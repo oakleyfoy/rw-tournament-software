@@ -4,9 +4,8 @@ from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import SQLModel
 
-from app.database import engine
+from app.database import engine, init_db
 from app.db_schema_patch import ensure_event_columns, ensure_tournament_columns
 from app.routes import (
     avoid_edges,
@@ -95,7 +94,7 @@ app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"])
 
 @app.on_event("startup")
 def on_startup():
-    SQLModel.metadata.create_all(engine)
+    init_db()  # Use centralized init_db() which imports models and creates tables
     ensure_event_columns(engine)
     ensure_tournament_columns(engine)
 
