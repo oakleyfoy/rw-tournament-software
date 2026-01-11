@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- Background -->
+  <rect width="200" height="200" fill="black"/>
+  
+  <!-- Stylized R -->
+  <rect x="40" y="40" width="20" height="120" fill="white"/>
+  <rect x="60" y="40" width="80" height="20" fill="white"/>
+  <rect x="130" y="60" width="20" height="40" fill="white"/>
+  <rect x="60" y="100" width="90" height="20" fill="white"/>
+  <rect x="140" y="120" width="20" height="40" fill="white"/>
+  
+  <!-- Motion streaks -->
+  <line x1="20" y1="90" x2="35" y2="90" stroke="white" stroke-width="8" stroke-linecap="round"/>
+  <line x1="20" y1="110" x2="35" y2="110" stroke="white" stroke-width="8" stroke-linecap="round"/>
+  
+  <!-- Tennis ball in R loop -->
+  <circle cx="135" cy="80" r="18" fill="#CFFF04"/>
+  <circle cx="135" cy="80" r="18" stroke="#1a1a1a" stroke-width="2"/>
+  <path d="M 117 80 Q 135 70 153 80" stroke="white" stroke-width="2" fill="none"/>
+  <path d="M 117 80 Q 135 90 153 80" stroke="white" stroke-width="2" fill="none"/>
+  
+  <!-- W -->
+  <path d="M 40 140 L 60 180 L 80 140 L 100 180 L 120 140" stroke="white" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+

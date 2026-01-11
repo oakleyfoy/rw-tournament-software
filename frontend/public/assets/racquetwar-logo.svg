@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" fill="none">
+  <!-- Background -->
+  <rect width="800" height="200" fill="black"/>
+  
+  <!-- Racquet text -->
+  <text x="50" y="140" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="white">Racquet</text>
+  
+  <!-- Stylized R tail with tennis ball -->
+  <path d="M 30 60 Q 40 70 50 80" stroke="white" stroke-width="8" fill="none"/>
+  <circle cx="45" cy="70" r="12" fill="#CFFF04" stroke="white" stroke-width="1"/>
+  <path d="M 40 68 Q 45 70 50 72" stroke="white" stroke-width="1.5" fill="none"/>
+  
+  <!-- War text with racquet W -->
+  <g transform="translate(350, 20)">
+    <!-- Left racquet handle -->
+    <rect x="0" y="0" width="8" height="80" fill="#CFFF04"/>
+    <rect x="8" y="0" width="50" height="8" fill="#CFFF04"/>
+    <rect x="48" y="8" width="8" height="50" fill="#CFFF04"/>
+    <!-- Right racquet handle -->
+    <rect x="58" y="0" width="8" height="80" fill="#CFFF04"/>
+    <rect x="66" y="0" width="50" height="8" fill="#CFFF04"/>
+    <rect x="106" y="8" width="8" height="50" fill="#CFFF04"/>
+    <!-- Racquet strings -->
+    <line x1="16" y1="16" x2="16" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="24" y1="16" x2="24" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="32" y1="16" x2="32" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="40" y1="16" x2="40" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="48" y1="16" x2="48" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="74" y1="16" x2="74" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="82" y1="16" x2="82" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="90" y1="16" x2="90" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="98" y1="16" x2="98" y2="56" stroke="black" stroke-width="0.5"/>
+    <line x1="106" y1="16" x2="106" y2="56" stroke="black" stroke-width="0.5"/>
+  </g>
+  
+  <text x="420" y="140" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="#CFFF04">War</text>
+</svg>
+

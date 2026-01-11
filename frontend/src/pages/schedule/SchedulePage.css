@@ -1,0 +1,94 @@
+.schedule-page {
+  padding: 24px;
+}
+
+.schedule-page .card {
+  background-color: var(--theme-card-bg);
+  color: var(--theme-text);
+  border: 1px solid var(--theme-border);
+}
+
+/* Schedule Grid Header - High specificity rules to override theme colors */
+/* Header cells have light gray background, so text must be dark for contrast */
+
+/* Header row container */
+.schedule-page .card .schedule-grid-header {
+  background-color: #f5f5f5 !important;
+  border-bottom: 2px solid #000;
+  min-height: 40px;
+}
+
+/* Time column header cell */
+.schedule-page .card .schedule-grid-header .schedule-grid-time-label {
+  background-color: #f5f5f5 !important;
+  color: #000000 !important;
+  font-weight: bold !important;
+  text-align: left;
+}
+
+/* Court label header cells */
+.schedule-page .card .schedule-grid-header .schedule-grid-court-label {
+  background-color: #f5f5f5 !important;
+  color: #000000 !important;
+  font-weight: bold !important;
+  text-align: center;
+}
+
+/* Time column in grid rows (not header) */
+.schedule-page .card .schedule-grid-time-column {
+  background-color: #f5f5f5 !important;
+  color: #000000 !important;
+  font-weight: 500;
+}
+
+/* Time labels in grid rows */
+.schedule-page .card .schedule-grid-time-column .schedule-grid-time-label {
+  color: #000000 !important;
+  font-weight: bold;
+}
+
+/* Ensure all child elements inherit the correct color */
+.schedule-page .card .schedule-grid-header *,
+.schedule-page .card .schedule-grid-time-column * {
+  color: inherit !important;
+}
+
+.schedule-page .btn {
+  background-color: var(--theme-primary-btn);
+  color: var(--theme-primary-btn-text);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.schedule-page .btn:hover {
+  opacity: 0.9;
+}
+
+.schedule-page .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.schedule-page .btn-primary {
+  background-color: var(--theme-primary-btn);
+  color: var(--theme-primary-btn-text);
+}
+
+.schedule-page .btn-secondary {
+  background-color: var(--theme-secondary-btn);
+  color: var(--theme-secondary-btn-text);
+}
+
+.schedule-page .btn-success {
+  background-color: var(--theme-success);
+  color: white;
+}
+
+.schedule-page .btn-danger {
+  background-color: var(--theme-danger);
+  color: white;
+}
+

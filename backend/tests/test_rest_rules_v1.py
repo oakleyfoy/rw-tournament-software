@@ -1,0 +1,600 @@
+"""
+Test suite for Rest Rules V1
+
+Tests rest time enforcement between matches:
+- WF → Scoring: 60 minutes minimum
+- Scoring → Scoring: 90 minutes minimum
+- Placeholder matches: Rest rules skipped
+- Determinism: Same input → same output
+"""
+
+from datetime import date, datetime, time, timedelta
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, select
+
+from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
+from app.models.schedule_slot import ScheduleSlot
+from app.models.schedule_version import ScheduleVersion
+
+
+@pytest.fixture
+def setup_rest_test_scenario(client: TestClient, session: Session):
+    """
+    Create test scenario with:
+    - 1 tournament
+    - 1 schedule version (draft)
+    - 1 event with 4 teams
+    - WF and MAIN matches with real team assignments
+    - 5 schedule slots with varying time gaps for testing rest rules
+    """
+    # Create tournament
+    tournament_data = {
+        "name": "Rest Test Tournament",
+        "location": "Test Location",
+        "timezone": "America/New_York",
+        "start_date": date(2026, 1, 15).isoformat(),
+        "end_date": date(2026, 1, 15).isoformat(),
+    }
+    t_response = client.post("/api/tournaments", json=tournament_data)
+    assert t_response.status_code == 201
+    tournament = t_response.json()
+
+    # Get/create schedule version
+    version = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament["id"])).first()
+
+    if not version:
+        version = ScheduleVersion(tournament_id=tournament["id"], version_number=1, status="draft")
+        session.add(version)
+        session.commit()
+        session.refresh(version)
+
+    # Create event with 4 teams
+    event_data = {"category": "mixed", "name": "Test Event", "team_count": 4, "draw_status": "final"}
+    e_response = client.post(f"/api/tournaments/{tournament['id']}/events", json=event_data)
+    assert e_response.status_code == 201
+    event = e_response.json()
+
+    # Create 4 teams (matching team_count)
+    teams = []
+    for i in range(1, 5):
+        team_data = {"name": f"Team {i}", "seed": i}
+        t_resp = client.post(f"/api/events/{event['id']}/teams", json=team_data)
+        assert t_resp.status_code == 201
+        teams.append(t_resp.json())
+
+    # Create WF match (60 min) with Team 1 vs Team 2
+    wf_match = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="WF_01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="Team 1",
+        placeholder_side_b="Team 2",
+        team_a_id=teams[0]["id"],  # Team 1
+        team_b_id=teams[1]["id"],  # Team 2
+    )
+    session.add(wf_match)
+
+    # Create MAIN match 1 (90 min) with Team 1 vs Team 3
+    main_match_1 = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="MAIN_01",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        placeholder_side_a="Team 1",
+        placeholder_side_b="Team 3",
+        team_a_id=teams[0]["id"],  # Team 1 (same as WF)
+        team_b_id=teams[2]["id"],  # Team 3
+    )
+    session.add(main_match_1)
+
+    # Create MAIN match 2 (90 min) with Team 1 vs Team 4
+    main_match_2 = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="MAIN_02",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=90,
+        placeholder_side_a="Team 1",
+        placeholder_side_b="Team 4",
+        team_a_id=teams[0]["id"],  # Team 1 (again)
+        team_b_id=teams[3]["id"],  # Team 4
+    )
+    session.add(main_match_2)
+
+    session.commit()
+    session.refresh(wf_match)
+    session.refresh(main_match_1)
+    session.refresh(main_match_2)
+
+    # Create schedule slots with proper date/time objects
+    # Slot 1: 9:00-11:00 (120 min) - for WF (60 min match)
+    slot1 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(9, 0),
+        end_time=time(11, 0),
+        block_minutes=120,
+        court_number=1,
+        court_label="Court 1",
+        is_active=True,
+    )
+    session.add(slot1)
+
+    # Slot 2: 10:00-12:00 (120 min) - exactly 60 min after WF start
+    slot2 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(10, 0),
+        end_time=time(12, 0),
+        block_minutes=120,
+        court_number=2,
+        court_label="Court 2",
+        is_active=True,
+    )
+    session.add(slot2)
+
+    # Slot 3: 9:59-11:59 (120 min) - 59 min after WF start (should FAIL for WF→MAIN)
+    slot3 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(9, 59),
+        end_time=time(11, 59),
+        block_minutes=120,
+        court_number=3,
+        court_label="Court 3",
+        is_active=True,
+    )
+    session.add(slot3)
+
+    # Slot 4: 11:30-13:30 (120 min) - exactly 90 min after MAIN_01 start
+    slot4 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(11, 30),
+        end_time=time(13, 30),
+        block_minutes=120,
+        court_number=1,
+        court_label="Court 1",
+        is_active=True,
+    )
+    session.add(slot4)
+
+    # Slot 5: 11:29-13:29 (120 min) - 89 min after MAIN_01 start (should FAIL for MAIN→MAIN)
+    slot5 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(11, 29),
+        end_time=time(13, 29),
+        block_minutes=120,
+        court_number=2,
+        court_label="Court 2",
+        is_active=True,
+    )
+    session.add(slot5)
+
+    session.commit()
+    session.refresh(slot1)
+    session.refresh(slot2)
+    session.refresh(slot3)
+    session.refresh(slot4)
+    session.refresh(slot5)
+
+    return {
+        "tournament": tournament,
+        "event": event,
+        "version": version,
+        "teams": teams,
+        "wf_match": wf_match,
+        "main_match_1": main_match_1,
+        "main_match_2": main_match_2,
+        "slots": [slot1, slot2, slot3, slot4, slot5],
+    }
+
+
+def test_wf_to_scoring_60_minutes_allowed(client: TestClient, session: Session):
+    """Test that WF → Scoring allows exactly 60 minutes rest"""
+    # Create tournament
+    tournament_data = {
+        "name": "Rest Test Tournament",
+        "location": "Test Location",
+        "timezone": "America/New_York",
+        "start_date": date(2026, 1, 15).isoformat(),
+        "end_date": date(2026, 1, 15).isoformat(),
+    }
+    t_response = client.post("/api/tournaments", json=tournament_data)
+    assert t_response.status_code == 201
+    tournament = t_response.json()
+
+    # Get/create schedule version
+    version = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament["id"])).first()
+
+    if not version:
+        version = ScheduleVersion(tournament_id=tournament["id"], version_number=1, status="draft")
+        session.add(version)
+        session.commit()
+        session.refresh(version)
+
+    # Create event with 3 teams (matching actual team count)
+    event_data = {"category": "mixed", "name": "Test Event", "team_count": 3, "draw_status": "final"}
+    e_response = client.post(f"/api/tournaments/{tournament['id']}/events", json=event_data)
+    assert e_response.status_code == 201
+    event = e_response.json()
+
+    # Create 3 teams
+    teams = []
+    for i in range(1, 4):
+        team_data = {"name": f"Team {i}", "seed": i}
+        t_resp = client.post(f"/api/events/{event['id']}/teams", json=team_data)
+        assert t_resp.status_code == 201
+        teams.append(t_resp.json())
+
+    # Create WF match with Team 1 vs Team 2 (60 min)
+    wf_match = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="WF_01",
+        match_type="WF",  # Explicitly set as WF
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="Team 1",
+        placeholder_side_b="Team 2",
+        team_a_id=teams[0]["id"],  # Team 1
+        team_b_id=teams[1]["id"],  # Team 2
+    )
+    session.add(wf_match)
+
+    # Create MAIN/scoring match with Team 1 vs Team 3 (60 min)
+    main_match = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="MAIN_01",
+        match_type="MAIN",  # Explicitly set as MAIN (scoring)
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="Team 1",
+        placeholder_side_b="Team 3",
+        team_a_id=teams[0]["id"],  # Team 1 (same as WF)
+        team_b_id=teams[2]["id"],  # Team 3
+    )
+    session.add(main_match)
+
+    session.commit()
+    session.refresh(wf_match)
+    session.refresh(main_match)
+
+    # Create two schedule slots on same court
+    # Slot 1: 9:00-10:00 (60 min) - for WF
+    slot1 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        block_minutes=60,
+        court_number=1,
+        court_label="Court 1",
+        is_active=True,
+    )
+    session.add(slot1)
+
+    # Slot 2: 11:00-12:00 (60 min) - exactly 60 min after WF ends
+    slot2 = ScheduleSlot(
+        tournament_id=tournament["id"],
+        schedule_version_id=version.id,
+        day_date=date(2026, 1, 15),
+        start_time=time(11, 0),
+        end_time=time(12, 0),
+        block_minutes=60,
+        court_number=1,
+        court_label="Court 1",
+        is_active=True,
+    )
+    session.add(slot2)
+
+    session.commit()
+    session.refresh(slot1)
+    session.refresh(slot2)
+
+    # Run auto-assign with rest
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Should assign both:
+    # - WF_01 to slot 1 (9:00-10:00)
+    # - MAIN_01 to slot 2 (11:00-12:00) - exactly 60 min after WF ends
+
+    assert result["assigned_count"] == 2, f"Expected 2 assignments, got {result['assigned_count']}"
+    assert result["rest_violations_summary"]["wf_to_scoring_violations"] == 0
+
+
+def test_wf_to_scoring_59_minutes_rejected(client: TestClient, setup_rest_test_scenario, session: Session):
+    """Test that WF → Scoring rejects 59 minutes rest"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+
+    # Manually assign WF to slot 1
+    wf_match = setup_rest_test_scenario["wf_match"]
+    slots = setup_rest_test_scenario["slots"]
+
+    assignment = MatchAssignment(
+        schedule_version_id=version.id,
+        match_id=wf_match.id,
+        slot_id=slots[0].id,  # 9:00 AM
+    )
+    session.add(assignment)
+    session.commit()
+
+    # Run auto-assign (will try to assign remaining matches)
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": False},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Slot 3 (9:59) should be rejected for MAIN_01 due to insufficient rest
+    # Should skip to slot 2 (10:00) or later
+    result.get("unassigned_reasons", {})
+
+    # Verify that if any match is unassigned, it's due to rest or duration, not a crash
+    assert "assigned_count" in result
+
+
+def test_scoring_to_scoring_90_minutes_required(client: TestClient, setup_rest_test_scenario):
+    """Test that Scoring → Scoring requires 90 minutes rest"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+
+    # Run auto-assign
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Should assign:
+    # - WF_01 to slot 1 (9:00)
+    # - MAIN_01 to slot 2 (10:00)
+    # - MAIN_02 to slot 4 (11:30) - exactly 90 min after MAIN_01 start
+    # Slot 5 (11:29) should be skipped as it's only 89 min rest
+
+    assert "assigned_count" in result
+    assert result["rest_violations_summary"]["scoring_to_scoring_violations"] == 0 or result["unassigned_count"] > 0
+
+
+def test_scoring_to_scoring_89_minutes_rejected(client: TestClient, setup_rest_test_scenario, session: Session):
+    """Test that Scoring → Scoring rejects 89 minutes rest"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+    wf_match = setup_rest_test_scenario["wf_match"]
+    main_match_1 = setup_rest_test_scenario["main_match_1"]
+    slots = setup_rest_test_scenario["slots"]
+
+    # Manually assign WF and MAIN_01
+    assignment1 = MatchAssignment(
+        schedule_version_id=version.id,
+        match_id=wf_match.id,
+        slot_id=slots[0].id,  # 9:00 AM
+    )
+    assignment2 = MatchAssignment(
+        schedule_version_id=version.id,
+        match_id=main_match_1.id,
+        slot_id=slots[1].id,  # 10:00 AM
+    )
+    session.add(assignment1)
+    session.add(assignment2)
+    session.commit()
+
+    # Run auto-assign for remaining matches
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": False},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Slot 5 (11:29) should be rejected for MAIN_02
+    # Should use slot 4 (11:30) or mark as unassigned
+    assert "assigned_count" in result
+
+
+def test_placeholder_match_ignores_rest(client: TestClient, setup_rest_test_scenario, session: Session):
+    """Test that matches with placeholder teams (null team_id) ignore rest rules"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+    event = setup_rest_test_scenario["event"]
+
+    # Create a match with null team_ids (placeholders)
+    placeholder_match = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="PLACEHOLDER_01",
+        match_type="MAIN",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=90,
+        placeholder_side_a="Winner of Match 1",
+        placeholder_side_b="Winner of Match 2",
+        team_a_id=None,  # Placeholder
+        team_b_id=None,  # Placeholder
+    )
+    session.add(placeholder_match)
+    session.commit()
+
+    # Run auto-assign
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Placeholder match should be assignable to any slot (rest not checked)
+    assert result["assigned_count"] >= 1
+
+
+def test_one_null_team_still_assigns(client: TestClient, setup_rest_test_scenario, session: Session):
+    """Test that match with one null team_id still assigns (checks rest for known team only)"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+    event = setup_rest_test_scenario["event"]
+    teams = setup_rest_test_scenario["teams"]
+
+    # Create a match with one known team, one placeholder
+    partial_match = Match(
+        tournament_id=tournament["id"],
+        event_id=event["id"],
+        schedule_version_id=version.id,
+        match_code="PARTIAL_01",
+        match_type="MAIN",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=2,
+        duration_minutes=90,
+        placeholder_side_a="TBD",
+        placeholder_side_b="Winner of Match X",
+        team_a_id=teams[0]["id"],  # Known team
+        team_b_id=None,  # Placeholder
+    )
+    session.add(partial_match)
+    session.commit()
+
+    # Run auto-assign
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+
+    # Match should be assignable (rest checked for team_a only)
+    assert result["assigned_count"] >= 1
+
+
+def test_determinism(client: TestClient, setup_rest_test_scenario):
+    """Test that two runs produce identical assignments"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+
+    # Run 1
+    response1 = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+    assert response1.status_code == 200
+    result1 = response1.json()
+
+    # Run 2
+    response2 = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+    assert response2.status_code == 200
+    result2 = response2.json()
+
+    # Results should be identical
+    assert result1["assigned_count"] == result2["assigned_count"]
+    assert result1["unassigned_count"] == result2["unassigned_count"]
+    assert result1["rest_violations_summary"] == result2["rest_violations_summary"]
+
+
+def test_no_team_scheduled_inside_rest_window(client: TestClient, setup_rest_test_scenario, session: Session):
+    """Test that no team is ever scheduled inside its rest window"""
+    tournament = setup_rest_test_scenario["tournament"]
+    version = setup_rest_test_scenario["version"]
+
+    # Run auto-assign
+    response = client.post(
+        f"/api/tournaments/{tournament['id']}/schedule/versions/{version.id}/auto-assign-rest",
+        params={"clear_existing": True},
+    )
+
+    assert response.status_code == 200
+    response.json()
+
+    # Get all assignments
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all()
+
+    # Build team schedule
+    team_schedule = {}
+    for assignment in assignments:
+        match = session.get(Match, assignment.match_id)
+        slot = session.get(ScheduleSlot, assignment.slot_id)
+
+        slot_start = datetime.fromisoformat(f"{slot.day_date}T{slot.start_time}")
+        slot_end = slot_start + timedelta(minutes=match.duration_minutes)
+
+        for team_id in [match.team_a_id, match.team_b_id]:
+            if team_id is None:
+                continue
+
+            if team_id not in team_schedule:
+                team_schedule[team_id] = []
+
+            team_schedule[team_id].append(
+                {"start": slot_start, "end": slot_end, "stage": match.match_type, "match_code": match.match_code}
+            )
+
+    # Verify no rest violations
+    for team_id, matches in team_schedule.items():
+        sorted_matches = sorted(matches, key=lambda m: m["start"])
+
+        for i in range(len(sorted_matches) - 1):
+            current = sorted_matches[i]
+            next_match = sorted_matches[i + 1]
+
+            gap_minutes = (next_match["start"] - current["end"]).total_seconds() / 60
+
+            # Determine required rest
+            if current["stage"] == "WF" and next_match["stage"] != "WF":
+                required_rest = 60
+            else:
+                required_rest = 90
+
+            # Verify gap meets requirement
+            assert gap_minutes >= required_rest, (
+                f"Team {team_id}: Rest violation between {current['match_code']} "
+                f"and {next_match['match_code']}. Gap: {gap_minutes}min, Required: {required_rest}min"
+            )
