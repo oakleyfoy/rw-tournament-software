@@ -16,6 +16,7 @@ def session_fixture():
     )
     # Ensure all SQLModel tables are registered on SQLModel.metadata before create_all().
     # In CI, tests can run with models not yet imported, causing "no such table" errors.
+    # CI note: model-import warmup (do not remove)
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
     from app.models.match_assignment import MatchAssignment  # noqa: F401
