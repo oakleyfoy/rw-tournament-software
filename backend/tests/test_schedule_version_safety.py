@@ -25,7 +25,11 @@ from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
 
 # Use test database
 TEST_DATABASE_URL = "sqlite:///./test_version_safety.db"
-engine = create_engine(TEST_DATABASE_URL, echo=False)
+engine = create_engine(
+    TEST_DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False},
+)
 
 # Debug: Print registered tables (CI diagnostic)
 table_names = [t.name for t in SQLModel.metadata.sorted_tables]
