@@ -12,6 +12,17 @@ from app.database import get_session
 from app.main import app
 from app.models.tournament import Tournament
 
+# Import all models to ensure tables are registered
+from app.models.event import Event  # noqa: F401
+from app.models.match import Match  # noqa: F401
+from app.models.match_assignment import MatchAssignment  # noqa: F401
+from app.models.schedule_slot import ScheduleSlot  # noqa: F401
+from app.models.schedule_version import ScheduleVersion  # noqa: F401
+from app.models.team import Team  # noqa: F401
+from app.models.team_avoid_edge import TeamAvoidEdge  # noqa: F401
+from app.models.tournament_day import TournamentDay  # noqa: F401
+from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
+
 # Use test database
 TEST_DATABASE_URL = "sqlite:///./test_version_safety.db"
 engine = create_engine(TEST_DATABASE_URL, echo=False)
