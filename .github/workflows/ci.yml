@@ -56,13 +56,16 @@ jobs:
       working-directory: ./frontend
       run: npm ci
     
-    - name: Lint
+    - name: Frontend lint (only if ESLint config exists)
       working-directory: ./frontend
+      shell: bash
       run: |
-        if grep -q "\"lint\"" package.json; then
+        set -euo pipefail
+        if [ -f .eslintrc ] || [ -f .eslintrc.js ] || [ -f .eslintrc.cjs ] || [ -f .eslintrc.json ] || [ -f .eslintrc.yaml ] || [ -f .eslintrc.yml ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ] || [ -f eslint.config.cjs ]; then
+          echo "ESLint config found; running lint."
           npm run lint
         else
-          echo "No lint script found, skipping..."
+          echo "No ESLint config found; skipping lint."
         fi
     
     - name: Build
