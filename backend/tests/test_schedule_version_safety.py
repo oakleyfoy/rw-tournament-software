@@ -27,6 +27,10 @@ from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
 TEST_DATABASE_URL = "sqlite:///./test_version_safety.db"
 engine = create_engine(TEST_DATABASE_URL, echo=False)
 
+# Debug: Print registered tables (CI diagnostic)
+table_names = [t.name for t in SQLModel.metadata.sorted_tables]
+print(f"[test_schedule_version_safety DEBUG] Registered tables: {table_names}")
+
 
 def get_test_session():
     with Session(engine) as session:
@@ -40,6 +44,7 @@ client = TestClient(app)
 @pytest.fixture(scope="function", autouse=True)
 def setup_database():
     """Create tables before each test and drop after"""
+    # Ensure all tables are created for each test
     SQLModel.metadata.create_all(engine)
     yield
     SQLModel.metadata.drop_all(engine)
