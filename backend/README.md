@@ -59,3 +59,4 @@ pytest
 
 By default, uses SQLite (`sqlite:///./tournament.db`). To use PostgreSQL, set the `DATABASE_URL` environment variable.
 
+
