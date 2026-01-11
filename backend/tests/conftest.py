@@ -27,6 +27,10 @@ def session_fixture():
     from app.models.tournament_day import TournamentDay  # noqa: F401
     from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
 
+    # Debug: verify models are registered (CI diagnostic)
+    table_names = [t.name for t in SQLModel.metadata.sorted_tables]
+    print(f"[conftest DEBUG] Registered tables before create_all: {table_names}")
+
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
