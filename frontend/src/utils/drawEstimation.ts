@@ -74,7 +74,6 @@ export function calculateMatches(
       }
       const wfMatches = wfRoundMatches(teamCount) * wfRounds;
       const pools = teamCount / 4;
-      const matchesPerPool = rrMatches(4); // rrMatches(4) = 6 matches per pool (full round robin)
       // Guarantee calculation:
       // - With wfRounds waterfall matches, each team has wfRounds matches
       // - Guarantee 4: Need (4 - wfRounds) more matches per team

@@ -503,8 +503,8 @@ export async function getSlots(tournamentId: number, scheduleVersionId?: number,
 
 // Matches functions
 export interface MatchGenerateRequest {
-  event_id?: number;
-  schedule_version_id?: number;
+  event_id?: number | null;
+  schedule_version_id?: number | null;
   wipe_existing?: boolean;
 }
 
@@ -657,7 +657,7 @@ export async function buildSchedule(tournamentId: number, versionId: number): Pr
     
     // Get slots and matches to calculate assignments
     console.log('Loading slots and matches...');
-    const [slots, matches] = await Promise.all([
+    const [, matches] = await Promise.all([
       getSlots(tournamentId, versionId),
       getMatches(tournamentId, versionId),
     ]);

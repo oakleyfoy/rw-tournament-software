@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { listTournaments, getEvents, duplicateTournament, deleteTournament, Tournament } from '../api/client'
 import { showToast } from '../utils/toast'
 import { confirmDialog } from '../utils/confirm'
-import { getSettings } from '../utils/settings'
 import './TournamentList.css'
 
 function TournamentList() {
@@ -17,9 +16,6 @@ function TournamentList() {
   useEffect(() => {
     loadTournaments()
   }, [])
-  
-  // Get current theme for conditional rendering
-  const currentTheme = getSettings().theme
 
   const loadTournaments = async () => {
     try {

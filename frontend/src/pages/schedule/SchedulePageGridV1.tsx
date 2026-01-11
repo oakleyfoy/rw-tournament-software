@@ -1,4 +1,3 @@
-import React from 'react'
 import { useParams } from 'react-router-dom'
 import { useScheduleGrid } from './hooks/useScheduleGrid'
 import { ScheduleHeader } from './components/ScheduleHeader'
@@ -14,7 +13,6 @@ function SchedulePageGridV1() {
 
   const {
     tournament,
-    events,
     versions,
     activeVersion,
     gridData,

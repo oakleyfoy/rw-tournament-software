@@ -21,6 +21,13 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/**/*.old.ts",
+    "src/**/*.old.tsx",
+    "src/pages/schedule/SchedulePage.old.tsx"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useScheduleAutoBuild } from './hooks/useScheduleAutoBuild'
 import { ScheduleHeader } from './components/ScheduleHeader'
@@ -8,7 +8,7 @@ import { UnscheduledPanel } from './components/UnscheduledPanel'
 import { ScheduleGridViewer } from './components/ScheduleGridViewer'
 import { SlotDrawer } from './components/SlotDrawer'
 import { UnscheduledMatch } from './types'
-import { Match, ScheduleSlot } from '../../api/client'
+import { ScheduleSlot } from '../../api/client'
 import './SchedulePage.css'
 
 function SchedulePage() {

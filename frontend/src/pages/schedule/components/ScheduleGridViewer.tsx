@@ -15,7 +15,7 @@ export const ScheduleGridViewer: React.FC<ScheduleGridViewerProps> = ({
   slots,
   matches,
   events,
-  tournament,
+  tournament: _tournament,
   readOnly,
   onSlotClick,
 }) => {
@@ -137,7 +137,6 @@ export const ScheduleGridViewer: React.FC<ScheduleGridViewerProps> = ({
                 textAlign: 'left',
                 position: 'sticky',
                 left: 0,
-                backgroundColor: '#f5f5f5',
                 zIndex: 10,
               }}>
                 Time
@@ -168,7 +167,6 @@ export const ScheduleGridViewer: React.FC<ScheduleGridViewerProps> = ({
                   fontWeight: '500',
                   position: 'sticky',
                   left: 0,
-                  backgroundColor: '#fafafa',
                   zIndex: 5,
                 }}>
                   {timeTo12Hour(time)}

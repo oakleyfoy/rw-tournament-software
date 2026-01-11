@@ -251,7 +251,7 @@ export function useScheduleData(tournamentId: number | null): UseScheduleDataRet
     try {
       // This would need a backend endpoint to clone a version
       // For now, just show a message
-      showToast('Clone functionality not yet implemented', 'info')
+      showToast('Clone functionality not yet implemented', 'warning')
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to clone version', 'error')
     }

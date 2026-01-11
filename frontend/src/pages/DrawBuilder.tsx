@@ -18,19 +18,11 @@ import {
   ScheduleProfile,
   calculateMatches,
   calculateMinutesRequired,
-  determineGuarantee,
   MatchCounts,
 } from '../utils/drawEstimation'
 import { minutesToHours, minutesToHM } from '../utils/timeFormat'
 import { EVENT_SUMMARY_HELP } from '../constants/eventSummaryHelp'
 import './TournamentSetup.css'
-
-// Helper to format minutes as clock time (H:MM)
-const minutesToClock = (minutes: number): string => {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return `${h}:${String(m).padStart(2, '0')}`
-}
 
 // Match length options for dropdown (value in minutes, label in H:MM format)
 // Supported: 1:00, 1:30, 1:45, 2:00
@@ -287,7 +279,7 @@ function DrawBuilder() {
           matchCounts,
           state.waterfallMinutes,
           state.standardMinutes,
-          selectedGuarantee
+          selectedGuarantee as 4 | 5
         )
         
         // Check against remaining capacity (excluding this event since it's not finalized yet)

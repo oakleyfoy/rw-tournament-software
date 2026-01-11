@@ -1,9 +1,31 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { apiClient } from '../api/client'
 import { showToast } from '../utils/toast'
-import { confirmAction } from '../utils/confirm'
+import { confirmDialog } from '../utils/confirm'
 import './WhoKnowsWho.css'
+
+// ============================================================================
+// API Helper
+// ============================================================================
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+
+async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  })
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || `HTTP ${response.status}`)
+  }
+  
+  return response.json()
+}
 
 // ============================================================================
 // Types
@@ -125,16 +147,16 @@ export default function WhoKnowsWho() {
     try {
       // Parallel fetch
       const [teamsRes, edgesRes, lensRes] = await Promise.all([
-        apiClient.get(`/api/events/${eventId}/teams?include_grouping=true`),
-        apiClient.get(`/api/events/${eventId}/avoid-edges`),
-        apiClient.get(`/api/events/${eventId}/waterfall/conflicts`),
+        apiFetch<Team[]>(`${API_BASE_URL}/events/${eventId}/teams?include_grouping=true`),
+        apiFetch<AvoidEdge[]>(`${API_BASE_URL}/events/${eventId}/avoid-edges`),
+        apiFetch<ConflictLens>(`${API_BASE_URL}/events/${eventId}/waterfall/conflicts`),
       ])
       
-      setTeams(teamsRes.data)
-      setAvoidEdges(edgesRes.data)
-      setConflictLens(lensRes.data)
+      setTeams(teamsRes)
+      setAvoidEdges(edgesRes)
+      setConflictLens(lensRes)
     } catch (error: any) {
-      showToast('Failed to load data: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Failed to load data: ' + error.message, 'error')
     } finally {
       setLoading(false)
     }
@@ -183,21 +205,24 @@ export default function WhoKnowsWho() {
     }
     
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/avoid-edges/bulk?dry_run=true`,
+      const response = await apiFetch<BulkResponse>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/bulk?dry_run=true`,
         {
-          pairs: [{
-            team_a_id: parseInt(pairForm.teamA),
-            team_b_id: parseInt(pairForm.teamB),
-            reason: pairForm.reason || null
-          }]
+          method: 'POST',
+          body: JSON.stringify({
+            pairs: [{
+              team_a_id: parseInt(pairForm.teamA),
+              team_b_id: parseInt(pairForm.teamB),
+              reason: pairForm.reason || null
+            }]
+          })
         }
       )
       
-      setPreviewResponse(response.data)
+      setPreviewResponse(response)
       setShowPreview(true)
     } catch (error: any) {
-      showToast('Preview failed: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Preview failed: ' + error.message, 'error')
     }
   }
   
@@ -205,24 +230,27 @@ export default function WhoKnowsWho() {
     if (!eventId || !pairForm.teamA || !pairForm.teamB) return
     
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/avoid-edges/bulk?dry_run=false`,
+      const response = await apiFetch<BulkResponse>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/bulk?dry_run=false`,
         {
-          pairs: [{
-            team_a_id: parseInt(pairForm.teamA),
-            team_b_id: parseInt(pairForm.teamB),
-            reason: pairForm.reason || null
-          }]
+          method: 'POST',
+          body: JSON.stringify({
+            pairs: [{
+              team_a_id: parseInt(pairForm.teamA),
+              team_b_id: parseInt(pairForm.teamB),
+              reason: pairForm.reason || null
+            }]
+          })
         }
       )
       
-      showToast(`Created ${response.data.created_count} edge(s)`, 'success')
+      showToast(`Created ${response.created_count} edge(s)`, 'success')
       setPairForm({ teamA: '', teamB: '', reason: '' })
       setShowPreview(false)
       setPreviewResponse(null)
       await loadData()
     } catch (error: any) {
-      showToast('Failed to add pair: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Failed to add pair: ' + error.message, 'error')
     }
   }
   
@@ -237,21 +265,24 @@ export default function WhoKnowsWho() {
     }
     
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/avoid-edges/bulk?dry_run=true`,
+      const response = await apiFetch<BulkResponse>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/bulk?dry_run=true`,
         {
-          link_groups: [{
-            code: groupForm.code,
-            team_ids: Array.from(selectedTeamIds),
-            reason: groupForm.reason || null
-          }]
+          method: 'POST',
+          body: JSON.stringify({
+            link_groups: [{
+              code: groupForm.code,
+              team_ids: Array.from(selectedTeamIds),
+              reason: groupForm.reason || null
+            }]
+          })
         }
       )
       
-      setPreviewResponse(response.data)
+      setPreviewResponse(response)
       setShowPreview(true)
     } catch (error: any) {
-      showToast('Preview failed: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Preview failed: ' + error.message, 'error')
     }
   }
   
@@ -259,25 +290,28 @@ export default function WhoKnowsWho() {
     if (!eventId || !groupForm.code || selectedTeamIds.size < 2) return
     
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/avoid-edges/bulk?dry_run=false`,
+      const response = await apiFetch<BulkResponse>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/bulk?dry_run=false`,
         {
-          link_groups: [{
-            code: groupForm.code,
-            team_ids: Array.from(selectedTeamIds),
-            reason: groupForm.reason || null
-          }]
+          method: 'POST',
+          body: JSON.stringify({
+            link_groups: [{
+              code: groupForm.code,
+              team_ids: Array.from(selectedTeamIds),
+              reason: groupForm.reason || null
+            }]
+          })
         }
       )
       
-      showToast(`Created ${response.data.created_count} edge(s) for group "${groupForm.code}"`, 'success')
+      showToast(`Created ${response.created_count} edge(s) for group "${groupForm.code}"`, 'success')
       setGroupForm({ code: '', reason: '' })
       setSelectedTeamIds(new Set())
       setShowPreview(false)
       setPreviewResponse(null)
       await loadData()
     } catch (error: any) {
-      showToast('Failed to add group: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Failed to add group: ' + error.message, 'error')
     }
   }
   
@@ -340,15 +374,18 @@ export default function WhoKnowsWho() {
     }
     
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/avoid-edges/bulk?dry_run=true`,
-        { pairs }
+      const response = await apiFetch<BulkResponse>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/bulk?dry_run=true`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ pairs })
+        }
       )
       
-      setPreviewResponse(response.data)
+      setPreviewResponse(response)
       setShowPreview(true)
     } catch (error: any) {
-      showToast('Preview failed: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Preview failed: ' + error.message, 'error')
     }
   }
   
@@ -359,18 +396,21 @@ export default function WhoKnowsWho() {
     if (!pairs) return
     
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/avoid-edges/bulk?dry_run=false`,
-        { pairs }
+      const response = await apiFetch<BulkResponse>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/bulk?dry_run=false`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ pairs })
+        }
       )
       
-      showToast(`Created ${response.data.created_count} edge(s), skipped ${response.data.skipped_duplicates_count} duplicate(s)`, 'success')
+      showToast(`Created ${response.created_count} edge(s), skipped ${response.skipped_duplicates_count} duplicate(s)`, 'success')
       setBulkPaste('')
       setShowPreview(false)
       setPreviewResponse(null)
       await loadData()
     } catch (error: any) {
-      showToast('Failed bulk operation: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Failed bulk operation: ' + error.message, 'error')
     }
   }
   
@@ -379,15 +419,18 @@ export default function WhoKnowsWho() {
   // ============================================================================
   
   async function handleDeleteEdge(edgeId: number) {
-    const confirmed = await confirmAction('Delete this avoid edge?')
+    const confirmed = await confirmDialog('Delete this avoid edge?')
     if (!confirmed) return
     
     try {
-      await apiClient.delete(`/api/events/${eventId}/avoid-edges/${edgeId}`)
+      await apiFetch<void>(
+        `${API_BASE_URL}/events/${eventId}/avoid-edges/${edgeId}`,
+        { method: 'DELETE' }
+      )
       showToast('Edge deleted', 'success')
       await loadData()
     } catch (error: any) {
-      showToast('Delete failed: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Delete failed: ' + error.message, 'error')
     }
   }
   
@@ -398,19 +441,20 @@ export default function WhoKnowsWho() {
   async function handleRecomputeGroups() {
     if (!eventId) return
     
-    const confirmed = await confirmAction('Recompute Waterfall groups? This will reassign all teams.')
+    const confirmed = await confirmDialog('Recompute Waterfall groups? This will reassign all teams.')
     if (!confirmed) return
     
     setRecomputeLoading(true)
     try {
-      const response = await apiClient.post(
-        `/api/events/${eventId}/waterfall/assign-groups?clear_existing=true`
+      const response = await apiFetch<{ groups_count: number; total_internal_conflicts: number }>(
+        `${API_BASE_URL}/events/${eventId}/waterfall/assign-groups?clear_existing=true`,
+        { method: 'POST' }
       )
       
-      showToast(`Groups assigned: ${response.data.groups_count} groups with ${response.data.total_internal_conflicts} unavoidable conflicts`, 'success')
+      showToast(`Groups assigned: ${response.groups_count} groups with ${response.total_internal_conflicts} unavoidable conflicts`, 'success')
       await loadData()
     } catch (error: any) {
-      showToast('Recompute failed: ' + (error.response?.data?.detail || error.message), 'error')
+      showToast('Recompute failed: ' + error.message, 'error')
     } finally {
       setRecomputeLoading(false)
     }

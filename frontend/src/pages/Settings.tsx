@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getSettings, saveSettings, getTheme, themes, Theme, applyTheme } from '../utils/settings'
+import { getSettings, saveSettings, getTheme, themes, applyTheme } from '../utils/settings'
 import './Settings.css'
 
 function Settings() {

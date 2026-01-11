@@ -4,12 +4,6 @@ import { ScheduleSlot, Match, Event, Tournament } from '../../../api/client'
 import { timeTo12Hour } from '../../../utils/timeFormat'
 import { getCellSpan } from '../../../utils/gridHelper'
 
-// Ensure grid labels are black with inline styles
-const gridLabelStyle: React.CSSProperties = {
-  color: '#000000',
-  WebkitTextFillColor: '#000000',
-}
-
 interface ScheduleGridVirtualProps {
   slots: ScheduleSlot[]
   matches: Match[]
@@ -70,7 +64,7 @@ const GridRowComponent = ({ index, style, rows, events, readOnly, onSlotClick, g
         
         {/* Court cells */}
         <div style={{ display: 'flex', flex: 1 }}>
-          {row.courtLabels.map((courtLabel, courtIndex) => {
+          {row.courtLabels.map((courtLabel) => {
             const slot = row.slotsByCourtLabel.get(courtLabel)
             
             if (!slot) {
@@ -167,20 +161,6 @@ export const ScheduleGridVirtual: React.FC<ScheduleGridVirtualProps> = React.mem
   readOnly,
   onSlotClick,
 }) => {
-  // Get court labels from slots (already sorted by court_number)
-  const courtLabels = useMemo(() => {
-    return allCourtLabels
-  }, [allCourtLabels])
-
-  const getMatchAssignment = (slot: ScheduleSlot): { match: Match; span: number } | null => {
-    if (!slot.match_id) return null
-    const match = matches.find(m => m.id === slot.match_id)
-    if (!match) return null
-    
-    const span = getCellSpan(match.duration_minutes)
-    return { match, span }
-  }
-
   // Get all unique court labels from slots, sorted by court_number for consistent ordering
   const allCourtLabels = useMemo(() => {
     const courtMap = new Map<string, { label: string; number: number }>()
@@ -196,6 +176,20 @@ export const ScheduleGridVirtual: React.FC<ScheduleGridVirtualProps> = React.mem
       .sort((a, b) => a.number - b.number)
       .map(c => c.label)
   }, [slots])
+
+  // Get court labels from slots (already sorted by court_number)
+  const courtLabels = useMemo(() => {
+    return allCourtLabels
+  }, [allCourtLabels])
+
+  const getMatchAssignment = (slot: ScheduleSlot): { match: Match; span: number } | null => {
+    if (!slot.match_id) return null
+    const match = matches.find(m => m.id === slot.match_id)
+    if (!match) return null
+    
+    const span = getCellSpan(match.duration_minutes)
+    return { match, span }
+  }
 
   const rows = useMemo(() => {
     if (slots.length === 0) return []
@@ -241,7 +235,7 @@ export const ScheduleGridVirtual: React.FC<ScheduleGridVirtualProps> = React.mem
     
     // Check if any slot in this row has a multi-cell match
     let maxSpan = 1
-    for (const slot of row.slotsByCourt.values()) {
+    for (const slot of row.slotsByCourtLabel.values()) {
       const assignment = getMatchAssignment(slot)
       if (assignment && assignment.span > maxSpan) {
         maxSpan = assignment.span
