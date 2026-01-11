@@ -10,4 +10,3 @@ from app.models.team_avoid_edge import TeamAvoidEdge  # noqa: F401
 from app.models.tournament import Tournament  # noqa: F401
 from app.models.tournament_day import TournamentDay  # noqa: F401
 from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
-
