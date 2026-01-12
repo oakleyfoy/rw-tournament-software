@@ -8,7 +8,14 @@ from app.main import app
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
-# Create test engine with StaticPool - CRITICAL for :memory: across connections/threads
+# ============================================================================
+# CRITICAL: Test Database Setup with StaticPool
+# ============================================================================
+# 1. Use sqlite:///:memory: with StaticPool so ALL sessions share same DB
+# 2. check_same_thread=False required for TestClient/threaded access
+# 3. All models MUST be imported before create_all() (see session_fixture)
+# 4. App dependency overridden to use test_engine (see client_fixture)
+# 5. Tables created explicitly, not relying on app startup
 test_engine = create_engine(
     TEST_DATABASE_URL,
     connect_args={"check_same_thread": False},
@@ -22,10 +29,14 @@ def override_get_session():
         yield session
 
 
-@pytest.fixture(name="session")
+@pytest.fixture(name="session", scope="function")
 def session_fixture():
-    """Provide a test database session"""
-    # Import all models to ensure they're registered
+    """Provide a test database session
+    
+    With StaticPool + :memory:, all sessions share the same database.
+    Tables persist across tests within a session but are isolated per test run.
+    """
+    # Import all models to ensure they're registered BEFORE create_all
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
     from app.models.match_assignment import MatchAssignment  # noqa: F401
@@ -37,22 +48,29 @@ def session_fixture():
     from app.models.tournament_day import TournamentDay  # noqa: F401
     from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
 
-    # Create all tables on test engine
+    # Create all tables on test engine (explicit, don't rely on app startup)
     SQLModel.metadata.create_all(test_engine)
 
     with Session(test_engine) as session:
         yield session
+    
+    # Note: With StaticPool + :memory:, data persists across tests in same run
+    # but is isolated per pytest invocation. This matches previous behavior.
 
 
 @pytest.fixture(name="client")
 def client_fixture(session: Session):
-    """Provide a test client with overridden database session"""
-    # Override dependency to use test session
+    """Provide a test client with overridden database session
+    
+    CRITICAL: Override MUST be set BEFORE TestClient() and stay in place
+    for the entire duration. This ensures the app never uses its own engine.
+    """
+    # Override dependency BEFORE creating TestClient (prevents production engine use)
     app.dependency_overrides[get_session] = override_get_session
 
-    # Use context manager to ensure lifespan/startup executes reliably
+    # Create TestClient with context manager (keeps override active throughout)
     with TestClient(app) as client:
         yield client
 
-    # Clear overrides after test
+    # Clear overrides only AFTER TestClient context exits
     app.dependency_overrides.clear()
