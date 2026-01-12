@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ "**" ]
 
 jobs:
   backend:
@@ -32,6 +32,9 @@ jobs:
       run: |
         ruff check .
         ruff format --check .
+    
+    - name: Print CI SHA
+      run: echo "CI is running GITHUB_SHA=$GITHUB_SHA"
     
     - name: Run tests
       working-directory: ./backend
