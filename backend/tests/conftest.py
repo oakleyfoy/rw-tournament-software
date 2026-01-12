@@ -39,7 +39,7 @@ def session_fixture():
 
     # Create all tables on test engine
     SQLModel.metadata.create_all(test_engine)
-    
+
     with Session(test_engine) as session:
         yield session
 
@@ -49,10 +49,10 @@ def client_fixture(session: Session):
     """Provide a test client with overridden database session"""
     # Override dependency to use test session
     app.dependency_overrides[get_session] = override_get_session
-    
+
     # Use context manager to ensure lifespan/startup executes reliably
     with TestClient(app) as client:
         yield client
-    
+
     # Clear overrides after test
     app.dependency_overrides.clear()
