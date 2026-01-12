@@ -32,7 +32,7 @@ def override_get_session():
 @pytest.fixture(name="session", scope="function")
 def session_fixture():
     """Provide a test database session
-    
+
     With StaticPool + :memory:, all sessions share the same database.
     Tables persist across tests within a session but are isolated per test run.
     """
@@ -53,7 +53,7 @@ def session_fixture():
 
     with Session(test_engine) as session:
         yield session
-    
+
     # Note: With StaticPool + :memory:, data persists across tests in same run
     # but is isolated per pytest invocation. This matches previous behavior.
 
@@ -61,7 +61,7 @@ def session_fixture():
 @pytest.fixture(name="client")
 def client_fixture(session: Session):
     """Provide a test client with overridden database session
-    
+
     CRITICAL: Override MUST be set BEFORE TestClient() and stay in place
     for the entire duration. This ensures the app never uses its own engine.
     """
