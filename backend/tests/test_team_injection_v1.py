@@ -122,10 +122,15 @@ def test_update_team(client: TestClient, session: Session, setup_test_tournament
     event = session.exec(select(Event)).first()
     assert event is not None
 
-    # Create a team
-    team_data = {"name": "Original Name", "seed": 1, "rating": 1500.0}
+    # Create a team with a unique seed to avoid conflicts with other tests
+    team_data = {"name": "Original Name", "seed": 10, "rating": 1500.0}
     create_response = client.post(f"/api/events/{event.id}/teams", json=team_data)
+    assert create_response.status_code in (
+        200,
+        201,
+    ), f"Expected 200/201, got {create_response.status_code}: {create_response.text}"
     team = create_response.json()
+    assert "id" in team, f"Response missing 'id' field: {team}"
 
     # Update it
     update_data = {"name": "Updated Name", "rating": 1600.0}
@@ -135,7 +140,7 @@ def test_update_team(client: TestClient, session: Session, setup_test_tournament
     updated_team = response.json()
     assert updated_team["name"] == "Updated Name"
     assert updated_team["rating"] == 1600.0
-    assert updated_team["seed"] == 1  # Unchanged
+    assert updated_team["seed"] == 10  # Unchanged
 
 
 def test_delete_team(client: TestClient, session: Session, setup_test_tournament):
