@@ -2093,25 +2093,39 @@ def auto_assign_with_rest_rules(
     tournament_id: int,
     version_id: int,
     clear_existing: bool = Query(True, description="Clear existing assignments before running"),
+    v: int = Query(1, description="Algorithm version: 1 (default) or 2 (with enhanced constraints)", ge=1, le=2),
+    min_rest_minutes: int = Query(90, description="V2 only: Minimum rest minutes between matches for same team", ge=0),
+    require_court_type_match: bool = Query(
+        False, description="V2 only: Require court type compatibility (if courts have types)"
+    ),
     session: Session = Depends(get_session),
 ):
     """
     Auto-assign matches to slots with rest rules enforcement.
 
-    Rest Rules:
+    **Version 1 (default)**: Basic rest rules
     - WF → Scoring matches: Minimum 60 minutes rest
     - Scoring → Scoring matches: Minimum 90 minutes rest
     - Matches with placeholder teams: Rest rules skipped for that side
 
-    Assignment Strategy:
-    - Deterministic: Same input → same output
-    - First-fit: Assigns to first compatible slot
-    - No backtracking or optimization
+    **Version 2**: Enhanced constraints
+    - Configurable minimum rest time per team (default: 90 minutes)
+    - Optional court-type eligibility (e.g., feature court vs standard)
+    - Structured conflict reporting (rest violations, court mismatches)
+    - Partial assignments with detailed conflict reasons
+
+    Both versions:
+    - Fully deterministic: Same input → same output
+    - First-fit strategy: No backtracking or optimization
+    - Preserve stage ordering (WF → MAIN → CONSOLATION → PLACEMENT)
 
     Args:
         tournament_id: Tournament ID
         version_id: Schedule version ID
         clear_existing: If true, clears all assignments before running
+        v: Algorithm version (1 or 2)
+        min_rest_minutes: V2 only - minimum rest between matches for same team
+        require_court_type_match: V2 only - enforce court type compatibility
 
     Returns:
         AutoAssignRestResponse with assignment results and rest violation details
@@ -2129,10 +2143,43 @@ def auto_assign_with_rest_rules(
     # CHUNK 2B: Draft-only guard
     require_draft_version(session, version_id, tournament_id)
 
-    # Run rest-aware auto-assign
+    # Run auto-assign (version selected by parameter)
     try:
-        result = auto_assign_with_rest(session=session, schedule_version_id=version_id, clear_existing=clear_existing)
-        return AutoAssignRestResponse(**result)
+        if v == 2:
+            # Import V2 lazily to avoid circular dependencies
+            from app.utils.auto_assign_v2 import auto_assign_v2
+
+            result = auto_assign_v2(
+                session=session,
+                schedule_version_id=version_id,
+                clear_existing=clear_existing,
+                min_rest_minutes=min_rest_minutes,
+                require_court_type_match=require_court_type_match,
+            )
+
+            # Convert V2 result to response format
+            return AutoAssignRestResponse(
+                assigned_count=result.assigned_count,
+                unassigned_count=result.unassigned_count,
+                unassigned_reasons={
+                    "conflicts": result.conflicts,
+                    "conflict_summary": {
+                        "rest_violations": result.rest_violations,
+                        "court_type_mismatches": result.court_type_mismatches,
+                        "slot_occupied": result.slot_occupied_count,
+                    },
+                },
+                rest_violations_summary={
+                    "total_rest_violations": result.rest_violations,
+                    "min_rest_minutes": min_rest_minutes,
+                },
+            )
+        else:
+            # V1 (default)
+            result = auto_assign_with_rest(
+                session=session, schedule_version_id=version_id, clear_existing=clear_existing
+            )
+            return AutoAssignRestResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Auto-assign failed: {str(e)}")
 
