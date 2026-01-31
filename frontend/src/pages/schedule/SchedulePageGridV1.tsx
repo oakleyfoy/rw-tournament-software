@@ -1,10 +1,12 @@
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { useScheduleGrid } from './hooks/useScheduleGrid'
 import { ScheduleHeader } from './components/ScheduleHeader'
 import { ScheduleBuildPanel } from './components/ScheduleBuildPanel'
+import { AutoAssignAssistPanel } from './components/AutoAssignAssistPanel'
 import { ScheduleSummaryPanel } from './components/ScheduleSummaryPanel'
 import { ScheduleGridV1Viewer } from './components/ScheduleGridV1'
 import { ConflictsBanner } from './components/ConflictsBanner'
+import { featureFlags, featureFlagsRaw } from '../../config/featureFlags'
 import './SchedulePage.css'
 
 function SchedulePageGridV1() {
@@ -24,6 +26,7 @@ function SchedulePageGridV1() {
     finalizeDraft,
     cloneFinalToDraft,
     setActiveVersion,
+    refresh,
   } = useScheduleGrid(tournamentId)
 
   const isReadOnly = activeVersion?.status === 'final' || false
@@ -55,6 +58,45 @@ function SchedulePageGridV1() {
         onBuild={buildSchedule}
         onCreateDraft={createDraft}
       />
+
+      <AutoAssignAssistPanel
+        tournamentId={tournamentId}
+        activeVersionId={activeVersion?.id ?? null}
+        activeVersionStatus={activeVersion?.status ?? null}
+        onRefresh={refresh}
+      />
+
+      {/* TEMP Debug: Feature flag status (dev only) */}
+      {(import.meta as any).env.DEV && (
+        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+          ManualEditor flag: raw="{featureFlagsRaw.VITE_ENABLE_MANUAL_EDITOR}" parsed={String(featureFlags.manualScheduleEditor)}
+        </div>
+      )}
+
+      {/* Manual Editor Link - Gated by feature flag */}
+      {featureFlags.manualScheduleEditor && activeVersion && (
+        <div style={{ marginBottom: '16px' }}>
+          <Link
+            to={`/tournaments/${tournamentId}/schedule/editor?versionId=${activeVersion.id}`}
+            style={{ textDecoration: 'none' }}
+          >
+            <button
+              style={{
+                padding: '10px 20px',
+                background: '#9c27b0',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 600,
+              }}
+            >
+              ✏️ Open Manual Schedule Editor
+            </button>
+          </Link>
+        </div>
+      )}
 
       {buildSummary && <ScheduleSummaryPanel buildSummary={buildSummary} />}
 

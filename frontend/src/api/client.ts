@@ -551,6 +551,7 @@ export interface GridSlot {
 }
 
 export interface GridAssignment {
+  id: number;  // Assignment database ID (required for PATCH endpoint)
   slot_id: number;
   match_id: number;
 }
@@ -616,15 +617,18 @@ export interface BuildScheduleResponse {
   warnings?: { message: string; count: number }[]
 }
 
+/** POST /api/tournaments/{tournamentId}/schedule/versions/{versionId}/build — Auto-Assign V2 (respects locked). */
+export async function buildScheduleVersion(tournamentId: number, versionId: number): Promise<BuildScheduleResponse> {
+  return fetchJson<BuildScheduleResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/build`,
+    { method: 'POST' }
+  );
+}
+
 export async function buildSchedule(tournamentId: number, versionId: number): Promise<BuildScheduleResponse> {
   // Try the single build endpoint first (if implemented)
   try {
-    return await fetchJson<BuildScheduleResponse>(
-      `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/build`,
-      {
-        method: 'POST',
-      }
-    );
+    return await buildScheduleVersion(tournamentId, versionId);
   } catch (err: any) {
     // Only fallback on 404 (endpoint not found), not on 500/400/422 (business logic errors)
     const status = err?.status;
@@ -673,5 +677,111 @@ export async function buildSchedule(tournamentId: number, versionId: number): Pr
       matches_unassigned: unassignedCount,
     };
   }
+}
+
+// Conflicts Report V1 (Phase 3D)
+export interface UnassignedMatchDetail {
+  match_id: number;
+  match_code: string;
+  stage: string;
+  round_index: number;
+  sequence_in_round: number;
+  duration_minutes: number;
+  event_id: number;
+  team_a_id: number | null;
+  team_b_id: number | null;
+  placeholder_side_a: string;
+  placeholder_side_b: string;
+}
+
+export interface ConflictReportSummary {
+  tournament_id: number;
+  schedule_version_id: number;
+  total_slots: number;
+  total_matches: number;
+  assigned_matches: number;
+  unassigned_matches: number;
+  assignment_rate: number;
+}
+
+export interface SlotPressure {
+  slot_id: number;
+  day_date: string;
+  start_time: string;
+  court_label: string;
+  match_count: number;
+}
+
+export interface StageTimeline {
+  stage: string;
+  earliest_slot: string | null;
+  latest_slot: string | null;
+}
+
+export interface OrderingViolation {
+  earlier_match_id: number;
+  earlier_match_code: string;
+  earlier_slot_time: string;
+  later_match_id: number;
+  later_match_code: string;
+  later_slot_time: string;
+  reason: string;
+}
+
+export interface OrderingIntegrity {
+  violations_detected: number;
+  violations: OrderingViolation[];
+}
+
+export interface ConflictReportV1 {
+  summary: ConflictReportSummary;
+  unassigned_matches: UnassignedMatchDetail[];
+  slot_pressure: SlotPressure[];
+  stage_timeline: StageTimeline[];
+  ordering_integrity: OrderingIntegrity;
+}
+
+export async function getConflicts(
+  tournamentId: number,
+  scheduleVersionId: number,
+  eventId?: number
+): Promise<ConflictReportV1> {
+  const params = new URLSearchParams();
+  params.append('schedule_version_id', scheduleVersionId.toString());
+  if (eventId !== undefined) {
+    params.append('event_id', eventId.toString());
+  }
+  return fetchJson<ConflictReportV1>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/conflicts?${params.toString()}`
+  );
+}
+
+// Manual Assignment PATCH endpoint
+export interface UpdateAssignmentRequest {
+  new_slot_id: number;
+}
+
+export interface AssignmentDetail {
+  id: number;
+  schedule_version_id: number;
+  match_id: number;
+  slot_id: number;
+  locked: boolean;
+  assigned_by: string;
+  assigned_at: string;
+}
+
+export async function updateAssignment(
+  tournamentId: number,
+  assignmentId: number,
+  newSlotId: number
+): Promise<AssignmentDetail> {
+  return fetchJson<AssignmentDetail>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/assignments/${assignmentId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ new_slot_id: newSlotId }),
+    }
+  );
 }
 
