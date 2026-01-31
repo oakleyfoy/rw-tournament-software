@@ -1,10 +1,15 @@
 import React, { useMemo, useState } from 'react'
 import { ScheduleGridV1, GridSlot, GridMatch, GridAssignment, TeamInfo } from '../../../api/client'
+import type { MatchRuntimeState } from '../../../api/client'
 import { timeTo12Hour } from '../../../utils/timeFormat'
 
 interface ScheduleGridV1Props {
   gridData: ScheduleGridV1 | null
   readOnly: boolean
+  /** Phase 4: runtime status by match id (match_id -> state) */
+  runtimeByMatchId?: Record<number, MatchRuntimeState>
+  /** Phase 4: when user clicks an assigned match cell */
+  onMatchClick?: (matchId: number, match: GridMatch) => void
   onSlotClick?: (slotId: number, matchId: number | null) => void
 }
 
@@ -22,6 +27,8 @@ interface TimeRow {
 export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
   gridData,
   readOnly,
+  runtimeByMatchId = {},
+  onMatchClick,
   onSlotClick,
 }) => {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
@@ -146,10 +153,20 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
     return `Team #${teamId}`
   }
 
-  const handleSlotClickInternal = (slot: GridSlot) => {
+  const handleSlotClickInternal = (slot: GridSlot, match: GridMatch | null) => {
+    if (match && onMatchClick) {
+      onMatchClick(match.match_id, match)
+      return
+    }
     if (readOnly || !onSlotClick) return
     const assignment = assignmentMap.get(slot.slot_id)
     onSlotClick(slot.slot_id, assignment?.match_id || null)
+  }
+
+  const getRuntimeLabel = (runtimeStatus: string): string => {
+    if (runtimeStatus === 'IN_PROGRESS') return 'Live'
+    if (runtimeStatus === 'FINAL') return 'Final'
+    return 'Scheduled'
   }
 
   if (!gridData) {
@@ -269,11 +286,13 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
 
                     const match = getMatchForSlot(slot)
                     const isAssigned = match !== null
+                    const runtime = match ? runtimeByMatchId[match.match_id] : null
+                    const runtimeStatus = runtime?.runtime_status ?? 'SCHEDULED'
 
                     return (
                       <td
                         key={court}
-                        onClick={() => handleSlotClickInternal(slot)}
+                        onClick={() => handleSlotClickInternal(slot, match)}
                         style={{ 
                           padding: '4px',
                           borderBottom: '1px solid #eee',
@@ -295,14 +314,26 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
                           </div>
                           {isAssigned && match ? (
                             <>
-                              <div style={{ 
+                              <div style={{
+                                display: 'inline-block',
+                                fontSize: '10px',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                marginBottom: '4px',
+                                background: runtimeStatus === 'FINAL' ? '#4caf50' : runtimeStatus === 'IN_PROGRESS' ? '#ff9800' : '#e0e0e0',
+                                color: runtimeStatus === 'FINAL' || runtimeStatus === 'IN_PROGRESS' ? '#fff' : '#333',
+                                fontWeight: 600,
+                              }}>
+                                {getRuntimeLabel(runtimeStatus)}
+                              </div>
+                              <div style={{
                                 fontWeight: 'bold',
                                 color: '#1976d2',
                                 fontSize: '12px'
                               }}>
                                 {getStageLabel(match.stage)} R{match.round_index} #{match.sequence_in_round}
                               </div>
-                              <div style={{ 
+                              <div style={{
                                 fontSize: '10px', 
                                 color: '#999',
                                 overflow: 'hidden',

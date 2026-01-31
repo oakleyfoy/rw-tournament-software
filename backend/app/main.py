@@ -13,6 +13,7 @@ from app.routes import (
     draw_builder,
     events,
     phase1_status,
+    runtime,
     schedule,
     schedule_sanity,
     teams,
@@ -74,6 +75,8 @@ app.include_router(time_windows.router, prefix="/api", tags=["time_windows"])
 
 # Include schedule router
 app.include_router(schedule.router, prefix="/api", tags=["schedule"])
+# Phase 4 runtime (match status + scoring; no schedule mutation)
+app.include_router(runtime.router, prefix="/api", tags=["runtime"])
 
 # Include schedule sanity-check router
 app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"])

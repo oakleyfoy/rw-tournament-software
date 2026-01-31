@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from sqlalchemy import UniqueConstraint as SAUniqueConstraint
-from sqlmodel import Field, Relationship, SQLModel
+from sqlalchemy import JSON, UniqueConstraint as SAUniqueConstraint
+from sqlmodel import Column, Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from app.models.event import Event
@@ -41,6 +41,13 @@ class Match(SQLModel, table=True):
 
     status: str = Field(default="unscheduled")  # "unscheduled" | "scheduled" | "complete" | "cancelled"
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Phase 4 runtime (do not affect scheduling; immutable assignments respected)
+    runtime_status: str = Field(default="SCHEDULED")  # SCHEDULED | IN_PROGRESS | FINAL
+    score_json: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    winner_team_id: Optional[int] = Field(default=None, foreign_key="team.id")
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
 
     # Relationships
     tournament: "Tournament" = Relationship(back_populates="matches")

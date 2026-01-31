@@ -1,3 +1,4 @@
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useScheduleGrid } from './hooks/useScheduleGrid'
 import { ScheduleHeader } from './components/ScheduleHeader'
@@ -6,7 +7,10 @@ import { AutoAssignAssistPanel } from './components/AutoAssignAssistPanel'
 import { ScheduleSummaryPanel } from './components/ScheduleSummaryPanel'
 import { ScheduleGridV1Viewer } from './components/ScheduleGridV1'
 import { ConflictsBanner } from './components/ConflictsBanner'
+import { MatchRuntimeModal } from './components/MatchRuntimeModal'
 import { featureFlags, featureFlagsRaw } from '../../config/featureFlags'
+import { getVersionRuntimeMatches, MatchRuntimeState } from '../../api/client'
+import type { GridMatch } from '../../api/client'
 import './SchedulePage.css'
 
 function SchedulePageGridV1() {
@@ -28,6 +32,28 @@ function SchedulePageGridV1() {
     setActiveVersion,
     refresh,
   } = useScheduleGrid(tournamentId)
+
+  const [runtimeByMatchId, setRuntimeByMatchId] = useState<Record<number, MatchRuntimeState>>({})
+  const [selectedMatchForRuntime, setSelectedMatchForRuntime] = useState<{ matchId: number; match: GridMatch } | null>(null)
+
+  const loadRuntimeMatches = useCallback(async () => {
+    if (!tournamentId || !activeVersion?.id) {
+      setRuntimeByMatchId({})
+      return
+    }
+    try {
+      const list = await getVersionRuntimeMatches(tournamentId, activeVersion.id)
+      const map: Record<number, MatchRuntimeState> = {}
+      list.forEach((r) => { map[r.id] = r })
+      setRuntimeByMatchId(map)
+    } catch {
+      setRuntimeByMatchId({})
+    }
+  }, [tournamentId, activeVersion?.id])
+
+  useEffect(() => {
+    loadRuntimeMatches()
+  }, [loadRuntimeMatches])
 
   const isReadOnly = activeVersion?.status === 'final' || false
 
@@ -100,6 +126,19 @@ function SchedulePageGridV1() {
 
       {buildSummary && <ScheduleSummaryPanel buildSummary={buildSummary} />}
 
+      {activeVersion && (
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            type="button"
+            onClick={() => { loadRuntimeMatches(); refresh() }}
+            className="btn-secondary"
+            style={{ fontSize: '13px' }}
+          >
+            Refresh runtime
+          </button>
+        </div>
+      )}
+
       {/* Conflicts Banner */}
       {gridData?.conflicts_summary && (
         <ConflictsBanner
@@ -128,13 +167,23 @@ function SchedulePageGridV1() {
           <ScheduleGridV1Viewer
             gridData={gridData}
             readOnly={isReadOnly}
-            onSlotClick={(slotId, matchId) => {
-              // TODO: Implement slot click handler for assignment/unassignment
-              console.log('Slot clicked:', slotId, matchId)
-            }}
+            runtimeByMatchId={runtimeByMatchId}
+            onMatchClick={(matchId, match) => setSelectedMatchForRuntime({ matchId, match })}
+            onSlotClick={() => {}}
           />
         </div>
       </div>
+
+      {selectedMatchForRuntime && tournamentId && gridData && (
+        <MatchRuntimeModal
+          tournamentId={tournamentId}
+          match={selectedMatchForRuntime.match}
+          teams={gridData.teams}
+          runtime={runtimeByMatchId[selectedMatchForRuntime.match.match_id] ?? null}
+          onSave={loadRuntimeMatches}
+          onClose={() => setSelectedMatchForRuntime(null)}
+        />
+      )}
     </div>
   )
 }

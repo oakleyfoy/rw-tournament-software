@@ -602,6 +602,49 @@ export async function getScheduleGrid(tournamentId: number, scheduleVersionId: n
   return fetchJson<ScheduleGridV1>(`${API_BASE_URL}/tournaments/${tournamentId}/schedule/grid?${params.toString()}`);
 }
 
+// Phase 4 runtime (match status + scoring; no schedule mutation)
+export interface MatchRuntimeState {
+  id: number;
+  tournament_id: number;
+  schedule_version_id: number;
+  event_id: number;
+  match_code: string;
+  match_type: string;
+  round_index: number;
+  sequence_in_round: number;
+  runtime_status: string;
+  score_json: Record<string, unknown> | null;
+  winner_team_id: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface MatchRuntimeUpdate {
+  status?: string;
+  score?: Record<string, unknown>;
+  winner_team_id?: number | null;
+}
+
+export async function getVersionRuntimeMatches(
+  tournamentId: number,
+  scheduleVersionId: number
+): Promise<MatchRuntimeState[]> {
+  return fetchJson<MatchRuntimeState[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/runtime/versions/${scheduleVersionId}/matches`
+  );
+}
+
+export async function updateMatchRuntime(
+  tournamentId: number,
+  matchId: number,
+  payload: MatchRuntimeUpdate
+): Promise<MatchRuntimeState> {
+  return fetchJson<MatchRuntimeState>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/runtime/matches/${matchId}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+}
+
 // Build Schedule function (one-click build)
 export interface BuildScheduleRequest {
   schedule_version_id: number
