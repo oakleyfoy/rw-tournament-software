@@ -5,7 +5,9 @@ import {
   getEvents,
   getPhase1Status,
   getScheduleBuilder,
+  getPlanReport,
   ScheduleBuilderResponse,
+  SchedulePlanReport,
   updateDrawPlan,
   finalizeDrawPlan,
   updateEvent,
@@ -67,6 +69,7 @@ function DrawBuilder() {
   const [phase1Status, setPhase1Status] = useState<Phase1Status | null>(null)
   const [inventoryByEventId, setInventoryByEventId] = useState<Record<number, { total_matches: number }>>({})
   const [scheduleBuilderData, setScheduleBuilderData] = useState<ScheduleBuilderResponse | null>(null)
+  const [planReport, setPlanReport] = useState<SchedulePlanReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<Record<number, boolean>>({})
   const [eventEditorStates, setEventEditorStates] = useState<Record<number, EventEditorState>>({})
@@ -88,11 +91,12 @@ function DrawBuilder() {
     
     try {
       setLoading(true)
-      const [tournamentData, eventsData, statusData, scheduleBuilderData] = await Promise.all([
+      const [tournamentData, eventsData, statusData, scheduleBuilderData, planReportData] = await Promise.all([
         getTournament(tournamentId),
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
-        getScheduleBuilder(tournamentId).catch(() => ({ events: [] })),
+        getScheduleBuilder(tournamentId).catch(() => ({ events: [] } as ScheduleBuilderResponse)),
+        getPlanReport(tournamentId).catch(() => null),
       ])
       
       setTournament(tournamentData)
@@ -104,6 +108,7 @@ function DrawBuilder() {
       })
       setInventoryByEventId(inv)
       setScheduleBuilderData(scheduleBuilderData)
+      setPlanReport(planReportData)
       
       // Initialize editor states from event data
       const states: Record<number, EventEditorState> = {}
@@ -121,13 +126,17 @@ function DrawBuilder() {
   const refetchInventory = async () => {
     if (!tournamentId) return
     try {
-      const sb = await getScheduleBuilder(tournamentId)
+      const [sb, pr] = await Promise.all([
+        getScheduleBuilder(tournamentId),
+        getPlanReport(tournamentId).catch(() => null),
+      ])
       const inv: Record<number, { total_matches: number }> = {}
       sb.events?.forEach((e: { event_id: number; total_matches: number }) => {
         inv[e.event_id] = { total_matches: e.total_matches }
       })
       setInventoryByEventId(inv)
       setScheduleBuilderData(sb)
+      setPlanReport(pr)
     } catch {
       /* ignore */
     }
@@ -1055,48 +1064,104 @@ function DrawBuilder() {
         )
       })()}
 
-      {/* Bottom navigation */}
+      {/* Bottom navigation — gated by plan report contract */}
       {tournament && (() => {
-        const hasBlockingErrors = scheduleBuilderData?.events?.some((e) => e.error != null) ?? false
-        const hasZeroMatches = scheduleBuilderData?.events?.some((e) => (e.total_matches ?? 0) === 0) ?? false
-        const hasFinalizedEvents = events.some((e) => e.draw_status === 'final')
-        const inventoryLoaded =
-          scheduleBuilderData != null && (scheduleBuilderData.events?.length ?? 0) > 0
-        const canGoToSchedule =
-          !loading &&
-          inventoryLoaded &&
-          !hasBlockingErrors &&
-          !hasZeroMatches &&
-          hasFinalizedEvents
+        // Contract gating: use plan report as single source of truth
+        const reportOk = planReport?.ok === true
+        const reportLoaded = planReport != null
+        const hasEvents = (planReport?.events?.length ?? 0) > 0
+        const canGoToSchedule = !loading && reportLoaded && reportOk && hasEvents
+
+        // First blocking error for display
+        const firstBlockingError = planReport?.blocking_errors?.[0]
 
         return (
-          <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <button
-              className="btn btn-secondary"
-              onClick={() => navigate(`/tournaments/${tournament.id}/schedule-builder`)}
-              style={{ fontSize: '16px', padding: '12px 24px' }}
-            >
-              Review Schedule Plan
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => navigate(`/tournaments/${tournament.id}/schedule`)}
-              disabled={!canGoToSchedule}
-              title={!canGoToSchedule ? 'Complete Draw Builder steps first.' : ''}
-              style={{
-                fontSize: '16px',
-                padding: '12px 24px',
-                opacity: canGoToSchedule ? 1 : 0.6,
-                cursor: canGoToSchedule ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Go to Schedule
-            </button>
-            {!canGoToSchedule && (
-              <span style={{ fontSize: '13px', color: '#666', alignSelf: 'center' }}>
-                Complete Draw Builder steps first.
-              </span>
+          <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid rgba(0,0,0,0.1)' }}>
+            {/* Plan Report Status Banner */}
+            {reportLoaded && (
+              <div style={{
+                marginBottom: '16px',
+                padding: '12px 16px',
+                borderRadius: '6px',
+                backgroundColor: reportOk
+                  ? 'rgba(40, 167, 69, 0.08)'
+                  : 'rgba(220, 53, 69, 0.08)',
+                border: `1px solid ${reportOk ? 'rgba(40, 167, 69, 0.2)' : 'rgba(220, 53, 69, 0.2)'}`,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}>
+                <span style={{
+                  fontSize: '18px',
+                  fontWeight: 700,
+                  color: reportOk ? '#28a745' : '#dc3545',
+                }}>
+                  {reportOk ? 'Ready to schedule' : 'Fix required'}
+                </span>
+                {!reportOk && firstBlockingError && (
+                  <span style={{ fontSize: '13px', color: '#dc3545' }}>
+                    {firstBlockingError.code}: {firstBlockingError.message}
+                  </span>
+                )}
+                {reportOk && (
+                  <span style={{ fontSize: '13px', color: '#28a745' }}>
+                    {planReport.totals.events} event{planReport.totals.events !== 1 ? 's' : ''}, {planReport.totals.matches_total} total matches
+                  </span>
+                )}
+              </div>
             )}
+
+            {/* Blocking errors list (if any, grouped by event) */}
+            {!reportOk && planReport && planReport.blocking_errors.length > 1 && (
+              <div style={{
+                marginBottom: '16px',
+                padding: '12px 16px',
+                backgroundColor: 'rgba(220, 53, 69, 0.04)',
+                borderRadius: '4px',
+                fontSize: '13px',
+              }}>
+                <strong style={{ color: '#dc3545' }}>Blocking errors ({planReport.blocking_errors.length}):</strong>
+                <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px', color: '#721c24' }}>
+                  {planReport.blocking_errors.slice(0, 10).map((err, idx) => (
+                    <li key={idx}>
+                      <code style={{ fontSize: '11px', backgroundColor: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: '2px' }}>{err.code}</code>{' '}
+                      {err.message}
+                    </li>
+                  ))}
+                  {planReport.blocking_errors.length > 10 && (
+                    <li style={{ fontStyle: 'italic' }}>...and {planReport.blocking_errors.length - 10} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => navigate(`/tournaments/${tournament.id}/schedule-builder`)}
+                style={{ fontSize: '16px', padding: '12px 24px' }}
+              >
+                Review Schedule Plan
+              </button>
+              <button
+                className={canGoToSchedule ? 'btn btn-primary' : 'btn btn-secondary'}
+                onClick={() => navigate(`/tournaments/${tournament.id}/schedule`)}
+                disabled={!canGoToSchedule}
+                title={!canGoToSchedule
+                  ? firstBlockingError
+                    ? `${firstBlockingError.code}: ${firstBlockingError.message}`
+                    : 'Complete Draw Builder steps first.'
+                  : ''}
+                style={{
+                  fontSize: '16px',
+                  padding: '12px 24px',
+                  opacity: canGoToSchedule ? 1 : 0.6,
+                  cursor: canGoToSchedule ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Go to Schedule
+              </button>
+            </div>
           </div>
         )
       })()}

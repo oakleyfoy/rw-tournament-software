@@ -13,6 +13,7 @@ from app.routes import (
     draw_builder,
     events,
     phase1_status,
+    plan_report,
     runtime,
     schedule,
     schedule_builder,
@@ -71,6 +72,7 @@ app.include_router(phase1_status.router, prefix="/api", tags=["phase1"])
 app.include_router(debug.router, prefix="/api", tags=["debug"])
 app.include_router(draw_builder.router, prefix="/api", tags=["draw-builder"])
 app.include_router(schedule_builder.router, prefix="/api", tags=["schedule-builder"])
+app.include_router(plan_report.router, prefix="/api", tags=["plan-report"])
 
 # Include time_windows router
 app.include_router(time_windows.router, prefix="/api", tags=["time_windows"])

@@ -1093,6 +1093,94 @@ export async function getTeamConflicts(
   );
 }
 
+// ============================================================================
+// Schedule Plan Report (authoritative contract)
+// ============================================================================
+
+export interface PlanReportError {
+  code: string
+  message: string
+  event_id?: number | null
+  context?: Record<string, unknown> | null
+}
+
+export interface WaterfallInfo {
+  rounds: number
+  r1_matches: number
+  r2_matches: number
+  r2_sequences_total: number
+}
+
+export interface PoolsInfo {
+  pool_count: number
+  pool_size: number
+  rr_rounds: number
+  rr_matches: number
+}
+
+export interface BracketsInfo {
+  divisions: number
+  main_matches: number
+  consolation_matches: number
+  total_matches: number
+}
+
+export interface PlaceholderInfo {
+  rr_wired: boolean
+  bracket_wired: boolean
+  bye_count: number
+}
+
+export interface InventoryInfo {
+  expected_total: number
+  actual_total: number
+}
+
+export interface EventReport {
+  event_id: number
+  name: string
+  teams_count: number
+  template_code: string
+  waterfall: WaterfallInfo
+  pools: PoolsInfo
+  brackets: BracketsInfo
+  placeholders: PlaceholderInfo
+  inventory: InventoryInfo
+}
+
+export interface TotalsInfo {
+  events: number
+  matches_total: number
+}
+
+export interface SchedulePlanReport {
+  tournament_id: number
+  schedule_version_id: number | null
+  version_status: string | null
+  ok: boolean
+  blocking_errors: PlanReportError[]
+  warnings: PlanReportError[]
+  events: EventReport[]
+  totals: TotalsInfo
+}
+
+/** Draw-plan-only validation (no version required). */
+export async function getPlanReport(tournamentId: number): Promise<SchedulePlanReport> {
+  return fetchJson<SchedulePlanReport>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/plan-report`
+  )
+}
+
+/** Full validation with match inventory comparison. */
+export async function getPlanReportVersioned(
+  tournamentId: number,
+  versionId: number
+): Promise<SchedulePlanReport> {
+  return fetchJson<SchedulePlanReport>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/plan-report`
+  )
+}
+
 // Manual Assignment PATCH endpoint
 export interface UpdateAssignmentRequest {
   new_slot_id: number;
