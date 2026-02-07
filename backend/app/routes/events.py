@@ -161,11 +161,34 @@ def update_event(event_id: int, event_data: EventUpdate, session: Session = Depe
 
 @router.delete("/events/{event_id}", status_code=204)
 def delete_event(event_id: int, session: Session = Depends(get_session)):
-    """Delete an event"""
+    """Delete an event and all its dependent records (teams, matches, avoid edges)"""
+    from app.models.team import Team
+    from app.models.match import Match
+    from app.models.team_avoid_edge import TeamAvoidEdge
+    
     event = session.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    # Delete dependent records first (cascade delete)
+    # Order matters: avoid_edges → matches → teams → event
+    
+    # 1. Delete team avoid edges
+    avoid_edges = session.query(TeamAvoidEdge).filter(TeamAvoidEdge.event_id == event_id).all()
+    for edge in avoid_edges:
+        session.delete(edge)
+    
+    # 2. Delete matches (including schedule assignments via cascade)
+    matches = session.query(Match).filter(Match.event_id == event_id).all()
+    for match in matches:
+        session.delete(match)
+    
+    # 3. Delete teams
+    teams = session.query(Team).filter(Team.event_id == event_id).all()
+    for team in teams:
+        session.delete(team)
+    
+    # 4. Finally delete the event
     session.delete(event)
     session.commit()
 

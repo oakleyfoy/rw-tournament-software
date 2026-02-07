@@ -22,6 +22,10 @@ class MatchAssignment(SQLModel, table=True):
     slot_id: int = Field(foreign_key="scheduleslot.id")
     assigned_at: datetime = Field(default_factory=datetime.utcnow)
     assigned_by: Optional[str] = None
+    
+    # Manual Schedule Editor: Lock flag for manual assignments
+    # When True, auto-assign must skip this assignment (admin override)
+    locked: bool = Field(default=False)
 
     # Relationships
     schedule_version: "ScheduleVersion" = Relationship()

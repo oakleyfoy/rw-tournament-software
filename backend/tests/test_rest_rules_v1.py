@@ -14,10 +14,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
+from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.team import Team
+from app.models.tournament import Tournament
+from app.utils.rest_rules import _intervals_overlap, auto_assign_with_rest
 
 
 @pytest.fixture
@@ -598,3 +602,119 @@ def test_no_team_scheduled_inside_rest_window(client: TestClient, setup_rest_tes
                 f"Team {team_id}: Rest violation between {current['match_code']} "
                 f"and {next_match['match_code']}. Gap: {gap_minutes}min, Required: {required_rest}min"
             )
+
+
+def test_rr_no_team_overlapping_slots(session: Session):
+    """
+    Regression: RR event with 4 teams and 2 rounds where one team appears in both rounds.
+    Auto-assign must never assign a team to two overlapping slots.
+    """
+    # Create tournament, version, event, 4 teams
+    tournament = Tournament(
+        name="RR Overlap Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 2, 20),
+        end_date=date(2026, 2, 22),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        category=EventCategory.mixed,
+        name="RR Event",
+        team_count=4,
+        draw_status="final",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    teams = []
+    for i in range(1, 5):
+        t = Team(event_id=event.id, name=f"Team {i}", seed=i, rating=1000.0)
+        session.add(t)
+        teams.append(t)
+    session.commit()
+    for t in teams:
+        session.refresh(t)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    # RR-style: Round 1: M1 (T1 vs T2), M2 (T3 vs T4); Round 2: M3 (T1 vs T3), M4 (T2 vs T4)
+    # Team 1 appears in M1 and M3 — must not get overlapping slots
+    day = date(2026, 2, 20)
+    matches_data = [
+        ("RR_R1_1", 1, 1, teams[0].id, teams[1].id),   # T1 vs T2
+        ("RR_R1_2", 1, 2, teams[2].id, teams[3].id),   # T3 vs T4
+        ("RR_R2_1", 2, 1, teams[0].id, teams[2].id),   # T1 vs T3
+        ("RR_R2_2", 2, 2, teams[1].id, teams[3].id),   # T2 vs T4
+    ]
+    for match_code, rnd, seq, ta, tb in matches_data:
+        m = Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=match_code,
+            match_type="RR",
+            round_number=rnd,
+            round_index=rnd,
+            sequence_in_round=seq,
+            duration_minutes=60,
+            team_a_id=ta,
+            team_b_id=tb,
+            placeholder_side_a="TBD",
+            placeholder_side_b="TBD",
+        )
+        session.add(m)
+    session.commit()
+
+    # 4 slots spaced so rest (90 min between scoring matches) is satisfied: 9:00, 11:30, 14:00, 16:30
+    for i, (h, m) in enumerate([(9, 0), (11, 30), (14, 0), (16, 30)], start=1):
+        slot = ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            day_date=day,
+            start_time=time(h, m),
+            end_time=time(h + 1, m),
+            block_minutes=60,
+            court_number=i,
+            court_label=f"C{i}",
+            is_active=True,
+        )
+        session.add(slot)
+    session.commit()
+
+    result = auto_assign_with_rest(session, version.id, clear_existing=True)
+    assert result["unassigned_count"] == 0, f"Expected all assigned: {result}"
+    assert result["assigned_count"] == 4
+
+    # Build team_id -> list of (start_dt, end_dt)
+    assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
+    ).all()
+    team_intervals = {}
+    for a in assignments:
+        match = session.get(Match, a.match_id)
+        slot = session.get(ScheduleSlot, a.slot_id)
+        start_dt = datetime.combine(slot.day_date, slot.start_time)
+        end_dt = start_dt + timedelta(minutes=match.duration_minutes)
+        for tid in (match.team_a_id, match.team_b_id):
+            if tid is None:
+                continue
+            team_intervals.setdefault(tid, []).append((start_dt, end_dt))
+
+    # Assert no team has overlapping intervals
+    for team_id, intervals in team_intervals.items():
+        for i in range(len(intervals)):
+            for j in range(i + 1, len(intervals)):
+                a_start, a_end = intervals[i]
+                b_start, b_end = intervals[j]
+                assert not _intervals_overlap(a_start, a_end, b_start, b_end), (
+                    f"Team {team_id}: overlapping slots {intervals[i]} and {intervals[j]}"
+                )

@@ -1,7 +1,11 @@
 import hashlib
 import json
+import logging
 from datetime import date, datetime, time
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -13,12 +17,29 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.services.schedule_orchestrator import build_schedule_v1
+from app.utils.courts import court_label_for_index, parse_court_names
+
+
+def _court_label_to_str(value: object) -> str:
+    """Ensure court_label is always a string for DB (never a list)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return ",".join(str(x) for x in value)
+    return str(value)
 from app.utils.rest_rules import auto_assign_with_rest
+from app.utils.sql import scalar_int
 from app.utils.version_guards import require_draft_version, require_final_version
+# Phase 3D.1: Shared conflict computation
+from app.utils.conflict_report import ConflictReportSummary, UnassignedMatchDetail
 
 router = APIRouter()
 
@@ -194,6 +215,68 @@ def create_schedule_version(tournament_id: int, data: ScheduleVersionCreate, ses
 
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+class ActiveVersionResponse(BaseModel):
+    """Canonical active draft version for a tournament"""
+    schedule_version_id: int
+    status: str
+    created_at: Optional[str] = None
+    none_found: bool = False
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/active",
+    response_model=ActiveVersionResponse,
+)
+def get_active_schedule_version(tournament_id: int, session: Session = Depends(get_session)):
+    """
+    Return the canonical active draft version for the tournament.
+    Prefers the latest DRAFT version. If none exists, creates one.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    draft = session.exec(
+        select(ScheduleVersion)
+        .where(
+            ScheduleVersion.tournament_id == tournament_id,
+            ScheduleVersion.status == "draft",
+        )
+        .order_by(ScheduleVersion.version_number.desc())
+    ).first()
+
+    if draft:
+        created = getattr(draft, "created_at", None)
+        return ActiveVersionResponse(
+            schedule_version_id=draft.id,
+            status=draft.status,
+            created_at=created.isoformat() if created else None,
+            none_found=False,
+        )
+
+    max_version = session.exec(
+        select(func.max(ScheduleVersion.version_number)).where(
+            ScheduleVersion.tournament_id == tournament_id
+        )
+    ).first()
+    next_version = (max_version or 0) + 1
+    new_version = ScheduleVersion(
+        tournament_id=tournament_id,
+        version_number=next_version,
+        status="draft",
+    )
+    session.add(new_version)
+    session.commit()
+    session.refresh(new_version)
+    created = getattr(new_version, "created_at", None)
+    return ActiveVersionResponse(
+        schedule_version_id=new_version.id,
+        status=new_version.status,
+        created_at=created.isoformat() if created else None,
+        none_found=False,
+    )
 
 
 @router.post(
@@ -381,6 +464,35 @@ def reset_draft_version(tournament_id: int, version_id: int, session: Session = 
     )
 
 
+# Wipe matches route - MUST come before general DELETE /versions/{version_id} route
+@router.delete("/tournaments/{tournament_id}/schedule/versions/{version_id}/matches")
+def wipe_schedule_version_matches(tournament_id: int, version_id: int, session: Session = Depends(get_session)):
+    """Wipe all matches for a schedule version.
+    
+    Verifies version belongs to tournament and is not finalized.
+    Deletes all Match and MatchAssignment rows for the version.
+    """
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    
+    if version.status == "final":
+        raise HTTPException(status_code=409, detail="Cannot wipe matches for a finalized schedule version")
+    
+    # Count matches before deletion
+    match_count_before = scalar_int(
+        session.exec(
+            select(func.count(Match.id)).where(Match.schedule_version_id == version_id)
+        ).one()
+    )
+    
+    # Use existing helper to wipe matches (handles MatchAssignments correctly)
+    wipe_matches_for_version(session, version_id)
+    session.commit()
+    
+    return {"deleted_matches": match_count_before}
+
+
 @router.delete("/tournaments/{tournament_id}/schedule/versions/{version_id}", status_code=204)
 def delete_schedule_version(tournament_id: int, version_id: int, session: Session = Depends(get_session)):
     """Delete a schedule version and all its associated data"""
@@ -533,6 +645,7 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
 
     slot_id_map = {}  # old_id -> new_id
     for slot in source_slots:
+        court_label = _court_label_to_str(getattr(slot, "court_label", None) or str(slot.court_number))
         new_slot = ScheduleSlot(
             tournament_id=slot.tournament_id,
             schedule_version_id=new_version.id,
@@ -540,7 +653,7 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
             start_time=slot.start_time,
             end_time=slot.end_time,
             court_number=slot.court_number,
-            court_label=slot.court_label,
+            court_label=court_label,
             block_minutes=slot.block_minutes,
             label=slot.label,
             is_active=slot.is_active,
@@ -576,6 +689,7 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
         match_id_map[match.id] = new_match.id
 
     # Clone assignments using ID mappings
+    # CRITICAL: Explicitly copy locked and assigned_by to preserve manual editor state
     source_assignments = session.exec(
         select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
     ).all()
@@ -585,6 +699,8 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
             schedule_version_id=new_version.id,
             slot_id=slot_id_map[assignment.slot_id],
             match_id=match_id_map[assignment.match_id],
+            locked=assignment.locked,  # Preserve locked flag for manual editor
+            assigned_by=assignment.assigned_by,  # Preserve assignment source
         )
         session.add(new_assignment)
 
@@ -627,7 +743,11 @@ class SlotResponse(BaseModel):
 
 @router.post("/tournaments/{tournament_id}/schedule/slots/generate")
 def generate_slots(
-    tournament_id: int, request: Optional[SlotGenerateRequest] = None, session: Session = Depends(get_session)
+    tournament_id: int,
+    request: Optional[SlotGenerateRequest] = None,
+    session: Session = Depends(get_session),
+    *,
+    _transactional: bool = False,
 ):
     """Generate slots from time windows or days/courts (DRAFT-ONLY)
 
@@ -676,49 +796,10 @@ def generate_slots(
 
     print(f"[DEBUG] Generating slots with source={source}, version_id={version.id}")
 
-    # Get tournament to access court_names
+    # Get tournament to access court_names (used only via court_label_for_index — never pass labels list)
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-
-    # Derive effective court labels
-    # Rules: If tournament.court_names exists and has length > 0, use that list in exact order
-    # Else: generate default labels: ["1","2","3",...,"N"]
-    def get_court_labels(max_courts: int) -> tuple[list[str], list[str]]:
-        """
-        Returns: (labels, warnings)
-        """
-        warnings = []
-
-        if tournament.court_names and len(tournament.court_names) > 0:
-            labels = list(tournament.court_names)
-
-            # Check for duplicates
-            seen = set()
-            duplicates = []
-            for label in labels:
-                if label in seen:
-                    duplicates.append(label)
-                seen.add(label)
-
-            if duplicates:
-                warnings.append(f"Court labels must be unique. Duplicate label found: '{duplicates[0]}'.")
-
-            # Check count mismatch
-            if len(labels) != max_courts:
-                warnings.append(
-                    f"Court labels count ({len(labels)}) does not match court count ({max_courts}). "
-                    f"Missing labels will be auto-filled."
-                )
-
-            # Extend if needed
-            while len(labels) < max_courts:
-                labels.append(str(len(labels) + 1))
-
-            return labels[:max_courts], warnings  # Trim if too many
-        else:
-            # Generate defaults
-            return [str(i) for i in range(1, max_courts + 1)], warnings
 
     if source == "time_windows":
         # Get active time windows
@@ -733,6 +814,25 @@ def generate_slots(
 
         # Generate slots for each time window
         for window in time_windows:
+            # Validate window block_minutes
+            if not window.block_minutes or window.block_minutes <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid block_minutes ({window.block_minutes}) for time window on {window.day_date}. Must be > 0.",
+                )
+
+            # Validate start/end times are on 15-minute increments
+            if window.start_time.minute % 15 != 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Window start time {window.start_time} must be on 15-minute increment (e.g., 8:00, 8:15, 8:30, 8:45).",
+                )
+            if window.end_time.minute % 15 != 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Window end time {window.end_time} must be on 15-minute increment (e.g., 8:00, 8:15, 8:30, 8:45).",
+                )
+
             # Calculate start and end minutes
             start_minutes = window.start_time.hour * 60 + window.start_time.minute
             end_minutes = window.end_time.hour * 60 + window.end_time.minute
@@ -741,41 +841,28 @@ def generate_slots(
                 continue  # Skip invalid time ranges
 
             print(
-                f"[DEBUG] Processing window: {window.day_date} {window.start_time}-{window.end_time}, courts={window.courts_available}"
+                f"[DEBUG] Processing window: {window.day_date} {window.start_time}-{window.end_time}, courts={window.courts_available}, block_minutes={window.block_minutes}"
             )
 
-            # Get court labels for this window
-            court_labels = get_court_labels(window.courts_available)
-
-            # Generate 15-minute start-time slots for each court
-            # Slots are start opportunities, not fixed blocks
-            # Assignment determines actual occupation duration based on match.duration_minutes
+            # Generate slots at block_minutes granularity (e.g., 60 or 105 minute slots)
+            # Algorithm: t = start; while t + slot_len <= end: create slot; t += step
             for court_num in range(1, window.courts_available + 1):
-                court_label = court_labels[court_num - 1]  # 0-based index
                 current_minutes = start_minutes
                 court_slots = 0
-                while current_minutes < end_minutes:
+                
+                while current_minutes + window.block_minutes <= end_minutes:
                     # Calculate slot start time
                     slot_start_hour = current_minutes // 60
                     slot_start_min = current_minutes % 60
                     slot_start_time = time(slot_start_hour, slot_start_min)
 
-                    # Calculate slot end time (15 minutes later for grid display)
-                    # Note: actual match occupation is determined by match.duration_minutes
-                    slot_end_minutes = current_minutes + 15
+                    # Calculate slot end time (block_minutes later)
+                    slot_end_minutes = current_minutes + window.block_minutes
                     slot_end_hour = slot_end_minutes // 60
                     slot_end_min = slot_end_minutes % 60
                     slot_end_time = time(slot_end_hour, slot_end_min)
 
-                    # Don't exceed the window's end time
-                    # If this would exceed, make it a shorter slot (but still create it)
-                    if slot_end_minutes > end_minutes:
-                        slot_end_time = window.end_time
-                        # Calculate actual duration for this last slot
-                        actual_duration = end_minutes - current_minutes
-                    else:
-                        actual_duration = 15
-
+                    court_label = court_label_for_index(tournament.court_names, court_num)
                     slot = ScheduleSlot(
                         tournament_id=tournament_id,
                         schedule_version_id=version.id,
@@ -783,19 +870,18 @@ def generate_slots(
                         start_time=slot_start_time,
                         end_time=slot_end_time,
                         court_number=court_num,
-                        court_label=court_label,  # Immutable label for this version
-                        block_minutes=actual_duration,  # 15 for most, less for last slot if needed
+                        court_label=court_label,  # Scalar string only
+                        block_minutes=window.block_minutes,  # Match the window's block duration
                         label=window.label,  # Preserve window label if any
                         is_active=True,
                     )
                     session.add(slot)
                     slots_created += 1
                     court_slots += 1
-                    current_minutes += 15  # 15-minute tick interval
+                    
+                    # Increment by block_minutes (not 15)
+                    current_minutes += window.block_minutes
 
-                    # If we've reached the end, break
-                    if slot_end_minutes >= end_minutes:
-                        break
                 print(f"[DEBUG] Created {court_slots} slots for court {court_num} on {window.day_date}")
     else:  # days_courts
         # Get active tournament days
@@ -827,17 +913,8 @@ def generate_slots(
 
             print(f"[DEBUG] Processing day: {day.date} {day.start_time}-{day.end_time}, courts={day.courts_available}")
 
-            # Get court labels for this day
-            court_labels, label_warnings = get_court_labels(day.courts_available)
-            if label_warnings:
-                for warning in label_warnings:
-                    print(f"[WARNING] {warning}")
-
-            # Generate 15-minute start-time slots for each court
-            # Slots are start opportunities, not fixed blocks
-            # Assignment determines actual occupation duration based on match.duration_minutes
+            # Generate 15-minute start-time slots for each court (court_label via canonical fn only)
             for court_num in range(1, day.courts_available + 1):
-                court_label = court_labels[court_num - 1]  # 0-based index
                 current_minutes = start_minutes
                 court_slots = 0
                 while current_minutes < end_minutes:
@@ -862,6 +939,7 @@ def generate_slots(
                     else:
                         actual_duration = 15
 
+                    court_label = court_label_for_index(tournament.court_names, court_num)
                     slot = ScheduleSlot(
                         tournament_id=tournament_id,
                         schedule_version_id=version.id,
@@ -869,7 +947,7 @@ def generate_slots(
                         start_time=slot_start_time,
                         end_time=slot_end_time,
                         court_number=court_num,
-                        court_label=court_label,  # Immutable label for this version
+                        court_label=court_label,  # Scalar string only
                         block_minutes=actual_duration,  # 15 for most, less for last slot if needed
                         label=None,
                         is_active=True,
@@ -884,7 +962,18 @@ def generate_slots(
                         break
                 print(f"[DEBUG] Created {court_slots} slots for court {court_num} on {day.date}")
 
-    session.commit()
+    # Fail-fast tripwire: court_label must never be a list before commit
+    bad = []
+    for obj in list(session.new):
+        if obj.__class__.__name__ == "ScheduleSlot" and isinstance(getattr(obj, "court_label", None), list):
+            bad.append((getattr(obj, "court_number", None), getattr(obj, "court_label", None)))
+    if bad:
+        raise ValueError(f"court_label list detected in session.new before commit: {bad[:3]}")
+
+    if _transactional:
+        session.flush()
+    else:
+        session.commit()
 
     print(f"[DEBUG] Total slots created: {slots_created}")
 
@@ -1014,14 +1103,27 @@ class MatchResponse(BaseModel):
 
 @router.post("/tournaments/{tournament_id}/schedule/matches/generate")
 def generate_matches(
-    tournament_id: int, request: Optional[MatchGenerateRequest] = None, session: Session = Depends(get_session)
+    tournament_id: int,
+    request: Optional[MatchGenerateRequest] = None,
+    session: Session = Depends(get_session),
+    *,
+    _transactional: bool = False,
 ):
-    """Generate placeholder matches from finalized events
+    """Generate placeholder matches from finalized events using Draw Plan Engine.
 
     If request body is empty or schedule_version_id is None, uses the active draft version.
     Returns 422 for validation errors, 409 for ambiguous draft selection, 404/400 for other errors.
     All responses include CORS headers via CORSMiddleware.
+
+    Match generation is now fully delegated to draw_plan_engine.generate_matches_for_event().
     """
+    from app.services.draw_plan_engine import (
+        build_spec_from_event,
+        compute_inventory,
+        generate_matches_for_event,
+        resolve_event_family,
+    )
+
     # Validate tournament exists
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -1034,6 +1136,12 @@ def generate_matches(
     # Get or create draft version (handles ambiguity)
     version = get_or_create_draft_version(session, tournament_id, request.schedule_version_id)
 
+    seen_event_ids: List[int] = [
+        e.id for e in session.exec(
+            select(Event).where(Event.tournament_id == tournament_id).order_by(Event.id)
+        ).all()
+    ]
+
     # Get events to process
     if request.event_id:
         event = session.get(Event, request.event_id)
@@ -1043,110 +1151,289 @@ def generate_matches(
             raise HTTPException(status_code=400, detail="Event must be finalized to generate matches")
         events = [event]
     else:
-        # Get all finalized events
-        events = session.exec(
-            select(Event).where(Event.tournament_id == tournament_id, Event.draw_status == "final")
+        # Get all finalized events - use pure Event query with deterministic ordering
+        # IMPORTANT: Dedupe by event.id in case query returns duplicates
+        events_raw = session.exec(
+            select(Event)
+            .where(Event.tournament_id == tournament_id)
+            .where(Event.draw_status == "final")
+            .order_by(Event.id)
         ).all()
+
+        events_by_id: dict[int, Event] = {}
+        for e in events_raw:
+            if e.id not in events_by_id:
+                events_by_id[e.id] = e
+        events = list(events_by_id.values())
+
+        # Diagnostic: log if dedupe made a difference
+        if len(events_raw) != len(events):
+            logger.warning(
+                "DEDUPE: events_raw=%s events_unique=%s (query returned duplicates)",
+                len(events_raw),
+                len(events),
+            )
 
     if not events:
         raise HTTPException(status_code=400, detail="No finalized events found")
 
     total_matches = 0
     per_event_breakdown = {}
+    match_warnings: List[dict] = []
+    generated_event_ids: set[int] = set()
+
+    # Version-global existing_codes: built once, passed through so second pass skips in-memory
+    existing_codes: set[str] = set(
+        session.exec(
+            select(Match.match_code).where(Match.schedule_version_id == version.id)
+        ).all()
+    )
+
+    events_expected: List[dict] = []
 
     for event in events:
-        # Wipe existing matches for this event if requested (uses helper for correct order)
-        if request.wipe_existing:
-            wipe_matches_for_version(session, version.id, event_id=event.id)
+        if event.id in generated_event_ids:
+            raise RuntimeError(f"Duplicate event in generation loop: event_id={event.id}")
+        generated_event_ids.add(event.id)
 
-        # Parse draw plan to get template info
-        draw_plan = None
-        if event.draw_plan_json:
-            try:
-                draw_plan = json.loads(event.draw_plan_json)
-            except (json.JSONDecodeError, TypeError, AttributeError):
-                pass
+        try:
+            # Wipe existing matches for this event if requested (uses helper for correct order)
+            if request.wipe_existing:
+                wipe_matches_for_version(session, version.id, event_id=event.id)
 
-        template_type = draw_plan.get("template_type", "RR_ONLY") if draw_plan else "RR_ONLY"
-        wf_rounds = draw_plan.get("wf_rounds", 0) if draw_plan else 0
+            # Build spec from event using the engine
+            spec = build_spec_from_event(event)
 
-        # Get match counts using same logic as frontend
-        from app.utils.match_generation import (
-            calculate_match_counts,
-            generate_consolation_matches,
-            generate_placement_matches,
-            generate_standard_matches,
-            generate_wf_matches,
-        )
+            # Validate spec via inventory computation
+            inventory = compute_inventory(spec)
+            if inventory.has_errors():
+                raise ValueError("; ".join(inventory.errors))
 
-        match_counts = calculate_match_counts(template_type, event.team_count, wf_rounds, event.guarantee_selected or 5)
-
-        # Generate event prefix for match codes
-        event_prefix = f"{event.category.upper()[:3]}_{event.name.upper()[:3]}"
-        if len(event_prefix) < 6:
-            event_prefix = f"{event.category.upper()}_{event.id}"
-
-        matches_for_event = 0
-
-        # Generate WF matches (with grouping support)
-        if match_counts["wf_matches"] > 0:
-            wf_matches = generate_wf_matches(
-                event,
-                version.id,
-                tournament_id,
-                match_counts["wf_rounds"],
-                event.wf_block_minutes or 60,
-                event_prefix,
-                session=session,  # Pass session for WF grouping support
+            expected_count = inventory.total_matches
+            existing_before = scalar_int(
+                session.exec(
+                    select(func.count(Match.id)).where(
+                        Match.schedule_version_id == version.id,
+                        Match.event_id == event.id,
+                    )
+                ).one()
             )
-            for match in wf_matches:
-                session.add(match)
-                matches_for_event += 1
 
-        # Generate standard matches (MAIN)
-        standard_matches = generate_standard_matches(
-            event,
-            version.id,
-            tournament_id,
-            match_counts["standard_matches"],
-            event.standard_block_minutes or 120,
-            event_prefix,
-            template_type,
-        )
-        for match in standard_matches:
-            session.add(match)
-            matches_for_event += 1
+            # Check if event needs rebuild due to old placeholder format
+            # Sample bracket matches to detect old format placeholders
+            needs_rebuild = False
+            if existing_before >= expected_count:
+                # Check a sample of bracket matches for old placeholder format
+                sample_bracket_matches = session.exec(
+                    select(Match)
+                    .where(
+                        Match.schedule_version_id == version.id,
+                        Match.event_id == event.id,
+                        Match.match_type.in_(["MAIN", "BRACKET"]),
+                    )
+                    .limit(5)  # Sample a few matches
+                ).all()
+                
+                if sample_bracket_matches:
+                    # Check if any bracket match has old placeholder format
+                    for match in sample_bracket_matches:
+                        placeholder_a = match.placeholder_side_a or ""
+                        placeholder_b = match.placeholder_side_b or ""
+                        # Old format: "Division X TBD" or ends with " TBD" or starts with "Bracket"
+                        if (
+                            placeholder_a.startswith("Division ") or
+                            placeholder_a.endswith(" TBD") or
+                            placeholder_a.startswith("Bracket ") or
+                            placeholder_b.startswith("Division ") or
+                            placeholder_b.endswith(" TBD") or
+                            placeholder_b.startswith("Bracket ")
+                        ):
+                            needs_rebuild = True
+                            logger.info(
+                                f"Event {event.id} ({event.name}): Detected old placeholder format "
+                                f"('{placeholder_a}' / '{placeholder_b}'), marking for rebuild"
+                            )
+                            break
 
-        # Generate consolation and placement matches for bracket templates only
-        # Round Robin templates never generate consolation or placement
-        if template_type == "CANONICAL_32":
-            # CANONICAL_32 is now an 8-team bracket event
-            guarantee = event.guarantee_selected or 5
-
-            # Generate consolation matches (Tier 1 always, Tier 2 if guarantee==5)
-            consolation_matches = generate_consolation_matches(
-                event, version.id, tournament_id, event.standard_block_minutes or 120, event_prefix, guarantee
-            )
-            for match in consolation_matches:
-                session.add(match)
-                matches_for_event += 1
-
-            # Generate placement matches (only if guarantee==5)
-            if guarantee == 5:
-                placement_matches = generate_placement_matches(
-                    event, version.id, tournament_id, event.standard_block_minutes or 120, event_prefix
+            # Event-scoped idempotency: skip if already complete AND placeholders are current
+            if existing_before >= expected_count and not needs_rebuild:
+                per_event_breakdown[event.id] = {"event_name": event.name, "matches": 0}
+                events_expected.append({
+                    "event_id": event.id,
+                    "event_name": event.name,
+                    "expected": expected_count,
+                    "existing_before": existing_before,
+                    "generated_added": 0,
+                    "decision": "skip_complete",
+                    "reason": "existing>=expected and placeholders current",
+                })
+                continue
+            
+            # If needs rebuild, wipe existing matches for this event
+            if needs_rebuild:
+                logger.info(
+                    f"Event {event.id} ({event.name}): Wiping {existing_before} existing matches "
+                    f"due to old placeholder format"
                 )
-                for match in placement_matches:
-                    session.add(match)
-                    matches_for_event += 1
-        # Note: RR_ONLY and WF_TO_POOLS_4 do NOT generate consolation or placement
+                # Get match codes before wiping (for existing_codes cleanup)
+                wiped_codes = set(
+                    session.exec(
+                        select(Match.match_code).where(
+                            Match.schedule_version_id == version.id,
+                            Match.event_id == event.id,
+                        )
+                    ).all()
+                )
+                # Wipe matches for this event
+                wipe_matches_for_version(session, version.id, event_id=event.id)
+                existing_before = 0
+                # Remove wiped match codes from existing_codes set
+                existing_codes.difference_update(wiped_codes)
+                events_expected.append({
+                    "event_id": event.id,
+                    "event_name": event.name,
+                    "expected": expected_count,
+                    "existing_before": len(wiped_codes),
+                    "generated_added": 0,
+                    "decision": "rebuild_placeholders",
+                    "reason": "old placeholder format detected",
+                })
 
-        total_matches += matches_for_event
-        per_event_breakdown[event.id] = {"event_name": event.name, "matches": matches_for_event}
+            family = resolve_event_family(spec)
+            logger.info(
+                "GENERATE_MATCHES: event_id=%s name=%s family=%s template_key=%s team_count=%s",
+                event.id, event.name, family, spec.template_key, spec.team_count
+            )
 
-    session.commit()
+            # Get linked teams in seed order
+            linked_teams = session.exec(
+                select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)
+            ).all()
+            linked_team_ids = [t.id for t in linked_teams]
 
-    return {"schedule_version_id": version.id, "total_matches_created": total_matches, "per_event": per_event_breakdown}
+            # Generate matches via engine (existing_codes mutated in-place for idempotency)
+            matches, warnings = generate_matches_for_event(
+                session, version.id, spec, linked_team_ids, existing_codes
+            )
+
+            # Add matches to session
+            for match in matches:
+                session.add(match)
+
+            matches_for_event = len(matches)
+            total_matches += matches_for_event
+            per_event_breakdown[event.id] = {"event_name": event.name, "matches": matches_for_event}
+            events_expected.append({
+                "event_id": event.id,
+                "event_name": event.name,
+                "expected": expected_count,
+                "existing_before": existing_before,
+                "generated_added": matches_for_event,
+                "decision": "generate_missing",
+                "reason": "existing<expected",
+            })
+
+            # Add any warnings from generation
+            for w in warnings:
+                match_warnings.append({"message": w, "event_id": event.id, "event_name": event.name})
+
+            # Flush to persist matches
+            session.flush()
+
+            # Validate: when we have enough linked teams, non-dependency matches must have teams
+            teams_linked = len(linked_team_ids)
+            event_matches = session.exec(
+                select(Match).where(Match.event_id == event.id, Match.schedule_version_id == version.id)
+            ).all()
+
+            def _has_deps(m: Match) -> bool:
+                return (
+                    getattr(m, "source_match_a_id", None) is not None
+                    or getattr(m, "source_match_b_id", None) is not None
+                )
+
+            null_team_count = sum(
+                1 for m in event_matches
+                if (m.team_a_id is None or m.team_b_id is None) and not _has_deps(m)
+            )
+
+            # Only enforce null-team check for RR_ONLY (which requires all teams upfront)
+            if family == "RR_ONLY" and teams_linked >= event.team_count and null_team_count > 0:
+                raise ValueError(
+                    f"generate_matches produced null teams for event_id={event.id} ({event.name}): "
+                    f"{null_team_count} matches with null team_a_id or team_b_id "
+                    f"(teams_linked={teams_linked}, event.team_count={event.team_count})"
+                )
+
+        except Exception as e:
+            # Skip this event but continue with others
+            logger.warning("generate_matches failed for event %s: %s", event.id, str(e))
+            match_warnings.append({"message": str(e), "event_id": event.id, "event_name": event.name})
+            per_event_breakdown[event.id] = {"event_name": event.name, "matches": 0}
+            try:
+                spec = build_spec_from_event(event)
+                inv = compute_inventory(spec)
+                exp = inv.total_matches if not inv.has_errors() else 0
+            except Exception:
+                exp = 0
+            existing_before = scalar_int(
+                session.exec(
+                    select(func.count(Match.id)).where(
+                        Match.schedule_version_id == version.id,
+                        Match.event_id == event.id,
+                    )
+                ).one()
+            )
+            reason = str(e)[:80] if str(e) else "exception"
+            events_expected.append({
+                "event_id": event.id,
+                "event_name": event.name,
+                "expected": exp,
+                "existing_before": existing_before,
+                "generated_added": 0,
+                "decision": "skipped_error",
+                "reason": reason,
+            })
+            continue
+
+    if _transactional:
+        session.flush()
+    else:
+        session.commit()
+
+    all_complete = len(events_expected) > 0 and all(
+        ev.get("existing_before", 0) + ev.get("generated_added", 0) >= ev.get("expected", 0)
+        for ev in events_expected
+    )
+
+    finalized_event_ids = [e.id for e in events]
+    for eid in seen_event_ids:
+        if eid not in {ev["event_id"] for ev in events_expected}:
+            evt = session.get(Event, eid)
+            if evt:
+                events_expected.append({
+                    "event_id": evt.id,
+                    "event_name": evt.name,
+                    "expected": 0,
+                    "existing_before": 0,
+                    "generated_added": 0,
+                    "decision": "skipped_not_final",
+                    "reason": f"draw_status={evt.draw_status or 'null'}",
+                })
+    events_expected.sort(key=lambda x: x["event_id"])
+    out: dict = {
+        "schedule_version_id": version.id,
+        "total_matches_created": total_matches,
+        "per_event": per_event_breakdown,
+        "finalized_events_found": [e.name for e in events],
+        "seen_event_ids": seen_event_ids,
+        "finalized_event_ids": finalized_event_ids,
+        "events_expected": events_expected,
+        "already_complete": all_complete and total_matches == 0,
+    }
+    if match_warnings:
+        out["warnings"] = match_warnings
+    return out
 
 
 @router.get("/tournaments/{tournament_id}/schedule/matches", response_model=List[MatchResponse])
@@ -1366,6 +1653,58 @@ def create_assignment(tournament_id: int, data: AssignmentCreate, session: Sessi
                     detail=f"Match would overlap with existing match on {slot.court_label} at {existing_slot.start_time}",
                 )
 
+    # Validate: Check if match would exceed day end time
+    # Get the latest slot for this day to determine end time
+    from app.models.tournament_day import TournamentDay
+    tournament_day = session.exec(
+        select(TournamentDay).where(
+            TournamentDay.tournament_id == tournament_id,
+            TournamentDay.date == slot.day_date,
+            TournamentDay.is_active == True,
+        )
+    ).first()
+
+    if tournament_day and tournament_day.end_time:
+        # Calculate day end in minutes
+        day_end_minutes = tournament_day.end_time.hour * 60 + tournament_day.end_time.minute
+        
+        # Check if match would exceed day end
+        if match_end_minutes > day_end_minutes:
+            match_end_time = time(
+                hour=match_end_minutes // 60,
+                minute=match_end_minutes % 60
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Match would end at {match_end_time.strftime('%H:%M')}, but schedule ends at {tournament_day.end_time.strftime('%H:%M')} on {slot.day_date}",
+            )
+    else:
+        # Fallback: Calculate from slots if TournamentDay not available
+        latest_slot = session.exec(
+            select(ScheduleSlot)
+            .where(
+                ScheduleSlot.schedule_version_id == version.id,
+                ScheduleSlot.day_date == slot.day_date,
+            )
+            .order_by(ScheduleSlot.start_time.desc())
+        ).first()
+        
+        if latest_slot:
+            latest_slot_end_minutes = latest_slot.start_time.hour * 60 + latest_slot.start_time.minute + latest_slot.block_minutes
+            if match_end_minutes > latest_slot_end_minutes:
+                match_end_time = time(
+                    hour=match_end_minutes // 60,
+                    minute=match_end_minutes % 60
+                )
+                latest_end_time = time(
+                    hour=latest_slot_end_minutes // 60,
+                    minute=latest_slot_end_minutes % 60
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Match would end at {match_end_time.strftime('%H:%M')}, but last slot ends at {latest_end_time.strftime('%H:%M')} on {slot.day_date}",
+                )
+
     # Create assignment
     assignment = MatchAssignment(
         schedule_version_id=data.schedule_version_id, match_id=data.match_id, slot_id=data.slot_id
@@ -1417,6 +1756,160 @@ def delete_assignment(tournament_id: int, assignment_id: int, session: Session =
     session.commit()
 
     return None
+
+
+# ============================================================================
+# Manual Schedule Editor - Manual Assignment Endpoints
+# ============================================================================
+
+
+class ManualAssignmentRequest(BaseModel):
+    """Request to manually assign/reassign a match to a slot"""
+    
+    new_slot_id: int
+
+
+class SlotKey(BaseModel):
+    """Stable slot identifier (UI doesn't need extra lookups)"""
+    
+    day_date: str
+    start_time: str
+    court_number: int
+    court_label: str
+
+
+class ManualAssignmentResponse(BaseModel):
+    """Response from manual assignment operation"""
+    
+    assignment_id: int
+    match_id: int
+    slot_id: int
+    locked: bool
+    assigned_by: str
+    assigned_at: str
+    validation_passed: bool
+    
+    # Phase 3D.1: Enriched response (zero additional UI calls needed)
+    slot_key: SlotKey
+    conflicts_summary: ConflictReportSummary
+    unassigned_matches: List[UnassignedMatchDetail]
+
+
+@router.patch(
+    "/tournaments/{tournament_id}/schedule/assignments/{assignment_id}",
+    response_model=ManualAssignmentResponse
+)
+def manually_reassign_match(
+    tournament_id: int,
+    assignment_id: int,
+    request: ManualAssignmentRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Manually reassign a match to a different slot (Manual Schedule Editor).
+    
+    **Manual Editor Rules:**
+    - Only works on DRAFT schedules (not finalized)
+    - Creates locked=True assignments so auto-assign skips them
+    - Enforces hard invariants:
+      * No slot overlap (one match per slot)
+      * Duration fit (match must fit in slot)
+      * Stage ordering preserved (WF → MAIN → CONSOLATION → PLACEMENT)
+      * Consolation rules (no violations)
+    
+    **Workflow:**
+    1. Admin drags match to new slot in UI
+    2. UI calls this endpoint with new_slot_id
+    3. Backend validates the move
+    4. If valid: Updates assignment with locked=True
+    5. If invalid: Returns 422 with validation error
+    
+    **Undo Support:**
+    - Clone draft version before making changes
+    - Restore by switching back to cloned version
+    
+    Args:
+        tournament_id: Tournament ID
+        assignment_id: Assignment ID to update
+        request: New slot ID
+    
+    Returns:
+        Updated assignment with locked=True
+    
+    Raises:
+        404: Assignment/tournament/slot not found
+        422: Validation failed (see error message for reason)
+        400: Schedule is finalized (clone to draft first)
+    """
+    from app.utils.manual_assignment import (
+        manually_assign_match,
+        ManualAssignmentValidationError,
+    )
+    
+    # Validate tournament
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # Get existing assignment
+    assignment = session.get(MatchAssignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    
+    # Verify assignment belongs to tournament
+    version = session.get(ScheduleVersion, assignment.schedule_version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Assignment not found in tournament")
+    
+    # Manually reassign (with validation)
+    try:
+        updated_assignment = manually_assign_match(
+            session=session,
+            match_id=assignment.match_id,
+            new_slot_id=request.new_slot_id,
+            schedule_version_id=assignment.schedule_version_id,
+            assigned_by="MANUAL",
+        )
+        session.commit()
+        
+        # Phase 3D.1: Get slot for stable key
+        slot = session.get(ScheduleSlot, updated_assignment.slot_id)
+        if not slot:
+            raise HTTPException(status_code=500, detail="Slot not found after assignment")
+        
+        # Phase 3D.2: Recompute conflicts deterministically (service layer)
+        from app.services.conflict_report_builder import ConflictReportBuilder
+        
+        builder = ConflictReportBuilder()
+        conflict_report = builder.compute(
+            session=session,
+            tournament_id=tournament_id,
+            schedule_version_id=assignment.schedule_version_id,
+            event_id=None,  # No event filter for PATCH (recompute all)
+        )
+        
+        # Build enriched response
+        return ManualAssignmentResponse(
+            assignment_id=updated_assignment.id,
+            match_id=updated_assignment.match_id,
+            slot_id=updated_assignment.slot_id,
+            locked=updated_assignment.locked,
+            assigned_by=updated_assignment.assigned_by or "MANUAL",
+            assigned_at=updated_assignment.assigned_at.isoformat(),
+            validation_passed=True,
+            # Phase 3D.1: Stable slot key (no UI lookups needed)
+            slot_key=SlotKey(
+                day_date=slot.day_date.isoformat() if slot.day_date else "",
+                start_time=slot.start_time.isoformat() if slot.start_time else "",
+                court_number=slot.court_number,
+                court_label=slot.court_label,
+            ),
+            # Phase 3D.1: Deterministic conflicts (same as GET /conflicts)
+            conflicts_summary=conflict_report.summary,
+            unassigned_matches=conflict_report.unassigned,
+        )
+    except ManualAssignmentValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 # ============================================================================
@@ -1597,6 +2090,7 @@ class ConflictReportV1(BaseModel):
     ordering_integrity: OrderingIntegrity
 
 
+# Phase 3D.1: ConflictReportBuilder extraction (behavior-preserving)
 @router.get("/tournaments/{tournament_id}/schedule/conflicts", response_model=ConflictReportV1)
 def get_schedule_conflicts(
     tournament_id: int,
@@ -1613,8 +2107,72 @@ def get_schedule_conflicts(
     - Slot utilization pressure
     - Stage timeline and spillover warnings
     - Ordering integrity violations
+    - Team overlap conflicts (for matches with known teams)
+    
+    Phase 3D.1: Uses ConflictReportBuilder service (pure deterministic computation).
     """
-    from app.utils.auto_assign import STAGE_PRECEDENCE, get_match_sort_key, get_slot_sort_key
+    from app.services.conflict_report_builder import ConflictReportBuilder
+
+    # Validate tournament (HTTP concern, stays in route)
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    # Validate schedule version (HTTP concern, stays in route)
+    version = session.get(ScheduleVersion, schedule_version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    # Compute conflicts using service layer (pure computation)
+    builder = ConflictReportBuilder()
+    return builder.compute(
+        session=session,
+        tournament_id=tournament_id,
+        schedule_version_id=schedule_version_id,
+        event_id=event_id,
+    )
+
+
+# ============================================================================
+# Team Conflicts Revalidation (Read-Only)
+# ============================================================================
+
+from app.utils.conflict_report import TeamConflictsSummary
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/team-conflicts",
+    response_model=TeamConflictsSummary,
+)
+def get_team_conflicts(
+    tournament_id: int,
+    schedule_version_id: int = Query(..., description="Required schedule version ID"),
+    session: Session = Depends(get_session),
+):
+    """
+    Revalidate team overlap conflicts for a schedule version (read-only).
+    
+    This endpoint checks for team scheduling conflicts where the same team
+    is scheduled in overlapping time slots. It only evaluates matches where
+    both team_a_id and team_b_id are known (not null).
+    
+    Use this after:
+    - Dependencies resolve and team IDs are populated
+    - Manual edits to the schedule
+    - Team assignments change
+    
+    Returns:
+        TeamConflictsSummary with:
+        - known_team_conflicts_count: Number of detected overlaps
+        - unknown_team_matches_count: Matches still without teams
+        - conflicts: List of specific conflict details
+    
+    Guarantees:
+        - Read-only (does NOT mutate assignments)
+        - Deterministic output ordering (sorted by match_id, team_id)
+        - Same input → same output
+    """
+    from app.services.conflict_report_builder import ConflictReportBuilder
 
     # Validate tournament
     tournament = session.get(Tournament, tournament_id)
@@ -1626,259 +2184,24 @@ def get_schedule_conflicts(
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
-    # Build match query
-    match_query = select(Match).where(
-        Match.tournament_id == tournament_id, Match.schedule_version_id == schedule_version_id
-    )
-    if event_id:
-        match_query = match_query.where(Match.event_id == event_id)
-
-    matches = session.exec(match_query).all()
-
-    # Get all slots
-    slot_query = select(ScheduleSlot).where(
-        ScheduleSlot.tournament_id == tournament_id,
-        ScheduleSlot.schedule_version_id == schedule_version_id,
-        ScheduleSlot.is_active,
-    )
-    slots = session.exec(slot_query).all()
-
-    # Get all assignments
-    assignment_query = select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
-    assignments = session.exec(assignment_query).all()
-
-    # Build assignment maps
-    match_to_assignment = {a.match_id: a for a in assignments}
-    slot_to_assignment = {a.slot_id: a for a in assignments}
-
-    # Separate assigned and unassigned matches
-    assigned_matches = [m for m in matches if m.id in match_to_assignment]
-    unassigned_matches = [m for m in matches if m.id not in match_to_assignment]
-
-    # ========================================================================
-    # SECTION 1: Summary
-    # ========================================================================
-    total_matches = len(matches)
-    total_slots = len(slots)
-    assigned_count = len(assigned_matches)
-    unassigned_count = len(unassigned_matches)
-    assignment_rate = round((assigned_count / total_matches * 100), 1) if total_matches > 0 else 0.0
-
-    summary = ConflictReportSummary(
+    # Compute full report and extract team conflicts
+    builder = ConflictReportBuilder()
+    report = builder.compute(
+        session=session,
         tournament_id=tournament_id,
         schedule_version_id=schedule_version_id,
-        total_slots=total_slots,
-        total_matches=total_matches,
-        assigned_matches=assigned_count,
-        unassigned_matches=unassigned_count,
-        assignment_rate=assignment_rate,
+        event_id=None,
     )
-
-    # ========================================================================
-    # SECTION 2: Unassigned matches with reasons
-    # ========================================================================
-    unassigned_details = []
-
-    for match in unassigned_matches:
-        # Compute best-effort reason
-        reason = "UNKNOWN"
-
-        # Check if there are any free slots with sufficient duration
-        free_slots = [s for s in slots if s.id not in slot_to_assignment]
-        compatible_slots = [s for s in free_slots if s.block_minutes >= match.duration_minutes]
-
-        if len(free_slots) == 0:
-            reason = "SLOTS_EXHAUSTED"
-        elif len(compatible_slots) == 0:
-            reason = "DURATION_TOO_LONG"
-        else:
-            reason = "NO_COMPATIBLE_SLOT"
-
-        unassigned_details.append(
-            UnassignedMatchDetail(
-                match_id=match.id,
-                stage=match.match_type,
-                round_index=match.round_index,
-                sequence_in_round=match.sequence_in_round,
-                duration_minutes=match.duration_minutes,
-                reason=reason,
-                notes=None,
-            )
-        )
-
-    # ========================================================================
-    # SECTION 3: Slot Pressure
-    # ========================================================================
-    unused_slots = [s for s in slots if s.id not in slot_to_assignment]
-
-    # Group by day
-    unused_by_day: dict[str, int] = {}
-    for slot in unused_slots:
-        day_str = slot.day_date.isoformat()
-        unused_by_day[day_str] = unused_by_day.get(day_str, 0) + 1
-
-    # Group by court
-    unused_by_court: dict[str, int] = {}
-    for slot in unused_slots:
-        unused_by_court[slot.court_label] = unused_by_court.get(slot.court_label, 0) + 1
-
-    # Find longest unassigned match duration
-    longest_match_duration = max([m.duration_minutes for m in unassigned_matches], default=0)
-
-    # Find max slot duration
-    max_slot_duration = max([s.block_minutes for s in slots], default=0)
-
-    # Count insufficient duration slots
-    insufficient_duration_slots = [
-        s for s in unused_slots if longest_match_duration > 0 and s.block_minutes < longest_match_duration
-    ]
-
-    slot_pressure = SlotPressure(
-        unused_slots_count=len(unused_slots),
-        unused_slots_by_day=unused_by_day,
-        unused_slots_by_court=unused_by_court,
-        insufficient_duration_slots_count=len(insufficient_duration_slots),
-        longest_match_duration=longest_match_duration,
-        max_slot_duration=max_slot_duration,
-    )
-
-    # ========================================================================
-    # SECTION 4: Stage Timeline
-    # ========================================================================
-    # Build slot map for lookup
-    slot_map = {s.id: s for s in slots}
-
-    # Group matches by stage
-    stage_groups: dict[str, List[Match]] = {}
-    for match in matches:
-        stage = match.match_type
-        if stage not in stage_groups:
-            stage_groups[stage] = []
-        stage_groups[stage].append(match)
-
-    stage_timeline_list = []
-
-    # Track assigned match times by stage for spillover detection
-    stage_time_ranges: dict[str, tuple[datetime, datetime]] = {}
-
-    for stage in sorted(stage_groups.keys(), key=lambda s: STAGE_PRECEDENCE.get(s, 999)):
-        stage_matches = stage_groups[stage]
-        assigned_in_stage = [m for m in stage_matches if m.id in match_to_assignment]
-        unassigned_in_stage = [m for m in stage_matches if m.id not in match_to_assignment]
-
-        # Find first and last assigned times
-        first_time = None
-        last_time = None
-
-        if assigned_in_stage:
-            times = []
-            for match in assigned_in_stage:
-                assignment = match_to_assignment[match.id]
-                slot = slot_map.get(assignment.slot_id)
-                if slot:
-                    dt = datetime.combine(slot.day_date, slot.start_time)
-                    times.append(dt)
-
-            if times:
-                times.sort()
-                first_time = times[0].isoformat()
-                last_time = times[-1].isoformat()
-                stage_time_ranges[stage] = (times[0], times[-1])
-
-        stage_timeline_list.append(
-            StageTimeline(
-                stage=stage,
-                first_assigned_start_time=first_time,
-                last_assigned_start_time=last_time,
-                assigned_count=len(assigned_in_stage),
-                unassigned_count=len(unassigned_in_stage),
-                spillover_warning=False,  # Will compute in next pass
-            )
-        )
-
-    # Detect spillover: earlier-priority stage starts after later-priority stage
-    for i, timeline in enumerate(stage_timeline_list):
-        stage = timeline.stage
-        if stage not in stage_time_ranges:
-            continue
-
-        stage_order = STAGE_PRECEDENCE.get(stage, 999)
-        stage_first, stage_last = stage_time_ranges[stage]
-
-        # Check if any later-priority stage has matches that start before this stage
-        for other_stage, (other_first, other_last) in stage_time_ranges.items():
-            other_order = STAGE_PRECEDENCE.get(other_stage, 999)
-
-            # If other stage has later priority (higher number) but starts earlier
-            if other_order > stage_order and other_first < stage_first:
-                timeline.spillover_warning = True
-                break
-
-    # ========================================================================
-    # SECTION 5: Ordering Integrity
-    # ========================================================================
-    violations = []
-    deterministic_order_ok = True
-
-    # Get assigned matches sorted by their deterministic match order
-    assigned_sorted_by_match_key = sorted(assigned_matches, key=get_match_sort_key)
-
-    # Get assigned matches sorted by their slot time
-    assigned_with_times = []
-    for match in assigned_matches:
-        assignment = match_to_assignment[match.id]
-        slot = slot_map.get(assignment.slot_id)
-        if slot:
-            assigned_with_times.append((match, slot))
-
-    assigned_sorted_by_slot = sorted(assigned_with_times, key=lambda x: get_slot_sort_key(x[1]))
-
-    # Create match order lookup
-    match_order_index = {m.id: idx for idx, m in enumerate(assigned_sorted_by_match_key)}
-
-    # Check if slot-time order respects deterministic match order
-    for i in range(len(assigned_sorted_by_slot) - 1):
-        current_match, current_slot = assigned_sorted_by_slot[i]
-        next_match, next_slot = assigned_sorted_by_slot[i + 1]
-
-        current_order = match_order_index.get(current_match.id, -1)
-        next_order = match_order_index.get(next_match.id, -1)
-
-        # If next match comes before current match in deterministic order, violation
-        if next_order < current_order:
-            deterministic_order_ok = False
-
-            # Determine violation type
-            violation_type = "ORDERING_VIOLATION"
-            if current_match.match_type != next_match.match_type:
-                stage_order_current = STAGE_PRECEDENCE.get(current_match.match_type, 999)
-                stage_order_next = STAGE_PRECEDENCE.get(next_match.match_type, 999)
-                if stage_order_next < stage_order_current:
-                    violation_type = "STAGE_ORDER_INVERSION"
-            elif current_match.round_index != next_match.round_index:
-                if next_match.round_index < current_match.round_index:
-                    violation_type = "ROUND_ORDER_INVERSION"
-
-            violations.append(
-                OrderingViolation(
-                    type=violation_type,
-                    earlier_match_id=next_match.id,
-                    later_match_id=current_match.id,
-                    details=f"{next_match.match_code} scheduled at {datetime.combine(next_slot.day_date, next_slot.start_time).isoformat()} comes after {current_match.match_code} at {datetime.combine(current_slot.day_date, current_slot.start_time).isoformat()} but should come before in deterministic order",
-                )
-            )
-
-    ordering_integrity = OrderingIntegrity(deterministic_order_ok=deterministic_order_ok, violations=violations)
-
-    # ========================================================================
-    # Build final report
-    # ========================================================================
-    return ConflictReportV1(
-        summary=summary,
-        unassigned=unassigned_details,
-        slot_pressure=slot_pressure,
-        stage_timeline=stage_timeline_list,
-        ordering_integrity=ordering_integrity,
+    
+    # Return just the team conflicts summary
+    if report.team_conflicts:
+        return report.team_conflicts
+    
+    # Fallback if team_conflicts is None (shouldn't happen)
+    return TeamConflictsSummary(
+        known_team_conflicts_count=0,
+        unknown_team_matches_count=0,
+        conflicts=[],
     )
 
 
@@ -1897,6 +2220,7 @@ class GridSlot(BaseModel):
 
 
 class GridAssignment(BaseModel):
+    id: int  # Assignment database ID (required for PATCH endpoint)
     slot_id: int
     match_id: int
 
@@ -1996,7 +2320,7 @@ def get_schedule_grid(
     # Build grid assignments
     grid_assignments = []
     for assignment in assignments:
-        grid_assignments.append(GridAssignment(slot_id=assignment.slot_id, match_id=assignment.match_id))
+        grid_assignments.append(GridAssignment(id=assignment.id, slot_id=assignment.slot_id, match_id=assignment.match_id))
 
     # ========================================================================
     # Fetch matches
@@ -2069,6 +2393,384 @@ def get_schedule_grid(
         teams=team_infos,
         conflicts_summary=conflicts_summary,
     )
+
+
+# ============================================================================
+# Phase Flow V1 - Match Preview, Generate Matches/Slots Only, Assign by Scope
+# ============================================================================
+
+
+class MatchPreviewItem(BaseModel):
+    """Single match in preview response"""
+    id: int
+    event_id: int
+    match_code: str
+    stage: str  # match_type as stage
+    round_number: int
+    round_index: int
+    sequence_in_round: int
+    match_type: str
+    consolation_tier: Optional[int] = None  # 1 for Tier 1, 2 for Tier 2, None for non-consolation
+    duration_minutes: int
+    placeholder_side_a: str
+    placeholder_side_b: str
+    team_a_id: Optional[int] = None
+    team_b_id: Optional[int] = None
+
+
+class MatchPreviewDiagnostics(BaseModel):
+    """Version mismatch detection for preview"""
+    requested_version_id: int
+    matches_found: int
+    grid_reported_matches_for_version: int
+    likely_version_mismatch: bool
+    event_ids_present: List[int] = []
+    event_counts_by_id: Dict[int, int] = {}
+
+
+class MatchPreviewResponse(BaseModel):
+    """Match preview for Schedule Builder review"""
+    matches: List[MatchPreviewItem]
+    counts_by_event: Dict[str, int]
+    counts_by_stage: Dict[str, int]
+    event_names_by_id: Dict[str, str]  # event_id (as str key) -> event name
+    duplicate_codes: List[str]
+    ordering_checksum: str
+    diagnostics: MatchPreviewDiagnostics
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/matches/preview",
+    response_model=MatchPreviewResponse,
+)
+def get_matches_preview(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Read-only match preview with deterministic ordering and duplicate detection."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    matches = session.exec(
+        select(Match)
+        .where(Match.schedule_version_id == version_id, Match.tournament_id == tournament_id)
+        .order_by(
+            Match.event_id,
+            Match.match_type,
+            Match.round_index,
+            Match.sequence_in_round,
+            Match.match_code,
+            Match.id,
+        )
+    ).all()
+
+    matches_found = len(matches)
+    grid_reported_matches_for_version = scalar_int(
+        session.exec(
+            select(func.count(Match.id)).where(
+                Match.schedule_version_id == version_id,
+                Match.tournament_id == tournament_id,
+            )
+        ).one()
+    )
+    total_matches_any_version = scalar_int(
+        session.exec(
+            select(func.count(Match.id)).where(Match.tournament_id == tournament_id)
+        ).one()
+    )
+    likely_version_mismatch = total_matches_any_version > 0 and matches_found == 0
+
+    codes = [m.match_code for m in matches]
+    seen: Dict[str, int] = {}
+    duplicate_codes: List[str] = []
+    for c in codes:
+        seen[c] = seen.get(c, 0) + 1
+    for c, cnt in seen.items():
+        if cnt > 1:
+            duplicate_codes.extend([c] * (cnt - 1))
+
+    checksum_str = ",".join(codes)
+    ordering_checksum = hashlib.sha256(checksum_str.encode()).hexdigest()[:16]
+
+    counts_by_event: Dict[str, int] = {}
+    counts_by_stage: Dict[str, int] = {}
+    event_counts_by_id: Dict[int, int] = {}
+    event_names = {e.id: e.name for e in session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()}
+    for m in matches:
+        key_e = event_names.get(m.event_id, str(m.event_id))
+        counts_by_event[key_e] = counts_by_event.get(key_e, 0) + 1
+        counts_by_stage[m.match_type] = counts_by_stage.get(m.match_type, 0) + 1
+        event_counts_by_id[m.event_id] = event_counts_by_id.get(m.event_id, 0) + 1
+
+    event_ids_present = sorted(set(m.event_id for m in matches))
+
+    diagnostics = MatchPreviewDiagnostics(
+        requested_version_id=version_id,
+        matches_found=matches_found,
+        grid_reported_matches_for_version=grid_reported_matches_for_version,
+        likely_version_mismatch=likely_version_mismatch,
+        event_ids_present=event_ids_present,
+        event_counts_by_id=event_counts_by_id,
+    )
+
+    event_names_by_id = {str(eid): name for eid, name in event_names.items()}
+
+    return MatchPreviewResponse(
+        matches=[
+            MatchPreviewItem(
+                id=m.id,
+                event_id=m.event_id,
+                match_code=m.match_code,
+                stage=m.match_type,
+                round_number=m.round_number,
+                round_index=m.round_index,
+                sequence_in_round=m.sequence_in_round,
+                match_type=m.match_type,
+                consolation_tier=m.consolation_tier,
+                duration_minutes=m.duration_minutes,
+                placeholder_side_a=m.placeholder_side_a,
+                placeholder_side_b=m.placeholder_side_b,
+                team_a_id=m.team_a_id,
+                team_b_id=m.team_b_id,
+            )
+            for m in matches
+        ],
+        counts_by_event=counts_by_event,
+        counts_by_stage=counts_by_stage,
+        event_names_by_id=event_names_by_id,
+        duplicate_codes=sorted(set(duplicate_codes)),
+        ordering_checksum=ordering_checksum,
+        diagnostics=diagnostics,
+    )
+
+
+class MatchesGenerateOnlyRequest(BaseModel):
+    """Optional body for generate matches only."""
+    wipe_existing: bool = False
+
+
+class EventExpectedItem(BaseModel):
+    event_id: int
+    event_name: str
+    expected: int
+    existing_before: int
+    generated_added: int
+    decision: str = "unknown"
+    reason: str = ""
+
+
+class MatchesGenerateOnlyResponse(BaseModel):
+    matches_generated: int
+    already_generated: bool
+    debug_stamp: str = "matches_generate_only_v1"
+    trace_id: str = ""
+    seen_event_ids: List[int] = []
+    finalized_event_ids: List[int] = []
+    events_included: List[str] = []
+    events_skipped: List[str] = []
+    events_not_finalized: List[str] = []
+    finalized_events_found: List[str] = []
+    events_expected: List[EventExpectedItem] = []
+    already_complete: bool = False
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/matches/generate",
+    response_model=MatchesGenerateOnlyResponse,
+)
+def generate_matches_only(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+    body: Optional[MatchesGenerateOnlyRequest] = None,
+):
+    """Generate matches only (no slots, no assignment). Idempotent unless wipe_existing=True."""
+    trace_id = uuid4().hex[:8]
+    wipe_existing = body.wipe_existing if body else False
+    logger.info(
+        "[GEN_MATCHES][%s] tournament=%s version=%s wipe=%s caller=ScheduleBuilder",
+        trace_id, tournament_id, version_id, wipe_existing,
+    )
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    if wipe_existing:
+        existing_count = scalar_int(
+            session.exec(
+                select(func.count(Match.id)).where(Match.schedule_version_id == version_id)
+            ).one()
+        )
+        if existing_count > 0:
+            wipe_matches_for_version(session, version_id)
+            session.flush()
+
+    try:
+        session._allow_match_generation = True
+        match_request = MatchGenerateRequest(schedule_version_id=version_id, wipe_existing=False)
+        result = generate_matches(tournament_id, match_request, session, _transactional=True)
+        session.flush()
+        session.commit()
+
+        per_event = result.get("per_event", {}) or {}
+        events_included = [p["event_name"] for p in per_event.values() if p.get("matches", 0) > 0]
+        events_skipped = [p["event_name"] for p in per_event.values() if p.get("matches", 0) == 0]
+        if result.get("warnings"):
+            for w in result["warnings"]:
+                if isinstance(w, dict) and w.get("event_name") and w["event_name"] not in events_skipped:
+                    events_skipped.append(w["event_name"])
+
+        events_not_finalized = [
+            e.name for e in session.exec(
+                select(Event).where(Event.tournament_id == tournament_id, Event.draw_status != "final")
+            ).all()
+        ]
+        finalized_events_found = result.get("finalized_events_found", [])
+        events_expected_raw = result.get("events_expected", [])
+        events_expected = [EventExpectedItem(**e) for e in events_expected_raw]
+        already_complete = result.get("already_complete", False)
+        total_added = result.get("total_matches_created", 0)
+
+        return MatchesGenerateOnlyResponse(
+            matches_generated=total_added,
+            already_generated=already_complete and total_added == 0,
+            trace_id=trace_id,
+            seen_event_ids=result.get("seen_event_ids", []),
+            finalized_event_ids=result.get("finalized_event_ids", []),
+            events_included=events_included,
+            events_skipped=events_skipped,
+            events_not_finalized=events_not_finalized,
+            finalized_events_found=finalized_events_found,
+            events_expected=events_expected,
+            already_complete=already_complete,
+        )
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Match generation failed: {e}") from e
+    finally:
+        session._allow_match_generation = False
+
+
+class SlotsGenerateOnlyResponse(BaseModel):
+    slots_generated: int
+    already_generated: bool
+    debug_stamp: str = "slots_generate_only_v1"
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/slots/generate",
+    response_model=SlotsGenerateOnlyResponse,
+)
+def generate_slots_only(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Generate slots only (no matches, no assignment). Idempotent."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    existing_count = scalar_int(
+        session.exec(
+            select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
+        ).one()
+    )
+    if existing_count > 0:
+        return SlotsGenerateOnlyResponse(
+            slots_generated=existing_count,
+            already_generated=True,
+        )
+
+    try:
+        slot_request = SlotGenerateRequest(
+            source="auto",
+            schedule_version_id=version_id,
+            wipe_existing=False,
+        )
+        result = generate_slots(tournament_id, slot_request, session, _transactional=True)
+        session.flush()
+        session.commit()
+        return SlotsGenerateOnlyResponse(
+            slots_generated=result.get("slots_created", 0),
+            already_generated=False,
+        )
+    except Exception as e:
+        session.rollback()
+        raise RuntimeError(f"Slot generation failed: {e}") from e
+
+
+class AssignScopeRequest(BaseModel):
+    scope: str  # WF_R1 | WF_R2 | RR_POOL | BRACKET_MAIN | ALL
+    event_id: Optional[int] = None
+    clear_existing_assignments_in_scope: bool = False
+
+
+class AssignScopeResponse(BaseModel):
+    assigned_count: int
+    unassigned_count_remaining_in_scope: int
+    debug_stamp: str = "assign_scope_v1"
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/assign",
+    response_model=AssignScopeResponse,
+)
+def assign_matches_by_scope(
+    tournament_id: int,
+    version_id: int,
+    body: AssignScopeRequest,
+    session: Session = Depends(get_session),
+):
+    """Place matches for one round/scope. Requires slots exist. Only assigns unassigned matches."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    slot_count = scalar_int(
+        session.exec(
+            select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
+        ).one()
+    )
+    if slot_count == 0:
+        raise HTTPException(status_code=400, detail="No slots exist. Generate slots first.")
+
+    try:
+        from app.utils.auto_assign import assign_with_scope
+
+        result = assign_with_scope(
+            session=session,
+            schedule_version_id=version_id,
+            scope=body.scope,
+            event_id=body.event_id,
+            clear_existing_assignments_in_scope=body.clear_existing_assignments_in_scope,
+        )
+        session.commit()
+        return AssignScopeResponse(
+            assigned_count=result.assigned_count,
+            unassigned_count_remaining_in_scope=result.unassigned_count,
+        )
+    except Exception as e:
+        session.rollback()
+        raise RuntimeError(f"Assign failed: {e}") from e
 
 
 # ============================================================================
@@ -2156,6 +2858,9 @@ def auto_assign_with_rest_rules(
                 min_rest_minutes=min_rest_minutes,
                 require_court_type_match=require_court_type_match,
             )
+            
+            # Commit the assignments
+            session.commit()
 
             # Convert V2 result to response format
             return AutoAssignRestResponse(
@@ -2216,6 +2921,7 @@ def build_full_schedule(
     version_id: int,
     clear_existing: bool = Query(True, description="Clear existing assignments before building"),
     dry_run: bool = Query(False, description="Run without committing assignments (preview mode)"),
+    inject_teams: bool = Query(False, description="Run team injection step (default: false)"),
     session: Session = Depends(get_session),
 ):
     """
@@ -2227,7 +2933,7 @@ def build_full_schedule(
     3. Generate slots (assumes already generated)
     4. Generate matches (assumes already generated)
     5. Assign WF groups (if avoid edges exist)
-    6. Inject teams (if teams exist)
+    6. Inject teams (if inject_teams=true AND teams exist)
     7. Auto-assign (rest-aware + day targeting)
     8. Return composite response (grid + conflicts + WF lens)
 
@@ -2242,6 +2948,7 @@ def build_full_schedule(
         version_id: Schedule version ID
         clear_existing: Clear existing assignments before building (default: true)
         dry_run: Preview mode - run without committing assignments (default: false)
+        inject_teams: Run team injection step (default: false)
 
     Returns:
         BuildFullScheduleResponse with:
@@ -2261,27 +2968,87 @@ def build_full_schedule(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    # CHUNK 2B: Draft-only guard
     require_draft_version(session, version_id, tournament_id)
 
-    # Run orchestrator
-    result = build_schedule_v1(
-        session=session,
-        tournament_id=tournament_id,
-        version_id=version_id,
-        clear_existing=clear_existing,
-        dry_run=dry_run,
-    )
-
-    # If failed, return error response
-    if result.status == "error":
-        if "SCHEDULE_VERSION_NOT_DRAFT" in (result.error_message or ""):
-            raise HTTPException(status_code=400, detail=result.error_message)
+    # Convenience wrapper: phased flow (slots → matches → assign scope=ALL)
+    # Does NOT use orchestrator all-in-one; calls phased endpoints' logic inline
+    try:
+        # 1. Generate slots (idempotent)
+        slot_count = scalar_int(
+            session.exec(select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)).one()
+        )
+        if slot_count == 0:
+            slot_request = SlotGenerateRequest(source="auto", schedule_version_id=version_id, wipe_existing=False)
+            slot_result = generate_slots(tournament_id, slot_request, session, _transactional=True)
+            slots_generated = slot_result.get("slots_created", 0)
         else:
-            raise HTTPException(status_code=500, detail=result.error_message)
+            slots_generated = slot_count
 
-    # Build composite response
-    response_data = result.to_dict()
+        # 2. Generate matches (idempotent)
+        match_count = scalar_int(
+            session.exec(select(func.count(Match.id)).where(Match.schedule_version_id == version_id)).one()
+        )
+        if match_count == 0:
+            session._allow_match_generation = True
+            try:
+                match_request = MatchGenerateRequest(schedule_version_id=version_id, wipe_existing=False)
+                match_result = generate_matches(tournament_id, match_request, session, _transactional=True)
+                matches_generated = match_result.get("total_matches_created", 0)
+            finally:
+                session._allow_match_generation = False
+        else:
+            matches_generated = match_count
+
+        # 2b. WF Grouping (conditional: events with WF + avoid edges)
+        from app.utils.wf_grouping import assign_wf_groups_v1
+
+        events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+        for event in events:
+            if event.draw_plan_json:
+                draw_plan = json.loads(event.draw_plan_json)
+                if draw_plan.get("wf_rounds", 0) > 0:
+                    avoid_count = len(
+                        session.exec(
+                            select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)
+                        ).all()
+                    )
+                    if avoid_count > 0:
+                        assign_wf_groups_v1(session, event.id, clear_existing=True, _transactional=True)
+        session.flush()
+
+        # 3. Assign scope=ALL
+        from app.utils.auto_assign import assign_with_scope
+
+        assign_result = assign_with_scope(
+            session=session,
+            schedule_version_id=version_id,
+            scope="ALL",
+            clear_existing_assignments_in_scope=clear_existing,
+        )
+        assignments_created = assign_result.assigned_count
+        unassigned_matches = assign_result.unassigned_count
+
+        session.commit()
+
+        response_data = {
+            "status": "success",
+            "tournament_id": tournament_id,
+            "schedule_version_id": version_id,
+            "clear_existing": clear_existing,
+            "dry_run": dry_run,
+            "summary": {
+                "slots_generated": slots_generated,
+                "matches_generated": matches_generated,
+                "assignments_created": assignments_created,
+                "unassigned_matches": unassigned_matches,
+                "debug_build_stamp": "build_phased_wrapper_v1",
+            },
+            "warnings": [],
+        }
+    except Exception as e:
+        session.rollback()
+        logger.exception("Build (phased wrapper) failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
     # Add grid payload
     try:

@@ -4,6 +4,8 @@ import {
   getTournament,
   getEvents,
   getPhase1Status,
+  getScheduleBuilder,
+  ScheduleBuilderResponse,
   updateDrawPlan,
   finalizeDrawPlan,
   updateEvent,
@@ -22,6 +24,14 @@ import {
 } from '../utils/drawEstimation'
 import { minutesToHours, minutesToHM } from '../utils/timeFormat'
 import { EVENT_SUMMARY_HELP } from '../constants/eventSummaryHelp'
+// Import Phase 1 rules from single source of truth
+import {
+  ALLOWED_TEAM_COUNTS,
+  PHASE1_SUPPORTED_TEAM_COUNTS,
+  requiredWfRounds,
+  getValidFamilyForTeamCount,
+  isTeamCountValidForFamily,
+} from '../utils/drawPlanRules'
 import './TournamentSetup.css'
 
 // Match length options for dropdown (value in minutes, label in H:MM format)
@@ -55,6 +65,8 @@ function DrawBuilder() {
   const [tournament, setTournament] = useState<Tournament | null>(null)
   const [events, setEvents] = useState<Event[]>([])
   const [phase1Status, setPhase1Status] = useState<Phase1Status | null>(null)
+  const [inventoryByEventId, setInventoryByEventId] = useState<Record<number, { total_matches: number }>>({})
+  const [scheduleBuilderData, setScheduleBuilderData] = useState<ScheduleBuilderResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<Record<number, boolean>>({})
   const [eventEditorStates, setEventEditorStates] = useState<Record<number, EventEditorState>>({})
@@ -76,15 +88,22 @@ function DrawBuilder() {
     
     try {
       setLoading(true)
-      const [tournamentData, eventsData, statusData] = await Promise.all([
+      const [tournamentData, eventsData, statusData, scheduleBuilderData] = await Promise.all([
         getTournament(tournamentId),
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
+        getScheduleBuilder(tournamentId).catch(() => ({ events: [] })),
       ])
       
       setTournament(tournamentData)
       setEvents(eventsData)
       setPhase1Status(statusData)
+      const inv: Record<number, { total_matches: number }> = {}
+      scheduleBuilderData.events?.forEach((e: { event_id: number; total_matches: number }) => {
+        inv[e.event_id] = { total_matches: e.total_matches }
+      })
+      setInventoryByEventId(inv)
+      setScheduleBuilderData(scheduleBuilderData)
       
       // Initialize editor states from event data
       const states: Record<number, EventEditorState> = {}
@@ -99,10 +118,29 @@ function DrawBuilder() {
     }
   }
 
+  const refetchInventory = async () => {
+    if (!tournamentId) return
+    try {
+      const sb = await getScheduleBuilder(tournamentId)
+      const inv: Record<number, { total_matches: number }> = {}
+      sb.events?.forEach((e: { event_id: number; total_matches: number }) => {
+        inv[e.event_id] = { total_matches: e.total_matches }
+      })
+      setInventoryByEventId(inv)
+      setScheduleBuilderData(sb)
+    } catch {
+      /* ignore */
+    }
+  }
+
   const initializeEditorState = (event: Event): EventEditorState => {
-    // Default values
-    let templateType: TemplateType = 'RR_ONLY'
-    let wfRounds = 0
+    const n = event.team_count
+    
+    // Phase 1 default template selection using rules module
+    const validFamily = getValidFamilyForTeamCount(n)
+    let templateType: TemplateType = validFamily ?? 'RR_ONLY'
+    let wfRounds = validFamily ? requiredWfRounds(validFamily, n) : 0
+    
     let standardMinutes = event.standard_block_minutes || 120
     let waterfallMinutes = 60 // Default to 1 hour
     let scheduleProfile: ScheduleProfile = {
@@ -114,16 +152,28 @@ function DrawBuilder() {
     if (event.draw_plan_json) {
       try {
         const plan: DrawPlan = JSON.parse(event.draw_plan_json)
-        templateType = plan.template_type || templateType
-        wfRounds = plan.wf_rounds || wfRounds
+        const savedTemplate = plan.template_type
+        const savedWfRounds = plan.wf_rounds || 0
+        
         if (plan.timing?.standard_block_minutes) {
           standardMinutes = plan.timing.standard_block_minutes
         }
         if (plan.timing?.wf_block_minutes) {
           waterfallMinutes = plan.timing.wf_block_minutes
         }
+        
+        // VALIDATION: Only use saved template if valid for team_count (using rules module)
+        const isValidTemplate = (
+          isTeamCountValidForFamily(savedTemplate as 'RR_ONLY' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8', n) ||
+          (savedTemplate === 'WF_TO_POOLS_4' && n === 16) // Legacy support
+        )
+        
+        if (isValidTemplate) {
+          templateType = savedTemplate
+          wfRounds = savedWfRounds
+        }
       } catch (e) {
-        // Invalid JSON, use defaults
+        // Invalid JSON, use auto-selected defaults
       }
     }
 
@@ -142,11 +192,6 @@ function DrawBuilder() {
     // Fallback to event.wf_block_minutes if available (for backwards compatibility)
     if (event.wf_block_minutes) {
       waterfallMinutes = event.wf_block_minutes
-    }
-
-    // CANONICAL_32 requires wfRounds=2
-    if (templateType === 'CANONICAL_32') {
-      wfRounds = 2
     }
 
     return {
@@ -170,23 +215,47 @@ function DrawBuilder() {
 
   const validateEvent = (event: Event, state: EventEditorState): string[] => {
     const errors: string[] = []
+    const n = event.team_count
 
     // Even team count
-    if (event.team_count % 2 !== 0) {
+    if (n % 2 !== 0) {
       errors.push('Team count must be even')
     }
 
-    // Template-specific validations
-    if (state.templateType === 'CANONICAL_32' && event.team_count !== 32) {
+    // Phase 1 supported team counts (using rules module)
+    if (!PHASE1_SUPPORTED_TEAM_COUNTS.includes(n)) {
+      errors.push(`Team count ${n} is not supported in Phase 1 (supported: ${PHASE1_SUPPORTED_TEAM_COUNTS.join(', ')})`)
+    }
+
+    // Template-specific validations using rules module
+    if (state.templateType === 'WF_TO_POOLS_DYNAMIC') {
+      if (!isTeamCountValidForFamily('WF_TO_POOLS_DYNAMIC', n)) {
+        const allowed = ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.join(',')
+        errors.push(`WF_TO_POOLS_DYNAMIC requires team count in {${allowed}}, got ${n}`)
+      }
+      const expectedWfRounds = requiredWfRounds('WF_TO_POOLS_DYNAMIC', n)
+      if (state.wfRounds !== expectedWfRounds) {
+        errors.push(`WF_TO_POOLS_DYNAMIC with ${n} teams requires ${expectedWfRounds} waterfall rounds`)
+      }
+    }
+
+    if (state.templateType === 'WF_TO_BRACKETS_8') {
+      if (!isTeamCountValidForFamily('WF_TO_BRACKETS_8', n)) {
+        errors.push('WF_TO_BRACKETS_8 requires exactly 32 teams')
+      }
+      const expectedWfRounds = requiredWfRounds('WF_TO_BRACKETS_8', n)
+      if (state.wfRounds !== expectedWfRounds) {
+        errors.push(`WF_TO_BRACKETS_8 requires ${expectedWfRounds} waterfall rounds`)
+      }
+    }
+
+    // Legacy template validations (deprecated but kept for backwards compat)
+    if (state.templateType === 'CANONICAL_32' && n !== 32) {
       errors.push('CANONICAL_32 requires exactly 32 teams')
     }
 
-    if (state.templateType === 'WF_TO_POOLS_4' && event.team_count % 4 !== 0) {
-      errors.push('WF_TO_POOLS_4 requires team count divisible by 4')
-    }
-
-    if (state.templateType === 'CANONICAL_32' && state.wfRounds !== 2) {
-      errors.push('CANONICAL_32 requires 2 waterfall rounds')
+    if (state.templateType === 'WF_TO_POOLS_4' && n !== 16) {
+      errors.push('WF_TO_POOLS_4 requires exactly 16 teams')
     }
 
     if (state.wfRounds < 0 || state.wfRounds > 2) {
@@ -266,6 +335,12 @@ function DrawBuilder() {
         matchCounts = calculateMatches(state.templateType, event.team_count, state.wfRounds)
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Invalid template configuration', 'error')
+        return
+      }
+
+      // Check for estimation error (unsupported template)
+      if (matchCounts.estimationError) {
+        showToast(matchCounts.estimationError, 'error')
         return
       }
 
@@ -390,6 +465,11 @@ function DrawBuilder() {
         state = initializeEditorState(event)
       }
       const matchCounts = calculateMatches(state.templateType, event.team_count, state.wfRounds)
+      // Skip if estimation error (unsupported template)
+      if (matchCounts.estimationError) {
+        console.warn(`Estimation error for event ${event.id}: ${matchCounts.estimationError}`)
+        return null
+      }
       return calculateMinutesRequired(matchCounts, state.waterfallMinutes, state.standardMinutes, guarantee)
     } catch (e) {
       console.warn(`Failed to calculate minutes for event ${event.id}:`, e)
@@ -470,26 +550,32 @@ function DrawBuilder() {
     }
     const state = eventEditorStates[event.id]
     const errors = validateEvent(event, state)
-    const canFinalize = errors.length === 0 && event.team_count % 2 === 0
-
+    
     // Calculate match counts and minutes using selected guarantee
     const selectedGuarantee = (event.guarantee_selected ?? 5) as 4 | 5
     let matchCounts: MatchCounts | null = null
     let requiredMinutes: number | null = null
+    let estimationError: string | null = null
 
     try {
-      if (canFinalize) {
-        matchCounts = calculateMatches(state.templateType, event.team_count, state.wfRounds)
-        requiredMinutes = calculateMinutesRequired(
-          matchCounts,
-          state.waterfallMinutes,
-          state.standardMinutes,
-          selectedGuarantee
-        )
+      matchCounts = calculateMatches(state.templateType, event.team_count, state.wfRounds)
+      // Check for estimation error (unsupported template)
+      if (matchCounts.estimationError) {
+        estimationError = matchCounts.estimationError
       }
+      requiredMinutes = calculateMinutesRequired(
+        matchCounts,
+        state.waterfallMinutes,
+        state.standardMinutes,
+        selectedGuarantee
+      )
     } catch (e) {
       // Invalid configuration, show errors
+      estimationError = e instanceof Error ? e.message : 'Failed to calculate matches'
     }
+
+    // Can finalize only if no validation errors, even team count, and no estimation error
+    const canFinalize = errors.length === 0 && event.team_count % 2 === 0 && !estimationError
 
     // Removed per-event headroom - now shown only at tournament level
 
@@ -551,9 +637,11 @@ function DrawBuilder() {
                 try {
                   await updateEvent(event.id, { guarantee_selected: newGuarantee })
                   // Update local event state
-                  setEvents(prev => prev.map(e => 
-                    e.id === event.id ? { ...e, guarantee_selected: newGuarantee } : e
+                  setEvents(prev => prev.map(ev => 
+                    ev.id === event.id ? { ...ev, guarantee_selected: newGuarantee } : ev
                   ))
+                  // Refetch inventory so totals update immediately from backend
+                  await refetchInventory()
                 } catch (err) {
                   showToast(err instanceof Error ? err.message : 'Failed to update guarantee', 'error')
                 }
@@ -577,46 +665,78 @@ function DrawBuilder() {
           </div>
         )}
 
+        {estimationError && (
+          <div style={{ padding: '12px', backgroundColor: '#fff3cd', color: '#856404', borderRadius: '4px', marginBottom: '16px', border: '1px solid #ffc107' }}>
+            <strong>Template Warning:</strong> {estimationError}
+            <div style={{ fontSize: '12px', marginTop: '4px' }}>
+              Finalize is disabled until a supported template is selected.
+            </div>
+          </div>
+        )}
+
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label>Template Type</label>
           <select
             value={state.templateType}
             onChange={(e) => {
               const newType = e.target.value as TemplateType
+              const n = event.team_count
               const updates: Partial<EventEditorState> = { templateType: newType }
-              // CANONICAL_32 requires wfRounds=2
-              if (newType === 'CANONICAL_32') {
-                updates.wfRounds = 2
+              
+              // Auto-set wfRounds based on template + team count (using rules module)
+              if (newType === 'WF_TO_POOLS_DYNAMIC' || newType === 'WF_TO_BRACKETS_8' || newType === 'RR_ONLY') {
+                updates.wfRounds = requiredWfRounds(newType, n)
               }
+              
               updateEventEditorState(event.id, updates)
             }}
             disabled={event.draw_status === 'final'}
-            style={{ width: '350px', maxWidth: '350px', boxSizing: 'border-box' }}
+            style={{ width: '400px', maxWidth: '400px', boxSizing: 'border-box' }}
           >
-            <option value="RR_ONLY">Round Robin Only</option>
-            <option value="WF_TO_POOLS_4">Waterfall to Pools of 4</option>
-            <option value="CANONICAL_32">Canonical 32 (WF2 to 4 brackets)</option>
+            <option value="RR_ONLY">
+              Round Robin Only ({ALLOWED_TEAM_COUNTS.RR_ONLY.join(', ')} teams)
+            </option>
+            <option 
+              value="WF_TO_POOLS_DYNAMIC" 
+              disabled={!isTeamCountValidForFamily('WF_TO_POOLS_DYNAMIC', event.team_count)}
+            >
+              Waterfall to Pools ({ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.join(',')})
+              {!isTeamCountValidForFamily('WF_TO_POOLS_DYNAMIC', event.team_count) && ` — requires ${ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.join(',')}`}
+            </option>
+            <option 
+              value="WF_TO_BRACKETS_8" 
+              disabled={!isTeamCountValidForFamily('WF_TO_BRACKETS_8', event.team_count)}
+            >
+              Waterfall to Brackets ({ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.join(',')} teams)
+              {!isTeamCountValidForFamily('WF_TO_BRACKETS_8', event.team_count) && ' — requires 32 teams'}
+            </option>
           </select>
         </div>
 
-        {(state.templateType === 'WF_TO_POOLS_4' || state.templateType === 'CANONICAL_32') && (
+        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8') && (
           <div className="form-group" style={{ marginBottom: '16px' }}>
             <label>Waterfall Rounds</label>
-            <select
-              value={state.wfRounds}
-              onChange={(e) => updateEventEditorState(event.id, { wfRounds: parseInt(e.target.value) })}
-              disabled={event.draw_status === 'final' || state.templateType === 'CANONICAL_32'}
-              style={{ width: '80px', maxWidth: '80px', boxSizing: 'border-box' }}
-            >
-              <option value={0}>0</option>
-              <option value={1}>1</option>
-              <option value={2}>2</option>
-            </select>
-            {state.templateType === 'CANONICAL_32' && <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Fixed at 2 for Canonical 32</div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ 
+                padding: '4px 12px', 
+                backgroundColor: 'var(--theme-table-row-hover)', 
+                borderRadius: '4px',
+                fontWeight: '500'
+              }}>
+                {state.wfRounds}
+              </span>
+              <span style={{ fontSize: '12px', color: '#666' }}>
+                {state.templateType === 'WF_TO_POOLS_DYNAMIC' && 
+                  (event.team_count === 8 || event.team_count === 10 
+                    ? '(Fixed at 1 for 8-10 teams)' 
+                    : '(Fixed at 2 for 12+ teams)')}
+                {state.templateType === 'WF_TO_BRACKETS_8' && '(Fixed at 2 for 32 teams)'}
+              </span>
+            </div>
           </div>
         )}
 
-        {(state.templateType === 'WF_TO_POOLS_4' || state.templateType === 'CANONICAL_32') && state.wfRounds > 0 && (
+        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_POOLS_4' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'CANONICAL_32') && state.wfRounds > 0 && (
           <div className="form-group" style={{ marginBottom: '16px' }}>
             <label>Waterfall Match Length</label>
             <select
@@ -654,6 +774,11 @@ function DrawBuilder() {
           <div style={{ padding: '12px', backgroundColor: 'var(--theme-card-bg)', borderRadius: '4px', marginBottom: '16px', color: 'var(--theme-text)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
               <strong>Capacity Metrics:</strong>
+              {inventoryByEventId[event.id] != null && (
+                <span style={{ fontWeight: 600 }}>
+                  Total Matches: {inventoryByEventId[event.id].total_matches}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => setExpandedExplanations(prev => ({ ...prev, [event.id]: !prev[event.id] }))}
@@ -786,8 +911,8 @@ function DrawBuilder() {
           <button className="btn btn-secondary" onClick={() => navigate(`/tournaments/${tournament.id}/setup`)}>
             Back to Setup
           </button>
-          <button className="btn btn-primary" onClick={() => navigate(`/tournaments/${tournament.id}/schedule`)}>
-            Go to Schedule
+          <button className="btn btn-primary" onClick={() => navigate(`/tournaments/${tournament.id}/schedule-builder`)}>
+            Review Schedule Plan
           </button>
         </div>
       </div>
@@ -931,17 +1056,50 @@ function DrawBuilder() {
       })()}
 
       {/* Bottom navigation */}
-      {tournament && (
-        <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'center' }}>
-          <button 
-            className="btn btn-primary" 
-            onClick={() => navigate(`/tournaments/${tournament.id}/schedule`)}
-            style={{ fontSize: '16px', padding: '12px 24px' }}
-          >
-            Go to Schedule
-          </button>
-        </div>
-      )}
+      {tournament && (() => {
+        const hasBlockingErrors = scheduleBuilderData?.events?.some((e) => e.error != null) ?? false
+        const hasZeroMatches = scheduleBuilderData?.events?.some((e) => (e.total_matches ?? 0) === 0) ?? false
+        const hasFinalizedEvents = events.some((e) => e.draw_status === 'final')
+        const inventoryLoaded =
+          scheduleBuilderData != null && (scheduleBuilderData.events?.length ?? 0) > 0
+        const canGoToSchedule =
+          !loading &&
+          inventoryLoaded &&
+          !hasBlockingErrors &&
+          !hasZeroMatches &&
+          hasFinalizedEvents
+
+        return (
+          <div style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => navigate(`/tournaments/${tournament.id}/schedule-builder`)}
+              style={{ fontSize: '16px', padding: '12px 24px' }}
+            >
+              Review Schedule Plan
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => navigate(`/tournaments/${tournament.id}/schedule`)}
+              disabled={!canGoToSchedule}
+              title={!canGoToSchedule ? 'Complete Draw Builder steps first.' : ''}
+              style={{
+                fontSize: '16px',
+                padding: '12px 24px',
+                opacity: canGoToSchedule ? 1 : 0.6,
+                cursor: canGoToSchedule ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Go to Schedule
+            </button>
+            {!canGoToSchedule && (
+              <span style={{ fontSize: '13px', color: '#666', alignSelf: 'center' }}>
+                Complete Draw Builder steps first.
+              </span>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }

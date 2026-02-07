@@ -25,6 +25,7 @@ from app.services.draw_plan_rules import (
     calculate_rr_matches_for_pools,
     calculate_rr_only_matches,
 )
+from app.utils.rr_wiring import wire_rr_match_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +447,10 @@ def _generate_rr_only(
     spec: DrawPlanSpec,
     linked_team_ids: List[int],
 ) -> Tuple[List, List[str]]:
-    """Generate round-robin matches for RR_ONLY family using circle method."""
+    """
+    Generate round-robin matches for RR_ONLY family using circle method.
+    For RR_ONLY, treat entire event as single pool (pool_index=0).
+    """
     from app.models.match import Match
 
     matches = []
@@ -461,11 +465,33 @@ def _generate_rr_only(
 
     teams = linked_team_ids[:n] if len(linked_team_ids) >= n else linked_team_ids
     prefix = spec.match_code_prefix
-    pairings = rr_pairings_by_round(n)
+    base_pairings = rr_pairings_by_round(n)
+    
+    # Wire placeholders for RR_ONLY (single pool, pool_index=0)
+    # Enforce top2-last-round constraint
+    wired_pairings = wire_rr_match_placeholders(
+        pool_index=0,
+        pool_size=n,
+        pairings=base_pairings,
+        enforce_top2_last=True,
+    )
 
-    for pair_count, (round_index, seq_in_round, idx_a, idx_b) in enumerate(pairings, start=1):
+    for pair_count, (round_index, seq_in_round, placeholder_a, placeholder_b) in enumerate(wired_pairings, start=1):
+        # Extract seed numbers from placeholders (e.g., "SEED_1" -> seed 1)
+        # For RR_ONLY, seeds are 1..n, convert to 0-based indices
+        try:
+            seed_a = int(placeholder_a.replace("SEED_", ""))
+            seed_b = int(placeholder_b.replace("SEED_", ""))
+            idx_a = seed_a - 1  # Convert to 0-based (seed 1 -> index 0)
+            idx_b = seed_b - 1
+        except (ValueError, AttributeError):
+            # Fallback: use pair_count (shouldn't happen with proper wiring)
+            idx_a = pair_count - 1
+            idx_b = pair_count - 1
+        
         team_a_id = teams[idx_a] if idx_a < len(teams) else None
         team_b_id = teams[idx_b] if idx_b < len(teams) else None
+        
         match = Match(
             tournament_id=spec.tournament_id,
             event_id=spec.event_id,
@@ -477,8 +503,8 @@ def _generate_rr_only(
             sequence_in_round=seq_in_round,
             team_a_id=team_a_id,
             team_b_id=team_b_id,
-            placeholder_side_a=f"Team {idx_a+1}",
-            placeholder_side_b=f"Team {idx_b+1}",
+            placeholder_side_a=placeholder_a,
+            placeholder_side_b=placeholder_b,
             duration_minutes=spec.standard_minutes,
         )
         matches.append(match)
@@ -603,13 +629,22 @@ def _generate_wf_to_pools_4(
     # -------------------------------------------------------------------------
     # Pool RR: 4 pools of 4 teams = 24 matches (circle method, 3 rounds × 2 matches)
     # Pool assignment by seed bands: [0..3], [4..7], [8..11], [12..15]
-    # These are PLACEHOLDER matches; teams assigned after WF resolves
+    # Wire placeholders deterministically by seed order
     # -------------------------------------------------------------------------
     pool_labels = ["A", "B", "C", "D"]
     pool_size = 4
-    pairings = rr_pairings_by_round(pool_size)
+    base_pairings = rr_pairings_by_round(pool_size)
+    
     for pool_idx, pool_label in enumerate(pool_labels):
-        for rr_idx, (round_index, seq_in_round, _idx_a, _idx_b) in enumerate(pairings):
+        # Wire placeholders for this pool (enforces top2-last-round constraint)
+        wired_pairings = wire_rr_match_placeholders(
+            pool_index=pool_idx,
+            pool_size=pool_size,
+            pairings=base_pairings,
+            enforce_top2_last=True,
+        )
+        
+        for rr_idx, (round_index, seq_in_round, placeholder_a, placeholder_b) in enumerate(wired_pairings):
             match = Match(
                 tournament_id=spec.tournament_id,
                 event_id=spec.event_id,
@@ -621,8 +656,8 @@ def _generate_wf_to_pools_4(
                 sequence_in_round=seq_in_round,
                 team_a_id=None,  # Assigned after WF resolves
                 team_b_id=None,
-                placeholder_side_a=f"Pool {pool_label} TBD",
-                placeholder_side_b=f"Pool {pool_label} TBD",
+                placeholder_side_a=placeholder_a,
+                placeholder_side_b=placeholder_b,
                 duration_minutes=spec.standard_minutes,
             )
             matches.append(match)
@@ -771,12 +806,21 @@ def _generate_wf_to_pools_dynamic(
     # -------------------------------------------------------------------------
     # Pool RR: Generate round-robin matches within each pool (circle method)
     # No playoffs - pools only
+    # Wire placeholders deterministically by seed order
     # -------------------------------------------------------------------------
     pool_labels = [chr(ord('A') + i) for i in range(pools_count)]  # A, B, C, ...
-    pairings = rr_pairings_by_round(teams_per_pool)
+    base_pairings = rr_pairings_by_round(teams_per_pool)
 
     for pool_idx, pool_label in enumerate(pool_labels):
-        for rr_idx, (round_index, seq_in_round, _idx_a, _idx_b) in enumerate(pairings):
+        # Wire placeholders for this pool (enforces top2-last-round constraint)
+        wired_pairings = wire_rr_match_placeholders(
+            pool_index=pool_idx,
+            pool_size=teams_per_pool,
+            pairings=base_pairings,
+            enforce_top2_last=True,
+        )
+        
+        for rr_idx, (round_index, seq_in_round, placeholder_a, placeholder_b) in enumerate(wired_pairings):
             match = Match(
                 tournament_id=spec.tournament_id,
                 event_id=spec.event_id,
@@ -788,8 +832,8 @@ def _generate_wf_to_pools_dynamic(
                 sequence_in_round=seq_in_round,
                 team_a_id=None,  # Assigned after WF resolves
                 team_b_id=None,
-                placeholder_side_a=f"Pool {pool_label} TBD",
-                placeholder_side_b=f"Pool {pool_label} TBD",
+                placeholder_side_a=placeholder_a,
+                placeholder_side_b=placeholder_b,
                 duration_minutes=spec.standard_minutes,
             )
             matches.append(match)

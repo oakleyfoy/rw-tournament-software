@@ -1,0 +1,289 @@
+.editor-page {
+  padding: 16px;
+  max-width: 100%;
+}
+
+.error-banner {
+  background: #fee;
+  border: 1px solid #fcc;
+  color: #c33;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.info-banner {
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+  color: #1565c0;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr 350px;
+  gap: 16px;
+  min-height: 600px;
+}
+
+.editor-panel {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 16px;
+  overflow-y: auto;
+  max-height: calc(100vh - 250px);
+}
+
+.editor-panel h2 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.loading {
+  text-align: center;
+  padding: 32px;
+  color: #666;
+  font-size: 14px;
+}
+
+/* Match Queue Panel */
+.match-queue-panel {
+  composes: editor-panel;
+}
+
+.match-card {
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.match-card:hover {
+  background: #f0f0f0;
+  border-color: #bbb;
+}
+
+.match-card-code {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.match-card-stage {
+  color: #666;
+  font-size: 12px;
+}
+
+.match-card-duration {
+  color: #888;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* Conflicts Panel */
+.conflicts-panel {
+  composes: editor-panel;
+}
+
+.conflicts-summary {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.conflicts-summary-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.conflicts-section {
+  margin-bottom: 20px;
+}
+
+.conflicts-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #555;
+  margin: 0 0 10px 0;
+}
+
+.unassigned-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.unassigned-list li {
+  background: #fff9e6;
+  border: 1px solid #ffeaa7;
+  border-radius: 3px;
+  padding: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.btn-refresh {
+  background: #2196f3;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.btn-refresh:hover {
+  background: #1976d2;
+}
+
+.btn-refresh:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+/* Grid Panel */
+.editor-grid-panel {
+  composes: editor-panel;
+  max-height: calc(100vh - 200px);
+}
+
+.grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.grid-table th,
+.grid-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: center;
+}
+
+.grid-table th {
+  background: #f5f5f5;
+  color: #000;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.grid-cell {
+  min-height: 60px;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.grid-cell.droppable {
+  background: #e8f5e9;
+  cursor: pointer;
+}
+
+.grid-cell.occupied {
+  background: #e3f2fd !important;
+  border: 1px solid #90caf9;
+}
+
+.grid-cell.occupied:hover {
+  background: #bbdefb !important;
+  border-color: #64b5f6;
+}
+
+/* Style the td when it contains an occupied slot */
+.grid-table td.occupied-slot {
+  background: #e3f2fd !important;
+  padding: 0;
+}
+
+.grid-table td.occupied-slot:hover {
+  background: #bbdefb !important;
+}
+
+.grid-cell.dragging-over {
+  background: #c8e6c9;
+  border: 2px dashed #4caf50;
+}
+
+.grid-assignment {
+  background: #2196f3;
+  color: white;
+  padding: 6px;
+  border-radius: 3px;
+  cursor: move;
+  font-size: 11px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 60px;
+}
+
+.grid-assignment.locked {
+  background: #9c27b0;
+  border: 2px solid #7b1fa2;
+}
+
+.grid-assignment.locked::before {
+  content: '🔒 ';
+}
+
+.grid-assignment.dragging {
+  opacity: 0.5;
+}
+
+.grid-assignment.patching {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.grid-assignment button {
+  transition: all 0.2s;
+}
+
+.grid-assignment button:hover {
+  background: #ffebee !important;
+  color: #c62828 !important;
+  transform: scale(1.1);
+}
+
+.btn-secondary {
+  background: #757575;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-secondary:hover {
+  background: #616161;
+}
+
+.btn-secondary:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+

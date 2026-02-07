@@ -15,6 +15,7 @@ from app.routes import (
     phase1_status,
     runtime,
     schedule,
+    schedule_builder,
     schedule_sanity,
     teams,
     time_windows,
@@ -69,6 +70,7 @@ app.include_router(events.router, prefix="/api", tags=["events"])
 app.include_router(phase1_status.router, prefix="/api", tags=["phase1"])
 app.include_router(debug.router, prefix="/api", tags=["debug"])
 app.include_router(draw_builder.router, prefix="/api", tags=["draw-builder"])
+app.include_router(schedule_builder.router, prefix="/api", tags=["schedule-builder"])
 
 # Include time_windows router
 app.include_router(time_windows.router, prefix="/api", tags=["time_windows"])
@@ -106,6 +108,7 @@ def on_startup():
     print("REGISTERED ROUTES (Full Path Stack)")
     print("=" * 80)
     route_count = 0
+    wipe_route_found = False
     for r in app.routes:
         try:
             methods = getattr(r, "methods", None)

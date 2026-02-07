@@ -6,7 +6,7 @@ Hard-coded rest requirements:
 - Scoring → Scoring: 90 minutes minimum rest
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import case
@@ -191,6 +191,13 @@ def check_rest_compatibility(
     return is_compatible, violations
 
 
+def _intervals_overlap(
+    a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime
+) -> bool:
+    """Check if [a_start, a_end) overlaps [b_start, b_end)."""
+    return a_start < b_end and b_start < a_end
+
+
 # ============================================================================
 # Phase R4: Assignment Strategy (Deterministic with Rest)
 # ============================================================================
@@ -214,7 +221,14 @@ class AssignmentResult:
         self.rest_violations = rest_violations or []
 
 
-def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_existing: bool = True) -> Dict:
+def auto_assign_with_rest(
+    session: Session,
+    schedule_version_id: int,
+    clear_existing: bool = True,
+    allow_teamless: bool = True,
+    *,
+    _transactional: bool = False,
+) -> Dict:
     """
     Auto-assign matches to slots with rest rules and day-targeting enforcement.
 
@@ -232,15 +246,24 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
     - If match has preferred_day set: prefer slots on that weekday (0=Monday, 6=Sunday)
     - Preferred day acts as tie-breaker only; rest rules remain mandatory
 
+    Teamless Scheduling (Policy B):
+    - If allow_teamless=True (default for draft schedules):
+      Matches with null team_a_id/team_b_id are scheduled using only slot constraints.
+      Team overlap checks are skipped for these matches.
+    - If allow_teamless=False (strict mode):
+      Only matches with known teams OR dependency wiring are scheduled.
+
     Args:
         session: Database session
         schedule_version_id: Schedule version ID
         clear_existing: If true, clear all assignments first
+        allow_teamless: If true, schedule matches even when team IDs are null
 
     Returns:
         Dictionary with:
         - assigned_count: int
         - unassigned_count: int
+        - unknown_team_matches_count: int (matches assigned without known teams)
         - unassigned_reasons: Dict[str, List[match_info]]
         - rest_violations_summary: Dict
         - preferred_day_metrics: Dict with hits/misses/applied_count
@@ -256,7 +279,10 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
         ).all()
         for assignment in existing_assignments_to_clear:
             session.delete(assignment)
-        session.commit()
+        if _transactional:
+            session.flush()
+        else:
+            session.commit()
     else:
         # Load existing assignments to rebuild rest state
         existing_assignments = session.exec(
@@ -301,6 +327,12 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
     # Track which slots are occupied
     occupied_slot_ids: Set[int] = set()
 
+    # Team busy intervals for overlap constraint: team_id -> list of (start_dt, end_dt)
+    team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
+
+    # Hard cap: no team plays more than 2 matches on the same day. (team_id, day_date) -> count
+    team_day_match_count: Dict[Tuple[int, date], int] = {}
+
     # Rebuild rest state from existing assignments (if any)
     rest_tracker = RestStateTracker()
 
@@ -318,20 +350,36 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
                 occupied_slot_ids.add(assignment.slot_id)
                 slot_datetime = datetime.fromisoformat(f"{slot.day_date}T{slot.start_time}")
                 end_datetime = slot_datetime + timedelta(minutes=match.duration_minutes)
-                assignments_with_time.append({"match": match, "end_time": end_datetime})
+                assignments_with_time.append({"match": match, "end_time": end_datetime, "slot": slot})
 
         # Sort by end time to process in chronological order
         assignments_with_time.sort(key=lambda x: x["end_time"])
 
-        # Update rest tracker with existing assignments
+        # Update rest tracker, team_busy, and team_day_match_count from existing assignments
         for item in assignments_with_time:
             match = item["match"]
             end_time = item["end_time"]
+            slot = item.get("slot")
             # Update team rest state for both teams
             if match.team_a_id is not None:
                 rest_tracker.update_team_state(match.team_a_id, end_time, match.match_type)
             if match.team_b_id is not None:
                 rest_tracker.update_team_state(match.team_b_id, end_time, match.match_type)
+            # Populate team_busy for overlap checks
+            if slot and (match.team_a_id is not None or match.team_b_id is not None):
+                slot_start_dt = datetime.combine(slot.day_date, slot.start_time)
+                slot_end_dt = slot_start_dt + timedelta(minutes=match.duration_minutes)
+                if match.team_a_id is not None:
+                    team_busy.setdefault(match.team_a_id, []).append((slot_start_dt, slot_end_dt))
+                if match.team_b_id is not None:
+                    team_busy.setdefault(match.team_b_id, []).append((slot_start_dt, slot_end_dt))
+                # Cap: no team plays more than 2 matches in a day
+                day_key_a = (match.team_a_id, slot.day_date) if match.team_a_id is not None else None
+                day_key_b = (match.team_b_id, slot.day_date) if match.team_b_id is not None else None
+                if day_key_a:
+                    team_day_match_count[day_key_a] = team_day_match_count.get(day_key_a, 0) + 1
+                if day_key_b and day_key_b != day_key_a:
+                    team_day_match_count[day_key_b] = team_day_match_count.get(day_key_b, 0) + 1
 
     # Track assignment results
     results: List[AssignmentResult] = []
@@ -342,20 +390,88 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
     preferred_day_hits = 0
     preferred_day_misses = 0
 
+    # ============================================================================
+    # DIAGNOSTICS: Rejection counters
+    # ============================================================================
+    reject_counts = {
+        "no_slots_total": 0,
+        "duration_no_fit": 0,
+        "slot_already_taken": 0,
+        "day_not_allowed": 0,
+        "rest_violation": 0,
+        "team_conflict_overlap": 0,
+        "max_matches_per_day_reject": 0,
+        "stage_not_schedulable": 0,
+        "unknown_reject": 0,
+        "null_team_reject": 0,
+    }
+
+    # Collect summary inputs for diagnostics
+    slot_block_minutes_set = set()
+    match_minutes_set = set()
+    for slot in slots:
+        slot_block_minutes_set.add(slot.block_minutes)
+    for match in matches:
+        match_minutes_set.add(match.duration_minutes)
+
+    # Track matches assigned without known teams (for reporting)
+    unknown_team_matches_assigned = 0
+
     # Assign each match
     for match in matches:
         assigned = False
 
+        # Determine if this match has known teams
+        has_known_teams = (match.team_a_id is not None and match.team_b_id is not None)
+        has_deps = (
+            getattr(match, "source_match_a_id", None) is not None
+            or getattr(match, "source_match_b_id", None) is not None
+        )
+
+        # Policy B: Teamless scheduling
+        # - If allow_teamless=True: schedule matches even without teams (skip team overlap checks)
+        # - If allow_teamless=False: only schedule if has_known_teams OR has_deps
+        if not has_known_teams:
+            if allow_teamless or has_deps:
+                # Allow scheduling - team overlap checks will be skipped below
+                pass
+            else:
+                # Strict mode: reject teamless matches without dependencies
+                reject_counts["null_team_reject"] += 1
+                results.append(
+                    AssignmentResult(match_id=match.id, assigned=False, failure_reason="NULL_TEAM")
+                )
+                if "NULL_TEAM" not in unassigned_by_reason:
+                    unassigned_by_reason["NULL_TEAM"] = []
+                unassigned_by_reason["NULL_TEAM"].append(
+                    {
+                        "match_id": match.id,
+                        "match_code": match.match_code,
+                        "duration_minutes": match.duration_minutes,
+                        "team_a_id": match.team_a_id,
+                        "team_b_id": match.team_b_id,
+                        "rest_violations": [],
+                    }
+                )
+                continue
+
         # Phase D4: Build list of compatible slots with preference scoring
         compatible_slots = []
 
+        # Track if no slots exist at all for this match
+        any_active_slot_exists = False
+
         for slot in slots:
+            any_active_slot_exists = True
+
             # Skip if slot already occupied
             if slot.id in occupied_slot_ids:
+                reject_counts["slot_already_taken"] += 1
                 continue
 
             # Check duration compatibility
             if slot.block_minutes < match.duration_minutes:
+                reject_counts["duration_no_fit"] += 1
                 continue
 
             # Check rest compatibility
@@ -363,7 +479,42 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
 
             if not rest_compatible:
                 # This slot violates rest rules, skip it
+                reject_counts["rest_violation"] += 1
                 continue
+
+            # Team overlap check: no team can be in two matches at the same time
+            # Only enforced when BOTH teams are known
+            slot_start_dt = datetime.fromisoformat(f"{slot.day_date}T{slot.start_time}")
+            slot_end_dt = slot_start_dt + timedelta(minutes=match.duration_minutes)
+            
+            if has_known_teams:
+                has_overlap = False
+                for team_id in (match.team_a_id, match.team_b_id):
+                    if team_id is None:
+                        continue
+                    for busy_start, busy_end in team_busy.get(team_id, []):
+                        if _intervals_overlap(slot_start_dt, slot_end_dt, busy_start, busy_end):
+                            has_overlap = True
+                            break
+                    if has_overlap:
+                        break
+                if has_overlap:
+                    reject_counts["team_conflict_overlap"] += 1
+                    continue
+
+                # Hard cap: no team plays more than 2 matches on the same day
+                # Only enforced when teams are known
+                over_cap = False
+                for team_id in (match.team_a_id, match.team_b_id):
+                    if team_id is None:
+                        continue
+                    day_count = team_day_match_count.get((team_id, slot.day_date), 0)
+                    if day_count >= 2:
+                        over_cap = True
+                        break
+                if over_cap:
+                    reject_counts["max_matches_per_day_reject"] += 1
+                    continue
 
             # Slot is compatible! Calculate preference score
             # Phase D3: Derive slot weekday from day_date (0=Monday, 6=Sunday)
@@ -377,6 +528,10 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
                 preference_score = 0 if slot_weekday == match.preferred_day else 1
 
             compatible_slots.append({"slot": slot, "preference_score": preference_score, "slot_weekday": slot_weekday})
+
+        # If no active slots exist at all
+        if not any_active_slot_exists:
+            reject_counts["no_slots_total"] += 1
 
         # Sort compatible slots by preference score, then deterministic order
         compatible_slots.sort(
@@ -408,15 +563,24 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
             assigned = True
             assigned_count += 1
 
-            # Update team rest states
+            # Track if this was a teamless assignment
+            if not has_known_teams:
+                unknown_team_matches_assigned += 1
+
+            # Update team rest states and team_busy for overlap constraint
             slot_datetime = datetime.fromisoformat(f"{slot.day_date}T{slot.start_time}")
             end_time = slot_datetime + timedelta(minutes=match.duration_minutes)
 
             if match.team_a_id is not None:
                 rest_tracker.update_team_state(match.team_a_id, end_time, match.match_type)
-
+                team_busy.setdefault(match.team_a_id, []).append((slot_datetime, end_time))
+                key_a = (match.team_a_id, slot.day_date)
+                team_day_match_count[key_a] = team_day_match_count.get(key_a, 0) + 1
             if match.team_b_id is not None:
                 rest_tracker.update_team_state(match.team_b_id, end_time, match.match_type)
+                team_busy.setdefault(match.team_b_id, []).append((slot_datetime, end_time))
+                key_b = (match.team_b_id, slot.day_date)
+                team_day_match_count[key_b] = team_day_match_count.get(key_b, 0) + 1
 
             results.append(AssignmentResult(match_id=match.id, assigned=True, slot_id=slot.id))
 
@@ -471,7 +635,10 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
                 }
             )
 
-    session.commit()
+    if _transactional:
+        session.flush()
+    else:
+        session.commit()
 
     # Build rest violations summary
     rest_blocked_wf_scoring = 0
@@ -490,6 +657,7 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
     return {
         "assigned_count": assigned_count,
         "unassigned_count": unassigned_count,
+        "unknown_team_matches_count": unknown_team_matches_assigned,
         "unassigned_reasons": unassigned_by_reason,
         "rest_violations_summary": {
             "wf_to_scoring_violations": rest_blocked_wf_scoring,
@@ -500,5 +668,13 @@ def auto_assign_with_rest(session: Session, schedule_version_id: int, clear_exis
             "preferred_day_hits": preferred_day_hits,
             "preferred_day_misses": preferred_day_misses,
             "preferred_day_applied_count": preferred_day_hits + preferred_day_misses,
+        },
+        "assign_debug": {
+            "matches_considered": len(matches),
+            "slots_considered": len(slots),
+            "slot_block_minutes": sorted(list(slot_block_minutes_set)),
+            "match_minutes": sorted(list(match_minutes_set)),
+            "reject_counts": reject_counts,
+            "allow_teamless": allow_teamless,
         },
     }

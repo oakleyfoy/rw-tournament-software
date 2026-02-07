@@ -3,10 +3,33 @@ Match generation utilities for Phase 3A
 Uses the same logic as frontend drawEstimation.ts to ensure consistency
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 from app.models.event import Event
 from app.models.match import Match
+
+
+def _rr_pairs_circle(teams: List) -> List[Tuple[int, int, object, object]]:
+    """
+    Round-robin pairings via circle method. Returns list of (round_1based, seq_1based, team_a, team_b).
+    teams: list of Team (or any) in deterministic order (e.g. by seed).
+    """
+    n = len(teams)
+    if n % 2 != 0:
+        raise ValueError(f"Round-robin requires even team count, got {n}")
+    # Circle: position 0 fixed, others rotate. Round r: (0,n-1), (1,n-2), ...
+    half = n // 2
+    result = []
+    # positions 0..n-1; round r: pos[i] vs pos[n-1-i]
+    positions = list(range(n))
+    for round_num in range(1, n):  # n-1 rounds
+        for seq in range(1, half + 1):
+            i, j = seq - 1, n - seq
+            team_a, team_b = teams[positions[i]], teams[positions[j]]
+            result.append((round_num, seq, team_a, team_b))
+        # Rotate: keep 0, then positions[1] becomes last, positions[2] becomes 1, ...
+        positions = [positions[0]] + [positions[-1]] + positions[1:-1]
+    return result
 
 
 def calculate_match_counts(template_type: str, team_count: int, wf_rounds: int, guarantee: int) -> Dict:
@@ -23,6 +46,12 @@ def calculate_match_counts(template_type: str, team_count: int, wf_rounds: int, 
     elif template_type == "WF_TO_POOLS_4":
         if team_count % 4 != 0:
             raise ValueError(f"WF_TO_POOLS_4 requires team_count divisible by 4, got {team_count}")
+
+        # Canonical inventory: 16 teams, 2 WF rounds, guarantee 5 → 8 WF R1 + 8 WF R2 + 24 pool RR = 40
+        if team_count == 16 and wf_rounds == 2:
+            wf_matches = 16  # 8 R1 + 8 R2
+            standard_matches = 24  # 4 pools × 6 RR (no placement in canonical 40)
+            return {"wf_matches": wf_matches, "wf_rounds": wf_rounds, "standard_matches": standard_matches}
 
         wf_matches = wf_round_matches(team_count) * wf_rounds
         pools = team_count / 4
@@ -74,6 +103,127 @@ def wf_round_matches(n: int) -> int:
     return n // 2
 
 
+def generate_wf_to_pools_4_canonical_r1(
+    event: Event,
+    schedule_version_id: int,
+    tournament_id: int,
+    duration_minutes: int,
+    event_prefix: str,
+    session=None,
+    effective_team_count: Optional[int] = None,
+) -> List[Match]:
+    """
+    Canonical WF R1 for WF_TO_POOLS_4 (16 teams, 2 rounds): 8 matches.
+    Pair seed order: 1v16, 2v15, 3v14, 4v13, 5v12, 6v11, 7v10, 8v9.
+    stage=WF, wf_round=1, round_index=1, sequence_in_round=1..8.
+    """
+    matches = []
+    linked_teams = []
+    if session and (effective_team_count or event.team_count) >= 16:
+        from app.utils.team_injection import get_deterministic_teams
+        linked_teams = get_deterministic_teams(session, event.id) or []
+    bind_teams = len(linked_teams) == 16
+    # R1 pairs: (0,15), (1,14), (2,13), (3,12), (4,11), (5,10), (6,9), (7,8) (0-based seed 1..16)
+    pairs = [(i, 15 - i) for i in range(8)]
+    for seq, (a_idx, b_idx) in enumerate(pairs, 1):
+        team_a_id = team_b_id = None
+        placeholder_a = "Seed {} Team".format(a_idx + 1)
+        placeholder_b = "Seed {} Team".format(b_idx + 1)
+        if bind_teams:
+            team_a_id = linked_teams[a_idx].id
+            team_b_id = linked_teams[b_idx].id
+            placeholder_a = linked_teams[a_idx].name or placeholder_a
+            placeholder_b = linked_teams[b_idx].name or placeholder_b
+        match_code = f"{event_prefix}_WF_01_{seq:02d}"
+        match = Match(
+            tournament_id=tournament_id,
+            event_id=event.id,
+            schedule_version_id=schedule_version_id,
+            match_code=match_code,
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=seq,
+            duration_minutes=duration_minutes,
+            placeholder_side_a=placeholder_a,
+            placeholder_side_b=placeholder_b,
+            team_a_id=team_a_id,
+            team_b_id=team_b_id,
+            status="unscheduled",
+        )
+        matches.append(match)
+    return matches
+
+
+def generate_wf_to_pools_4_canonical_r2(
+    event: Event,
+    schedule_version_id: int,
+    tournament_id: int,
+    duration_minutes: int,
+    event_prefix: str,
+    r1_match_ids: List[int],
+) -> List[Match]:
+    """
+    Canonical WF R2 for WF_TO_POOLS_4: 8 matches (4 winners bracket + 4 losers bracket).
+    Winners: W(R1_1)vs W(R1_8), W(R1_2)vs W(R1_7), W(R1_3)vs W(R1_6), W(R1_4)vs W(R1_5).
+    Losers:  L(R1_1)vs L(R1_8), L(R1_2)vs L(R1_7), L(R1_3)vs L(R1_6), L(R1_4)vs L(R1_5).
+    team_a_id/team_b_id = None; source_match_* and source_*_role set.
+    """
+    if len(r1_match_ids) != 8:
+        raise ValueError(f"Canonical WF R2 requires 8 R1 match ids, got {len(r1_match_ids)}")
+    matches = []
+    # Winners bracket: seq 1..4
+    w_pairs = [(0, 7), (1, 6), (2, 5), (3, 4)]  # R1 0-indexed
+    for seq, (i, j) in enumerate(w_pairs, 1):
+        match_code = f"{event_prefix}_WF_02_{seq:02d}"
+        match = Match(
+            tournament_id=tournament_id,
+            event_id=event.id,
+            schedule_version_id=schedule_version_id,
+            match_code=match_code,
+            match_type="WF",
+            round_number=2,
+            round_index=2,
+            sequence_in_round=seq,
+            duration_minutes=duration_minutes,
+            placeholder_side_a=f"W(R1_{i+1})",
+            placeholder_side_b=f"W(R1_{j+1})",
+            team_a_id=None,
+            team_b_id=None,
+            status="unscheduled",
+            source_match_a_id=r1_match_ids[i],
+            source_match_b_id=r1_match_ids[j],
+            source_a_role="WINNER",
+            source_b_role="WINNER",
+        )
+        matches.append(match)
+    # Losers bracket: seq 5..8
+    for seq, (i, j) in enumerate(w_pairs, 5):
+        match_code = f"{event_prefix}_WF_02_{seq:02d}"
+        match = Match(
+            tournament_id=tournament_id,
+            event_id=event.id,
+            schedule_version_id=schedule_version_id,
+            match_code=match_code,
+            match_type="WF",
+            round_number=2,
+            round_index=2,
+            sequence_in_round=seq,
+            duration_minutes=duration_minutes,
+            placeholder_side_a=f"L(R1_{i+1})",
+            placeholder_side_b=f"L(R1_{j+1})",
+            team_a_id=None,
+            team_b_id=None,
+            status="unscheduled",
+            source_match_a_id=r1_match_ids[i],
+            source_match_b_id=r1_match_ids[j],
+            source_a_role="LOSER",
+            source_b_role="LOSER",
+        )
+        matches.append(match)
+    return matches
+
+
 def generate_wf_matches(
     event: Event,
     schedule_version_id: int,
@@ -82,6 +232,7 @@ def generate_wf_matches(
     duration_minutes: int,
     event_prefix: str,
     session=None,  # Optional: for WF grouping support
+    effective_team_count: Optional[int] = None,
 ) -> List[Match]:
     """Generate waterfall matches for an event
 
@@ -162,8 +313,10 @@ def generate_wf_matches(
                         round_index=round_num,
                         sequence_in_round=match_num,  # Global sequence
                         duration_minutes=duration_minutes,
-                        placeholder_side_a=f"Team {team_a.id}",
-                        placeholder_side_b=f"Team {team_b.id}",
+                        placeholder_side_a=team_a.name or f"Team {team_a.id}",
+                        placeholder_side_b=team_b.name or f"Team {team_b.id}",
+                        team_a_id=team_a.id,
+                        team_b_id=team_b.id,
                         status="unscheduled",
                     )
                     matches.append(match)
@@ -172,15 +325,42 @@ def generate_wf_matches(
 
         return matches
 
-    # Original logic (no grouping)
-    match_num = 1
+    # Original logic (no grouping). Use event.team_count for structure (how many matches); use effective_team_count for binding.
+    n_teams_structure = event.team_count  # number of WF match slots (e.g. 16 for 16-team draw)
+    n_teams_binding = effective_team_count if effective_team_count is not None else event.team_count
+    linked_teams_for_wf = []
+    if session and n_teams_binding >= 2:
+        from app.utils.team_injection import get_deterministic_teams
+        linked_teams_for_wf = get_deterministic_teams(session, event.id) or []
+    bind_wf = len(linked_teams_for_wf) == n_teams_binding and n_teams_binding % 2 == 0
+    wf_pairs_by_round = []
+    if bind_wf:
+        # Circle method: round r uses positions rotated (r-1) times; pairs (pos[0],pos[n-1]), (pos[1],pos[n-2]), ...
+        half = n_teams_binding // 2
+        for r in range(1, wf_rounds + 1):
+            positions = list(range(n_teams_binding))
+            for _ in range(r - 1):
+                positions = [positions[0]] + [positions[-1]] + positions[1:-1]
+            round_pairs = []
+            for seq in range(half):
+                round_pairs.append((linked_teams_for_wf[positions[seq]], linked_teams_for_wf[positions[n_teams_binding - 1 - seq]]))
+            wf_pairs_by_round.append(round_pairs)
 
+    match_num = 1
     for round_num in range(1, wf_rounds + 1):
-        matches_in_round = wf_round_matches(event.team_count)
+        matches_in_round = wf_round_matches(n_teams_structure)
 
         for seq in range(1, matches_in_round + 1):
             match_code = f"{event_prefix}_WF_{round_num:02d}_{seq:02d}"
-
+            team_a_id = team_b_id = None
+            placeholder_a = placeholder_b = "TBD"
+            if bind_wf and round_num <= len(wf_pairs_by_round):
+                round_pairs = wf_pairs_by_round[round_num - 1]
+                if seq - 1 < len(round_pairs):
+                    ta, tb = round_pairs[seq - 1]
+                    team_a_id, team_b_id = ta.id, tb.id
+                    placeholder_a = ta.name or f"Team {ta.id}"
+                    placeholder_b = tb.name or f"Team {tb.id}"
             match = Match(
                 tournament_id=tournament_id,
                 event_id=event.id,
@@ -188,11 +368,13 @@ def generate_wf_matches(
                 match_code=match_code,
                 match_type="WF",
                 round_number=round_num,
-                round_index=round_num,  # Index within WF type (1..wf_rounds)
+                round_index=round_num,
                 sequence_in_round=seq,
                 duration_minutes=duration_minutes,
-                placeholder_side_a="TBD",
-                placeholder_side_b="TBD",
+                placeholder_side_a=placeholder_a,
+                placeholder_side_b=placeholder_b,
+                team_a_id=team_a_id,
+                team_b_id=team_b_id,
                 status="unscheduled",
             )
             matches.append(match)
@@ -209,16 +391,35 @@ def generate_standard_matches(
     duration_minutes: int,
     event_prefix: str,
     template_type: str,
+    session=None,
+    effective_team_count: Optional[int] = None,
 ) -> List[Match]:
-    """Generate standard matches for an event"""
+    """Generate standard matches for an event. If session is provided and event has linked teams, bind team_a_id/team_b_id.
+    Structure (how many matches/pools) uses event.team_count; binding uses effective_team_count when set.
+    """
     matches = []
+    # Structure = full draw size (e.g. 16 teams => 4 pools, 24 RR matches for WF_TO_POOLS_4)
+    teams_config_structure = event.team_count
+    teams_config_binding = effective_team_count if effective_team_count is not None else event.team_count
+
+    # Load linked teams if session provided (for binding)
+    linked_teams_ordered = []
+    if session:
+        from sqlmodel import select
+        from app.models.team import Team
+        from app.utils.team_injection import get_deterministic_teams
+        linked_teams_ordered = get_deterministic_teams(session, event.id) or []
 
     # Determine match type based on template
     if template_type == "RR_ONLY":
         # Round Robin Only: match_type = "MAIN", round_index = RR round number
-        teams = event.team_count
-        total_rounds = teams - 1
-        matches_per_round = teams // 2
+        total_rounds = teams_config_structure - 1
+        matches_per_round = teams_config_structure // 2
+
+        # If we have linked teams matching binding config, bind team ids
+        bind_teams = len(linked_teams_ordered) == teams_config_binding and teams_config_binding >= 2
+        rr_pairs = _rr_pairs_circle(linked_teams_ordered) if bind_teams else []
+        pair_idx = 0
 
         match_num = 1
         for round_num in range(1, total_rounds + 1):
@@ -226,6 +427,14 @@ def generate_standard_matches(
                 if match_num > count:
                     break
                 match_code = f"{event_prefix}_RR_{round_num:02d}_{seq:02d}"
+                team_a_id = team_b_id = None
+                placeholder_a = placeholder_b = "TBD"
+                if bind_teams and pair_idx < len(rr_pairs):
+                    _, _, ta, tb = rr_pairs[pair_idx]
+                    team_a_id, team_b_id = ta.id, tb.id
+                    placeholder_a = ta.name or f"Team {ta.id}"
+                    placeholder_b = tb.name or f"Team {tb.id}"
+                    pair_idx += 1
                 match = Match(
                     tournament_id=tournament_id,
                     event_id=event.id,
@@ -233,11 +442,13 @@ def generate_standard_matches(
                     match_code=match_code,
                     match_type="MAIN",  # Normalized to MAIN
                     round_number=round_num,
-                    round_index=round_num,  # Index within MAIN type (RR round number)
+                    round_index=round_num,
                     sequence_in_round=seq,
                     duration_minutes=duration_minutes,
-                    placeholder_side_a="TBD",
-                    placeholder_side_b="TBD",
+                    placeholder_side_a=placeholder_a,
+                    placeholder_side_b=placeholder_b,
+                    team_a_id=team_a_id,
+                    team_b_id=team_b_id,
                     status="unscheduled",
                 )
                 matches.append(match)
@@ -247,57 +458,110 @@ def generate_standard_matches(
 
     elif template_type == "WF_TO_POOLS_4":
         # Post-waterfall matches: match_type = "MAIN", round_index = 1..N
-        # Each pool round is a separate round_index
-        pools = event.team_count // 4
+        # Each pool round is a separate round_index. Use structure team count for pool count (e.g. 16 => 4 pools).
+        pools = teams_config_structure // 4
         pool_rr_matches = 6  # rr_matches(4) = 6
+        # Canonical 4 pools: pool_id A/B/C/D (WW, WL, LW, LL)
+        pool_labels = ["A", "B", "C", "D"][:pools] if pools <= 4 else [str(i) for i in range(1, pools + 1)]
+
+        # Partition linked teams by wf_group_index for pool RR binding; if no wf_group_index, split by index (first 4 = pool 1, next 4 = pool 2)
+        pool_teams_by_num = {}
+        if linked_teams_ordered:
+            has_wf_index = any(getattr(t, "wf_group_index", None) is not None for t in linked_teams_ordered)
+            if has_wf_index:
+                pool_teams = {}
+                for t in linked_teams_ordered:
+                    idx = getattr(t, "wf_group_index", None)
+                    if idx is not None:
+                        if idx not in pool_teams:
+                            pool_teams[idx] = []
+                        pool_teams[idx].append(t)
+                sorted_group_indices = sorted(pool_teams.keys())
+                pool_teams_by_num = {i + 1: pool_teams[g] for i, g in enumerate(sorted_group_indices)}
+            else:
+                # No wf_group_index: partition by index (4 teams per pool)
+                pool_size = 4
+                for i in range(0, len(linked_teams_ordered), pool_size):
+                    pool_num = (i // pool_size) + 1
+                    pool_teams_by_num[pool_num] = linked_teams_ordered[i : i + pool_size]
 
         match_num = 1
-        main_round_index = 1  # Index within MAIN type
+        main_round_index = 1
 
-        # Pool matches (post-waterfall, so MAIN type)
-        # Each pool gets its own round_index
         for pool_num in range(1, pools + 1):
+            pool_label = pool_labels[pool_num - 1] if pool_num <= len(pool_labels) else str(pool_num)
+            pool_team_list = (pool_teams_by_num.get(pool_num) or []) if linked_teams_ordered else []
+            bind_pool = len(pool_team_list) == 4
+            pool_pairs = _rr_pairs_circle(pool_team_list) if bind_pool else []
+            pair_idx = 0
+
             for seq in range(1, pool_rr_matches + 1):
                 if match_num > count:
                     break
-                match_code = f"{event_prefix}_POOL{pool_num}_RR_{seq:02d}"
+                match_code = f"{event_prefix}_POOL{pool_label}_RR_{seq:02d}"
+                team_a_id = team_b_id = None
+                placeholder_a = placeholder_b = f"Pool {pool_label} TBD"
+                if bind_pool and pair_idx < len(pool_pairs):
+                    _, _, ta, tb = pool_pairs[pair_idx]
+                    team_a_id, team_b_id = ta.id, tb.id
+                    placeholder_a = ta.name or f"Team {ta.id}"
+                    placeholder_b = tb.name or f"Team {tb.id}"
+                    pair_idx += 1
                 match = Match(
                     tournament_id=tournament_id,
                     event_id=event.id,
                     schedule_version_id=schedule_version_id,
                     match_code=match_code,
-                    match_type="MAIN",  # Normalized to MAIN
-                    round_number=pool_num,  # Keep pool number for reference
-                    round_index=main_round_index,  # Index within MAIN type (same for all matches in this pool)
+                    match_type="MAIN",
+                    round_number=pool_num,
+                    round_index=main_round_index,
                     sequence_in_round=seq,
                     duration_minutes=duration_minutes,
-                    placeholder_side_a=f"Pool{pool_num} TBD",
-                    placeholder_side_b=f"Pool{pool_num} TBD",
+                    placeholder_side_a=placeholder_a,
+                    placeholder_side_b=placeholder_b,
+                    team_a_id=team_a_id,
+                    team_b_id=team_b_id,
                     status="unscheduled",
                 )
                 matches.append(match)
                 match_num += 1
-            main_round_index += 1  # Next pool gets next round_index
+            main_round_index += 1
 
-        # Placement matches (if guarantee 5) - also MAIN type, separate round_index
-        placement_count = event.team_count // 2
+        # Placement matches (if guarantee 5). Bind deterministically when we have linked teams so gate passes.
+        placement_count = teams_config_structure // 2
         if match_num <= count:
+            # Deterministic placement pairing when we have enough linked teams (e.g. 8 teams -> 4 placement matches)
+            placement_pairs = []
+            if len(linked_teams_ordered) >= placement_count * 2:
+                for i in range(placement_count):
+                    placement_pairs.append(
+                        (linked_teams_ordered[i * 2], linked_teams_ordered[i * 2 + 1])
+                    )
             for seq in range(1, placement_count + 1):
                 if match_num > count:
                     break
                 match_code = f"{event_prefix}_PLACE_{seq:02d}"
+                team_a_id = team_b_id = None
+                placeholder_a = placeholder_b = "TBD"
+                if seq - 1 < len(placement_pairs):
+                    ta, tb = placement_pairs[seq - 1]
+                    team_a_id, team_b_id = ta.id, tb.id
+                    placeholder_a = ta.name or f"Team {ta.id}"
+                    placeholder_b = tb.name or f"Team {tb.id}"
                 match = Match(
                     tournament_id=tournament_id,
                     event_id=event.id,
                     schedule_version_id=schedule_version_id,
                     match_code=match_code,
-                    match_type="MAIN",  # Normalized to MAIN
-                    round_number=main_round_index,  # Keep for reference
-                    round_index=main_round_index,  # Index within MAIN type
+                    match_type="MAIN",
+                    round_number=main_round_index,
+                    round_index=main_round_index,
                     sequence_in_round=seq,
                     duration_minutes=duration_minutes,
-                    placeholder_side_a="TBD",
-                    placeholder_side_b="TBD",
+                    placeholder_side_a=placeholder_a,
+                    placeholder_side_b=placeholder_b,
+                    team_a_id=team_a_id,
+                    team_b_id=team_b_id,
                     status="unscheduled",
                 )
                 matches.append(match)

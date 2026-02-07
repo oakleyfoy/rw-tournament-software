@@ -8,6 +8,7 @@ from sqlmodel import Session, func, select, text
 from app.database import get_session
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
+from app.utils.courts import parse_court_names
 
 router = APIRouter()
 
@@ -63,6 +64,14 @@ class TournamentResponse(BaseModel):
     court_names: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("court_names", mode="before")
+    @classmethod
+    def normalize_court_names(cls, v):
+        """Handle legacy DB storage: court_names may be string '1,2,3' instead of list."""
+        if v is None:
+            return None
+        return parse_court_names(v)  # handles str and list, returns List[str]
 
     class Config:
         from_attributes = True

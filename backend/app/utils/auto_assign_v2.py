@@ -19,7 +19,7 @@ Key differences from V1:
 4. **Partial assignments**: Can assign some matches even if others are blocked
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlmodel import Session, select
@@ -53,6 +53,7 @@ CONFLICT_REST_VIOLATION = "REST_VIOLATION"
 CONFLICT_COURT_TYPE_MISMATCH = "COURT_TYPE_MISMATCH"
 CONFLICT_SLOT_OCCUPIED = "SLOT_OCCUPIED"
 CONFLICT_DURATION_TOO_LONG = "DURATION_TOO_LONG"
+CONFLICT_ROUND_DEPENDENCY = "ROUND_DEPENDENCY"
 CONFLICT_NO_COMPATIBLE_SLOT = "NO_COMPATIBLE_SLOT"
 
 
@@ -252,6 +253,85 @@ def is_slot_compatible_v2(
     return True, None, None
 
 
+def check_round_dependencies_for_auto_assign_v2(
+    session: Session,
+    match: Match,
+    slot: ScheduleSlot,
+    schedule_version_id: int,
+    assigned_match_ids: set
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Check round dependencies for auto-assign V2.
+    
+    Only checks assigned prerequisites - doesn't block Round N matches if Round N-1 matches
+    haven't been assigned yet (they'll be assigned in order).
+    
+    Returns: (is_valid, conflict_reason, conflict_details)
+    """
+    # Round 1 matches have no dependencies
+    if match.round_index is None or match.round_index <= 1:
+        return True, None, None
+    
+    # Find all prerequisite matches (Round N-1 in same event and stage)
+    prerequisite_round = match.round_index - 1
+    
+    prerequisite_matches = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == schedule_version_id,
+            Match.event_id == match.event_id,
+            Match.match_type == match.match_type,
+            Match.round_index == prerequisite_round
+        )
+    ).all()
+    
+    if not prerequisite_matches:
+        # No prerequisites found - allow assignment
+        return True, None, None
+    
+    # Calculate target slot start time in minutes
+    slot_start_minutes = slot.start_time.hour * 60 + slot.start_time.minute if slot.start_time else 0
+    
+    # Check each prerequisite match - ALL must be assigned and finished
+    # (Auto-assign processes matches in order, so this should normally be satisfied)
+    for prereq_match in prerequisite_matches:
+        if prereq_match.id not in assigned_match_ids:
+            # ALL Round N-1 matches must be assigned before ANY Round N match can be scheduled
+            return False, CONFLICT_ROUND_DEPENDENCY, {
+                "prerequisite_match": prereq_match.match_code,
+                "prerequisite_round": prerequisite_round,
+                "reason": f"Cannot place Match: Round {match.round_index} cannot start before a Round {prerequisite_round} Match"
+            }
+        
+        # Get prerequisite assignment
+        prereq_assignment = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == schedule_version_id,
+                MatchAssignment.match_id == prereq_match.id
+            )
+        ).first()
+        
+        if not prereq_assignment:
+            continue
+        
+        prereq_slot = session.get(ScheduleSlot, prereq_assignment.slot_id)
+        if not prereq_slot or not prereq_slot.start_time:
+            continue
+        
+        # Calculate prerequisite match end time
+        prereq_start_minutes = prereq_slot.start_time.hour * 60 + prereq_slot.start_time.minute
+        prereq_end_minutes = prereq_start_minutes + prereq_match.duration_minutes
+        
+        # Check if prerequisite ends before target start
+        if prereq_end_minutes > slot_start_minutes:
+            return False, CONFLICT_ROUND_DEPENDENCY, {
+                "prerequisite_match": prereq_match.match_code,
+                "prerequisite_round": prerequisite_round,
+                "reason": f"Cannot place Match: Round {match.round_index} cannot start before a Round {prerequisite_round} Match"
+            }
+    
+    return True, None, None
+
+
 # ============================================================================
 # V2 Main Algorithm
 # ============================================================================
@@ -297,13 +377,13 @@ def auto_assign_v2(
 
     # Step 1: Clear existing V2 assignments if requested
     if clear_existing:
-        existing_assignments = session.exec(
+        existing_assignments_to_clear = session.exec(
             select(MatchAssignment)
             .where(MatchAssignment.schedule_version_id == schedule_version_id)
             .where(MatchAssignment.assigned_by == "AUTO_ASSIGN_V2")
         ).all()
 
-        for assignment in existing_assignments:
+        for assignment in existing_assignments_to_clear:
             session.delete(assignment)
 
         session.flush()
@@ -327,12 +407,16 @@ def auto_assign_v2(
     # Step 4: Validate inputs (reuse V1 validation)
     validate_inputs(matches_sorted, slots_sorted, schedule_version_id)
 
-    # Step 5: Load existing assignments to track occupied slots
+    # Step 5: Load existing assignments to track occupied slots and locked matches
     existing_assignments = session.exec(
         select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
     ).all()
 
     occupied_slot_ids = {a.slot_id for a in existing_assignments}
+    
+    # Manual Schedule Editor: Track locked assignments
+    # Locked matches should NOT be reassigned by auto-assign (admin overrides)
+    locked_match_ids = {a.match_id for a in existing_assignments if a.locked}
 
     # Step 6: Initialize V2 team tracker
     team_tracker = TeamAssignmentTracker()
@@ -355,7 +439,12 @@ def auto_assign_v2(
                     team_tracker.add_assignment(team_ids, slot_for_tracking, match_for_tracking.duration_minutes)
 
     # Step 7: V2 assignment loop with constraint checking
+    assigned_match_ids = set()
     for match in matches_sorted:
+        # Manual Schedule Editor: Skip locked matches (admin has manually assigned them)
+        if match.id in locked_match_ids:
+            continue
+        
         assigned = False
         conflicts_for_match = []
 
@@ -366,6 +455,20 @@ def auto_assign_v2(
             )
 
             if compatible:
+                # Check round dependencies
+                round_deps_ok, round_deps_reason, round_deps_details = check_round_dependencies_for_auto_assign_v2(
+                    session, match, slot, schedule_version_id, assigned_match_ids
+                )
+                if not round_deps_ok:
+                    # Track conflict for reporting
+                    conflict_record = {
+                        "slot_id": slot.id,
+                        "slot_time": f"{slot.day_date} {slot.start_time}" if slot.day_date and slot.start_time else "N/A",
+                        "reason": round_deps_reason,
+                        "details": round_deps_details or {},
+                    }
+                    conflicts_for_match.append(conflict_record)
+                    continue
                 # Create assignment
                 assignment = MatchAssignment(
                     schedule_version_id=schedule_version_id,
@@ -378,6 +481,7 @@ def auto_assign_v2(
 
                 # Mark slot as occupied
                 occupied_slot_ids.add(slot.id)
+                assigned_match_ids.add(match.id)
 
                 # Update team tracker
                 team_ids = []

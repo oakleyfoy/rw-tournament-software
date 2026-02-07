@@ -77,8 +77,11 @@ export function MatchRuntimeModal({
         score: score ?? undefined,
         winner_team_id: winnerTeamId ?? undefined,
       };
-      await updateMatchRuntime(tournamentId, match.match_id, payload);
-      showToast('Runtime updated', 'success');
+      const res = await updateMatchRuntime(tournamentId, match.match_id, payload);
+      const advMsg = res.advanced_count > 0
+        ? ` Advanced: ${res.advanced_count} downstream match(es).`
+        : '';
+      showToast(`Runtime updated.${advMsg}`, 'success');
       onSave();
       onClose();
     } catch (err) {

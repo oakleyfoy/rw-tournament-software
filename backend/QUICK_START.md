@@ -28,9 +28,17 @@ All tests should pass. This verifies:
 
 ## Step 4: Start the Server
 
-```bash
-uvicorn app.main:app --reload
-```
+From the `backend` folder you can:
+
+**Start (first time or after closing):**
+- Double-click `start_server.bat`, or
+- In a terminal: `uvicorn app.main:app --reload`
+
+**Restart (e.g. after code changes so the new code is loaded):**
+- Double-click `restart_server.bat`  
+  This stops whatever is using port 8000 and starts the server again. Use this when you’ve changed backend code and want to be sure the new version is running.
+
+If the server is already running in a terminal, you can instead press **Ctrl+C** there, then run `start_server.bat` or `uvicorn app.main:app --reload` again.
 
 ## Step 5: Test Manually
 

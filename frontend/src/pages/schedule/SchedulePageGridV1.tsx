@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useScheduleGrid } from './hooks/useScheduleGrid'
 import { ScheduleHeader } from './components/ScheduleHeader'
-import { ScheduleBuildPanel } from './components/ScheduleBuildPanel'
+import { SchedulePhasedPanel } from './components/SchedulePhasedPanel'
 import { AutoAssignAssistPanel } from './components/AutoAssignAssistPanel'
 import { ScheduleSummaryPanel } from './components/ScheduleSummaryPanel'
 import { ScheduleGridV1Viewer } from './components/ScheduleGridV1'
@@ -24,9 +24,7 @@ function SchedulePageGridV1() {
     gridData,
     buildSummary,
     loading,
-    building,
     createDraft,
-    buildSchedule,
     finalizeDraft,
     cloneFinalToDraft,
     setActiveVersion,
@@ -78,11 +76,15 @@ function SchedulePageGridV1() {
         onFinalize={finalizeDraft}
       />
 
-      <ScheduleBuildPanel
+      <SchedulePhasedPanel
+        tournamentId={tournamentId}
         activeVersion={activeVersion}
-        building={building}
-        onBuild={buildSchedule}
         onCreateDraft={createDraft}
+        onRefresh={refresh}
+        slotsCount={gridData?.conflicts_summary?.total_slots ?? 0}
+        matchesCount={gridData?.conflicts_summary?.total_matches ?? 0}
+        assignedCount={gridData?.conflicts_summary?.assigned_matches ?? 0}
+        unassignedCount={gridData?.conflicts_summary?.unassigned_matches ?? 0}
       />
 
       <AutoAssignAssistPanel

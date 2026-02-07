@@ -109,7 +109,9 @@ class GroupingResult:
         self.conflicted_pairs = conflicted_pairs
 
 
-def assign_wf_groups_v1(session: Session, event_id: int, clear_existing: bool = True) -> GroupingResult:
+def assign_wf_groups_v1(
+    session: Session, event_id: int, clear_existing: bool = True, *, _transactional: bool = False
+) -> GroupingResult:
     """
     Assign teams to WF groups using conflict-minimizing algorithm.
 
@@ -133,6 +135,8 @@ def assign_wf_groups_v1(session: Session, event_id: int, clear_existing: bool = 
     Returns:
         GroupingResult with diagnostics
     """
+    assert session.in_transaction(), "WF grouping must run inside active transaction"
+
     # Validate event exists
     event = session.get(Event, event_id)
     if not event:
@@ -144,7 +148,10 @@ def assign_wf_groups_v1(session: Session, event_id: int, clear_existing: bool = 
         for team in teams_to_clear:
             team.wf_group_index = None
             session.add(team)
-        session.commit()
+        if _transactional:
+            session.flush()
+        else:
+            session.commit()
 
     # Load teams in deterministic order
     teams = session.exec(
@@ -235,7 +242,10 @@ def assign_wf_groups_v1(session: Session, event_id: int, clear_existing: bool = 
             team.wf_group_index = best_group_index
             session.add(team)
 
-    session.commit()
+    if _transactional:
+        session.flush()
+    else:
+        session.commit()
 
     # Compute diagnostics
     total_internal_conflicts = 0

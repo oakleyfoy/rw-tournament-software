@@ -531,7 +531,9 @@ function TournamentSetup() {
     try {
       await updateTournament(tournament.id, { use_time_windows: useTimeWindows })
       setTournament({ ...tournament, use_time_windows: useTimeWindows })
-      
+
+      await loadPhase1Status()
+
       if (useTimeWindows) {
         await loadTimeWindows()
         await loadTimeWindowSummary()

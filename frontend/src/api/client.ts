@@ -152,6 +152,12 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {
       // If JSON parsing fails, use default message
     }
+    if (response.status === 500) {
+      if (errorDetail?.detail && typeof errorDetail.detail === 'string') {
+        errorMessage = errorDetail.detail;
+      }
+      errorMessage += ` (${url.replace(/^.*\/api/, '/api')})`;
+    }
     // Log the failed URL for debugging
     console.error(`API call failed: ${response.status} ${response.statusText}`, {
       url,
@@ -163,6 +169,7 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     const error = new Error(errorMessage) as any;
     error.status = response.status;
     error.detail = errorDetail;
+    error.url = url;
     throw error;
   }
 
@@ -317,6 +324,37 @@ export async function finalizeDrawPlan(eventId: number, guaranteeSelected: numbe
   });
 }
 
+// Schedule Builder — authoritative match inventory (read-only)
+export interface ScheduleBuilderEvent {
+  event_id: number;
+  event_name: string;
+  division: string;
+  team_count: number;
+  template_type: string;
+  guarantee: number;
+  waterfall_rounds: number;
+  wf_matches: number;
+  bracket_matches: number;
+  round_robin_matches: number;
+  match_lengths: { waterfall: number; standard: number };
+  total_matches: number;
+  /** Stage breakdown: WF, RR_POOL, BRACKET_MAIN, CONSOLATION_T1, CONSOLATION_T2, PLACEMENT */
+  counts_by_stage?: Record<string, number>;
+  status?: string;
+  is_finalized?: boolean;
+  error?: string;
+  warning?: string;
+}
+
+export interface ScheduleBuilderResponse {
+  tournament_id: number;
+  events: ScheduleBuilderEvent[];
+}
+
+export async function getScheduleBuilder(tournamentId: number): Promise<ScheduleBuilderResponse> {
+  return fetchJson<ScheduleBuilderResponse>(`${API_BASE_URL}/tournaments/${tournamentId}/schedule-builder`);
+}
+
 // Time Windows interfaces and functions
 export interface TimeWindow {
   id: number;
@@ -467,6 +505,20 @@ export async function createScheduleVersion(tournamentId: number, payload?: Sche
   });
 }
 
+export interface ActiveVersionResponse {
+  schedule_version_id: number
+  status: string
+  created_at: string | null
+  none_found: boolean
+}
+
+/** Canonical active draft version — backend source of truth. */
+export async function getActiveScheduleVersion(tournamentId: number): Promise<ActiveVersionResponse> {
+  return fetchJson<ActiveVersionResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/active`
+  )
+}
+
 export async function finalizeScheduleVersion(tournamentId: number, versionId: number): Promise<ScheduleVersion> {
   return fetchJson<ScheduleVersion>(`${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/finalize`, {
     method: 'POST',
@@ -508,13 +560,16 @@ export interface MatchGenerateRequest {
   wipe_existing?: boolean;
 }
 
+/** Calls orchestrator build endpoint — match generation only allowed via build. */
 export async function generateMatches(tournamentId: number, payload?: MatchGenerateRequest): Promise<{ schedule_version_id: number; total_matches_created: number; per_event: Record<number, { event_name: string; matches: number }> }> {
-  // If payload is empty or undefined, send empty object to let backend derive version_id
-  const body = payload && Object.keys(payload).length > 0 ? payload : {};
-  return fetchJson<{ schedule_version_id: number; total_matches_created: number; per_event: Record<number, { event_name: string; matches: number }> }>(`${API_BASE_URL}/tournaments/${tournamentId}/schedule/matches/generate`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  const versionId = payload?.schedule_version_id;
+  if (!versionId) throw new Error('schedule_version_id required');
+  const result = await buildScheduleVersion(tournamentId, versionId);
+  return {
+    schedule_version_id: versionId,
+    total_matches_created: result.matches_created,
+    per_event: {}, // build returns aggregate; per_event not needed for UI
+  };
 }
 
 export async function getMatches(tournamentId: number, scheduleVersionId?: number, eventId?: number, status?: string): Promise<Match[]> {
@@ -625,6 +680,12 @@ export interface MatchRuntimeUpdate {
   winner_team_id?: number | null;
 }
 
+/** PATCH runtime response: match state + advancement count when finalized */
+export interface MatchRuntimeUpdateResponse {
+  match: MatchRuntimeState;
+  advanced_count: number;
+}
+
 export async function getVersionRuntimeMatches(
   tournamentId: number,
   scheduleVersionId: number
@@ -638,8 +699,8 @@ export async function updateMatchRuntime(
   tournamentId: number,
   matchId: number,
   payload: MatchRuntimeUpdate
-): Promise<MatchRuntimeState> {
-  return fetchJson<MatchRuntimeState>(
+): Promise<MatchRuntimeUpdateResponse> {
+  return fetchJson<MatchRuntimeUpdateResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/runtime/matches/${matchId}`,
     { method: 'PATCH', body: JSON.stringify(payload) }
   );
@@ -660,66 +721,270 @@ export interface BuildScheduleResponse {
   warnings?: { message: string; count: number }[]
 }
 
-/** POST /api/tournaments/{tournamentId}/schedule/versions/{versionId}/build — Auto-Assign V2 (respects locked). */
+/** Full build response from backend (orchestrator returns summary object). */
+interface BuildFullScheduleResponseRaw {
+  status: string
+  schedule_version_id: number
+  summary?: {
+    slots_generated?: number
+    matches_generated?: number
+    assignments_created?: number
+    unassigned_matches?: number
+  }
+  warnings?: { message: string; count?: number; code?: string }[]
+  conflicts?: unknown
+}
+
+/** POST /api/tournaments/{tournamentId}/schedule/versions/{versionId}/build — One-click build (orchestrator). */
 export async function buildScheduleVersion(tournamentId: number, versionId: number): Promise<BuildScheduleResponse> {
-  return fetchJson<BuildScheduleResponse>(
+  const raw = await fetchJson<BuildFullScheduleResponseRaw>(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/build`,
     { method: 'POST' }
-  );
+  )
+  // Normalize orchestrator response (summary.*) to flat BuildScheduleResponse for UI
+  if (raw.summary != null && (raw as unknown as BuildScheduleResponse).slots_created === undefined) {
+    return {
+      schedule_version_id: raw.schedule_version_id,
+      slots_created: raw.summary.slots_generated ?? 0,
+      matches_created: raw.summary.matches_generated ?? 0,
+      matches_assigned: raw.summary.assignments_created ?? 0,
+      matches_unassigned: raw.summary.unassigned_matches ?? 0,
+      conflicts: undefined,
+      warnings: raw.warnings?.map((w) => ({ message: (w as { message?: string }).message ?? String(w), count: (w as { count?: number }).count ?? 1 })),
+    }
+  }
+  return raw as unknown as BuildScheduleResponse
 }
 
 export async function buildSchedule(tournamentId: number, versionId: number): Promise<BuildScheduleResponse> {
-  // Try the single build endpoint first (if implemented)
-  try {
-    return await buildScheduleVersion(tournamentId, versionId);
-  } catch (err: any) {
-    // Only fallback on 404 (endpoint not found), not on 500/400/422 (business logic errors)
-    const status = err?.status;
-    const is404 = status === 404;
-    
-    if (is404) {
-      // Build endpoint not implemented yet, use fallback: sequential calls
-      console.log('Build endpoint not available (404), using sequential calls');
-    } else {
-      // Re-throw other errors (500, 400, 422, etc.) - these are real errors
-      throw err;
-    }
-    
-    // Generate slots
-    console.log('Generating slots...');
-    const slotsResult = await generateSlots(tournamentId, {
-      source: 'auto',
-      schedule_version_id: versionId,
-      wipe_existing: true,
-    });
-    console.log(`Generated ${slotsResult.slots_created} slots`);
-    
-    // Generate matches
-    console.log('Generating matches...');
-    const matchesResult = await generateMatches(tournamentId, {
-      schedule_version_id: versionId,
-      wipe_existing: true,
-    });
-    console.log(`Generated ${matchesResult.total_matches_created} matches`);
-    
-    // Get slots and matches to calculate assignments
-    console.log('Loading slots and matches...');
-    const [, matches] = await Promise.all([
-      getSlots(tournamentId, versionId),
-      getMatches(tournamentId, versionId),
-    ]);
-    
-    const assignedCount = matches.filter(m => m.status === 'scheduled').length;
-    const unassignedCount = matches.filter(m => m.status === 'unscheduled').length;
-    
-    return {
-      schedule_version_id: versionId,
-      slots_created: slotsResult.slots_created,
-      matches_created: matchesResult.total_matches_created,
-      matches_assigned: assignedCount,
-      matches_unassigned: unassignedCount,
-    };
+  return await buildScheduleVersion(tournamentId, versionId);
+}
+
+// Phase Flow V1 - Match Preview, Generate Matches/Slots Only, Assign by Scope
+export interface MatchPreviewItem {
+  id: number
+  event_id: number
+  match_code: string
+  stage: string
+  round_number: number
+  round_index: number
+  sequence_in_round: number
+  match_type: string
+  consolation_tier: number | null
+  duration_minutes: number
+  placeholder_side_a: string
+  placeholder_side_b: string
+  team_a_id: number | null
+  team_b_id: number | null
+}
+
+export interface MatchPreviewDiagnostics {
+  requested_version_id: number
+  matches_found: number
+  grid_reported_matches_for_version: number
+  likely_version_mismatch: boolean
+  event_ids_present?: number[]
+  event_counts_by_id?: Record<string, number>
+}
+
+export interface MatchPreviewResponse {
+  matches: MatchPreviewItem[]
+  counts_by_event: Record<string, number>
+  counts_by_stage: Record<string, number>
+  /** event_id (as string key) -> event name */
+  event_names_by_id?: Record<string, string>
+  duplicate_codes: string[]
+  ordering_checksum: string
+  diagnostics: MatchPreviewDiagnostics
+}
+
+export async function getMatchesPreview(
+  tournamentId: number,
+  versionId: number
+): Promise<MatchPreviewResponse> {
+  return fetchJson<MatchPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/matches/preview`
+  )
+}
+
+/** Alias for clarity. */
+export const getMatchCardsPreview = getMatchesPreview
+
+/**
+ * Fetch match cards for review. Uses preview endpoint first; if it returns
+ * empty matches, falls back to getMatches (ensures page never shows empty
+ * when matches actually exist).
+ */
+export async function getMatchCardsPreviewWithFallback(
+  tournamentId: number,
+  versionId: number
+): Promise<MatchPreviewResponse> {
+  const preview = await getMatchesPreview(tournamentId, versionId)
+  if (preview.matches.length > 0) return preview
+
+  const matches = await getMatches(tournamentId, versionId)
+  if (matches.length === 0) return preview
+
+  const codes = matches.map((m) => m.match_code)
+  const seen: Record<string, number> = {}
+  const duplicate_codes: string[] = []
+  for (const c of codes) {
+    seen[c] = (seen[c] ?? 0) + 1
   }
+  for (const [c, cnt] of Object.entries(seen)) {
+    if (cnt > 1) duplicate_codes.push(...Array(cnt - 1).fill(c))
+  }
+
+  const eventCounts: Record<string, number> = {}
+  const stageCounts: Record<string, number> = {}
+  for (const m of matches) {
+    eventCounts[String(m.event_id)] = (eventCounts[String(m.event_id)] ?? 0) + 1
+    stageCounts[m.match_type] = (stageCounts[m.match_type] ?? 0) + 1
+  }
+
+  const sorted = [...matches].sort(
+    (a, b) =>
+      (a.event_id - b.event_id) ||
+      (a.match_type.localeCompare(b.match_type)) ||
+      ((a.round_index ?? 0) - (b.round_index ?? 0)) ||
+      ((a.sequence_in_round ?? 0) - (b.sequence_in_round ?? 0)) ||
+      (a.match_code.localeCompare(b.match_code)) ||
+      ((a.id ?? 0) - (b.id ?? 0))
+  )
+
+  const checksum = Array.from(codes.join(',')).reduce(
+    (h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0,
+    0
+  ).toString(16).slice(0, 16)
+
+  return {
+    matches: sorted.map((m) => ({
+      id: m.id,
+      event_id: m.event_id,
+      match_code: m.match_code,
+      stage: m.match_type,
+      round_number: m.round_number,
+      round_index: (m as { round_index?: number }).round_index ?? 0,
+      sequence_in_round: m.sequence_in_round ?? 0,
+      match_type: m.match_type,
+      duration_minutes: m.duration_minutes,
+      placeholder_side_a: m.placeholder_side_a,
+      placeholder_side_b: m.placeholder_side_b,
+      team_a_id: (m as { team_a_id?: number | null }).team_a_id ?? null,
+      team_b_id: (m as { team_b_id?: number | null }).team_b_id ?? null,
+    })),
+    counts_by_event: eventCounts,
+    counts_by_stage: stageCounts,
+    event_names_by_id: {},
+    duplicate_codes: [...new Set(duplicate_codes)],
+    ordering_checksum: checksum,
+    diagnostics: {
+      requested_version_id: versionId,
+      matches_found: matches.length,
+      grid_reported_matches_for_version: matches.length,
+      likely_version_mismatch: false,
+    },
+  }
+}
+
+export interface EventExpectedItem {
+  event_id: number
+  event_name: string
+  expected: number
+  existing_before: number
+  generated_added: number
+  decision?: string
+  reason?: string
+}
+
+export interface MatchesGenerateOnlyResponse {
+  matches_generated: number
+  already_generated: boolean
+  debug_stamp: string
+  trace_id?: string
+  seen_event_ids?: number[]
+  finalized_event_ids?: number[]
+  events_included?: string[]
+  events_skipped?: string[]
+  events_not_finalized?: string[]
+  finalized_events_found?: string[]
+  events_expected?: EventExpectedItem[]
+  already_complete?: boolean
+}
+
+export interface MatchesGenerateOnlyOptions {
+  wipeExisting?: boolean
+}
+
+export async function generateMatchesOnly(
+  tournamentId: number,
+  versionId: number,
+  options?: MatchesGenerateOnlyOptions
+): Promise<MatchesGenerateOnlyResponse> {
+  return fetchJson<MatchesGenerateOnlyResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/matches/generate`,
+    {
+      method: 'POST',
+      body: options?.wipeExisting ? JSON.stringify({ wipe_existing: true }) : undefined,
+    }
+  )
+}
+
+export interface WipeMatchesResponse {
+  deleted_matches: number
+}
+
+export async function wipeScheduleVersionMatches(
+  tournamentId: number,
+  versionId: number
+): Promise<WipeMatchesResponse> {
+  return fetchJson<WipeMatchesResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/matches`,
+    {
+      method: 'DELETE',
+    }
+  )
+}
+
+export interface SlotsGenerateOnlyResponse {
+  slots_generated: number
+  already_generated: boolean
+  debug_stamp: string
+}
+
+export async function generateSlotsOnly(
+  tournamentId: number,
+  versionId: number
+): Promise<SlotsGenerateOnlyResponse> {
+  return fetchJson<SlotsGenerateOnlyResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/slots/generate`,
+    { method: 'POST' }
+  )
+}
+
+export interface AssignScopeResponse {
+  assigned_count: number
+  unassigned_count_remaining_in_scope: number
+  debug_stamp: string
+}
+
+export async function assignByScope(
+  tournamentId: number,
+  versionId: number,
+  scope: 'WF_R1' | 'WF_R2' | 'RR_POOL' | 'BRACKET_MAIN' | 'ALL',
+  options?: { event_id?: number; clear_existing_assignments_in_scope?: boolean }
+): Promise<AssignScopeResponse> {
+  return fetchJson<AssignScopeResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/assign`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        scope,
+        event_id: options?.event_id ?? null,
+        clear_existing_assignments_in_scope: options?.clear_existing_assignments_in_scope ?? false,
+      }),
+    }
+  )
 }
 
 // Conflicts Report V1 (Phase 3D)
@@ -776,12 +1041,30 @@ export interface OrderingIntegrity {
   violations: OrderingViolation[];
 }
 
+export interface TeamConflictDetail {
+  match_id: number;
+  match_code: string;
+  slot_id: number;
+  team_id: number;
+  conflicting_match_id: number;
+  conflicting_match_code: string;
+  conflicting_slot_id: number;
+  details: string;
+}
+
+export interface TeamConflictsSummary {
+  known_team_conflicts_count: number;
+  unknown_team_matches_count: number;
+  conflicts: TeamConflictDetail[];
+}
+
 export interface ConflictReportV1 {
   summary: ConflictReportSummary;
   unassigned_matches: UnassignedMatchDetail[];
   slot_pressure: SlotPressure[];
   stage_timeline: StageTimeline[];
   ordering_integrity: OrderingIntegrity;
+  team_conflicts?: TeamConflictsSummary;
 }
 
 export async function getConflicts(
@@ -796,6 +1079,17 @@ export async function getConflicts(
   }
   return fetchJson<ConflictReportV1>(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/conflicts?${params.toString()}`
+  );
+}
+
+export async function getTeamConflicts(
+  tournamentId: number,
+  scheduleVersionId: number
+): Promise<TeamConflictsSummary> {
+  const params = new URLSearchParams();
+  params.append('schedule_version_id', scheduleVersionId.toString());
+  return fetchJson<TeamConflictsSummary>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/team-conflicts?${params.toString()}`
   );
 }
 

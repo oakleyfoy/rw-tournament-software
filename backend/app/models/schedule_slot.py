@@ -2,6 +2,7 @@ from datetime import date, time
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import UniqueConstraint as SAUniqueConstraint
+from sqlalchemy.orm import validates
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -25,6 +26,17 @@ class ScheduleSlot(SQLModel, table=True):
     end_time: time
     court_number: int
     court_label: str  # Label from tournament.court_names (immutable per version)
+
+    @validates("court_label")
+    def validate_court_label(self, key: str, value: object) -> object:
+        """Ensure court_label is always stored as a string (SQLite cannot bind list)."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return ",".join(str(x) for x in value)
+        return str(value)
     block_minutes: int
     label: Optional[str] = None
     is_active: bool = Field(default=True)

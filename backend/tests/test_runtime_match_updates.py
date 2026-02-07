@@ -97,9 +97,10 @@ def test_set_in_progress_sets_started_at(client: TestClient, session: Session, t
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["runtime_status"] == "IN_PROGRESS"
-    assert data["started_at"] is not None
-    assert data["completed_at"] is None
+    m = data["match"]
+    assert m["runtime_status"] == "IN_PROGRESS"
+    assert m["started_at"] is not None
+    assert m["completed_at"] is None
 
     match = session.get(Match, mid)
     assert match.runtime_status == "IN_PROGRESS"
@@ -118,9 +119,10 @@ def test_set_final_with_winner_sets_completed_at(client: TestClient, session: Se
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["runtime_status"] == "FINAL"
-    assert data["winner_team_id"] == winner_id
-    assert data["completed_at"] is not None
+    m = data["match"]
+    assert m["runtime_status"] == "FINAL"
+    assert m["winner_team_id"] == winner_id
+    assert m["completed_at"] is not None
 
     match = session.get(Match, mid)
     assert match.runtime_status == "FINAL"

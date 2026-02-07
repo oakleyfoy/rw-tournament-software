@@ -1,26 +1,21 @@
 @echo off
+cd /d "%~dp0"
 echo ========================================
-echo RW Tournament Software - Server Restart
+echo RW Tournament Software - Restart Backend
 echo ========================================
 echo.
 
-echo [1/3] Forcefully stopping all Python processes...
-taskkill /F /IM python.exe /T >nul 2>&1
-taskkill /F /IM pythonw.exe /T >nul 2>&1
-powershell -Command "Get-Process | Where-Object {$_.ProcessName -like '*python*'} | Stop-Process -Force -ErrorAction SilentlyContinue" >nul 2>&1
-echo All Python processes stopped
-
-echo.
-echo [2/3] Forcefully stopping processes on port 8000...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000') do (
-    echo Killing process %%a
+echo [1/2] Stopping whatever is using port 8000...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') do (
+    echo   Stopping process PID %%a
     taskkill /F /PID %%a >nul 2>&1
 )
-powershell -Command "netstat -ano | findstr :8000 | ForEach-Object { $parts = $_ -split '\s+'; if ($parts[-1] -match '^\d+$') { taskkill /F /PID $parts[-1] 2>$null } }" >nul 2>&1
-echo Port 8000 cleared
-
+powershell -Command "$pids = (Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue).OwningProcess | Sort-Object -Unique; foreach ($p in $pids) { if ($p -gt 0) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue } }" >nul 2>&1
+timeout /t 2 /nobreak >nul
+echo   Port 8000 cleared.
 echo.
-echo [3/3] Starting backend server...
+
+echo [2/2] Starting backend server...
 echo.
 echo Server will be available at:
 echo   http://localhost:8000

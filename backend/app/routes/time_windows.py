@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models.tournament import Tournament
 from app.models.tournament_time_window import TournamentTimeWindow
+from app.services.capacity_resolver import resolve_tournament_capacity
 
 router = APIRouter()
 
@@ -164,10 +165,20 @@ def delete_time_window(window_id: int, session: Session = Depends(get_session)):
 
 @router.get("/tournaments/{tournament_id}/time-windows/summary", response_model=TimeWindowSummary)
 def get_time_windows_summary(tournament_id: int, session: Session = Depends(get_session)):
-    """Get summary of time windows capacity"""
+    """Get summary of time windows capacity. When Advanced, total comes from single capacity resolver (matches Phase 1)."""
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+
+    use_time_windows = session.exec(
+        select(Tournament.use_time_windows).where(Tournament.id == tournament_id)
+    ).one()
+
+    if use_time_windows:
+        capacity = resolve_tournament_capacity(session, tournament_id)
+        total_capacity_minutes = capacity.total_court_minutes
+    else:
+        total_capacity_minutes = 0
 
     windows = session.exec(
         select(TournamentTimeWindow).where(
@@ -175,18 +186,13 @@ def get_time_windows_summary(tournament_id: int, session: Session = Depends(get_
         )
     ).all()
 
-    total_capacity_minutes = 0
     slot_capacity_by_block: Dict[int, int] = {60: 0, 90: 0, 105: 0, 120: 0}
-
     for window in windows:
         duration_minutes = calculate_window_duration_minutes(window.start_time, window.end_time)
-        window_capacity_minutes = duration_minutes * window.courts_available
-        total_capacity_minutes += window_capacity_minutes
-
-        # Calculate slots in this window
-        slots_in_window = (duration_minutes // window.block_minutes) * window.courts_available
-        if window.block_minutes in slot_capacity_by_block:
-            slot_capacity_by_block[window.block_minutes] += slots_in_window
+        if use_time_windows:
+            slots_in_window = (duration_minutes // window.block_minutes) * window.courts_available
+            if window.block_minutes in slot_capacity_by_block:
+                slot_capacity_by_block[window.block_minutes] += slots_in_window
 
     total_slots_all_blocks = sum(slot_capacity_by_block.values())
 

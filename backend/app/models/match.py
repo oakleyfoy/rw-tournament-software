@@ -39,6 +39,12 @@ class Match(SQLModel, table=True):
     # Day-Targeting V1: Preferred day of week (0=Monday, 6=Sunday)
     preferred_day: Optional[int] = Field(default=None)  # 0-6 or null
 
+    # Phase 4 advancement: upstream match → team slot (deterministic; WF/MAIN bracket)
+    source_match_a_id: Optional[int] = Field(default=None, foreign_key="match.id")
+    source_match_b_id: Optional[int] = Field(default=None, foreign_key="match.id")
+    source_a_role: Optional[str] = Field(default=None)  # "WINNER" | "LOSER" (MVP: WINNER only)
+    source_b_role: Optional[str] = Field(default=None)
+
     status: str = Field(default="unscheduled")  # "unscheduled" | "scheduled" | "complete" | "cancelled"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

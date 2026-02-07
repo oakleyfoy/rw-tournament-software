@@ -229,6 +229,25 @@ def test_build_schedule_success(client: TestClient, session: Session, setup_tour
     assert isinstance(data["warnings"], list)
 
 
+def test_build_schedule_all_slot_court_labels_are_strings(client: TestClient, session: Session, setup_tournament):
+    """Regression: full Build Schedule must never bind a list to court_label."""
+    setup = setup_tournament
+    tournament_id = setup["tournament_id"]
+    version_id = setup["version_id"]
+
+    response = client.post(
+        f"/api/tournaments/{tournament_id}/schedule/versions/{version_id}/build?clear_existing=true"
+    )
+    assert response.status_code == 200, response.text
+
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
+    assert len(slots) > 0
+    for slot in slots:
+        assert isinstance(slot.court_label, str), (
+            f"court_label must be str, got {type(slot.court_label).__name__} for slot id={slot.id}"
+        )
+
+
 def test_idempotency(client: TestClient, session: Session, setup_tournament):
     """Test that running build twice produces identical results"""
     setup = setup_tournament
@@ -289,15 +308,25 @@ def test_wf_grouping_conditional(client: TestClient, session: Session, setup_tou
     assert team2.wf_group_index is not None
 
 
-def test_no_teams_warning(client: TestClient, session: Session):
-    """Test that missing teams produces warning, not failure"""
-    # Create tournament without teams
+def test_inject_teams_is_ignored_by_route_guard(client: TestClient, session: Session):
+    """Route forces inject_teams=False; even ?inject_teams=true must not produce injection warnings."""
     tournament = Tournament(
         name="No Teams Test", location="Test", timezone="UTC", start_date=date(2026, 1, 15), end_date=date(2026, 1, 15)
     )
     session.add(tournament)
     session.commit()
     session.refresh(tournament)
+
+    day = TournamentDay(
+        tournament_id=tournament.id,
+        date=date(2026, 1, 15),
+        is_active=True,
+        start_time=time(9, 0),
+        end_time=time(18, 0),
+        courts_available=2,
+    )
+    session.add(day)
+    session.commit()
 
     version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
     session.add(version)
@@ -308,23 +337,74 @@ def test_no_teams_warning(client: TestClient, session: Session):
         tournament_id=tournament.id,
         name="Empty Event",
         category="mixed",
-        team_count=0,
-        draw_plan_json='{"template_type":"WF_TO_POOLS_4"}',
-        draw_status="draft",
+        team_count=4,
+        draw_plan_json='{"template_type":"RR_ONLY","wf_rounds":0}',
+        draw_status="final",
     )
     session.add(event)
     session.commit()
 
-    # Build schedule
-    response = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/build")
+    # Call build with ?inject_teams=true — route guard clamps to False
+    response = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/build?inject_teams=true")
 
     assert response.status_code == 200
     data = response.json()
 
-    # Should have warning about no teams
+    # Build must still succeed
+    assert data.get("status") == "success"
+
+    # No injection-related warnings (injection is disabled at route level)
+    warnings = data.get("warnings", [])
+    injection_warnings = [w for w in warnings if w.get("code") in ("NO_TEAMS_FOR_EVENT", "TEAM_INJECTION_FAILED")]
+    assert not injection_warnings, f"Route guard should prevent injection; got: {injection_warnings}"
+
+
+def test_no_teams_no_warning_with_inject_teams_false(client: TestClient, session: Session):
+    """Test that inject_teams=False skips injection silently (no warning)"""
+    tournament = Tournament(
+        name="No Teams Test 2", location="Test", timezone="UTC", start_date=date(2026, 1, 16), end_date=date(2026, 1, 16)
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    day = TournamentDay(
+        tournament_id=tournament.id,
+        date=date(2026, 1, 16),
+        is_active=True,
+        start_time=time(9, 0),
+        end_time=time(18, 0),
+        courts_available=2,
+    )
+    session.add(day)
+    session.commit()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Empty Event 2",
+        category="mixed",
+        team_count=4,
+        draw_plan_json='{"template_type":"RR_ONLY","wf_rounds":0}',
+        draw_status="final",
+    )
+    session.add(event)
+    session.commit()
+
+    # Build schedule with inject_teams=False (default)
+    response = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/build?inject_teams=false")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should NOT have warning about no teams (inject_teams=False skips silently)
     warnings = data.get("warnings", [])
     has_no_teams_warning = any(w.get("code") == "NO_TEAMS_FOR_EVENT" for w in warnings)
-    assert has_no_teams_warning
+    assert not has_no_teams_warning, "inject_teams=False should not produce NO_TEAMS_FOR_EVENT warning"
 
 
 def test_composite_response_structure(client: TestClient, session: Session, setup_tournament):
@@ -433,3 +513,84 @@ def test_endpoint_returns_grid(client: TestClient, session: Session, setup_tourn
         assert "slots" in data["grid"]
         assert "matches" in data["grid"]
         assert "assignments" in data["grid"]
+
+
+def test_wf_to_pools_4_canonical_inventory_counts(client: TestClient, session: Session):
+    """
+    Canonical WF_TO_POOLS_4 inventory: 16 teams, 2 WF rounds, guarantee 5.
+    Assert: 40 matches total, WF R1=8, WF R2=8, pool RR=24.
+    Uses build_schedule (match generation only allowed via orchestrator).
+    """
+    tournament = Tournament(
+        name="Canonical WF Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 2, 20),
+        end_date=date(2026, 2, 22),
+        court_names=["Court 1", "Court 2"],
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    day = TournamentDay(
+        tournament_id=tournament.id,
+        date=date(2026, 2, 20),
+        is_active=True,
+        start_time=time(9, 0),
+        end_time=time(18, 0),
+        courts_available=2,
+    )
+    session.add(day)
+    session.commit()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Mixed",
+        category="mixed",
+        team_count=16,
+        draw_plan_json=json.dumps({"template_type": "WF_TO_POOLS_4", "wf_rounds": 2, "guarantee": 5}),
+        draw_status="final",
+        wf_block_minutes=60,
+        standard_block_minutes=105,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    for i in range(1, 17):
+        team = Team(event_id=event.id, name=f"Seed {i} Team", seed=i, rating=1000.0 + i)
+        session.add(team)
+    session.commit()
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/build?clear_existing=true",
+    )
+    assert resp.status_code == 200, resp.text
+    build_data = resp.json()
+    data = build_data.get("summary", {})
+    assert data.get("matches_generated") == 40, f"Expected 40 matches, got {data.get('matches_generated')}"
+
+    matches = session.exec(
+        select(Match).where(Match.schedule_version_id == version.id, Match.event_id == event.id)
+    ).all()
+
+    assert len(matches) == 40
+
+    wf_r1 = [m for m in matches if m.match_type == "WF" and m.round_number == 1]
+    wf_r2 = [m for m in matches if m.match_type == "WF" and m.round_number == 2]
+    pool_rr = [m for m in matches if m.match_type == "RR" and "POOL" in m.match_code and "RR" in m.match_code]
+
+    assert len(wf_r1) == 8, f"WF round 1: expected 8, got {len(wf_r1)}"
+    assert len(wf_r2) == 8, f"WF round 2: expected 8, got {len(wf_r2)}"
+    assert len(pool_rr) == 24, f"Pool RR: expected 24, got {len(pool_rr)}"
+
+    # R2 matches have dependency pointers
+    for m in wf_r2:
+        assert m.source_match_a_id is not None or m.source_match_b_id is not None
+        assert m.team_a_id is None and m.team_b_id is None
