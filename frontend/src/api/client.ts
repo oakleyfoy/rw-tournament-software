@@ -1481,10 +1481,12 @@ export interface FullPolicyRunResponse {
 
 export async function runFullPolicy(
   tournamentId: number,
-  versionId: number
+  versionId: number,
+  force: boolean = false
 ): Promise<FullPolicyRunResponse> {
+  const qs = force ? '?force=true' : ''
   return fetchJson<FullPolicyRunResponse>(
-    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/run-full-policy`,
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/run-full-policy${qs}`,
     { method: 'POST' }
   )
 }

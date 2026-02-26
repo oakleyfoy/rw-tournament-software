@@ -322,37 +322,59 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
       onRefresh()
       onInventoryAction?.('assigned')
     } catch (e: unknown) {
-      // Handle 409 invariant violation response
-      const err = e as { message?: string; response?: { status: number; json: () => Promise<{ detail: { message: string; invariant_report: { violations: Array<{ code: string; message: string }>; stats?: Record<string, number> } } }> } }
-      if (err?.response?.status === 409) {
-        try {
-          const body = await err.response.json()
-          const detail = body.detail
-          const violationCount = detail?.invariant_report?.violations?.length ?? 0
-          showToast(
-            `Schedule rolled back: ${violationCount} invariant violation(s). ${detail?.message || ''}`,
-            'error'
-          )
-          setLastFullPolicyResult({
-            total_assigned: 0,
-            total_failed: 0,
-            total_reserved_spares: 0,
-            duration_ms: null,
-            day_results: [],
-            invariant_ok: false,
-            invariant_violations: detail?.invariant_report?.violations,
-            invariant_stats: detail?.invariant_report?.stats as FullPolicyRunResponse['invariant_stats'],
-          })
-          setFullPolicyResultExpanded(true)
-        } catch {
-          showToast('Schedule rolled back due to invariant violations', 'error')
-        }
+      const err = e as { status?: number; detail?: { detail?: { message?: string; invariant_report?: { violations?: Array<{ code: string; message: string }>; stats?: Record<string, number> } } }; message?: string }
+      if (err?.status === 409 && err?.detail?.detail) {
+        const detail = err.detail.detail
+        const violationCount = detail?.invariant_report?.violations?.length ?? 0
+        showToast(
+          `Schedule rolled back: ${violationCount} invariant violation(s). ${detail?.message || ''}`,
+          'error'
+        )
+        setLastFullPolicyResult({
+          total_assigned: 0,
+          total_failed: 0,
+          total_reserved_spares: 0,
+          duration_ms: null,
+          day_results: [],
+          invariant_ok: false,
+          invariant_violations: detail?.invariant_report?.violations,
+          invariant_stats: detail?.invariant_report?.stats as FullPolicyRunResponse['invariant_stats'],
+        })
+        setFullPolicyResultExpanded(true)
       } else {
         showToast(
           e instanceof Error ? e.message : 'Full policy run failed',
           'error'
         )
       }
+    } finally {
+      setBusy(null)
+    }
+  }, [tournamentId, activeVersion, onRefresh, onInventoryAction])
+
+  const handleForceSchedule = useCallback(async () => {
+    if (!tournamentId || !activeVersion) return
+    if (!window.confirm('Force schedule ignoring invariant violations?\n\nThis will keep the placement even if rules are broken (e.g., team plays >2/day, fairness ordering, etc.).\n\nContinue?')) return
+    setBusy('Force Schedule')
+    try {
+      const result: FullPolicyRunResponse = await runFullPolicy(
+        tournamentId,
+        activeVersion.id,
+        true
+      )
+      setLastFullPolicyResult(result)
+      setFullPolicyResultExpanded(true)
+      showToast(
+        `Force scheduled: ${result.total_assigned} placed, ${result.total_failed} failed.${result.invariant_ok === false ? ' (violations ignored)' : ''}`,
+        result.invariant_ok === false ? 'warning' : 'success'
+      )
+      onRefresh()
+      onInventoryAction?.('assigned')
+    } catch (e: unknown) {
+      showToast(
+        e instanceof Error ? e.message : 'Force schedule failed',
+        'error'
+      )
     } finally {
       setBusy(null)
     }
@@ -950,6 +972,15 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
               title="Run policy placement for ALL days in one click"
             >
               {busy === 'Run Full Policy' ? 'Scheduling...' : 'Schedule Entire Tournament'}
+            </button>
+            <button
+              className="btn"
+              disabled={anyBusy}
+              onClick={handleForceSchedule}
+              style={{ fontSize: 14, fontWeight: 600, padding: '8px 20px', backgroundColor: '#e65100', color: '#fff', border: 'none' }}
+              title="Force schedule even if invariant violations are detected (will not roll back)"
+            >
+              {busy === 'Force Schedule' ? 'Forcing...' : 'Force Schedule'}
             </button>
             <button
               className="btn btn-info"

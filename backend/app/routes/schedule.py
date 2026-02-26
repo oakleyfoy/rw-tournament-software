@@ -3552,6 +3552,7 @@ class FullPolicyRunResponse(BaseModel):
 def run_full_policy(
     tournament_id: int,
     version_id: int,
+    force: bool = False,
     session: Session = Depends(get_session),
 ):
     """
@@ -3674,8 +3675,7 @@ def run_full_policy(
             ),
         }
 
-        if not report.ok:
-            # HARD STOP: rollback all assignments
+        if not report.ok and not force:
             snapshot = {
                 "input_hash": input_h,
                 "output_hash": output_h,
@@ -3688,7 +3688,6 @@ def run_full_policy(
                 "locks": locks_snapshot,
             }
 
-            # Persist the failed run snapshot before rollback
             policy_run = PolicyRun(
                 tournament_id=tournament_id,
                 schedule_version_id=version_id,
@@ -3702,13 +3701,8 @@ def run_full_policy(
                 duration_ms=result.duration_ms or 0,
                 snapshot_json=json.dumps(snapshot, default=str),
             )
-            # We need a separate connection for the audit log since we're
-            # about to rollback.  Use the session to store it first, then
-            # rollback won't include it if we use a nested transaction.
-            # Instead, just rollback and re-insert the audit row.
             session.rollback()
 
-            # Re-insert the failed run record after rollback
             session.add(policy_run)
             session.commit()
 
@@ -3722,6 +3716,12 @@ def run_full_policy(
                     "invariant_report": report.to_dict(),
                     "day_results": result.day_results,
                 },
+            )
+
+        if not report.ok and force:
+            logger.warning(
+                "run_full_policy: FORCE mode — %d invariant violations ignored for version %d",
+                len(report.violations), version_id,
             )
 
         # All invariants passed — persist snapshot and commit
