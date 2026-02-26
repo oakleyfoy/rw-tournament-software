@@ -56,6 +56,20 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
     return map
   }, [gridData])
 
+  const lockedMatchSet = useMemo(() => {
+    if (!gridData) return new Set<number>()
+    return new Set((gridData.match_locks ?? []).map(ml => ml.match_id))
+  }, [gridData])
+
+  const blockedSlotSet = useMemo(() => {
+    if (!gridData) return new Set<number>()
+    return new Set(
+      (gridData.slot_locks ?? [])
+        .filter(sl => sl.status === 'BLOCKED')
+        .map(sl => sl.slot_id)
+    )
+  }, [gridData])
+
   // Build day grid data
   const dayGridData = useMemo((): DayGridData[] => {
     if (!gridData) return []
@@ -140,16 +154,15 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
     return labels[stage] || stage
   }
 
-  // Get team label (name or fallback)
   const getTeamLabel = (teamId: number | null, placeholder: string): string => {
     if (teamId === null) {
       return placeholder
     }
     const team = teamMap.get(teamId)
     if (team) {
-      return team.name
+      const label = team.display_name || team.name
+      return team.seed ? `#${team.seed} ${label}` : label
     }
-    // Fallback if team not found in map
     return `Team #${teamId}`
   }
 
@@ -165,7 +178,7 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
 
   const getRuntimeLabel = (runtimeStatus: string): string => {
     if (runtimeStatus === 'IN_PROGRESS') return 'Live'
-    if (runtimeStatus === 'FINAL') return 'Final'
+    if (runtimeStatus === 'FINAL') return 'Completed'
     return 'Scheduled'
   }
 
@@ -286,8 +299,25 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
 
                     const match = getMatchForSlot(slot)
                     const isAssigned = match !== null
+                    const isLocked = match ? lockedMatchSet.has(match.match_id) : false
+                    const isBlocked = blockedSlotSet.has(slot.slot_id)
                     const runtime = match ? runtimeByMatchId[match.match_id] : null
                     const runtimeStatus = runtime?.runtime_status ?? 'SCHEDULED'
+
+                    const cellBg = isBlocked
+                      ? '#fce4e4'
+                      : isLocked
+                        ? '#fff8e1'
+                        : isAssigned
+                          ? '#e3f2fd'
+                          : '#fff'
+                    const cellBorder = isBlocked
+                      ? '1px solid #e57373'
+                      : isLocked
+                        ? '1px solid #ffc107'
+                        : isAssigned
+                          ? '1px solid #90caf9'
+                          : '1px solid #e0e0e0'
 
                     return (
                       <td
@@ -297,18 +327,39 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
                           padding: '4px',
                           borderBottom: '1px solid #eee',
                           cursor: readOnly ? 'default' : 'pointer',
-                          background: isAssigned ? '#e3f2fd' : '#fff'
+                          background: cellBg,
                         }}
                       >
                         <div style={{
                           padding: '8px',
                           borderRadius: '4px',
-                          border: isAssigned ? '1px solid #90caf9' : '1px solid #e0e0e0',
+                          border: cellBorder,
                           minHeight: '50px',
                           display: 'flex',
                           flexDirection: 'column',
-                          gap: '4px'
+                          gap: '4px',
+                          position: 'relative',
                         }}>
+                          {isBlocked && !isAssigned && (
+                            <div style={{
+                              position: 'absolute', top: 2, right: 4,
+                              fontSize: '9px', fontWeight: 700,
+                              color: '#c62828', textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                            }}>
+                              BLOCKED
+                            </div>
+                          )}
+                          {isLocked && (
+                            <div style={{
+                              position: 'absolute', top: 2, right: 4,
+                              fontSize: '9px', fontWeight: 700,
+                              color: '#f57f17', textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                            }}>
+                              LOCK
+                            </div>
+                          )}
                           <div style={{ fontSize: '11px', color: '#666' }}>
                             {slot.duration_minutes}min
                           </div>
@@ -371,11 +422,12 @@ export const ScheduleGridV1Viewer: React.FC<ScheduleGridV1Props> = ({
                             </>
                           ) : (
                             <div style={{ 
-                              color: '#999',
+                              color: isBlocked ? '#c62828' : '#999',
                               fontStyle: 'italic',
-                              fontSize: '12px'
+                              fontSize: '12px',
+                              fontWeight: isBlocked ? 600 : 400,
                             }}>
-                              Open
+                              {isBlocked ? 'Blocked' : 'Open'}
                             </div>
                           )}
                         </div>

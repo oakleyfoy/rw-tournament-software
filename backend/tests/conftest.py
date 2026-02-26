@@ -40,6 +40,7 @@ def session_fixture():
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
     from app.models.match_assignment import MatchAssignment  # noqa: F401
+    from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.schedule_slot import ScheduleSlot  # noqa: F401
     from app.models.schedule_version import ScheduleVersion  # noqa: F401
     from app.models.team import Team  # noqa: F401

@@ -66,6 +66,9 @@ Thumbs.db
 *.sublime-project
 *.sublime-workspace
 
+# Production build (generated on Render)
+backend/static/
+
 # Environment variables
 .env
 .env.local

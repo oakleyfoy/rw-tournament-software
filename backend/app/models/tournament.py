@@ -23,6 +23,10 @@ class Tournament(SQLModel, table=True):
     notes: Optional[str] = None
     use_time_windows: bool = Field(default=False)
     court_names: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    public_schedule_version_id: Optional[int] = Field(
+        default=None,
+        foreign_key="scheduleversion.id",
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"onupdate": datetime.utcnow})
 
@@ -30,6 +34,9 @@ class Tournament(SQLModel, table=True):
     days: List["TournamentDay"] = Relationship(back_populates="tournament")
     events: List["Event"] = Relationship(back_populates="tournament")
     time_windows: List["TournamentTimeWindow"] = Relationship(back_populates="tournament")
-    schedule_versions: List["ScheduleVersion"] = Relationship(back_populates="tournament")
+    schedule_versions: List["ScheduleVersion"] = Relationship(
+        back_populates="tournament",
+        sa_relationship_kwargs={"foreign_keys": "ScheduleVersion.tournament_id"},
+    )
     schedule_slots: List["ScheduleSlot"] = Relationship(back_populates="tournament")
     matches: List["Match"] = Relationship(back_populates="tournament")

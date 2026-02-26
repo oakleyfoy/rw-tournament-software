@@ -1,15 +1,16 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useScheduleGrid } from './hooks/useScheduleGrid'
 import { ScheduleHeader } from './components/ScheduleHeader'
 import { SchedulePhasedPanel } from './components/SchedulePhasedPanel'
+import ScheduleInventoryPanel, { type InventoryTab } from './components/ScheduleInventoryPanel'
 import { AutoAssignAssistPanel } from './components/AutoAssignAssistPanel'
 import { ScheduleSummaryPanel } from './components/ScheduleSummaryPanel'
 import { ScheduleGridV1Viewer } from './components/ScheduleGridV1'
 import { ConflictsBanner } from './components/ConflictsBanner'
 import { MatchRuntimeModal } from './components/MatchRuntimeModal'
 import { featureFlags, featureFlagsRaw } from '../../config/featureFlags'
-import { getVersionRuntimeMatches, MatchRuntimeState } from '../../api/client'
+import { getVersionRuntimeMatches, getActiveScheduleVersion, MatchRuntimeState } from '../../api/client'
 import type { GridMatch } from '../../api/client'
 import './SchedulePage.css'
 
@@ -33,6 +34,9 @@ function SchedulePageGridV1() {
 
   const [runtimeByMatchId, setRuntimeByMatchId] = useState<Record<number, MatchRuntimeState>>({})
   const [selectedMatchForRuntime, setSelectedMatchForRuntime] = useState<{ matchId: number; match: GridMatch } | null>(null)
+  const [inventoryTab, setInventoryTab] = useState<InventoryTab>('slots')
+  const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0)
+  const [activeVersionFromBackend, setActiveVersionFromBackend] = useState<number | null>(null)
 
   const loadRuntimeMatches = useCallback(async () => {
     if (!tournamentId || !activeVersion?.id) {
@@ -52,6 +56,33 @@ function SchedulePageGridV1() {
   useEffect(() => {
     loadRuntimeMatches()
   }, [loadRuntimeMatches])
+
+  // Fetch backend active version for mismatch guard
+  useEffect(() => {
+    if (!tournamentId) return
+    getActiveScheduleVersion(tournamentId)
+      .then(r => {
+        if (r && !r.none_found) setActiveVersionFromBackend(r.schedule_version_id)
+      })
+      .catch(() => {})
+  }, [tournamentId])
+
+  const handleInventoryAction = useCallback((tab: InventoryTab) => {
+    setInventoryTab(tab)
+    setInventoryRefreshKey(k => k + 1)
+  }, [])
+
+  // Build eventNamesById from grid data (best-effort from match codes)
+  const eventNamesById = useMemo<Record<number, string>>(() => {
+    // No direct event names in grid data, so we use event IDs as fallback
+    // The inventory panel gracefully shows "Event {id}" if no name is found
+    return {}
+  }, [])
+
+  const usingVersionId = activeVersion?.id ?? null
+  const versionMismatch = activeVersionFromBackend != null
+    && usingVersionId != null
+    && activeVersionFromBackend !== usingVersionId
 
   const isReadOnly = activeVersion?.status === 'final' || false
 
@@ -76,6 +107,40 @@ function SchedulePageGridV1() {
         onFinalize={finalizeDraft}
       />
 
+      {/* ═══════ Version Guard Banner ═══════ */}
+      <div style={{
+        padding: '10px 16px',
+        marginBottom: 16,
+        borderRadius: 6,
+        backgroundColor: versionMismatch ? 'rgba(220,53,69,0.1)' : 'rgba(0,0,0,0.03)',
+        border: versionMismatch ? '2px solid #dc3545' : '1px solid rgba(0,0,0,0.08)',
+        fontSize: 13,
+        fontFamily: 'monospace',
+      }}>
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span>Tournament: <strong>{tournamentId}</strong></span>
+          <span>Active Draft Version: <strong>{activeVersionFromBackend ?? 'none'}</strong></span>
+          <span>Using Version: <strong>{usingVersionId ?? 'none'}</strong></span>
+          {activeVersion && (
+            <span>Status: <strong>{activeVersion.status}</strong></span>
+          )}
+        </div>
+        {versionMismatch && (
+          <div style={{
+            marginTop: 8,
+            padding: '8px 12px',
+            backgroundColor: '#dc3545',
+            color: '#fff',
+            fontWeight: 700,
+            borderRadius: 4,
+            fontSize: 14,
+            fontFamily: 'sans-serif',
+          }}>
+            VERSION MISMATCH: UI querying version {usingVersionId} but active draft is {activeVersionFromBackend}
+          </div>
+        )}
+      </div>
+
       <SchedulePhasedPanel
         tournamentId={tournamentId}
         activeVersion={activeVersion}
@@ -85,6 +150,19 @@ function SchedulePageGridV1() {
         matchesCount={gridData?.conflicts_summary?.total_matches ?? 0}
         assignedCount={gridData?.conflicts_summary?.assigned_matches ?? 0}
         unassignedCount={gridData?.conflicts_summary?.unassigned_matches ?? 0}
+        onInventoryAction={handleInventoryAction}
+        gridMatches={gridData?.matches ?? []}
+        gridAssignments={gridData?.assignments ?? []}
+      />
+
+      {/* ═══════ Schedule Inventory Panel ═══════ */}
+      <ScheduleInventoryPanel
+        tournamentId={tournamentId!}
+        versionId={usingVersionId}
+        activeTab={inventoryTab}
+        onTabChange={setInventoryTab}
+        eventNamesById={eventNamesById}
+        refreshKey={inventoryRefreshKey}
       />
 
       <AutoAssignAssistPanel

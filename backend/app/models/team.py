@@ -11,22 +11,26 @@ if TYPE_CHECKING:
 
 class Team(SQLModel, table=True):
     __table_args__ = (
-        # Enforce unique seeds within an event (where seed is not null)
         SAUniqueConstraint("event_id", "seed", name="uq_event_seed"),
-        # Optional: Enforce unique team names within an event
         SAUniqueConstraint("event_id", "name", name="uq_event_team_name"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     event_id: int = Field(foreign_key="event.id", index=True)
-    name: str  # Team name (required in practice)
-    seed: Optional[int] = Field(default=None)  # 1-based seed (1=highest, 2=second, etc.)
-    rating: Optional[float] = Field(default=None)  # For tie-breaking when seeds are equal
-    registration_timestamp: Optional[datetime] = Field(default=None)  # For tie-breaking
+    name: str
+    seed: Optional[int] = Field(default=None)
+    rating: Optional[float] = Field(default=None)
+    registration_timestamp: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-
-    # WF Grouping V1: Assigned group index for waterfall events (nullable)
     wf_group_index: Optional[int] = Field(default=None, index=True)
+    avoid_group: Optional[str] = Field(default=None, max_length=4)
+    display_name: Optional[str] = Field(default=None)
+    player1_cellphone: Optional[str] = Field(default=None)
+    player1_email: Optional[str] = Field(default=None)
+    player2_cellphone: Optional[str] = Field(default=None)
+    player2_email: Optional[str] = Field(default=None)
+    is_defaulted: bool = Field(default=False)
+    notes: Optional[str] = Field(default=None)
 
     # Relationships
     event: "Event" = Relationship(back_populates="teams")

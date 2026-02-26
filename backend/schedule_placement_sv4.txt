@@ -1,0 +1,99 @@
+
+================================================================================
+Day 1: 2026-02-20  (115 usable slots)
+================================================================================
+  09:00:00:  15 courts - 0 reserved = 15 usable
+  10:00:00:  15 courts - 1 reserved = 14 usable
+  11:00:00:  15 courts - 1 reserved = 14 usable
+  12:00:00:  19 courts - 1 reserved = 18 usable
+  13:00:00:  19 courts - 1 reserved = 18 usable
+  14:00:00:  19 courts - 1 reserved = 18 usable
+  15:00:00:  19 courts - 1 reserved = 18 usable
+
+  09:00:00 -- 15 courts (15 assigned, 0 spare)
+      Women's A WF R1: 15
+  10:00:00 -- 14 courts (14 assigned, 0 spare)
+      Women's A WF R1: 1
+      Women's B WF R1: 13
+  11:00:00 -- 14 courts (14 assigned, 0 spare)
+      Women's B WF R1: 3
+      Women's C WF R1: 11
+  12:00:00 -- 18 courts (18 assigned, 0 spare)
+      Women's C WF R1: 5
+      Mixed A WF R1: 8
+      Women's A WF R2: 5
+  13:00:00 -- 18 courts (18 assigned, 0 spare)
+      Women's A WF R2: 11
+      Women's B WF R2: 7
+  14:00:00 -- 18 courts (18 assigned, 0 spare)
+      Women's B WF R2: 9
+      Women's C WF R2: 9
+  15:00:00 -- 18 courts (15 assigned, 3 spare)
+      Women's C WF R2: 7
+      Mixed A WF R2: 8
+
+  Day total: 112 placed, 3 spare
+
+================================================================================
+Day 2: 2026-02-21  (101 usable slots)
+================================================================================
+  08:00:00:  15 courts - 0 reserved = 15 usable
+  09:45:00:  15 courts - 1 reserved = 14 usable
+  11:30:00:  19 courts - 1 reserved = 18 usable
+  13:15:00:  19 courts - 1 reserved = 18 usable
+  15:00:00:  19 courts - 1 reserved = 18 usable
+  16:45:00:  19 courts - 1 reserved = 18 usable
+
+  08:00:00 -- 15 courts (15 assigned, 0 spare)
+      Women's B MAIN QF: 15
+  09:45:00 -- 14 courts (14 assigned, 0 spare)
+      Women's B MAIN QF: 1
+      Women's C MAIN QF: 13
+  11:30:00 -- 18 courts (18 assigned, 0 spare)
+      Women's C MAIN QF: 3
+      Women's A MAIN QF: 15
+  13:15:00 -- 18 courts (18 assigned, 0 spare)
+      Women's A MAIN QF: 1
+      Mixed A RR R1: 8
+      Women's B MAIN SF: 8
+      Women's C MAIN SF: 1
+  15:00:00 -- 18 courts (18 assigned, 0 spare)
+      Women's C MAIN SF: 7
+      Women's A MAIN SF: 8
+      Mixed A RR R2: 3
+  16:45:00 -- 18 courts (18 assigned, 0 spare)
+      Mixed A RR R2: 5
+      Women's B CONS Semi: 8
+      Women's C CONS Semi: 5
+
+  Day total: 101 placed, 0 spare
+
+================================================================================
+Day 3: 2026-02-22  (85 usable slots)
+================================================================================
+  08:00:00:  16 courts - 0 reserved = 16 usable
+  09:45:00:  16 courts - 1 reserved = 15 usable
+  11:30:00:  19 courts - 1 reserved = 18 usable
+  13:15:00:  19 courts - 1 reserved = 18 usable
+  15:00:00:  19 courts - 1 reserved = 18 usable
+
+  08:00:00 -- 16 courts (16 assigned, 0 spare)
+      Women's C CONS Semi: 3
+      Women's A CONS Semi: 8
+      Women's C MAIN Final: 4
+      Women's A MAIN Final: 1
+  09:45:00 -- 15 courts (15 assigned, 0 spare)
+      Women's A MAIN Final: 3
+      Women's B MAIN Final: 4
+      Mixed A RR R3: 8
+  11:30:00 -- 18 courts (18 assigned, 0 spare)
+      Women's C CONS Final+: 12
+      Women's A CONS Final+: 6
+  13:15:00 -- 18 courts (18 assigned, 0 spare)
+      Women's A CONS Final+: 6
+      Women's B CONS Final+: 12
+  15:00:00 -- 18 courts (0 assigned, 18 spare)
+
+  Day total: 67 placed, 18 spare
+
+All 280 matches placed successfully.

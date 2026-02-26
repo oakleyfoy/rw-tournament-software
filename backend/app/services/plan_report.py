@@ -95,6 +95,32 @@ class TotalsInfo(BaseModel):
     matches_total: int
 
 
+class AvoidanceItemR1(BaseModel):
+    match_id: int
+    match_code: str
+    seed_a: Optional[int] = None
+    seed_b: Optional[int] = None
+    team_a: Optional[str] = None
+    team_b: Optional[str] = None
+    avoid_group: str
+    message: str
+
+
+class AvoidanceItemR2(BaseModel):
+    match_id: int
+    match_code: str
+    source_match_codes: List[str]
+    overlap_groups: List[str]
+    message: str
+
+
+class AvoidanceSummary(BaseModel):
+    r1_unavoidable_count: int
+    r1_unavoidable_items: List[AvoidanceItemR1]
+    r2_potential_count: int
+    r2_potential_items: List[AvoidanceItemR2]
+
+
 class SchedulePlanReport(BaseModel):
     tournament_id: int
     schedule_version_id: Optional[int] = None
@@ -104,6 +130,7 @@ class SchedulePlanReport(BaseModel):
     warnings: List[PlanReportError]
     events: List[EventReport]
     totals: TotalsInfo
+    avoidance_summary: Optional[AvoidanceSummary] = None
 
 
 # ============================================================================
@@ -496,6 +523,8 @@ def build_schedule_plan_report(
     blocking_errors: List[PlanReportError] = []
     warnings: List[PlanReportError] = []
     event_reports: List[EventReport] = []
+    avoidance_r1_items: List[AvoidanceItemR1] = []
+    avoidance_r2_items: List[AvoidanceItemR2] = []
 
     # ── Load tournament ──────────────────────────────────────────────────
     tournament = session.get(Tournament, tournament_id)
@@ -658,6 +687,88 @@ def build_schedule_plan_report(
                     context={"bye_count": bye_count},
                 ))
 
+            # Check WF R1 avoid-group conflicts on existing matches
+            wf_r1 = [m for m in actual_matches if m.match_type == "WF" and m.round_index == 1]
+            if wf_r1:
+                from app.models.team import Team as _Team
+                event_teams = session.exec(
+                    select(_Team).where(_Team.event_id == event.id)
+                ).all()
+                team_by_id = {t.id: t for t in event_teams}
+                for m in wf_r1:
+                    ta = team_by_id.get(m.team_a_id) if m.team_a_id else None
+                    tb = team_by_id.get(m.team_b_id) if m.team_b_id else None
+                    if (ta and tb
+                            and getattr(ta, "avoid_group", None)
+                            and getattr(tb, "avoid_group", None)
+                            and ta.avoid_group == tb.avoid_group):
+                        dn_a = getattr(ta, "display_name", None) or ta.name
+                        dn_b = getattr(tb, "display_name", None) or tb.name
+                        r1_msg = (
+                            f"Event '{event.name}': WF R1 {m.match_code} "
+                            f"pairs #{ta.seed} {dn_a} vs #{tb.seed} {dn_b} "
+                            f"(both group '{ta.avoid_group}')"
+                        )
+                        warnings.append(PlanReportError(
+                            code="W_WF_R1_AVOID_GROUP_CONFLICT",
+                            message=r1_msg,
+                            event_id=event.id,
+                            context={
+                                "match_code": m.match_code,
+                                "seed_a": ta.seed,
+                                "seed_b": tb.seed,
+                                "group": ta.avoid_group,
+                            },
+                        ))
+                        avoidance_r1_items.append(AvoidanceItemR1(
+                            match_id=m.id,
+                            match_code=m.match_code,
+                            seed_a=ta.seed,
+                            seed_b=tb.seed,
+                            team_a=dn_a,
+                            team_b=dn_b,
+                            avoid_group=ta.avoid_group,
+                            message=r1_msg,
+                        ))
+
+            # Check WF R2 potential avoid-group conflicts (based on source R1 match groups)
+            wf_r2 = [m for m in actual_matches if m.match_type == "WF" and m.round_index == 2]
+            if wf_r2 and wf_r1:
+                from app.services.wf_wiring import groups_for_r1_match
+                # team_by_id already loaded above in the wf_r1 block
+                r1_by_id = {m.id: m for m in wf_r1}
+                for m in wf_r2:
+                    src_a = r1_by_id.get(m.source_match_a_id) if m.source_match_a_id else None
+                    src_b = r1_by_id.get(m.source_match_b_id) if m.source_match_b_id else None
+                    if src_a and src_b:
+                        groups_a = groups_for_r1_match(src_a, team_by_id)
+                        groups_b = groups_for_r1_match(src_b, team_by_id)
+                        overlap = groups_a & groups_b
+                        if overlap:
+                            r2_msg = (
+                                f"Event '{event.name}': WF R2 {m.match_code} "
+                                f"sources {src_a.match_code} vs {src_b.match_code} "
+                                f"share avoid group(s) {sorted(overlap)}"
+                            )
+                            warnings.append(PlanReportError(
+                                code="W_WF_R2_AVOID_GROUP_POTENTIAL_CONFLICT",
+                                message=r2_msg,
+                                event_id=event.id,
+                                context={
+                                    "match_code": m.match_code,
+                                    "source_a": src_a.match_code,
+                                    "source_b": src_b.match_code,
+                                    "overlapping_groups": sorted(overlap),
+                                },
+                            ))
+                            avoidance_r2_items.append(AvoidanceItemR2(
+                                match_id=m.id,
+                                match_code=m.match_code,
+                                source_match_codes=[src_a.match_code, src_b.match_code],
+                                overlap_groups=sorted(overlap),
+                                message=r2_msg,
+                            ))
+
         # ── Build event report ───────────────────────────────────────────
         event_reports.append(EventReport(
             event_id=event.id,
@@ -682,6 +793,18 @@ def build_schedule_plan_report(
     blocking_errors.sort(key=lambda e: (e.code, e.event_id or 0, e.message))
     warnings.sort(key=lambda e: (e.code, e.event_id or 0, e.message))
 
+    # ── Build avoidance summary (only when version exists) ────────────
+    avoidance_summary: Optional[AvoidanceSummary] = None
+    if version:
+        avoidance_r1_items.sort(key=lambda x: (x.match_code, x.match_id))
+        avoidance_r2_items.sort(key=lambda x: (x.match_code, x.match_id))
+        avoidance_summary = AvoidanceSummary(
+            r1_unavoidable_count=len(avoidance_r1_items),
+            r1_unavoidable_items=avoidance_r1_items,
+            r2_potential_count=len(avoidance_r2_items),
+            r2_potential_items=avoidance_r2_items,
+        )
+
     # ── Compute ok ───────────────────────────────────────────────────────
     ok = len(blocking_errors) == 0 and len(finalized_events) > 0
 
@@ -697,4 +820,5 @@ def build_schedule_plan_report(
             events=len(finalized_events),
             matches_total=total_expected,
         ),
+        avoidance_summary=avoidance_summary,
     )

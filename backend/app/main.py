@@ -1,19 +1,23 @@
 import os
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.database import engine, init_db
-from app.db_schema_patch import ensure_event_columns, ensure_tournament_columns
+from app.db_schema_patch import ensure_event_columns, ensure_team_columns, ensure_tournament_columns
 from app.routes import (
     avoid_edges,
     debug,
+    desk,
     draw_builder,
     events,
     phase1_status,
     plan_report,
+    public,
     runtime,
     schedule,
     schedule_builder,
@@ -52,13 +56,17 @@ def get_build_info():
 
 BUILD_HASH = get_build_info()
 
-# CORS middleware
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_extra = os.getenv("CORS_ORIGINS", "")
+if _extra:
+    _cors_origins.extend(o.strip() for o in _extra.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,6 +104,12 @@ app.include_router(wf_grouping.router, prefix="/api", tags=["wf-grouping"])
 
 # Include WF conflicts router
 app.include_router(wf_conflicts.router, prefix="/api", tags=["wf-conflicts"])
+
+# Public read-only endpoints (no auth)
+app.include_router(public.router, prefix="/api", tags=["public"])
+
+# Desk runtime console (staff-only)
+app.include_router(desk.router, prefix="/api", tags=["desk"])
 app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"])
 
 
@@ -104,6 +118,7 @@ def on_startup():
     init_db()  # Use centralized init_db() which imports models and creates tables
     ensure_event_columns(engine)
     ensure_tournament_columns(engine)
+    ensure_team_columns(engine)
 
     # Print all registered routes for debugging (full path stack)
     print("\n" + "=" * 80)
@@ -127,12 +142,28 @@ def on_startup():
     print("=" * 80 + "\n")
 
 
-@app.get("/")
-def root():
-    return {"message": "RW Tournament Software API"}
-
-
 @app.get("/api/health")
 def health_check():
     """Diagnostic endpoint to verify which code is running"""
     return {"app_name": "RW Tournament Software API", "build_hash": BUILD_HASH, "status": "healthy"}
+
+
+# Serve frontend static build in production.
+# The build script places the Vite output in backend/static/
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+if _static_dir.is_dir():
+    from fastapi.responses import FileResponse
+
+    app.mount("/assets", StaticFiles(directory=str(_static_dir / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the SPA index.html for all non-API routes."""
+        file_path = _static_dir / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_static_dir / "index.html"))
+else:
+    @app.get("/")
+    def root():
+        return {"message": "RW Tournament Software API (no frontend build found)"}

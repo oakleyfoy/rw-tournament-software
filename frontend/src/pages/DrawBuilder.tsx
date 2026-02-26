@@ -1,11 +1,13 @@
 import { useEffect, useState, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   getTournament,
   getEvents,
   getPhase1Status,
   getScheduleBuilder,
   getPlanReport,
+  importSeededTeams,
+  getEventTeams,
   ScheduleBuilderResponse,
   SchedulePlanReport,
   updateDrawPlan,
@@ -14,6 +16,7 @@ import {
   Tournament,
   Event,
   Phase1Status,
+  TeamListItem,
 } from '../api/client'
 import { showToast } from '../utils/toast'
 import {
@@ -74,6 +77,13 @@ function DrawBuilder() {
   const [saving, setSaving] = useState<Record<number, boolean>>({})
   const [eventEditorStates, setEventEditorStates] = useState<Record<number, EventEditorState>>({})
   const [expandedExplanations, setExpandedExplanations] = useState<Record<number, boolean>>({})
+
+  // Team import state
+  const [importOpenEventId, setImportOpenEventId] = useState<number | null>(null)
+  const [importText, setImportText] = useState('')
+  const [importLoading, setImportLoading] = useState(false)
+  const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
+  const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
 
   // Scroll to top when component mounts
   useEffect(() => {
@@ -486,6 +496,44 @@ function DrawBuilder() {
     }
   }
 
+  const handleLoadTeams = async (eventId: number) => {
+    setLoadingTeamsFor(eventId)
+    try {
+      const teams = await getEventTeams(eventId)
+      setEventTeams(prev => ({ ...prev, [eventId]: teams }))
+    } catch {
+      showToast('Failed to load teams', 'error')
+    } finally {
+      setLoadingTeamsFor(null)
+    }
+  }
+
+  const handleImportTeams = async (eventId: number) => {
+    if (!tournamentId || !importText.trim()) return
+    setImportLoading(true)
+    try {
+      const res = await importSeededTeams(tournamentId, eventId, importText)
+      const parts: string[] = []
+      if (res.imported_count > 0) parts.push(`${res.imported_count} imported`)
+      if (res.updated_count > 0) parts.push(`${res.updated_count} updated`)
+      if (res.rejected_rows.length > 0) parts.push(`${res.rejected_rows.length} rejected`)
+      showToast(parts.join(', ') || 'No changes', res.rejected_rows.length > 0 ? 'warning' : 'success')
+      if (res.warnings.length > 0) {
+        res.warnings.forEach(w => showToast(w, 'warning'))
+      }
+      if (res.rejected_rows.length > 0) {
+        res.rejected_rows.forEach(r => showToast(`Line ${r.line}: ${r.reason}`, 'error'))
+      }
+      setImportText('')
+      setImportOpenEventId(null)
+      handleLoadTeams(eventId)
+    } catch (err: any) {
+      showToast(err?.message || 'Import failed', 'error')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
   // Calculate tournament-level capacity consumption
   const calculateTournamentCapacity = () => {
     if (!phase1Status) return null
@@ -661,6 +709,24 @@ function DrawBuilder() {
               <option value={5}>5</option>
             </select>
           </div>
+          {event.draw_status === 'final' && state.templateType !== 'RR_ONLY' && (
+            <Link
+              to={`/t/${tournamentId}/draws/${event.id}/waterfall`}
+              target="_blank"
+              style={{
+                fontSize: 12,
+                padding: '4px 12px',
+                borderRadius: 4,
+                backgroundColor: '#1a237e',
+                color: '#fff',
+                textDecoration: 'none',
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              View Waterfall
+            </Link>
+          )}
         </div>
 
         {errors.length > 0 && (
@@ -1063,6 +1129,109 @@ function DrawBuilder() {
           </div>
         )
       })()}
+
+      {/* Team Rosters — import seeded teams per event */}
+      {events.filter(e => e.draw_status === 'final').length > 0 && (
+        <div className="card" style={{ marginTop: 24 }}>
+          <h2 className="section-title">Team Rosters</h2>
+          {events.filter(e => e.draw_status === 'final').map((ev) => {
+            const isOpen = importOpenEventId === ev.id
+            const teams = eventTeams[ev.id]
+            const isLoadingTeams = loadingTeamsFor === ev.id
+            return (
+              <div key={ev.id} style={{ marginBottom: 12, border: '1px solid #ddd', borderRadius: 6 }}>
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 14px', cursor: 'pointer', backgroundColor: 'rgba(0,0,0,0.02)',
+                    borderRadius: 6,
+                  }}
+                  onClick={() => {
+                    const nextOpen = isOpen ? null : ev.id
+                    setImportOpenEventId(nextOpen)
+                    if (nextOpen && !eventTeams[ev.id]) handleLoadTeams(ev.id)
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>
+                    {isOpen ? '▾' : '▸'} {ev.name} ({ev.team_count} teams)
+                  </span>
+                  {teams && (
+                    <span style={{ fontSize: 12, color: '#666' }}>
+                      {teams.length} team{teams.length !== 1 ? 's' : ''} in DB
+                    </span>
+                  )}
+                </div>
+
+                {isOpen && (
+                  <div style={{ padding: '12px 14px' }}>
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+                        Import Seeded Teams (paste tab-separated or space-separated)
+                      </div>
+                      <textarea
+                        value={importText}
+                        onChange={(e) => setImportText(e.target.value)}
+                        placeholder={"1\ta\t9\tHeather Robinson / Shea Butler\n2\tb\t8.5\tJane Doe / Mary Smith\n..."}
+                        style={{
+                          width: '100%', minHeight: 120, fontFamily: 'monospace', fontSize: 12,
+                          padding: 8, border: '1px solid #ccc', borderRadius: 4, resize: 'vertical',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+                        <button
+                          className="btn btn-primary"
+                          disabled={importLoading || !importText.trim()}
+                          onClick={() => handleImportTeams(ev.id)}
+                          style={{ fontSize: 13, padding: '6px 14px' }}
+                        >
+                          {importLoading ? 'Importing...' : 'Import Teams'}
+                        </button>
+                        <span style={{ fontSize: 11, color: '#888' }}>
+                          Format: seed [avoid_group] rating team_name (tab or space separated)
+                        </span>
+                      </div>
+                    </div>
+
+                    {isLoadingTeams ? (
+                      <div style={{ color: '#888', fontSize: 13 }}>Loading teams...</div>
+                    ) : teams && teams.length > 0 ? (
+                      <div style={{ overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead style={{ position: 'sticky', top: 0, backgroundColor: '#fff' }}>
+                            <tr style={{ borderBottom: '2px solid #333', textAlign: 'left' }}>
+                              <th style={{ padding: '4px 8px' }}>Seed</th>
+                              <th style={{ padding: '4px 8px' }}>Grp</th>
+                              <th style={{ padding: '4px 8px' }}>Rating</th>
+                              <th style={{ padding: '4px 8px' }}>Display Name</th>
+                              <th style={{ padding: '4px 8px' }}>Full Name</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {teams.map((t) => (
+                              <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '4px 8px', fontWeight: 600 }}>{t.seed ?? '—'}</td>
+                                <td style={{ padding: '4px 8px', fontFamily: 'monospace' }}>{t.avoid_group ?? '—'}</td>
+                                <td style={{ padding: '4px 8px' }}>{t.rating ?? '—'}</td>
+                                <td style={{ padding: '4px 8px' }}>{t.display_name ?? '—'}</td>
+                                <td style={{ padding: '4px 8px' }}>{t.name}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : teams && teams.length === 0 ? (
+                      <div style={{ color: '#888', fontSize: 13, fontStyle: 'italic' }}>
+                        No teams imported yet. Paste data above and click Import.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Bottom navigation — gated by plan report contract */}
       {tournament && (() => {

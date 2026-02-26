@@ -11,6 +11,11 @@
   --theme-secondary-btn-text: #ffffff;
   --theme-danger-btn: #dc3545;
   --theme-danger-btn-hover: #c82333;
+  --theme-success: #28a745;
+  --theme-success-hover: #218838;
+  --theme-info: #17a2b8;
+  --theme-info-hover: #138496;
+  --theme-border: #dee2e6;
   --theme-table-header: #88bdf2;
   --theme-table-row-hover: #bdddfc;
   --theme-input-border: #88bdf2;
@@ -110,12 +115,21 @@ code {
 }
 
 .btn-success {
-  background-color: var(--theme-primary-btn);
+  background-color: var(--theme-success);
   color: white;
 }
 
 .btn-success:hover:not(:disabled) {
-  background-color: var(--theme-primary-btn-hover);
+  background-color: var(--theme-success-hover);
+}
+
+.btn-info {
+  background-color: var(--theme-info);
+  color: white;
+}
+
+.btn-info:hover:not(:disabled) {
+  background-color: var(--theme-info-hover);
 }
 
 .form-group {

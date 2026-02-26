@@ -58,7 +58,11 @@ export function MatchRuntimeModal({
 
   const handleSave = async () => {
     if (status === RUNTIME_FINAL && winnerTeamId == null) {
-      showToast('Select a winner when setting status to Final', 'error');
+      showToast('Select a winner when setting status to Completed', 'error');
+      return;
+    }
+    if (status === RUNTIME_FINAL && !scoreText.trim()) {
+      showToast('Score is required when finalizing a match', 'error');
       return;
     }
     let score: Record<string, unknown> | undefined;
@@ -132,9 +136,9 @@ export function MatchRuntimeModal({
           >
             <option value={RUNTIME_SCHEDULED}>Scheduled</option>
             <option value={RUNTIME_IN_PROGRESS}>Live</option>
-            <option value={RUNTIME_FINAL}>Final</option>
+            <option value={RUNTIME_FINAL}>Completed</option>
           </select>
-          {isFinal && <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Final is terminal; cannot change.</div>}
+          {isFinal && <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>Completed is terminal; cannot change.</div>}
         </div>
 
         <div style={{ marginBottom: '12px' }}>

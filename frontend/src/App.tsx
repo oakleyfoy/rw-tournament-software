@@ -9,6 +9,13 @@ import ScheduleEditorPage from './pages/schedule/editor/ScheduleEditorPage'
 import MatchCardsPage, { MatchCardsRedirectToActive } from './pages/schedule/MatchCardsPage'
 import WhoKnowsWho from './pages/WhoKnowsWho'
 import Settings from './pages/Settings'
+import PublicDrawsPage from './pages/public/PublicDrawsPage'
+import PublicWaterfallPage from './pages/public/PublicWaterfallPage'
+import PublicBracketPage from './pages/public/PublicBracketPage'
+import PublicRoundRobinPage from './pages/public/PublicRoundRobinPage'
+import PublicSchedulePage from './pages/public/PublicSchedulePage'
+import TournamentDeskPage from './pages/desk/TournamentDeskPage'
+import TournamentDeskBoardPage from './pages/desk/TournamentDeskBoardPage'
 import { getCurrentTheme, applyTheme } from './utils/settings'
 
 function App() {
@@ -32,6 +39,15 @@ function App() {
         <Route path="/tournaments/:id/schedule/editor" element={<ScheduleEditorPage />} />
         <Route path="/events/:eventId/who-knows-who" element={<WhoKnowsWho />} />
         <Route path="/settings" element={<Settings />} />
+        {/* Public routes */}
+        <Route path="/t/:tournamentId/draws" element={<PublicDrawsPage />} />
+        <Route path="/t/:tournamentId/draws/:eventId/waterfall" element={<PublicWaterfallPage />} />
+        <Route path="/t/:tournamentId/draws/:eventId/bracket/:divisionCode" element={<PublicBracketPage />} />
+        <Route path="/t/:tournamentId/draws/:eventId/roundrobin" element={<PublicRoundRobinPage />} />
+        <Route path="/t/:tournamentId/schedule" element={<PublicSchedulePage />} />
+        {/* Staff desk */}
+        <Route path="/desk/t/:tournamentId" element={<TournamentDeskPage />} />
+        <Route path="/desk/t/:tournamentId/board" element={<TournamentDeskBoardPage />} />
       </Routes>
     </div>
   )

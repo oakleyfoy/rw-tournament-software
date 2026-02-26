@@ -19,7 +19,20 @@ REQUIRED_EVENT_COLUMNS: List[Tuple[str, str, str]] = [
 
 # Columns we must ensure exist in the "tournament" table.
 REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
-    ("use_time_windows", "INTEGER", "BOOLEAN"),  # SQLite uses INTEGER (0/1), Postgres uses BOOLEAN
+    ("use_time_windows", "INTEGER", "BOOLEAN"),
+    ("public_schedule_version_id", "INTEGER", "INTEGER"),
+]
+
+# Columns we must ensure exist in the "team" table.
+REQUIRED_TEAM_COLUMNS: List[Tuple[str, str, str]] = [
+    ("avoid_group", "VARCHAR(4)", "VARCHAR(4)"),
+    ("display_name", "TEXT", "TEXT"),
+    ("player1_cellphone", "TEXT", "TEXT"),
+    ("player1_email", "TEXT", "TEXT"),
+    ("player2_cellphone", "TEXT", "TEXT"),
+    ("player2_email", "TEXT", "TEXT"),
+    ("is_defaulted", "INTEGER", "BOOLEAN"),
+    ("notes", "TEXT", "TEXT"),
 ]
 
 
@@ -138,7 +151,8 @@ def ensure_tournament_columns(engine: Engine) -> None:
                 for name, sqlite_type, _pg_type in REQUIRED_TOURNAMENT_COLUMNS:
                     if name in existing:
                         continue
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} DEFAULT 0;"))
+                    default = "DEFAULT NULL" if name == "public_schedule_version_id" else "DEFAULT 0"
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} {default};"))
         else:
             with engine.connect() as conn:
                 result = conn.execute(
@@ -158,9 +172,64 @@ def ensure_tournament_columns(engine: Engine) -> None:
                 for name, _sqlite_type, pg_type in REQUIRED_TOURNAMENT_COLUMNS:
                     if name in existing:
                         continue
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} DEFAULT FALSE;"))
+                    default = "DEFAULT NULL" if name == "public_schedule_version_id" else "DEFAULT FALSE"
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} {default};"))
     except Exception as e:
         import logging
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure tournament columns (this is OK if table doesn't exist yet): {e}")
+
+
+def ensure_team_columns(engine: Engine) -> None:
+    """
+    Idempotently adds required columns to the 'team' table if missing.
+    Safe to run at every startup.
+    """
+    try:
+        from app.models.team import Team
+
+        table = Team.__table__.name
+
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_TEAM_COLUMNS:
+                    if name in existing:
+                        continue
+                    default = " DEFAULT 0" if name == "is_defaulted" else ""
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type}{default};"))
+        else:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    )
+                """),
+                    {"table_name": table},
+                ).fetchone()
+                if not result or not result[0]:
+                    return
+
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_TEAM_COLUMNS:
+                    if name in existing:
+                        continue
+                    default = " DEFAULT FALSE" if name == "is_defaulted" else ""
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type}{default};"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to ensure team columns (this is OK if table doesn't exist yet): {e}")

@@ -21,6 +21,9 @@ class ScheduleVersion(SQLModel, table=True):
     finalized_checksum: Optional[str] = Field(default=None, max_length=64)
 
     # Relationships
-    tournament: "Tournament" = Relationship(back_populates="schedule_versions")
+    tournament: "Tournament" = Relationship(
+        back_populates="schedule_versions",
+        sa_relationship_kwargs={"foreign_keys": "[ScheduleVersion.tournament_id]"},
+    )
     slots: List["ScheduleSlot"] = Relationship(back_populates="schedule_version")
     matches: List["Match"] = Relationship(back_populates="schedule_version")

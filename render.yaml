@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: rw-tournament
+    runtime: python
+    region: oregon
+    plan: starter
+    buildCommand: ./build.sh
+    startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////data/tournament.db
+      - key: SQL_ECHO
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.12"
+    disk:
+      name: tournament-data
+      mountPath: /data
+      sizeGB: 1

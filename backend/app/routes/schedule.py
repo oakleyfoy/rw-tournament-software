@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 from datetime import date, datetime, time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,9 @@ from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_lock import MatchLock
 from app.models.schedule_slot import ScheduleSlot
+from app.models.slot_lock import SlotLock
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
@@ -404,6 +406,70 @@ def finalize_schedule_version(tournament_id: int, version_id: int, session: Sess
     return version
 
 
+# ── Publish / Unpublish ─────────────────────────────────────────────────
+
+
+class PublishResponse(BaseModel):
+    success: bool
+    tournament_id: int
+    public_schedule_version_id: Optional[int]
+    version_status: Optional[str] = None
+
+
+@router.patch("/tournaments/{tournament_id}/schedule/versions/{version_id}/publish")
+def publish_schedule_version(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Set a FINAL version as the publicly visible schedule."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    if version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Version does not belong to this tournament")
+    if version.status != "final":
+        raise HTTPException(status_code=400, detail="Only FINAL versions can be published")
+
+    tournament.public_schedule_version_id = version_id
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    return PublishResponse(
+        success=True,
+        tournament_id=tournament_id,
+        public_schedule_version_id=version_id,
+        version_status=version.status,
+    )
+
+
+@router.patch("/tournaments/{tournament_id}/schedule/unpublish")
+def unpublish_schedule(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    """Clear the public schedule pointer."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    tournament.public_schedule_version_id = None
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    return PublishResponse(
+        success=True,
+        tournament_id=tournament_id,
+        public_schedule_version_id=None,
+    )
+
+
 class ResetDraftResponse(BaseModel):
     schedule_version_id: int
     cleared_assignments_count: int
@@ -666,6 +732,7 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
     source_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id).order_by(Match.id)).all()
 
     match_id_map = {}  # old_id -> new_id
+    new_matches = []
     for match in source_matches:
         new_match = Match(
             tournament_id=match.tournament_id,
@@ -677,16 +744,34 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
             round_index=match.round_index,
             sequence_in_round=match.sequence_in_round,
             duration_minutes=match.duration_minutes,
+            consolation_tier=match.consolation_tier,
+            placement_type=match.placement_type,
             team_a_id=match.team_a_id,
             team_b_id=match.team_b_id,
             placeholder_side_a=match.placeholder_side_a,
             placeholder_side_b=match.placeholder_side_b,
             preferred_day=match.preferred_day,
+            source_a_role=match.source_a_role,
+            source_b_role=match.source_b_role,
             status=match.status,
+            runtime_status=match.runtime_status,
+            score_json=match.score_json,
+            winner_team_id=match.winner_team_id,
+            started_at=match.started_at,
+            completed_at=match.completed_at,
         )
         session.add(new_match)
-        session.flush()  # Get new ID
+        session.flush()
         match_id_map[match.id] = new_match.id
+        new_matches.append((match, new_match))
+
+    # Second pass: remap source_match pointers using match_id_map
+    for old_match, new_match in new_matches:
+        if old_match.source_match_a_id and old_match.source_match_a_id in match_id_map:
+            new_match.source_match_a_id = match_id_map[old_match.source_match_a_id]
+        if old_match.source_match_b_id and old_match.source_match_b_id in match_id_map:
+            new_match.source_match_b_id = match_id_map[old_match.source_match_b_id]
+        session.add(new_match)
 
     # Clone assignments using ID mappings
     # CRITICAL: Explicitly copy locked and assigned_by to preserve manual editor state
@@ -896,6 +981,21 @@ def generate_slots(
                 status_code=400, detail="No active tournament days found. Configure days and courts first."
             )
 
+        # Determine block_minutes from the tournament's events.
+        # Use the wf_block_minutes (typically 60 min) since WF matches
+        # are the most common and set the base time-slot rhythm.
+        # Falls back to 60 if no events exist yet.
+        from app.models import Event as EventModel
+        event_list = session.exec(
+            select(EventModel).where(EventModel.tournament_id == tournament_id)
+        ).all()
+        if event_list:
+            block_mins = event_list[0].wf_block_minutes or 60
+        else:
+            block_mins = 60  # sensible default: 1-hour slots
+
+        print(f"[DEBUG] days_courts mode: using block_minutes={block_mins}")
+
         # Generate slots for each active day
         for day in active_days:
             if not day.start_time or not day.end_time:
@@ -911,33 +1011,24 @@ def generate_slots(
             if end_minutes <= start_minutes:
                 continue  # Skip invalid time ranges
 
-            print(f"[DEBUG] Processing day: {day.date} {day.start_time}-{day.end_time}, courts={day.courts_available}")
+            print(f"[DEBUG] Processing day: {day.date} {day.start_time}-{day.end_time}, courts={day.courts_available}, block={block_mins}min")
 
-            # Generate 15-minute start-time slots for each court (court_label via canonical fn only)
+            # Generate slots at block_minutes intervals for each court
             for court_num in range(1, day.courts_available + 1):
                 current_minutes = start_minutes
                 court_slots = 0
-                while current_minutes < end_minutes:
+
+                while current_minutes + block_mins <= end_minutes:
                     # Calculate slot start time
                     slot_start_hour = current_minutes // 60
                     slot_start_min = current_minutes % 60
                     slot_start_time = time(slot_start_hour, slot_start_min)
 
-                    # Calculate slot end time (15 minutes later for grid display)
-                    # Note: actual match occupation is determined by match.duration_minutes
-                    slot_end_minutes = current_minutes + 15
+                    # Calculate slot end time
+                    slot_end_minutes = current_minutes + block_mins
                     slot_end_hour = slot_end_minutes // 60
                     slot_end_min = slot_end_minutes % 60
                     slot_end_time = time(slot_end_hour, slot_end_min)
-
-                    # Don't exceed the day's end time
-                    # If this would exceed, make it a shorter slot (but still create it)
-                    if slot_end_minutes > end_minutes:
-                        slot_end_time = day.end_time
-                        # Calculate actual duration for this last slot
-                        actual_duration = end_minutes - current_minutes
-                    else:
-                        actual_duration = 15
 
                     court_label = court_label_for_index(tournament.court_names, court_num)
                     slot = ScheduleSlot(
@@ -947,19 +1038,16 @@ def generate_slots(
                         start_time=slot_start_time,
                         end_time=slot_end_time,
                         court_number=court_num,
-                        court_label=court_label,  # Scalar string only
-                        block_minutes=actual_duration,  # 15 for most, less for last slot if needed
+                        court_label=court_label,
+                        block_minutes=block_mins,
                         label=None,
                         is_active=True,
                     )
                     session.add(slot)
                     slots_created += 1
                     court_slots += 1
-                    current_minutes += 15  # 15-minute tick interval
+                    current_minutes += block_mins
 
-                    # If we've reached the end, break
-                    if slot_end_minutes >= end_minutes:
-                        break
                 print(f"[DEBUG] Created {court_slots} slots for court {court_num} on {day.date}")
 
     # Fail-fast tripwire: court_label must never be a list before commit
@@ -2223,6 +2311,17 @@ class GridAssignment(BaseModel):
     id: int  # Assignment database ID (required for PATCH endpoint)
     slot_id: int
     match_id: int
+    locked: bool = False
+
+
+class GridMatchLock(BaseModel):
+    match_id: int
+    slot_id: int
+
+
+class GridSlotLock(BaseModel):
+    slot_id: int
+    status: str
 
 
 class GridMatch(BaseModel):
@@ -2249,6 +2348,8 @@ class TeamInfo(BaseModel):
     name: str
     seed: Optional[int] = None
     event_id: int
+    display_name: Optional[str] = None
+    avoid_group: Optional[str] = None
 
 
 class ScheduleGridV1(BaseModel):
@@ -2257,6 +2358,8 @@ class ScheduleGridV1(BaseModel):
     matches: List[GridMatch]
     teams: List[TeamInfo]  # Team dictionary for ID→name mapping
     conflicts_summary: Optional[ConflictReportSummary] = None
+    match_locks: List[GridMatchLock] = []
+    slot_locks: List[GridSlotLock] = []
 
 
 @router.get("/tournaments/{tournament_id}/schedule/grid", response_model=ScheduleGridV1)
@@ -2317,10 +2420,33 @@ def get_schedule_grid(
     assignment_query = select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
     assignments = session.exec(assignment_query).all()
 
-    # Build grid assignments
+    # ========================================================================
+    # Fetch locks
+    # ========================================================================
+    m_locks = session.exec(
+        select(MatchLock).where(MatchLock.schedule_version_id == schedule_version_id)
+    ).all()
+    s_locks = session.exec(
+        select(SlotLock).where(SlotLock.schedule_version_id == schedule_version_id)
+    ).all()
+    locked_match_set = {ml.match_id for ml in m_locks}
+
+    # Build grid assignments (with locked flag)
     grid_assignments = []
     for assignment in assignments:
-        grid_assignments.append(GridAssignment(id=assignment.id, slot_id=assignment.slot_id, match_id=assignment.match_id))
+        grid_assignments.append(GridAssignment(
+            id=assignment.id,
+            slot_id=assignment.slot_id,
+            match_id=assignment.match_id,
+            locked=assignment.match_id in locked_match_set,
+        ))
+
+    grid_match_locks = [
+        GridMatchLock(match_id=ml.match_id, slot_id=ml.slot_id) for ml in m_locks
+    ]
+    grid_slot_locks = [
+        GridSlotLock(slot_id=sl.slot_id, status=sl.status) for sl in s_locks
+    ]
 
     # ========================================================================
     # Fetch matches
@@ -2381,7 +2507,17 @@ def get_schedule_grid(
     teams = session.exec(teams_query).all()
 
     # Build team info list
-    team_infos = [TeamInfo(id=team.id, name=team.name, seed=team.seed, event_id=team.event_id) for team in teams]
+    team_infos = [
+        TeamInfo(
+            id=team.id,
+            name=team.name,
+            seed=team.seed,
+            event_id=team.event_id,
+            display_name=getattr(team, "display_name", None),
+            avoid_group=getattr(team, "avoid_group", None),
+        )
+        for team in teams
+    ]
 
     # ========================================================================
     # Return grid payload
@@ -2392,6 +2528,8 @@ def get_schedule_grid(
         matches=grid_matches,
         teams=team_infos,
         conflicts_summary=conflicts_summary,
+        match_locks=grid_match_locks,
+        slot_locks=grid_slot_locks,
     )
 
 
@@ -2428,15 +2566,24 @@ class MatchPreviewDiagnostics(BaseModel):
     event_counts_by_id: Dict[int, int] = {}
 
 
+class MatchPreviewTeam(BaseModel):
+    id: int
+    name: str
+    seed: Optional[int] = None
+    display_name: Optional[str] = None
+    event_id: int
+
+
 class MatchPreviewResponse(BaseModel):
     """Match preview for Schedule Builder review"""
     matches: List[MatchPreviewItem]
     counts_by_event: Dict[str, int]
     counts_by_stage: Dict[str, int]
-    event_names_by_id: Dict[str, str]  # event_id (as str key) -> event name
+    event_names_by_id: Dict[str, str]
     duplicate_codes: List[str]
     ordering_checksum: str
     diagnostics: MatchPreviewDiagnostics
+    teams: List[MatchPreviewTeam] = []
 
 
 @router.get(
@@ -2520,6 +2667,22 @@ def get_matches_preview(
 
     event_names_by_id = {str(eid): name for eid, name in event_names.items()}
 
+    # Load teams for team_id -> name lookup in match cards
+    all_event_ids = list(event_names.keys())
+    teams_for_preview = session.exec(
+        select(Team).where(Team.event_id.in_(all_event_ids))
+    ).all() if all_event_ids else []
+    preview_teams = [
+        MatchPreviewTeam(
+            id=t.id,
+            name=t.name,
+            seed=t.seed,
+            display_name=getattr(t, "display_name", None),
+            event_id=t.event_id,
+        )
+        for t in teams_for_preview
+    ]
+
     return MatchPreviewResponse(
         matches=[
             MatchPreviewItem(
@@ -2546,6 +2709,7 @@ def get_matches_preview(
         duplicate_codes=sorted(set(duplicate_codes)),
         ordering_checksum=ordering_checksum,
         diagnostics=diagnostics,
+        teams=preview_teams,
     )
 
 
@@ -2771,6 +2935,75 @@ def assign_matches_by_scope(
     except Exception as e:
         session.rollback()
         raise RuntimeError(f"Assign failed: {e}") from e
+
+
+# ============================================================================
+# Assign Subset — place specific match IDs (deterministic, per-round buttons)
+# ============================================================================
+
+
+class AssignSubsetRequest(BaseModel):
+    match_ids: List[int]
+
+
+class AssignSubsetResponse(BaseModel):
+    assigned_count: int
+    unassigned_count_remaining: int
+    debug_stamp: str = "assign_subset_v1"
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/assign-subset",
+    response_model=AssignSubsetResponse,
+)
+def assign_matches_by_ids(
+    tournament_id: int,
+    version_id: int,
+    body: AssignSubsetRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Place a specific list of matches by ID.
+
+    Used by per-round buttons on the frontend (e.g. RR Round 1, Bracket QFs).
+    Only assigns matches that are currently unassigned. The match IDs must
+    belong to the given schedule version.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    slot_count = scalar_int(
+        session.exec(
+            select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
+        ).one()
+    )
+    if slot_count == 0:
+        raise HTTPException(status_code=400, detail="No slots exist. Generate slots first.")
+
+    if not body.match_ids:
+        return AssignSubsetResponse(assigned_count=0, unassigned_count_remaining=0)
+
+    try:
+        from app.utils.auto_assign import assign_by_match_ids
+
+        result = assign_by_match_ids(
+            session=session,
+            schedule_version_id=version_id,
+            match_ids=body.match_ids,
+        )
+        session.commit()
+        return AssignSubsetResponse(
+            assigned_count=result.assigned_count,
+            unassigned_count_remaining=result.unassigned_count,
+        )
+    except Exception as e:
+        session.rollback()
+        raise RuntimeError(f"Assign subset failed: {e}") from e
 
 
 # ============================================================================
@@ -3088,3 +3321,1181 @@ def build_full_schedule(
         )
 
     return BuildFullScheduleResponse(**response_data)
+
+
+# ============================================================================
+# Policy-Based Placement (deterministic batch-based scheduling)
+# ============================================================================
+
+
+class PolicyBatchResult(BaseModel):
+    name: str
+    attempted: int
+    assigned: int
+    failed_count: int
+    failed_match_ids: List[int]
+
+
+class PolicyPlanPreviewResponse(BaseModel):
+    """Preview of a daily policy plan (without executing it)."""
+    day_date: str
+    day_index: int
+    total_match_ids: int
+    reserved_slot_count: int
+    batches: List[Dict[str, Any]]
+
+
+class PolicyRunResponse(BaseModel):
+    """Result of executing a daily policy plan."""
+    day_date: str
+    total_assigned: int
+    total_failed: int
+    reserved_slot_count: int
+    duration_ms: Optional[int] = None
+    batches: List[PolicyBatchResult]
+
+
+class PolicyDaysResponse(BaseModel):
+    """List of schedule days available for policy placement."""
+    days: List[str]
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/policy-days",
+    response_model=PolicyDaysResponse,
+)
+def get_policy_days(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Return the list of unique schedule days (from slots) for this version."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    from app.services.schedule_policy_plan import get_tournament_schedule_days
+
+    days = get_tournament_schedule_days(session, version_id)
+    return PolicyDaysResponse(days=[str(d) for d in days])
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/policy-plan",
+    response_model=PolicyPlanPreviewResponse,
+)
+def preview_policy_plan(
+    tournament_id: int,
+    version_id: int,
+    day: str = Query(..., description="Day date in YYYY-MM-DD format"),
+    session: Session = Depends(get_session),
+):
+    """
+    Preview the daily policy plan without executing it.
+
+    Returns the ordered list of batches with match IDs that would be placed.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    try:
+        day_date = date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {day}. Use YYYY-MM-DD.")
+
+    from app.services.schedule_policy_plan import build_daily_plan
+
+    plan = build_daily_plan(session, tournament_id, version_id, day_date)
+    return PolicyPlanPreviewResponse(
+        day_date=str(plan.day_date),
+        day_index=plan.day_index,
+        total_match_ids=sum(len(b.match_ids) for b in plan.batches),
+        reserved_slot_count=len(plan.reserved_slot_ids),
+        batches=[b.to_dict() for b in plan.batches],
+    )
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/run-policy",
+    response_model=PolicyRunResponse,
+)
+def run_policy(
+    tournament_id: int,
+    version_id: int,
+    day: str = Query(..., description="Day date in YYYY-MM-DD format"),
+    session: Session = Depends(get_session),
+):
+    """
+    Build and execute the daily policy placement plan.
+
+    1. Builds ordered batches for the specified day.
+    2. Reserves spare courts (temporarily deactivates slots).
+    3. Executes each batch via assign_by_match_ids (deterministic first-fit).
+    4. Restores reserved slots.
+    5. Returns per-batch results.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    require_draft_version(session, version_id, tournament_id)
+
+    try:
+        day_date = date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {day}. Use YYYY-MM-DD.")
+
+    try:
+        from app.services.schedule_policy_plan import run_daily_policy
+
+        result = run_daily_policy(session, tournament_id, version_id, day_date)
+        session.commit()
+
+        return PolicyRunResponse(
+            day_date=str(result.day_date),
+            total_assigned=result.total_assigned,
+            total_failed=result.total_failed,
+            reserved_slot_count=result.reserved_slot_count,
+            duration_ms=result.duration_ms,
+            batches=[
+                PolicyBatchResult(
+                    name=b.name,
+                    attempted=b.attempted,
+                    assigned=b.assigned,
+                    failed_count=len(b.failed_match_ids),
+                    failed_match_ids=b.failed_match_ids,
+                )
+                for b in result.batches
+            ],
+        )
+    except Exception as e:
+        session.rollback()
+        logger.exception("Policy run failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── One-button full schedule ──────────────────────────────────────────
+
+class FullPolicyDayResult(BaseModel):
+    day: str
+    assigned: int
+    failed: int
+    reserved_spares: int
+    duration_ms: Optional[int] = None
+    batches: List[dict]
+
+
+class FullPolicyRunResponse(BaseModel):
+    total_assigned: int
+    total_failed: int
+    total_reserved_spares: int
+    duration_ms: Optional[int] = None
+    day_results: List[FullPolicyDayResult]
+    input_hash: Optional[str] = None
+    output_hash: Optional[str] = None
+    invariant_ok: Optional[bool] = None
+    invariant_violations: Optional[List[dict]] = None
+    invariant_stats: Optional[dict] = None
+    policy_run_id: Optional[int] = None
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/run-full-policy",
+    response_model=FullPolicyRunResponse,
+)
+def run_full_policy(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    One-button scheduling with invariant verification.
+
+    1. Clears existing assignments
+    2. Computes input hash (pre-placement)
+    3. Runs the master-sequence scheduler
+    4. Runs invariant verification across all days
+    5. If violations found: ROLLBACK and return HTTP 409
+    6. If clean: compute output hash, persist snapshot, commit
+
+    The entire run is wrapped in a single transaction so rollback is real.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    require_draft_version(session, version_id, tournament_id)
+
+    from app.services.schedule_sequence import run_sequence_schedule
+    from app.services.policy_invariants import (
+        verify_full_schedule,
+        hash_policy_input,
+        hash_policy_output,
+    )
+    from app.models.policy_run import PolicyRun
+
+    try:
+        # ── Load locks ─────────────────────────────────────────────────
+        match_locks = session.exec(
+            select(MatchLock).where(MatchLock.schedule_version_id == version_id)
+        ).all()
+        slot_locks = session.exec(
+            select(SlotLock).where(
+                SlotLock.schedule_version_id == version_id,
+                SlotLock.status == "BLOCKED",
+            )
+        ).all()
+        locked_match_ids = {ml.match_id for ml in match_locks}
+        locked_slot_map = {ml.match_id: ml.slot_id for ml in match_locks}
+        blocked_slot_ids = {sl.slot_id for sl in slot_locks}
+
+        if match_locks or slot_locks:
+            logger.info(
+                "run_full_policy: %d match locks, %d blocked slots for version %d",
+                len(match_locks), len(slot_locks), version_id,
+            )
+
+        # Clear ALL existing assignments for this version before re-running.
+        existing_assignments = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == version_id,
+            )
+        ).all()
+        cleared_count = len(existing_assignments)
+        for a in existing_assignments:
+            session.delete(a)
+        session.flush()
+        if cleared_count:
+            logger.info(
+                "run_full_policy: cleared %d existing assignments for version %d",
+                cleared_count, version_id,
+            )
+
+        # ── Pre-apply locked match assignments ─────────────────────────
+        for ml in match_locks:
+            if ml.slot_id in blocked_slot_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Match lock conflict: match {ml.match_id} locked to slot {ml.slot_id} which is blocked",
+                )
+            assignment = MatchAssignment(
+                schedule_version_id=version_id,
+                match_id=ml.match_id,
+                slot_id=ml.slot_id,
+                assigned_at=datetime.utcnow(),
+                assigned_by="MATCH_LOCK",
+                locked=True,
+            )
+            session.add(assignment)
+        if match_locks:
+            session.flush()
+
+        # Compute input hash before placement (includes locks now)
+        input_h = hash_policy_input(session, tournament_id, version_id)
+
+        # Run the scheduler (creates MatchAssignment rows, not yet committed)
+        # Pass locked/blocked info so the scheduler skips them
+        locked_slot_ids = set(locked_slot_map.values())
+        result = run_sequence_schedule(
+            session, tournament_id, version_id,
+            locked_match_ids=locked_match_ids,
+            blocked_slot_ids=blocked_slot_ids | locked_slot_ids,
+        )
+        session.flush()
+
+        # Run invariant verification across all days
+        report = verify_full_schedule(session, tournament_id, version_id)
+
+        # Compute output hash
+        output_h = hash_policy_output(session, version_id)
+
+        # Build day_results for response
+        day_results_models = [
+            FullPolicyDayResult(**dr) for dr in result.day_results
+        ]
+
+        locks_snapshot = {
+            "match_locks": sorted(
+                [{"match_id": ml.match_id, "slot_id": ml.slot_id} for ml in match_locks],
+                key=lambda x: (x["match_id"], x["slot_id"]),
+            ),
+            "slot_locks": sorted(
+                [{"slot_id": sl.slot_id, "status": sl.status} for sl in slot_locks],
+                key=lambda x: x["slot_id"],
+            ),
+        }
+
+        if not report.ok:
+            # HARD STOP: rollback all assignments
+            snapshot = {
+                "input_hash": input_h,
+                "output_hash": output_h,
+                "invariant_report": report.to_dict(),
+                "day_results": result.day_results,
+                "total_assigned": result.total_assigned,
+                "total_failed": result.total_failed,
+                "total_reserved_spares": result.total_reserved_spares,
+                "rolled_back": True,
+                "locks": locks_snapshot,
+            }
+
+            # Persist the failed run snapshot before rollback
+            policy_run = PolicyRun(
+                tournament_id=tournament_id,
+                schedule_version_id=version_id,
+                policy_version="sequence_v1",
+                input_hash=input_h,
+                output_hash=output_h,
+                ok=False,
+                total_assigned=result.total_assigned,
+                total_failed=result.total_failed,
+                total_reserved_spares=result.total_reserved_spares,
+                duration_ms=result.duration_ms or 0,
+                snapshot_json=json.dumps(snapshot, default=str),
+            )
+            # We need a separate connection for the audit log since we're
+            # about to rollback.  Use the session to store it first, then
+            # rollback won't include it if we use a nested transaction.
+            # Instead, just rollback and re-insert the audit row.
+            session.rollback()
+
+            # Re-insert the failed run record after rollback
+            session.add(policy_run)
+            session.commit()
+
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Invariant violations detected - schedule rolled back",
+                    "policy_run_id": policy_run.id,
+                    "input_hash": input_h,
+                    "output_hash": output_h,
+                    "invariant_report": report.to_dict(),
+                    "day_results": result.day_results,
+                },
+            )
+
+        # All invariants passed — persist snapshot and commit
+        snapshot = {
+            "input_hash": input_h,
+            "output_hash": output_h,
+            "invariant_report": report.to_dict(),
+            "day_results": result.day_results,
+            "total_assigned": result.total_assigned,
+            "total_failed": result.total_failed,
+            "total_reserved_spares": result.total_reserved_spares,
+            "rolled_back": False,
+            "locks": locks_snapshot,
+        }
+
+        policy_run = PolicyRun(
+            tournament_id=tournament_id,
+            schedule_version_id=version_id,
+            policy_version="sequence_v1",
+            input_hash=input_h,
+            output_hash=output_h,
+            ok=True,
+            total_assigned=result.total_assigned,
+            total_failed=result.total_failed,
+            total_reserved_spares=result.total_reserved_spares,
+            duration_ms=result.duration_ms or 0,
+            snapshot_json=json.dumps(snapshot, default=str),
+        )
+        session.add(policy_run)
+        session.commit()
+        session.refresh(policy_run)
+
+        return FullPolicyRunResponse(
+            total_assigned=result.total_assigned,
+            total_failed=result.total_failed,
+            total_reserved_spares=result.total_reserved_spares,
+            duration_ms=result.duration_ms,
+            day_results=day_results_models,
+            input_hash=input_h,
+            output_hash=output_h,
+            invariant_ok=report.ok,
+            invariant_violations=[v.to_dict() if hasattr(v, 'to_dict') else v for v in report.to_dict()["violations"]],
+            invariant_stats=report.to_dict()["stats"],
+            policy_run_id=policy_run.id,
+        )
+    except HTTPException:
+        raise  # re-raise 409s as-is
+    except Exception as e:
+        session.rollback()
+        logger.exception("Full policy run failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Schedule Report
+# ══════════════════════════════════════════════════════════════════════════
+
+class EventStageBreakdown(BaseModel):
+    event_name: str
+    stage: str
+    match_count: int
+
+
+class TimeSlotReport(BaseModel):
+    time: str  # HH:MM format
+    total_courts: int
+    reserved_courts: int
+    assigned_matches: int
+    spare_courts: int
+    breakdown: List[EventStageBreakdown]
+
+
+class DayReport(BaseModel):
+    day: str  # YYYY-MM-DD format
+    time_slots: List[TimeSlotReport]
+
+
+class ScheduleReportResponse(BaseModel):
+    days: List[DayReport]
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/schedule-report",
+    response_model=ScheduleReportResponse,
+)
+def get_schedule_report(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Generate a detailed schedule report by time slot.
+
+    Returns breakdown by day and time slot showing:
+    - Total courts, reserved courts, assigned matches, spare courts
+    - Event/stage breakdown for each time slot
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    # Load all slots for this version
+    slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
+    ).all()
+
+    # Load all assignments
+    assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
+    ).all()
+    assigned_slot_ids = {a.slot_id for a in assignments}
+    match_id_to_assignment = {a.match_id: a for a in assignments}
+
+    # Load all matches to get event/stage info
+    matches = session.exec(
+        select(Match).where(Match.schedule_version_id == version_id)
+    ).all()
+    match_by_id = {m.id: m for m in matches}
+
+    # Load events to get names
+    events = session.exec(
+        select(Event).where(Event.tournament_id == tournament_id)
+    ).all()
+    event_by_id = {e.id: e.name for e in events}
+
+    # Group slots by day and time
+    from collections import defaultdict
+    slots_by_day_time: Dict[date, Dict[time, List[ScheduleSlot]]] = defaultdict(lambda: defaultdict(list))
+    for slot in slots:
+        slots_by_day_time[slot.day_date][slot.start_time].append(slot)
+
+    # Build report
+    days_list: List[DayReport] = []
+    for day_date in sorted(slots_by_day_time.keys()):
+        time_slots_list: List[TimeSlotReport] = []
+        for start_time in sorted(slots_by_day_time[day_date].keys()):
+            day_slots = slots_by_day_time[day_date][start_time]
+            
+            # Count totals
+            total_courts = len(day_slots)
+            reserved_courts = sum(1 for s in day_slots if not s.is_active)
+            
+            # Count assigned matches for this time slot
+            assigned_matches = sum(1 for s in day_slots if s.id in assigned_slot_ids)
+            
+            # Calculate spare (active slots not assigned)
+            active_slots = sum(1 for s in day_slots if s.is_active)
+            spare_courts = active_slots - assigned_matches
+            
+            # Build event/stage breakdown
+            breakdown_dict: Dict[Tuple[int, str], int] = defaultdict(int)
+            for slot in day_slots:
+                if slot.id in assigned_slot_ids:
+                    # Find the assignment for this slot
+                    assignment = next((a for a in assignments if a.slot_id == slot.id), None)
+                    if assignment and assignment.match_id in match_by_id:
+                        match = match_by_id[assignment.match_id]
+                        event_name = event_by_id.get(match.event_id, f"Event {match.event_id}")
+                        stage = match.match_type or "UNKNOWN"
+                        breakdown_dict[(match.event_id, stage)] += 1
+            
+            # Convert breakdown to list
+            breakdown_list: List[EventStageBreakdown] = []
+            for (event_id, stage), count in sorted(breakdown_dict.items()):
+                event_name = event_by_id.get(event_id, f"Event {event_id}")
+                breakdown_list.append(EventStageBreakdown(
+                    event_name=event_name,
+                    stage=stage,
+                    match_count=count,
+                ))
+            
+            # Format time as HH:MM
+            time_str = start_time.strftime("%H:%M")
+            
+            time_slots_list.append(TimeSlotReport(
+                time=time_str,
+                total_courts=total_courts,
+                reserved_courts=reserved_courts,
+                assigned_matches=assigned_matches,
+                spare_courts=spare_courts,
+                breakdown=breakdown_list,
+            ))
+        
+        days_list.append(DayReport(
+            day=str(day_date),
+            time_slots=time_slots_list,
+        ))
+    
+    return ScheduleReportResponse(days=days_list)
+
+
+# ============================================================================
+# Schedule Quality Report
+# ============================================================================
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/quality-report",
+    summary="Get schedule quality report",
+    description="Validates a schedule version against quality rules: completeness, sequencing, rest, daily cap, staggering, spare courts.",
+)
+def get_quality_report(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Run quality checks on a schedule and return a detailed report."""
+    from app.services.schedule_quality_report import generate_quality_report
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    report = generate_quality_report(session, tournament_id, version_id)
+    return report.to_dict()
+
+
+# ============================================================================
+# Policy Run Snapshots (Audit / Replay / Diff)
+# ============================================================================
+
+class PolicyRunSummary(BaseModel):
+    id: int
+    tournament_id: int
+    schedule_version_id: int
+    day_date: Optional[str] = None
+    policy_version: str
+    created_at: str
+    input_hash: str
+    output_hash: str
+    ok: bool
+    total_assigned: int
+    total_failed: int
+    total_reserved_spares: int
+    duration_ms: int
+
+
+class PolicyRunDetail(PolicyRunSummary):
+    snapshot_json: Optional[dict] = None
+    invariant_report: Optional[dict] = None
+
+
+class PolicyRunDiffResponse(BaseModel):
+    run_a: PolicyRunSummary
+    run_b: PolicyRunSummary
+    hash_changed: bool
+    assignment_delta: dict
+    changed_batches: List[dict]
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/policy-runs",
+    response_model=List[PolicyRunSummary],
+)
+def list_policy_runs(
+    tournament_id: int,
+    version_id: int,
+    day: Optional[str] = Query(None, description="Filter by day (YYYY-MM-DD)"),
+    session: Session = Depends(get_session),
+):
+    """List all policy run snapshots for a schedule version."""
+    from app.models.policy_run import PolicyRun
+
+    q = select(PolicyRun).where(
+        PolicyRun.tournament_id == tournament_id,
+        PolicyRun.schedule_version_id == version_id,
+    )
+    if day:
+        q = q.where(PolicyRun.day_date == day)
+    q = q.order_by(PolicyRun.created_at.desc())
+
+    runs = session.exec(q).all()
+    return [
+        PolicyRunSummary(
+            id=r.id,
+            tournament_id=r.tournament_id,
+            schedule_version_id=r.schedule_version_id,
+            day_date=r.day_date,
+            policy_version=r.policy_version,
+            created_at=str(r.created_at),
+            input_hash=r.input_hash,
+            output_hash=r.output_hash,
+            ok=r.ok,
+            total_assigned=r.total_assigned,
+            total_failed=r.total_failed,
+            total_reserved_spares=r.total_reserved_spares,
+            duration_ms=r.duration_ms,
+        )
+        for r in runs
+    ]
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/policy-runs/diff",
+    response_model=PolicyRunDiffResponse,
+)
+def diff_policy_runs(
+    tournament_id: int,
+    version_id: int,
+    run_id_a: int = Query(..., description="First run ID"),
+    run_id_b: int = Query(..., description="Second run ID"),
+    session: Session = Depends(get_session),
+):
+    """
+    Compare two policy run snapshots.
+
+    Returns which batches changed and an assignment delta
+    (added/removed match assignments).
+    """
+    from app.models.policy_run import PolicyRun
+
+    run_a = session.get(PolicyRun, run_id_a)
+    run_b = session.get(PolicyRun, run_id_b)
+    if not run_a or run_a.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail=f"Policy run {run_id_a} not found")
+    if not run_b or run_b.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail=f"Policy run {run_id_b} not found")
+
+    snap_a = json.loads(run_a.snapshot_json) if run_a.snapshot_json else {}
+    snap_b = json.loads(run_b.snapshot_json) if run_b.snapshot_json else {}
+
+    # Compare day_results batches
+    batches_a = {
+        b["label"]: b.get("assigned", 0)
+        for dr in snap_a.get("day_results", [])
+        for b in dr.get("batches", [])
+    }
+    batches_b = {
+        b["label"]: b.get("assigned", 0)
+        for dr in snap_b.get("day_results", [])
+        for b in dr.get("batches", [])
+    }
+    all_labels = sorted(set(batches_a.keys()) | set(batches_b.keys()))
+    changed_batches = []
+    for label in all_labels:
+        a_cnt = batches_a.get(label, 0)
+        b_cnt = batches_b.get(label, 0)
+        if a_cnt != b_cnt:
+            changed_batches.append({
+                "label": label,
+                "run_a_count": a_cnt,
+                "run_b_count": b_cnt,
+                "delta": b_cnt - a_cnt,
+            })
+
+    def _summary(r):
+        return PolicyRunSummary(
+            id=r.id,
+            tournament_id=r.tournament_id,
+            schedule_version_id=r.schedule_version_id,
+            day_date=r.day_date,
+            policy_version=r.policy_version,
+            created_at=str(r.created_at),
+            input_hash=r.input_hash,
+            output_hash=r.output_hash,
+            ok=r.ok,
+            total_assigned=r.total_assigned,
+            total_failed=r.total_failed,
+            total_reserved_spares=r.total_reserved_spares,
+            duration_ms=r.duration_ms,
+        )
+
+    return PolicyRunDiffResponse(
+        run_a=_summary(run_a),
+        run_b=_summary(run_b),
+        hash_changed=run_a.output_hash != run_b.output_hash,
+        assignment_delta={
+            "run_a_assigned": run_a.total_assigned,
+            "run_b_assigned": run_b.total_assigned,
+            "delta": run_b.total_assigned - run_a.total_assigned,
+        },
+        changed_batches=changed_batches,
+    )
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/policy-runs/{run_id}",
+    response_model=PolicyRunDetail,
+)
+def get_policy_run(
+    tournament_id: int,
+    version_id: int,
+    run_id: int,
+    session: Session = Depends(get_session),
+):
+    """Get full detail of a policy run snapshot including invariant report."""
+    from app.models.policy_run import PolicyRun
+
+    run = session.get(PolicyRun, run_id)
+    if not run or run.tournament_id != tournament_id or run.schedule_version_id != version_id:
+        raise HTTPException(status_code=404, detail="Policy run not found")
+
+    snapshot = json.loads(run.snapshot_json) if run.snapshot_json else None
+    invariant_report = snapshot.get("invariant_report") if snapshot else None
+
+    return PolicyRunDetail(
+        id=run.id,
+        tournament_id=run.tournament_id,
+        schedule_version_id=run.schedule_version_id,
+        day_date=run.day_date,
+        policy_version=run.policy_version,
+        created_at=str(run.created_at),
+        input_hash=run.input_hash,
+        output_hash=run.output_hash,
+        ok=run.ok,
+        total_assigned=run.total_assigned,
+        total_failed=run.total_failed,
+        total_reserved_spares=run.total_reserved_spares,
+        duration_ms=run.duration_ms,
+        snapshot_json=snapshot,
+        invariant_report=invariant_report,
+    )
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/policy-runs/{run_id}/replay",
+)
+def replay_policy_run(
+    tournament_id: int,
+    version_id: int,
+    run_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Replay a previous policy run to verify determinism.
+
+    1. Loads the original run's input_hash
+    2. Clears current assignments
+    3. Re-runs the scheduler
+    4. Compares output_hash with the original
+    5. Returns pass/fail with both hashes
+    """
+    from app.models.policy_run import PolicyRun
+    from app.services.schedule_sequence import run_sequence_schedule
+    from app.services.policy_invariants import (
+        verify_full_schedule,
+        hash_policy_input,
+        hash_policy_output,
+    )
+
+    original = session.get(PolicyRun, run_id)
+    if not original or original.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Policy run not found")
+
+    require_draft_version(session, version_id, tournament_id)
+
+    # Verify inputs haven't changed
+    current_input_hash = hash_policy_input(session, tournament_id, version_id)
+    if current_input_hash != original.input_hash:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Input data has changed since original run - replay not valid",
+                "original_input_hash": original.input_hash,
+                "current_input_hash": current_input_hash,
+            },
+        )
+
+    # Clear existing assignments
+    existing = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version_id,
+        )
+    ).all()
+    for a in existing:
+        session.delete(a)
+    session.flush()
+
+    # Re-run scheduler
+    result = run_sequence_schedule(session, tournament_id, version_id)
+    session.flush()
+
+    # Verify determinism
+    new_output_hash = hash_policy_output(session, version_id)
+    report = verify_full_schedule(session, tournament_id, version_id)
+
+    deterministic = new_output_hash == original.output_hash
+
+    if not deterministic:
+        session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "DETERMINISM REGRESSION: replay produced different output",
+                "original_output_hash": original.output_hash,
+                "replay_output_hash": new_output_hash,
+            },
+        )
+
+    # Persist replay as a new run
+    snapshot = {
+        "input_hash": current_input_hash,
+        "output_hash": new_output_hash,
+        "invariant_report": report.to_dict(),
+        "day_results": result.day_results,
+        "total_assigned": result.total_assigned,
+        "replay_of_run_id": run_id,
+    }
+
+    replay_run = PolicyRun(
+        tournament_id=tournament_id,
+        schedule_version_id=version_id,
+        policy_version=original.policy_version,
+        input_hash=current_input_hash,
+        output_hash=new_output_hash,
+        ok=report.ok,
+        total_assigned=result.total_assigned,
+        total_failed=result.total_failed,
+        total_reserved_spares=result.total_reserved_spares,
+        duration_ms=result.duration_ms or 0,
+        snapshot_json=json.dumps(snapshot, default=str),
+    )
+    session.add(replay_run)
+    session.commit()
+    session.refresh(replay_run)
+
+    return {
+        "deterministic": True,
+        "original_output_hash": original.output_hash,
+        "replay_output_hash": new_output_hash,
+        "invariant_ok": report.ok,
+        "replay_run_id": replay_run.id,
+        "total_assigned": result.total_assigned,
+    }
+
+
+# ============================================================================
+# Lock Endpoints (Match Locks + Slot Locks)
+# ============================================================================
+
+
+class MatchLockCreate(BaseModel):
+    match_id: int
+    slot_id: int
+
+
+class SlotLockCreate(BaseModel):
+    slot_id: int
+    status: str = "BLOCKED"
+
+
+@router.get("/tournaments/{tournament_id}/schedule/versions/{version_id}/locks")
+def get_locks(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Return all match locks and slot locks for a schedule version."""
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    match_locks = session.exec(
+        select(MatchLock)
+        .where(MatchLock.schedule_version_id == version_id)
+    ).all()
+    slot_locks = session.exec(
+        select(SlotLock)
+        .where(SlotLock.schedule_version_id == version_id)
+    ).all()
+
+    return {
+        "match_locks": sorted(
+            [
+                {
+                    "id": ml.id,
+                    "schedule_version_id": ml.schedule_version_id,
+                    "match_id": ml.match_id,
+                    "slot_id": ml.slot_id,
+                    "created_at": ml.created_at.isoformat() if ml.created_at else None,
+                    "created_by": ml.created_by,
+                }
+                for ml in match_locks
+            ],
+            key=lambda x: (x["match_id"], x["slot_id"]),
+        ),
+        "slot_locks": sorted(
+            [
+                {
+                    "id": sl.id,
+                    "schedule_version_id": sl.schedule_version_id,
+                    "slot_id": sl.slot_id,
+                    "status": sl.status,
+                    "created_at": sl.created_at.isoformat() if sl.created_at else None,
+                }
+                for sl in slot_locks
+            ],
+            key=lambda x: x["slot_id"],
+        ),
+    }
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/locks/match",
+    status_code=201,
+)
+def create_match_lock(
+    tournament_id: int,
+    version_id: int,
+    data: MatchLockCreate,
+    session: Session = Depends(get_session),
+):
+    """Lock a match to a specific slot (upsert)."""
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    match = session.get(Match, data.match_id)
+    if not match or match.schedule_version_id != version_id:
+        raise HTTPException(status_code=404, detail="Match not found in this version")
+
+    slot = session.get(ScheduleSlot, data.slot_id)
+    if not slot or slot.schedule_version_id != version_id:
+        raise HTTPException(status_code=404, detail="Slot not found in this version")
+
+    # Slot must not be blocked
+    slot_block = session.exec(
+        select(SlotLock).where(
+            SlotLock.schedule_version_id == version_id,
+            SlotLock.slot_id == data.slot_id,
+            SlotLock.status == "BLOCKED",
+        )
+    ).first()
+    if slot_block:
+        raise HTTPException(status_code=409, detail="Slot is blocked")
+
+    # Slot must not already be locked to a DIFFERENT match
+    existing_slot_lock = session.exec(
+        select(MatchLock).where(
+            MatchLock.schedule_version_id == version_id,
+            MatchLock.slot_id == data.slot_id,
+        )
+    ).first()
+    if existing_slot_lock and existing_slot_lock.match_id != data.match_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Slot already locked to match {existing_slot_lock.match_id}",
+        )
+
+    # Upsert: if match already locked, update slot
+    existing_match_lock = session.exec(
+        select(MatchLock).where(
+            MatchLock.schedule_version_id == version_id,
+            MatchLock.match_id == data.match_id,
+        )
+    ).first()
+
+    if existing_match_lock:
+        existing_match_lock.slot_id = data.slot_id
+        session.add(existing_match_lock)
+        session.commit()
+        session.refresh(existing_match_lock)
+        return {
+            "id": existing_match_lock.id,
+            "match_id": existing_match_lock.match_id,
+            "slot_id": existing_match_lock.slot_id,
+            "created_at": existing_match_lock.created_at.isoformat(),
+        }
+
+    lock = MatchLock(
+        schedule_version_id=version_id,
+        match_id=data.match_id,
+        slot_id=data.slot_id,
+    )
+    session.add(lock)
+    session.commit()
+    session.refresh(lock)
+
+    return {
+        "id": lock.id,
+        "match_id": lock.match_id,
+        "slot_id": lock.slot_id,
+        "created_at": lock.created_at.isoformat(),
+    }
+
+
+@router.delete(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/locks/match/{match_id}",
+    status_code=204,
+)
+def delete_match_lock(
+    tournament_id: int,
+    version_id: int,
+    match_id: int,
+    session: Session = Depends(get_session),
+):
+    """Remove a match lock."""
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    lock = session.exec(
+        select(MatchLock).where(
+            MatchLock.schedule_version_id == version_id,
+            MatchLock.match_id == match_id,
+        )
+    ).first()
+    if not lock:
+        raise HTTPException(status_code=404, detail="Match lock not found")
+
+    session.delete(lock)
+    session.commit()
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/locks/slot",
+    status_code=201,
+)
+def create_slot_lock(
+    tournament_id: int,
+    version_id: int,
+    data: SlotLockCreate,
+    session: Session = Depends(get_session),
+):
+    """Block or explicitly open a slot (upsert)."""
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    if data.status not in ("BLOCKED", "OPEN"):
+        raise HTTPException(status_code=400, detail="Status must be BLOCKED or OPEN")
+
+    slot = session.get(ScheduleSlot, data.slot_id)
+    if not slot or slot.schedule_version_id != version_id:
+        raise HTTPException(status_code=404, detail="Slot not found in this version")
+
+    # Cannot block a slot that has a match lock
+    if data.status == "BLOCKED":
+        ml = session.exec(
+            select(MatchLock).where(
+                MatchLock.schedule_version_id == version_id,
+                MatchLock.slot_id == data.slot_id,
+            )
+        ).first()
+        if ml:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Slot has a match lock (match {ml.match_id}); remove the match lock first",
+            )
+
+    # Upsert
+    existing = session.exec(
+        select(SlotLock).where(
+            SlotLock.schedule_version_id == version_id,
+            SlotLock.slot_id == data.slot_id,
+        )
+    ).first()
+    if existing:
+        existing.status = data.status
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return {
+            "id": existing.id,
+            "slot_id": existing.slot_id,
+            "status": existing.status,
+            "created_at": existing.created_at.isoformat(),
+        }
+
+    lock = SlotLock(
+        schedule_version_id=version_id,
+        slot_id=data.slot_id,
+        status=data.status,
+    )
+    session.add(lock)
+    session.commit()
+    session.refresh(lock)
+
+    return {
+        "id": lock.id,
+        "slot_id": lock.slot_id,
+        "status": lock.status,
+        "created_at": lock.created_at.isoformat(),
+    }
+
+
+@router.delete(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/locks/slot/{slot_id}",
+    status_code=204,
+)
+def delete_slot_lock(
+    tournament_id: int,
+    version_id: int,
+    slot_id: int,
+    session: Session = Depends(get_session),
+):
+    """Remove a slot lock."""
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    lock = session.exec(
+        select(SlotLock).where(
+            SlotLock.schedule_version_id == version_id,
+            SlotLock.slot_id == slot_id,
+        )
+    ).first()
+    if not lock:
+        raise HTTPException(status_code=404, detail="Slot lock not found")
+
+    session.delete(lock)
+    session.commit()

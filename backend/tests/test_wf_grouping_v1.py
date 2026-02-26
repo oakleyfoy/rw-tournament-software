@@ -203,10 +203,9 @@ def test_conflict_minimization_simple(session: Session, setup_wf_event):
     )
     session.add(edge1)
     session.add(edge2)
-    session.commit()
+    session.flush()
 
-    # Run grouping
-    result = assign_wf_groups_v1(session, event_id, clear_existing=True)
+    result = assign_wf_groups_v1(session, event_id, clear_existing=True, _transactional=True)
 
     # Should have 0 internal conflicts (perfectly separable)
     assert result.total_internal_conflicts == 0
@@ -227,12 +226,10 @@ def test_determinism(session: Session, setup_wf_event):
     setup = setup_wf_event(12)
     event_id = setup["event_id"]
 
-    # Run grouping first time
-    result1 = assign_wf_groups_v1(session, event_id, clear_existing=True)
+    result1 = assign_wf_groups_v1(session, event_id, clear_existing=True, _transactional=True)
     assignments1 = result1.team_assignments.copy()
 
-    # Run grouping second time
-    result2 = assign_wf_groups_v1(session, event_id, clear_existing=True)
+    result2 = assign_wf_groups_v1(session, event_id, clear_existing=True, _transactional=True)
     assignments2 = result2.team_assignments.copy()
 
     # Results should be identical
@@ -260,10 +257,9 @@ def test_unavoidable_cluster(session: Session, setup_wf_event):
             )
             edges.append(edge)
             session.add(edge)
-    session.commit()
+    session.flush()
 
-    # Run grouping
-    result = assign_wf_groups_v1(session, event_id, clear_existing=True)
+    result = assign_wf_groups_v1(session, event_id, clear_existing=True, _transactional=True)
 
     # Should have 6 internal conflicts (all pairs in same group)
     assert result.total_internal_conflicts == 6

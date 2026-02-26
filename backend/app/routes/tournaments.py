@@ -62,6 +62,7 @@ class TournamentResponse(BaseModel):
     notes: Optional[str]
     use_time_windows: bool
     court_names: Optional[List[str]] = None
+    public_schedule_version_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

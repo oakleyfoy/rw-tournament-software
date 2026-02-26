@@ -202,6 +202,22 @@ export function MatchCardsPage() {
   const getEventName = (eventId: number) =>
     eventNameById.get(eventId) ?? preview?.event_names_by_id?.[String(eventId)] ?? `Event ${eventId}`
 
+  const teamMap = useMemo(() => {
+    const map = new Map<number, { name: string; seed: number | null; display_name: string | null }>()
+    for (const t of preview?.teams ?? []) {
+      map.set(t.id, { name: t.name, seed: t.seed, display_name: t.display_name })
+    }
+    return map
+  }, [preview?.teams])
+
+  const teamLabel = (teamId: number | null, placeholder: string): string => {
+    if (teamId === null) return prettyPlaceholder(placeholder)
+    const t = teamMap.get(teamId)
+    if (!t) return prettyPlaceholder(placeholder)
+    const label = t.display_name || t.name
+    return t.seed ? `#${t.seed} ${label}` : label
+  }
+
   /** Get RR round for Pool matches. Derives from match_code when backend round_index is wrong (legacy data). */
   const getPoolRRRoundIndex = (
     m: { match_code: string; round_index?: number },
@@ -470,7 +486,7 @@ export function MatchCardsPage() {
                           <th style={{ padding: 6 }}>Round</th>
                           <th style={{ padding: 6 }}>match_code</th>
                           <th style={{ padding: 6 }}>sequence</th>
-                          <th style={{ padding: 6 }}>Placeholder A / B</th>
+                          <th style={{ padding: 6 }}>Side A / B</th>
                           <th style={{ padding: 6 }}>Duration</th>
                         </tr>
                       </thead>
@@ -489,7 +505,7 @@ export function MatchCardsPage() {
                               <td style={{ padding: 6 }}>{roundLabel}</td>
                               <td style={{ padding: 6 }}><code>{m.match_code}</code></td>
                               <td style={{ padding: 6 }}>{m.sequence_in_round}</td>
-                              <td style={{ padding: 6 }}>{prettyPlaceholder(m.placeholder_side_a)} / {prettyPlaceholder(m.placeholder_side_b)}</td>
+                              <td style={{ padding: 6 }}>{teamLabel(m.team_a_id, m.placeholder_side_a)} / {teamLabel(m.team_b_id, m.placeholder_side_b)}</td>
                               <td style={{ padding: 6 }}>{m.duration_minutes}m</td>
                             </tr>
                           )
@@ -530,10 +546,10 @@ export function MatchCardsPage() {
               // Render main bracket division sections in order: WW, WL, LW, LL
               const mainBracketDivisionOrder = ['WW', 'WL', 'LW', 'LL']
               const mainBracketDivisionLabels: Record<string, string> = {
-                'WW': 'Division I (WW)',
-                'WL': 'Division II (WL)',
-                'LW': 'Division III (LW)',
-                'LL': 'Division IV (LL)',
+                'WW': 'Division I',
+                'WL': 'Division II',
+                'LW': 'Division III',
+                'LL': 'Division IV',
               }
 
               const mainBracketSections = mainBracketDivisionOrder
@@ -551,10 +567,10 @@ export function MatchCardsPage() {
               // Render consolation division sections in order: I (WW), II (WL), III (LW), IV (LL)
               const divisionOrder = ['DIV_I_WW', 'DIV_II_WL', 'DIV_III_LW', 'DIV_IV_LL']
               const divisionLabels: Record<string, string> = {
-                'DIV_I_WW': 'Division I (WW)',
-                'DIV_II_WL': 'Division II (WL)',
-                'DIV_III_LW': 'Division III (LW)',
-                'DIV_IV_LL': 'Division IV (LL)',
+                'DIV_I_WW': 'Division I',
+                'DIV_II_WL': 'Division II',
+                'DIV_III_LW': 'Division III',
+                'DIV_IV_LL': 'Division IV',
               }
 
               const divisionSections = divisionOrder

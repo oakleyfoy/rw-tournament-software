@@ -158,7 +158,7 @@ function TournamentList() {
                 <th>Location</th>
                 <th>Date Range</th>
                 <th>Timezone</th>
-                <th style={{ width: '150px' }}>Actions</th>
+                <th style={{ width: '210px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -205,6 +205,26 @@ function TournamentList() {
                           title="Edit tournament"
                         >
                           Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{
+                            fontSize: '12px',
+                            padding: '6px 12px',
+                            position: 'relative',
+                            zIndex: 12,
+                            backgroundColor: '#00796b',
+                            borderColor: '#00796b',
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigate(`/desk/t/${tournament.id}`)
+                          }}
+                          disabled={!!isProcessing}
+                          title="Open tournament desk"
+                        >
+                          Desk
                         </button>
                         <button
                           type="button"

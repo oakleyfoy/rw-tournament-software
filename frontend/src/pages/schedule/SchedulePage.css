@@ -87,8 +87,21 @@
   color: white;
 }
 
+.schedule-page .btn-success:hover:not(:disabled) {
+  background-color: var(--theme-success-hover);
+}
+
+.schedule-page .btn-info {
+  background-color: var(--theme-info);
+  color: white;
+}
+
+.schedule-page .btn-info:hover:not(:disabled) {
+  background-color: var(--theme-info-hover);
+}
+
 .schedule-page .btn-danger {
-  background-color: var(--theme-danger);
+  background-color: var(--theme-danger-btn);
   color: white;
 }
 
