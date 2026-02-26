@@ -71,7 +71,7 @@ function DrawBuilder() {
   const [events, setEvents] = useState<Event[]>([])
   const [phase1Status, setPhase1Status] = useState<Phase1Status | null>(null)
   const [inventoryByEventId, setInventoryByEventId] = useState<Record<number, { total_matches: number }>>({})
-  const [scheduleBuilderData, setScheduleBuilderData] = useState<ScheduleBuilderResponse | null>(null)
+  const [, setScheduleBuilderData] = useState<ScheduleBuilderResponse | null>(null)
   const [planReport, setPlanReport] = useState<SchedulePlanReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<Record<number, boolean>>({})
@@ -101,11 +101,11 @@ function DrawBuilder() {
     
     try {
       setLoading(true)
-      const [tournamentData, eventsData, statusData, scheduleBuilderData, planReportData] = await Promise.all([
+      const [tournamentData, eventsData, statusData, sbData, planReportData] = await Promise.all([
         getTournament(tournamentId),
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
-        getScheduleBuilder(tournamentId).catch(() => ({ events: [] } as ScheduleBuilderResponse)),
+        getScheduleBuilder(tournamentId).catch(() => ({ tournament_id: tournamentId, events: [] } as ScheduleBuilderResponse)),
         getPlanReport(tournamentId).catch(() => null),
       ])
       
@@ -113,11 +113,11 @@ function DrawBuilder() {
       setEvents(eventsData)
       setPhase1Status(statusData)
       const inv: Record<number, { total_matches: number }> = {}
-      scheduleBuilderData.events?.forEach((e: { event_id: number; total_matches: number }) => {
+      sbData.events?.forEach((e: { event_id: number; total_matches: number }) => {
         inv[e.event_id] = { total_matches: e.total_matches }
       })
       setInventoryByEventId(inv)
-      setScheduleBuilderData(scheduleBuilderData)
+      setScheduleBuilderData(sbData)
       setPlanReport(planReportData)
       
       // Initialize editor states from event data

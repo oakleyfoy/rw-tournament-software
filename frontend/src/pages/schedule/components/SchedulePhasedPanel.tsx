@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   generateMatchesOnly,
   generateSlotsOnly,
-  assignByScope,
   placeMatchSubset,
   getMatchesPreview,
   wipeScheduleVersionMatches,
@@ -14,7 +13,6 @@ import {
   getScheduleReport,
   getQualityReport,
   listPolicyRuns,
-  getPolicyRun,
   diffPolicyRuns,
   replayPolicyRun,
   ScheduleVersion,
@@ -231,7 +229,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
 
   // ─── Full policy run result state ──────────────────────────────────
   const [lastFullPolicyResult, setLastFullPolicyResult] = useState<FullPolicyRunResponse | null>(null)
-  const [fullPolicyResultExpanded, setFullPolicyResultExpanded] = useState(false)
+  const [, setFullPolicyResultExpanded] = useState(false)
 
   // ─── Policy run history state ─────────────────────────────────────
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false)
@@ -324,7 +322,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
       onInventoryAction?.('assigned')
     } catch (e: unknown) {
       // Handle 409 invariant violation response
-      const err = e as { message?: string; response?: { status: number; json: () => Promise<{ detail: { message: string; invariant_report: { violations: Array<{ code: string; message: string }> } } }> } }
+      const err = e as { message?: string; response?: { status: number; json: () => Promise<{ detail: { message: string; invariant_report: { violations: Array<{ code: string; message: string }>; stats?: Record<string, number> } } }> } }
       if (err?.response?.status === 409) {
         try {
           const body = await err.response.json()
@@ -342,7 +340,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
             day_results: [],
             invariant_ok: false,
             invariant_violations: detail?.invariant_report?.violations,
-            invariant_stats: detail?.invariant_report?.stats,
+            invariant_stats: detail?.invariant_report?.stats as FullPolicyRunResponse['invariant_stats'],
           })
           setFullPolicyResultExpanded(true)
         } catch {
@@ -1361,7 +1359,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
                   <h4 style={{ marginBottom: '12px', color: '#333' }}>
                     Day: {dayReport.day}
                   </h4>
-                  {dayReport.time_slots.map((timeSlot, idx) => (
+                  {dayReport.time_slots.map((timeSlot) => (
                     <div
                       key={`${dayReport.day}-${timeSlot.time}`}
                       style={{

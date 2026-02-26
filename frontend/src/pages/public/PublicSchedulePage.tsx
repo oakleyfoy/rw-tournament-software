@@ -4,8 +4,6 @@ import {
   getPublicSchedule,
   PublicScheduleResponse,
   ScheduleMatchItem,
-  ScheduleEventOption,
-  ScheduleDayOption,
 } from '../../api/client'
 
 const STAGE_COLORS: Record<string, string> = {

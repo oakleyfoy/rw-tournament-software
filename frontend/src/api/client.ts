@@ -473,6 +473,7 @@ export interface Match {
   match_code: string;
   match_type: 'WF' | 'RR' | 'BRACKET' | 'PLACEMENT';
   round_number: number;
+  round_index?: number | null;
   sequence_in_round: number;
   duration_minutes: number;
   placeholder_side_a: string;
@@ -825,7 +826,7 @@ export interface MatchPreviewItem {
   round_index: number
   sequence_in_round: number
   match_type: string
-  consolation_tier: number | null
+  consolation_tier?: number | null
   duration_minutes: number
   placeholder_side_a: string
   placeholder_side_b: string
@@ -927,7 +928,7 @@ export async function getMatchCardsPreviewWithFallback(
       match_code: m.match_code,
       stage: m.match_type,
       round_number: m.round_number,
-      round_index: (m as { round_index?: number }).round_index ?? 0,
+      round_index: m.round_index ?? 0,
       sequence_in_round: m.sequence_in_round ?? 0,
       match_type: m.match_type,
       duration_minutes: m.duration_minutes,
@@ -1982,12 +1983,12 @@ export interface DeskMatchItem {
   started_at: string | null
   completed_at: string | null
   winner_display: string | null
-  winner_team_id: number | null
-  duration_minutes: number
-  team1_defaulted: boolean
-  team2_defaulted: boolean
-  team1_notes: string | null
-  team2_notes: string | null
+  winner_team_id?: number | null
+  duration_minutes?: number | null
+  team1_defaulted?: boolean | null
+  team2_defaulted?: boolean | null
+  team1_notes?: string | null
+  team2_notes?: string | null
   slot_id: number | null
   assignment_id: number | null
   court_number: number | null

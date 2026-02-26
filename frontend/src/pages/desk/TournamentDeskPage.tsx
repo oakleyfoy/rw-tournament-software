@@ -37,7 +37,6 @@ import {
   rebuildApply,
   RebuildPreviewResponse,
   RebuildMatchItem,
-  RebuildDayConfig,
   getDeskTeams,
   defaultTeamWeekend,
   updateTeam,
@@ -1011,7 +1010,7 @@ function MatchDrawer({
             {match.team1_display}
             {match.team1_notes && <NoteIcon note={match.team1_notes} />}
             {match.team1_id && isDraft && (
-              <button onClick={() => openNote(match.team1_id!, match.team1_notes)} title="Add/edit note" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: match.team1_notes ? '#ef6c00' : '#bbb' }}>
+              <button onClick={() => openNote(match.team1_id!, match.team1_notes ?? null)} title="Add/edit note" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: match.team1_notes ? '#ef6c00' : '#bbb' }}>
                 &#9998;
               </button>
             )}
@@ -1021,7 +1020,7 @@ function MatchDrawer({
             {match.team2_display}
             {match.team2_notes && <NoteIcon note={match.team2_notes} />}
             {match.team2_id && isDraft && (
-              <button onClick={() => openNote(match.team2_id!, match.team2_notes)} title="Add/edit note" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: match.team2_notes ? '#ef6c00' : '#bbb' }}>
+              <button onClick={() => openNote(match.team2_id!, match.team2_notes ?? null)} title="Add/edit note" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: match.team2_notes ? '#ef6c00' : '#bbb' }}>
                 &#9998;
               </button>
             )}
@@ -5445,7 +5444,7 @@ export default function TournamentDeskPage() {
 
         {activeTab === 'teams' && (
           <TeamsTab
-            tournamentId={parseInt(tid!, 10)}
+            tournamentId={tid!}
             versionId={data.version_id}
             onRefresh={() => loadSnapshot(data.version_id)}
           />

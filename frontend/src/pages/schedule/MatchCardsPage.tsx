@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getMatchesPreview,
@@ -423,7 +423,7 @@ export function MatchCardsPage() {
 
               // Sort main bracket matches within each division group
               // Sort by: round_index asc, then sequence_in_round asc, then match_code, then id
-              for (const [division, divMatches] of mainBracketGroups.entries()) {
+              for (const [, divMatches] of mainBracketGroups.entries()) {
                 divMatches.sort((a, b) => {
                   return (
                     (a.round_index ?? 0) - (b.round_index ?? 0) ||
@@ -458,7 +458,7 @@ export function MatchCardsPage() {
               }
 
               // Sort division matches within each group deterministically (same as sortedMatches logic)
-              for (const [bucket, divMatches] of divisionGroups.entries()) {
+              for (const [, divMatches] of divisionGroups.entries()) {
                 divMatches.sort((a, b) => {
                   return (
                     (a.round_index ?? 0) - (b.round_index ?? 0) ||
@@ -560,7 +560,7 @@ export function MatchCardsPage() {
                     mainBracketDivisionLabels[division],
                     divMatches,
                     undefined,
-                    (match, position) => getMainBracketDisplayRound(match)
+                    (match) => getMainBracketDisplayRound(match)
                   )
                 })
 
@@ -599,7 +599,7 @@ export function MatchCardsPage() {
                       {mainBracketSections}
                     </div>
                   )}
-                  {ungroupedMainBracket.length > 0 && renderSection('Main Bracket (Other)', ungroupedMainBracket, undefined, (match, position) => getMainBracketDisplayRound(match))}
+                  {ungroupedMainBracket.length > 0 && renderSection('Main Bracket (Other)', ungroupedMainBracket, undefined, (match) => getMainBracketDisplayRound(match))}
                   {divisionSections.length > 0 && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ fontWeight: 600, padding: '6px 0', borderBottom: '1px solid #ddd', marginBottom: 4 }}>
