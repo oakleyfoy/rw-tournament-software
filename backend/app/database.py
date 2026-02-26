@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Generator
 
 from dotenv import load_dotenv
@@ -7,13 +8,15 @@ from sqlmodel import Session, SQLModel, create_engine
 
 load_dotenv()
 
-# Database URL - defaults to SQLite for development
-# On Render with a persistent disk mounted at /data, use /data/tournament.db
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tournament.db")
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {}
 _echo = os.getenv("SQL_ECHO", "false").lower() in ("true", "1", "yes")
+
+if _is_sqlite:
+    db_path = DATABASE_URL.replace("sqlite:///", "", 1)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
 engine: Engine = create_engine(
     DATABASE_URL,
