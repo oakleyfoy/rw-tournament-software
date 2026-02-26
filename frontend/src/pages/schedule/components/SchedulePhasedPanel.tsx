@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   generateMatchesOnly,
   generateSlotsOnly,
+  regenerateSlots,
   placeMatchSubset,
   getMatchesPreview,
   wipeScheduleVersionMatches,
@@ -1215,6 +1216,29 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
           <span>Matches: {matchesCount}</span>
           <span>Assigned: {assignedCount}</span>
           <span>Unassigned: {unassignedCount}</span>
+          {slotsCount > 0 && assignedCount === 0 && (
+            <button
+              className="btn"
+              disabled={busy !== null}
+              onClick={async () => {
+                if (!tournamentId || !versionId) return
+                if (!window.confirm(`Wipe all ${slotsCount} slots and regenerate from current time windows/courts?`)) return
+                setBusy('Regenerating Slots')
+                try {
+                  const r = await regenerateSlots(tournamentId, versionId)
+                  showToast(`Regenerated ${r.slots_generated} slots (was ${slotsCount})`, 'success')
+                  onRefresh()
+                } catch (e) {
+                  showToast(e instanceof Error ? e.message : 'Slot regeneration failed', 'error')
+                } finally {
+                  setBusy(null)
+                }
+              }}
+              style={{ fontSize: 12, padding: '2px 10px', backgroundColor: '#e65100', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+            >
+              {busy === 'Regenerating Slots' ? 'Regenerating...' : 'Regenerate Slots'}
+            </button>
+          )}
         </div>
       </div>
 

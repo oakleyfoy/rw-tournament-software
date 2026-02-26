@@ -2878,6 +2878,42 @@ def generate_slots_only(
         raise RuntimeError(f"Slot generation failed: {e}") from e
 
 
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/slots/regenerate",
+    response_model=SlotsGenerateOnlyResponse,
+)
+def regenerate_slots(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Wipe all existing slots (and their assignments) and regenerate from time windows."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    require_draft_version(session, version_id, tournament_id)
+
+    try:
+        slot_request = SlotGenerateRequest(
+            source="auto",
+            schedule_version_id=version_id,
+            wipe_existing=True,
+        )
+        result = generate_slots(tournament_id, slot_request, session, _transactional=True)
+        session.flush()
+        session.commit()
+        return SlotsGenerateOnlyResponse(
+            slots_generated=result.get("slots_created", 0),
+            already_generated=False,
+        )
+    except Exception as e:
+        session.rollback()
+        raise RuntimeError(f"Slot regeneration failed: {e}") from e
+
+
 class AssignScopeRequest(BaseModel):
     scope: str  # WF_R1 | WF_R2 | RR_POOL | BRACKET_MAIN | ALL
     event_id: Optional[int] = None

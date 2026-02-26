@@ -1026,6 +1026,16 @@ export async function generateSlotsOnly(
   )
 }
 
+export async function regenerateSlots(
+  tournamentId: number,
+  versionId: number
+): Promise<SlotsGenerateOnlyResponse> {
+  return fetchJson<SlotsGenerateOnlyResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/slots/regenerate`,
+    { method: 'POST' }
+  )
+}
+
 export interface AssignScopeResponse {
   assigned_count: number
   unassigned_count_remaining_in_scope: number
