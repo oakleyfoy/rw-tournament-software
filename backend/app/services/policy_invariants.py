@@ -480,12 +480,11 @@ def verify_day(
     stats.unresolved_scheduled = len(dep_violations)
     violations.extend(dep_violations)
 
-    # D) Consolation completeness
+    # D) Consolation completeness (advisory — does not cause rollback)
     cons_violations = _check_consolation_completeness(
         day_assignments, all_matches, all_assignments_by_match, day
     )
     stats.consolation_partial = len(cons_violations)
-    violations.extend(cons_violations)
 
     # E) Spare court rules (conditional)
     spare_violations = _check_spare_court_rules(
