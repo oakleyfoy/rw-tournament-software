@@ -3171,6 +3171,8 @@ class RebuildMatchItemResponse(BaseModel):
     team2: str
     status: str
     rank: int
+    assigned_day: Optional[str] = None
+    assigned_time: Optional[str] = None
 
 
 class RebuildDaySummary(BaseModel):
@@ -3250,6 +3252,8 @@ def rebuild_preview(
                 team2=m.team2,
                 status=m.status,
                 rank=m.rank,
+                assigned_day=m.assigned_day,
+                assigned_time=m.assigned_time,
             )
             for m in preview.matches
         ],

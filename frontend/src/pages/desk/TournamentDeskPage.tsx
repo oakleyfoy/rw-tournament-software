@@ -3499,6 +3499,8 @@ function WeatherTab({
                       <th style={{ padding: '5px 8px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Match</th>
                       <th style={{ padding: '5px 8px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Event</th>
                       <th style={{ padding: '5px 8px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Teams</th>
+                      <th style={{ padding: '5px 8px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Day</th>
+                      <th style={{ padding: '5px 8px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Time</th>
                       <th style={{ padding: '5px 8px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Status</th>
                     </tr>
                   </thead>
@@ -3506,12 +3508,18 @@ function WeatherTab({
                     {rbPreview.matches.map((m: RebuildMatchItem) => (
                       <tr key={m.match_id} style={{
                         borderBottom: '1px solid #f0f0f0',
-                        backgroundColor: m.status === 'IN_PROGRESS' ? '#fff3e0' : undefined,
+                        backgroundColor: m.status === 'IN_PROGRESS' ? '#fff3e0' : m.assigned_day ? undefined : '#ffebee',
                       }}>
                         <td style={{ padding: '4px 8px', textAlign: 'center', color: '#888' }}>{m.rank}</td>
                         <td style={{ padding: '4px 8px', fontWeight: 600 }}>{m.match_code}</td>
                         <td style={{ padding: '4px 8px', color: '#555' }}>{m.event_name} ({m.stage})</td>
                         <td style={{ padding: '4px 8px' }}>{m.team1} vs {m.team2}</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 600, color: m.assigned_day ? '#1a237e' : '#c62828' }}>
+                          {m.assigned_day || '\u2014'}
+                        </td>
+                        <td style={{ padding: '4px 8px', textAlign: 'center', color: '#555' }}>
+                          {m.assigned_time || '\u2014'}
+                        </td>
                         <td style={{ padding: '4px 8px', textAlign: 'center' }}>
                           <span style={{
                             fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 3,

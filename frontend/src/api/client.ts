@@ -2589,6 +2589,8 @@ export interface RebuildMatchItem {
   team2: string
   status: string
   rank: number
+  assigned_day: string | null
+  assigned_time: string | null
 }
 
 export interface RebuildDaySummary {

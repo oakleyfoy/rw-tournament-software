@@ -834,6 +834,8 @@ class RebuildMatchItem:
     team2: str
     status: str
     rank: int
+    assigned_day: Optional[str] = None  # date string of the day this match is placed on
+    assigned_time: Optional[str] = None  # start time of the assigned slot
 
 
 @dataclass
@@ -879,7 +881,7 @@ def compute_rebuild_preview(
     day_configs: List[RebuildDayConfig],
     drop_consolation: str = "none",
 ) -> RebuildPreview:
-    """Dry-run: count remaining matches and compute slot capacity."""
+    """Simulate rebuild placement to show accurate preview with day assignments."""
 
     all_matches = session.exec(
         select(Match).where(Match.schedule_version_id == version_id)
@@ -899,29 +901,27 @@ def compute_rebuild_preview(
             team_map[tid] = t.name if t else placeholder
         return team_map[tid]
 
-    # Load current assignments and their slots to determine original order
-    all_assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == version_id,
-        )
+    # Load assignments/slots for original order sorting
+    all_assignments_for_order = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
     ).all()
-    assign_by_match = {a.match_id: a for a in all_assignments}
+    assign_by_match_order = {a.match_id: a for a in all_assignments_for_order}
 
-    all_slots = session.exec(
-        select(ScheduleSlot).where(
-            ScheduleSlot.schedule_version_id == version_id,
-        )
+    all_slots_for_order = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
     ).all()
-    slot_map = {s.id: s for s in all_slots}
+    slot_map_order = {s.id: s for s in all_slots_for_order}
 
-    STAGE_PRECEDENCE = {"WF": 1, "RR": 2, "MAIN": 3, "CONSOLATION": 4, "PLACEMENT": 5}
-
+    # Separate remaining from final/dropped
     remaining: List[Match] = []
     dropped_count = 0
     in_progress_count = 0
+    final_match_ids: Set[int] = set()
+
     for m in all_matches:
         status = (m.runtime_status or "SCHEDULED").upper()
         if status == "FINAL":
+            final_match_ids.add(m.id)
             continue
         if status != "IN_PROGRESS" and _should_drop_consolation(m, drop_consolation):
             dropped_count += 1
@@ -930,20 +930,21 @@ def compute_rebuild_preview(
         if status == "IN_PROGRESS":
             in_progress_count += 1
 
+    # Sort by original schedule order
+    STAGE_PRECEDENCE_REBUILD = {"WF": 1, "RR": 2, "MAIN": 3, "CONSOLATION": 4, "PLACEMENT": 5}
+
     def _original_order_key(m: Match) -> Tuple:
-        """Sort by original slot assignment (day -> time -> court), unassigned at end."""
-        status = (m.runtime_status or "SCHEDULED").upper()
-        status_order = 0 if status == "IN_PROGRESS" else 1
-        assign = assign_by_match.get(m.id)
-        slot = slot_map.get(assign.slot_id) if assign else None
+        assign = assign_by_match_order.get(m.id)
+        slot = slot_map_order.get(assign.slot_id) if assign else None
         if slot:
-            return (status_order, 0, slot.day_date, slot.start_time, slot.court_number, m.id)
-        # Unassigned: fall to end, sorted by stage precedence
-        sp = STAGE_PRECEDENCE.get(m.match_type, 99)
-        return (status_order, 1, date.max, time.max, sp, m.round_index or 999, m.sequence_in_round or 999, m.id)
+            return (0, slot.day_date, slot.start_time, slot.court_number, m.id)
+        sp = STAGE_PRECEDENCE_REBUILD.get(m.match_type, 99)
+        return (1, date.max, time.max, sp, m.round_index or 999, m.sequence_in_round or 999, m.id)
 
     remaining.sort(key=_original_order_key)
 
+    # Generate theoretical slots from day configs
+    sim_slots = []
     total_slots = 0
     per_day: List[Dict[str, Any]] = []
     for dc in day_configs:
@@ -959,10 +960,150 @@ def compute_rebuild_preview(
             "format": dc.format,
             "block_minutes": dc.block_minutes,
         })
+        # Generate simulated slot objects for placement
+        current = start_min
+        while current + dc.block_minutes <= end_min:
+            slot_start = time(current // 60, current % 60)
+            slot_end_min = current + dc.block_minutes
+            slot_end = time(slot_end_min // 60, slot_end_min % 60)
+            for court_num in range(1, dc.courts + 1):
+                sim_slots.append({
+                    "day_date": dc.day_date,
+                    "start_time": slot_start,
+                    "end_time": slot_end,
+                    "block_minutes": dc.block_minutes,
+                    "court_number": court_num,
+                })
+            current += dc.block_minutes
 
+    # Sort sim slots chronologically
+    sim_slots.sort(key=lambda s: (s["day_date"], s["start_time"], s["court_number"]))
+
+    # Build rest time per day
+    rest_by_date = {dc.day_date: SCORING_FORMATS.get(dc.format, 105) for dc in day_configs}
+
+    # Build dependency graph
+    match_map: Dict[int, Match] = {m.id: m for m in all_matches}
+    dep_sources: Dict[int, List[int]] = {}
+    for m in all_matches:
+        deps: List[int] = []
+        if m.source_match_a_id:
+            deps.append(m.source_match_a_id)
+        if m.source_match_b_id:
+            deps.append(m.source_match_b_id)
+        if deps:
+            dep_sources[m.id] = deps
+
+    event_type_round_matches: Dict[Tuple[int, str, int], List[int]] = {}
+    for m in all_matches:
+        key = (m.event_id, m.match_type, m.round_number)
+        event_type_round_matches.setdefault(key, []).append(m.id)
+    for m in all_matches:
+        if m.round_number > 1:
+            prev_key = (m.event_id, m.match_type, m.round_number - 1)
+            prev_ids = event_type_round_matches.get(prev_key, [])
+            existing_deps = dep_sources.get(m.id, [])
+            for pid in prev_ids:
+                if pid not in existing_deps:
+                    dep_sources.setdefault(m.id, []).append(pid)
+
+    # Seed team state from FINAL matches
+    team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
+    placed_end_times: Dict[int, datetime] = {}
+
+    for mid in final_match_ids:
+        m = match_map.get(mid)
+        a = assign_by_match_order.get(mid)
+        if not m or not a:
+            continue
+        slot = slot_map_order.get(a.slot_id)
+        if not slot:
+            continue
+        start_dt = datetime.combine(slot.day_date, slot.start_time)
+        end_dt = start_dt + timedelta(minutes=m.duration_minutes)
+        placed_end_times[mid] = end_dt
+        for tid in (m.team_a_id, m.team_b_id):
+            if tid is not None:
+                team_busy.setdefault(tid, []).append((start_dt, end_dt))
+
+    # Simulate first-fit placement
+    occupied: Set[int] = set()  # index into sim_slots
+    match_day_assignments: Dict[int, Tuple[str, str]] = {}  # match_id -> (day_str, time_str)
+    unplaceable_count = 0
+
+    for m in remaining:
+        match_duration = m.duration_minutes
+
+        earliest_start: Optional[datetime] = None
+        for dep_id in dep_sources.get(m.id, []):
+            dep_end = placed_end_times.get(dep_id)
+            if dep_end is not None:
+                if earliest_start is None or dep_end > earliest_start:
+                    earliest_start = dep_end
+
+        placed = False
+        for idx, slot in enumerate(sim_slots):
+            if idx in occupied:
+                continue
+            if slot["block_minutes"] < match_duration:
+                continue
+
+            slot_start = datetime.combine(slot["day_date"], slot["start_time"])
+            slot_end = slot_start + timedelta(minutes=match_duration)
+
+            if earliest_start and slot_start < earliest_start:
+                continue
+
+            ok = True
+            for tid in (m.team_a_id, m.team_b_id):
+                if tid is None:
+                    continue
+                for busy_start, busy_end in team_busy.get(tid, []):
+                    if slot_start < busy_end and slot_end > busy_start:
+                        ok = False
+                        break
+                if not ok:
+                    break
+                # Rest time check (per-day)
+                slot_rest_minutes = rest_by_date.get(slot["day_date"], 105)
+                for busy_start, busy_end in team_busy.get(tid, []):
+                    if busy_end <= slot_start:
+                        gap = (slot_start - busy_end).total_seconds() / 60
+                        if gap < slot_rest_minutes:
+                            ok = False
+                            break
+                    if slot_end <= busy_start:
+                        gap = (busy_start - slot_end).total_seconds() / 60
+                        if gap < slot_rest_minutes:
+                            ok = False
+                            break
+                if not ok:
+                    break
+
+            if not ok:
+                continue
+
+            occupied.add(idx)
+            placed_end_times[m.id] = slot_end
+            for tid in (m.team_a_id, m.team_b_id):
+                if tid is not None:
+                    team_busy.setdefault(tid, []).append((slot_start, slot_end))
+
+            match_day_assignments[m.id] = (
+                slot["day_date"].isoformat(),
+                slot["start_time"].strftime("%H:%M"),
+            )
+            placed = True
+            break
+
+        if not placed:
+            unplaceable_count += 1
+
+    # Build match items with day assignments
     match_items = []
     for i, m in enumerate(remaining):
         status = (m.runtime_status or "SCHEDULED").upper()
+        day_info = match_day_assignments.get(m.id)
         match_items.append(RebuildMatchItem(
             match_id=m.id,
             match_number=m.id,
@@ -973,16 +1114,19 @@ def compute_rebuild_preview(
             team2=_team_name(m.team_b_id, m.placeholder_side_b),
             status=status,
             rank=i + 1,
+            assigned_day=day_info[0] if day_info else None,
+            assigned_time=day_info[1] if day_info else None,
         ))
 
-    overflow = max(0, len(remaining) - total_slots)
+    actual_fits = unplaceable_count == 0
+    overflow = max(0, len(remaining) - (len(remaining) - unplaceable_count))
 
     return RebuildPreview(
         remaining_matches=len(remaining),
         in_progress_matches=in_progress_count,
         total_slots=total_slots,
-        fits=overflow == 0,
-        overflow=overflow,
+        fits=actual_fits,
+        overflow=unplaceable_count,
         matches=match_items,
         per_day=per_day,
         dropped_count=dropped_count,
@@ -1125,19 +1269,10 @@ def apply_rebuild(
             current += dc.block_minutes
     session.flush()
 
-    # Update durations for remaining matches based on per-day format
+    # Build per-day format and rest time maps
     format_by_date = {dc.day_date: dc.format for dc in day_configs}
-    global_format = day_configs[0].format if day_configs else "REGULAR"
-    global_dur = SCORING_FORMATS.get(global_format, 105)
+    rest_by_date = {dc.day_date: SCORING_FORMATS.get(dc.format, 105) for dc in day_configs}
     duration_update_count = 0
-
-    all_same_format = len(set(dc.format for dc in day_configs)) == 1
-    if all_same_format:
-        for m in remaining:
-            if m.duration_minutes != global_dur:
-                m.duration_minutes = global_dur
-                session.add(m)
-                duration_update_count += 1
 
     # Sort new slots chronologically
     new_slots.sort(key=lambda s: (s.day_date, s.start_time, s.court_number))
@@ -1182,11 +1317,6 @@ def apply_rebuild(
     for s in new_slots:
         all_slot_map[s.id] = s
 
-    # Compute rest time from scoring format (rest = match duration)
-    # If all days use the same format, use that duration. Otherwise use the minimum.
-    rebuild_durations = [SCORING_FORMATS.get(dc.format, 105) for dc in day_configs]
-    rebuild_rest_minutes = min(rebuild_durations) if rebuild_durations else 105
-
     placed_end_times: Dict[int, datetime] = {}
     team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
 
@@ -1211,9 +1341,6 @@ def apply_rebuild(
     unplaceable_count = 0
 
     for m in remaining:
-        if not all_same_format:
-            pass
-
         earliest_start: Optional[datetime] = None
         for dep_id in dep_sources.get(m.id, []):
             dep_end = placed_end_times.get(dep_id)
@@ -1244,15 +1371,17 @@ def apply_rebuild(
                         break
                 if not ok:
                     break
+                # Rest time check (per-day)
+                slot_rest_minutes = rest_by_date.get(slot.day_date, 105)
                 for busy_start, busy_end in team_busy.get(tid, []):
                     if busy_end <= slot_start:
                         gap = (slot_start - busy_end).total_seconds() / 60
-                        if gap < rebuild_rest_minutes:
+                        if gap < slot_rest_minutes:
                             ok = False
                             break
                     if slot_end <= busy_start:
                         gap = (busy_start - slot_end).total_seconds() / 60
-                        if gap < rebuild_rest_minutes:
+                        if gap < slot_rest_minutes:
                             ok = False
                             break
                 if not ok:
@@ -1266,6 +1395,15 @@ def apply_rebuild(
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
+
+            # Update match duration based on placed day's format
+            day_format = format_by_date.get(slot.day_date)
+            if day_format:
+                new_dur = SCORING_FORMATS.get(day_format, 105)
+                if m.duration_minutes != new_dur:
+                    m.duration_minutes = new_dur
+                    session.add(m)
+                    duration_update_count += 1
 
             assignment = MatchAssignment(
                 schedule_version_id=version_id,
