@@ -314,10 +314,24 @@ def compute_reschedule(
             affected_matches.append(m)
             continue
 
-        if _slot_is_affected(slot, params):
-            affected_matches.append(m)
+        # For PARTIAL_DAY: ALL matches on the affected day at or after
+        # unavailable_from need to shift forward (not just those in the rain window).
+        # This preserves match ordering.
+        if params.mode == "PARTIAL_DAY":
+            if (slot.day_date == params.affected_day
+                    and params.unavailable_from
+                    and slot.start_time >= params.unavailable_from):
+                affected_matches.append(m)
+            elif _slot_is_affected(slot, params):
+                affected_matches.append(m)
+            else:
+                kept_assignments[m.id] = assign
         else:
-            kept_assignments[m.id] = assign
+            # COURT_LOSS and other modes: use existing logic
+            if _slot_is_affected(slot, params):
+                affected_matches.append(m)
+            else:
+                kept_assignments[m.id] = assign
 
     # Override match durations if a scoring format is specified.
     # Track original durations so apply can persist the changes.
