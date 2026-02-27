@@ -1000,6 +1000,12 @@ def compute_rebuild_preview(
             if tid is not None:
                 team_busy.setdefault(tid, []).append((start_dt, end_dt))
 
+    # Update match durations to fit rebuild slots (use minimum format duration)
+    rebuild_durations = [SCORING_FORMATS.get(dc.format, 105) for dc in day_configs]
+    min_rebuild_duration = min(rebuild_durations) if rebuild_durations else 105
+    for m in remaining:
+        m.duration_minutes = min_rebuild_duration
+
     # Simulate first-fit placement
     occupied: Set[int] = set()  # index into sim_slots
     match_day_assignments: Dict[int, Tuple[str, str]] = {}  # match_id -> (day_str, time_str)
@@ -1271,6 +1277,14 @@ def apply_rebuild(
         for tid in (m.team_a_id, m.team_b_id):
             if tid is not None:
                 team_busy.setdefault(tid, []).append((start_dt, end_dt))
+
+    # Update match durations to minimum format so they fit in any day's slots
+    rebuild_durations = [SCORING_FORMATS.get(dc.format, 105) for dc in day_configs]
+    min_rebuild_duration = min(rebuild_durations) if rebuild_durations else 105
+    for m in remaining:
+        if m.duration_minutes != min_rebuild_duration:
+            m.duration_minutes = min_rebuild_duration
+            session.add(m)
 
     # First-fit assignment with constraints
     occupied: Set[int] = set()
