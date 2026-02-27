@@ -862,6 +862,7 @@ class RebuildPreview:
     matches: List[RebuildMatchItem]
     per_day: List[Dict[str, Any]]
     dropped_count: int = 0
+    day1_match_count: int = 0
 
 
 @dataclass
@@ -894,6 +895,7 @@ def compute_rebuild_preview(
     version_id: int,
     day_configs: List[RebuildDayConfig],
     drop_consolation: str = "none",
+    day1_max_matches: Optional[int] = None,
 ) -> RebuildPreview:
     """Simulate rebuild placement to show accurate preview with day assignments."""
 
@@ -1024,6 +1026,8 @@ def compute_rebuild_preview(
     occupied: Set[int] = set()  # index into sim_slots
     match_day_assignments: Dict[int, Tuple[str, str]] = {}  # match_id -> (day_str, time_str)
     unplaceable_count = 0
+    day1_date = day_configs[0].day_date if day_configs else None
+    day1_placed_count = 0
 
     for m in remaining:
         match_duration = m.duration_minutes
@@ -1032,6 +1036,12 @@ def compute_rebuild_preview(
         for idx, slot in enumerate(sim_slots):
             if idx in occupied:
                 continue
+
+            # Day boundary enforcement
+            if day1_max_matches is not None and slot["day_date"] == day1_date:
+                if day1_placed_count >= day1_max_matches:
+                    continue
+
             if slot["block_minutes"] < match_duration:
                 continue
 
@@ -1072,6 +1082,9 @@ def compute_rebuild_preview(
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
 
+            if slot["day_date"] == day1_date:
+                day1_placed_count += 1
+
             match_day_assignments[m.id] = (
                 slot["day_date"].isoformat(),
                 slot["start_time"].strftime("%H:%M"),
@@ -1102,7 +1115,7 @@ def compute_rebuild_preview(
         ))
 
     actual_fits = unplaceable_count == 0
-    overflow = max(0, len(remaining) - (len(remaining) - unplaceable_count))
+    day1_count = sum(1 for m_item in match_items if m_item.assigned_day == day_configs[0].day_date.isoformat()) if day_configs else 0
 
     return RebuildPreview(
         remaining_matches=len(remaining),
@@ -1113,6 +1126,7 @@ def compute_rebuild_preview(
         matches=match_items,
         per_day=per_day,
         dropped_count=dropped_count,
+        day1_match_count=day1_count,
     )
 
 
@@ -1122,6 +1136,7 @@ def apply_rebuild(
     version_id: int,
     day_configs: List[RebuildDayConfig],
     drop_consolation: str = "none",
+    day1_max_matches: Optional[int] = None,
 ) -> RebuildResult:
     """Regenerate slots and reassign all remaining matches."""
 
@@ -1304,12 +1319,20 @@ def apply_rebuild(
     occupied: Set[int] = set()
     assigned_count = 0
     unplaceable_count = 0
+    day1_date = day_configs[0].day_date if day_configs else None
+    day1_placed_count = 0
 
     for m in remaining:
         placed = False
         for slot in new_slots:
             if slot.id in occupied:
                 continue
+
+            # Day boundary enforcement
+            if day1_max_matches is not None and slot.day_date == day1_date:
+                if day1_placed_count >= day1_max_matches:
+                    continue
+
             if slot.block_minutes < m.duration_minutes:
                 continue
 
@@ -1349,6 +1372,9 @@ def apply_rebuild(
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
+
+            if slot.day_date == day1_date:
+                day1_placed_count += 1
 
             # Update match duration based on placed day's format
             day_format = format_by_date.get(slot.day_date)

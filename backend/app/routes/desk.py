@@ -3159,6 +3159,7 @@ class RebuildRequest(BaseModel):
     version_id: int
     days: List[RebuildDayConfigItem]
     drop_consolation: str = "none"
+    day1_max_matches: Optional[int] = None
 
 
 class RebuildMatchItemResponse(BaseModel):
@@ -3192,6 +3193,7 @@ class RebuildPreviewResponse(BaseModel):
     matches: List[RebuildMatchItemResponse]
     per_day: List[RebuildDaySummary]
     dropped_count: int = 0
+    day1_match_count: int = 0
 
 
 class RebuildApplyResponse(BaseModel):
@@ -3233,6 +3235,7 @@ def rebuild_preview(
     preview = compute_rebuild_preview(
         session, tournament_id, payload.version_id, day_configs,
         drop_consolation=payload.drop_consolation,
+        day1_max_matches=payload.day1_max_matches,
     )
 
     return RebuildPreviewResponse(
@@ -3261,6 +3264,7 @@ def rebuild_preview(
             RebuildDaySummary(**d) for d in preview.per_day
         ],
         dropped_count=preview.dropped_count,
+        day1_match_count=preview.day1_match_count,
     )
 
 
@@ -3283,6 +3287,7 @@ def rebuild_apply(
     result = apply_rebuild(
         session, tournament_id, payload.version_id, day_configs,
         drop_consolation=payload.drop_consolation,
+        day1_max_matches=payload.day1_max_matches,
     )
 
     return RebuildApplyResponse(

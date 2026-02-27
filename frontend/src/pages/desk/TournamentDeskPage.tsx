@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getDeskSnapshot,
@@ -2783,6 +2783,7 @@ function WeatherTab({
   const [rbPreview, setRbPreview] = useState<RebuildPreviewResponse | null>(null)
   const [rbLoading, setRbLoading] = useState(false)
   const [rbApplyLoading, setRbApplyLoading] = useState(false)
+  const [day1MaxMatches, setDay1MaxMatches] = useState<number | null>(null)
   const [dropConsolation, setDropConsolation] = useState<'none' | 'finals' | 'all'>('none')
 
   const inProgressCount = data.matches.filter(m => m.status === 'IN_PROGRESS').length
@@ -2919,7 +2920,33 @@ function WeatherTab({
         drop_consolation: dropConsolation,
       })
       setRbPreview(resp)
+      setDay1MaxMatches(resp.day1_match_count)
       setStep('rebuild_preview')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Preview failed')
+    } finally {
+      setRbLoading(false)
+    }
+  }
+
+  const handleRebuildPreviewWithOverride = async (maxMatches: number) => {
+    setRbLoading(true)
+    setError(null)
+    try {
+      const enabledDays = rebuildDays.filter(d => d.enabled)
+      const resp = await rebuildPreview(tournamentId, {
+        version_id: data.version_id,
+        days: enabledDays.map(d => ({
+          date: d.date,
+          start_time: d.start_time,
+          end_time: d.end_time,
+          courts: d.courts,
+          format: d.format,
+        })),
+        drop_consolation: dropConsolation,
+        day1_max_matches: maxMatches,
+      })
+      setRbPreview(resp)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Preview failed')
     } finally {
@@ -2942,6 +2969,7 @@ function WeatherTab({
           format: d.format,
         })),
         drop_consolation: dropConsolation,
+        day1_max_matches: day1MaxMatches ?? undefined,
       })
       setStep('rebuild_done')
       const parts = [`${resp.assigned} assigned`, `${resp.slots_created} slots created`]
@@ -3486,6 +3514,27 @@ function WeatherTab({
               </div>
             </div>
 
+            {/* Day split summary */}
+            {rbPreview && day1MaxMatches !== null && (
+              <div style={{
+                padding: '10px 14px',
+                backgroundColor: '#fff3e0',
+                borderRadius: 6,
+                border: '1px solid #ffe0b2',
+                marginBottom: 12,
+                fontSize: 13,
+                fontWeight: 600,
+                display: 'flex',
+                justifyContent: 'space-between',
+              }}>
+                <span>
+                  Day 1: {rbPreview.matches.filter(m => m.assigned_day === rbPreview.per_day[0]?.date).length} matches
+                  {' | '}
+                  Day 2: {rbPreview.matches.filter(m => m.assigned_day === rbPreview.per_day[1]?.date).length} matches
+                </span>
+              </div>
+            )}
+
             {/* Match list */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: '#333', marginBottom: 6 }}>
@@ -3505,31 +3554,104 @@ function WeatherTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {rbPreview.matches.map((m: RebuildMatchItem) => (
-                      <tr key={m.match_id} style={{
-                        borderBottom: '1px solid #f0f0f0',
-                        backgroundColor: m.status === 'IN_PROGRESS' ? '#fff3e0' : m.assigned_day ? undefined : '#ffebee',
-                      }}>
-                        <td style={{ padding: '4px 8px', textAlign: 'center', color: '#888' }}>{m.rank}</td>
-                        <td style={{ padding: '4px 8px', fontWeight: 600 }}>{m.match_code}</td>
-                        <td style={{ padding: '4px 8px', color: '#555' }}>{m.event_name} ({m.stage})</td>
-                        <td style={{ padding: '4px 8px' }}>{m.team1} vs {m.team2}</td>
-                        <td style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 600, color: m.assigned_day ? '#1a237e' : '#c62828' }}>
-                          {m.assigned_day || '\u2014'}
-                        </td>
-                        <td style={{ padding: '4px 8px', textAlign: 'center', color: '#555' }}>
-                          {m.assigned_time || '\u2014'}
-                        </td>
-                        <td style={{ padding: '4px 8px', textAlign: 'center' }}>
-                          <span style={{
-                            fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 3,
-                            backgroundColor: m.status === 'IN_PROGRESS' ? '#fff3e0' : '#f5f5f5',
-                            color: m.status === 'IN_PROGRESS' ? '#e65100' : '#888',
-                          }}>
-                            {m.status}
-                          </span>
-                        </td>
-                      </tr>
+                    {rbPreview.matches.map((m: RebuildMatchItem, index: number) => (
+                      <React.Fragment key={m.match_id}>
+                        {/* Red divider line between Day 1 and Day 2 */}
+                        {index === (day1MaxMatches ?? rbPreview.day1_match_count) && (
+                          <tr style={{ height: 36 }}>
+                            <td colSpan={7} style={{ padding: 0, position: 'relative' }}>
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 12,
+                                padding: '4px 0',
+                                backgroundColor: '#ffebee',
+                                borderTop: '3px solid #c62828',
+                                borderBottom: '3px solid #c62828',
+                                cursor: 'ns-resize',
+                                userSelect: 'none',
+                              }}>
+                                <button
+                                  onClick={() => {
+                                    const newMax = Math.max(1, (day1MaxMatches ?? rbPreview.day1_match_count) - 1)
+                                    setDay1MaxMatches(newMax)
+                                    handleRebuildPreviewWithOverride(newMax)
+                                  }}
+                                  style={{
+                                    padding: '2px 12px',
+                                    fontSize: 16,
+                                    fontWeight: 700,
+                                    backgroundColor: '#c62828',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                  }}
+                                  title="Move matches from Day 1 to Day 2"
+                                >
+                                  ▲ Move to Day 2
+                                </button>
+                                <span style={{
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: '#c62828',
+                                }}>
+                                  — Day Break —
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    const newMax = Math.min(
+                                      rbPreview.remaining_matches,
+                                      (day1MaxMatches ?? rbPreview.day1_match_count) + 1
+                                    )
+                                    setDay1MaxMatches(newMax)
+                                    handleRebuildPreviewWithOverride(newMax)
+                                  }}
+                                  style={{
+                                    padding: '2px 12px',
+                                    fontSize: 16,
+                                    fontWeight: 700,
+                                    backgroundColor: '#c62828',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                  }}
+                                  title="Move matches from Day 2 to Day 1"
+                                >
+                                  ▼ Move to Day 1
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        {/* Regular match row */}
+                        <tr style={{
+                          borderBottom: '1px solid #f0f0f0',
+                          backgroundColor: m.status === 'IN_PROGRESS' ? '#fff3e0' : m.assigned_day ? undefined : '#ffebee',
+                        }}>
+                          <td style={{ padding: '4px 8px', textAlign: 'center', color: '#888' }}>{m.rank}</td>
+                          <td style={{ padding: '4px 8px', fontWeight: 600 }}>{m.match_code}</td>
+                          <td style={{ padding: '4px 8px', color: '#555' }}>{m.event_name} ({m.stage})</td>
+                          <td style={{ padding: '4px 8px' }}>{m.team1} vs {m.team2}</td>
+                          <td style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 600, color: m.assigned_day ? '#1a237e' : '#c62828' }}>
+                            {m.assigned_day || '\u2014'}
+                          </td>
+                          <td style={{ padding: '4px 8px', textAlign: 'center', color: '#555' }}>
+                            {m.assigned_time || '\u2014'}
+                          </td>
+                          <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 3,
+                              backgroundColor: m.status === 'IN_PROGRESS' ? '#fff3e0' : '#f5f5f5',
+                              color: m.status === 'IN_PROGRESS' ? '#e65100' : '#888',
+                            }}>
+                              {m.status}
+                            </span>
+                          </td>
+                        </tr>
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -3545,7 +3667,7 @@ function WeatherTab({
                 {rbApplyLoading ? 'Rebuilding...' : `Remake Schedule (${rbPreview.remaining_matches})`}
               </button>
               <button
-                onClick={() => { setStep('setup'); setRbPreview(null) }}
+                onClick={() => { setStep('setup'); setRbPreview(null); setDay1MaxMatches(null) }}
                 style={{ padding: '8px 20px', fontSize: 13, fontWeight: 600, border: '1px solid #ccc', borderRadius: 4, backgroundColor: '#fff', color: '#555', cursor: 'pointer' }}
               >
                 ← Back

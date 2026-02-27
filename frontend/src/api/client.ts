@@ -2577,6 +2577,7 @@ export interface RebuildRequest {
   version_id: number
   days: RebuildDayConfig[]
   drop_consolation: 'none' | 'finals' | 'all'
+  day1_max_matches?: number
 }
 
 export interface RebuildMatchItem {
@@ -2610,6 +2611,7 @@ export interface RebuildPreviewResponse {
   matches: RebuildMatchItem[]
   per_day: RebuildDaySummary[]
   dropped_count: number
+  day1_match_count: number
 }
 
 export interface RebuildApplyResponse {
