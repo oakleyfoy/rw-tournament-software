@@ -982,34 +982,9 @@ def compute_rebuild_preview(
     # Build rest time per day
     rest_by_date = {dc.day_date: SCORING_FORMATS.get(dc.format, 105) for dc in day_configs}
 
-    # Build dependency graph
-    match_map: Dict[int, Match] = {m.id: m for m in all_matches}
-    dep_sources: Dict[int, List[int]] = {}
-    for m in all_matches:
-        deps: List[int] = []
-        if m.source_match_a_id:
-            deps.append(m.source_match_a_id)
-        if m.source_match_b_id:
-            deps.append(m.source_match_b_id)
-        if deps:
-            dep_sources[m.id] = deps
-
-    event_type_round_matches: Dict[Tuple[int, str, int], List[int]] = {}
-    for m in all_matches:
-        key = (m.event_id, m.match_type, m.round_number)
-        event_type_round_matches.setdefault(key, []).append(m.id)
-    for m in all_matches:
-        if m.round_number > 1:
-            prev_key = (m.event_id, m.match_type, m.round_number - 1)
-            prev_ids = event_type_round_matches.get(prev_key, [])
-            existing_deps = dep_sources.get(m.id, [])
-            for pid in prev_ids:
-                if pid not in existing_deps:
-                    dep_sources.setdefault(m.id, []).append(pid)
-
     # Seed team state from FINAL matches
+    match_map: Dict[int, Match] = {m.id: m for m in all_matches}
     team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
-    placed_end_times: Dict[int, datetime] = {}
 
     for mid in final_match_ids:
         m = match_map.get(mid)
@@ -1021,7 +996,6 @@ def compute_rebuild_preview(
             continue
         start_dt = datetime.combine(slot.day_date, slot.start_time)
         end_dt = start_dt + timedelta(minutes=m.duration_minutes)
-        placed_end_times[mid] = end_dt
         for tid in (m.team_a_id, m.team_b_id):
             if tid is not None:
                 team_busy.setdefault(tid, []).append((start_dt, end_dt))
@@ -1034,13 +1008,6 @@ def compute_rebuild_preview(
     for m in remaining:
         match_duration = m.duration_minutes
 
-        earliest_start: Optional[datetime] = None
-        for dep_id in dep_sources.get(m.id, []):
-            dep_end = placed_end_times.get(dep_id)
-            if dep_end is not None:
-                if earliest_start is None or dep_end > earliest_start:
-                    earliest_start = dep_end
-
         placed = False
         for idx, slot in enumerate(sim_slots):
             if idx in occupied:
@@ -1050,9 +1017,6 @@ def compute_rebuild_preview(
 
             slot_start = datetime.combine(slot["day_date"], slot["start_time"])
             slot_end = slot_start + timedelta(minutes=match_duration)
-
-            if earliest_start and slot_start < earliest_start:
-                continue
 
             ok = True
             for tid in (m.team_a_id, m.team_b_id):
@@ -1084,7 +1048,6 @@ def compute_rebuild_preview(
                 continue
 
             occupied.add(idx)
-            placed_end_times[m.id] = slot_end
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
@@ -1277,32 +1240,10 @@ def apply_rebuild(
     # Sort new slots chronologically
     new_slots.sort(key=lambda s: (s.day_date, s.start_time, s.court_number))
 
-    # Build dependency graph
+    # Seed team state from FINAL matches
     match_map: Dict[int, Match] = {m.id: m for m in all_matches}
-    dep_sources: Dict[int, List[int]] = {}
-    for m in all_matches:
-        deps: List[int] = []
-        if m.source_match_a_id:
-            deps.append(m.source_match_a_id)
-        if m.source_match_b_id:
-            deps.append(m.source_match_b_id)
-        if deps:
-            dep_sources[m.id] = deps
+    team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
 
-    event_type_round_matches: Dict[Tuple[int, str, int], List[int]] = {}
-    for m in all_matches:
-        key = (m.event_id, m.match_type, m.round_number)
-        event_type_round_matches.setdefault(key, []).append(m.id)
-    for m in all_matches:
-        if m.round_number > 1:
-            prev_key = (m.event_id, m.match_type, m.round_number - 1)
-            prev_ids = event_type_round_matches.get(prev_key, [])
-            existing_deps = dep_sources.get(m.id, [])
-            for pid in prev_ids:
-                if pid not in existing_deps:
-                    dep_sources.setdefault(m.id, []).append(pid)
-
-    # Track FINAL match end times for dependency ordering
     final_assignments_map: Dict[int, MatchAssignment] = {}
     for a in existing_assignments:
         if a.match_id in final_match_ids:
@@ -1317,9 +1258,6 @@ def apply_rebuild(
     for s in new_slots:
         all_slot_map[s.id] = s
 
-    placed_end_times: Dict[int, datetime] = {}
-    team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
-
     for mid in final_match_ids:
         m = match_map.get(mid)
         a = final_assignments_map.get(mid)
@@ -1330,7 +1268,6 @@ def apply_rebuild(
             continue
         start_dt = datetime.combine(slot.day_date, slot.start_time)
         end_dt = start_dt + timedelta(minutes=m.duration_minutes)
-        placed_end_times[mid] = end_dt
         for tid in (m.team_a_id, m.team_b_id):
             if tid is not None:
                 team_busy.setdefault(tid, []).append((start_dt, end_dt))
@@ -1341,13 +1278,6 @@ def apply_rebuild(
     unplaceable_count = 0
 
     for m in remaining:
-        earliest_start: Optional[datetime] = None
-        for dep_id in dep_sources.get(m.id, []):
-            dep_end = placed_end_times.get(dep_id)
-            if dep_end is not None:
-                if earliest_start is None or dep_end > earliest_start:
-                    earliest_start = dep_end
-
         placed = False
         for slot in new_slots:
             if slot.id in occupied:
@@ -1357,9 +1287,6 @@ def apply_rebuild(
 
             slot_start = datetime.combine(slot.day_date, slot.start_time)
             slot_end = slot_start + timedelta(minutes=m.duration_minutes)
-
-            if earliest_start and slot_start < earliest_start:
-                continue
 
             ok = True
             for tid in (m.team_a_id, m.team_b_id):
@@ -1391,7 +1318,6 @@ def apply_rebuild(
                 continue
 
             occupied.add(slot.id)
-            placed_end_times[m.id] = slot_end
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
