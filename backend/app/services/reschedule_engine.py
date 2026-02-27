@@ -880,7 +880,6 @@ def compute_rebuild_preview(
     drop_consolation: str = "none",
 ) -> RebuildPreview:
     """Dry-run: count remaining matches and compute slot capacity."""
-    from app.services.schedule_sequence import build_master_sequence
 
     all_matches = session.exec(
         select(Match).where(Match.schedule_version_id == version_id)
@@ -900,8 +899,22 @@ def compute_rebuild_preview(
             team_map[tid] = t.name if t else placeholder
         return team_map[tid]
 
-    master_seq = build_master_sequence(session, version_id)
-    rank_by_id = {rm.match_id: rm.rank for rm in master_seq}
+    # Load current assignments and their slots to determine original order
+    all_assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version_id,
+        )
+    ).all()
+    assign_by_match = {a.match_id: a for a in all_assignments}
+
+    all_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == version_id,
+        )
+    ).all()
+    slot_map = {s.id: s for s in all_slots}
+
+    STAGE_PRECEDENCE = {"WF": 1, "RR": 2, "MAIN": 3, "CONSOLATION": 4, "PLACEMENT": 5}
 
     remaining: List[Match] = []
     dropped_count = 0
@@ -917,12 +930,19 @@ def compute_rebuild_preview(
         if status == "IN_PROGRESS":
             in_progress_count += 1
 
-    def _sort_key(m: Match) -> Tuple:
+    def _original_order_key(m: Match) -> Tuple:
+        """Sort by original slot assignment (day -> time -> court), unassigned at end."""
         status = (m.runtime_status or "SCHEDULED").upper()
         status_order = 0 if status == "IN_PROGRESS" else 1
-        return (status_order, rank_by_id.get(m.id, 999999), m.id)
+        assign = assign_by_match.get(m.id)
+        slot = slot_map.get(assign.slot_id) if assign else None
+        if slot:
+            return (status_order, 0, slot.day_date, slot.start_time, slot.court_number, m.id)
+        # Unassigned: fall to end, sorted by stage precedence
+        sp = STAGE_PRECEDENCE.get(m.match_type, 99)
+        return (status_order, 1, date.max, time.max, sp, m.round_index or 999, m.sequence_in_round or 999, m.id)
 
-    remaining.sort(key=_sort_key)
+    remaining.sort(key=_original_order_key)
 
     total_slots = 0
     per_day: List[Dict[str, Any]] = []
@@ -977,7 +997,6 @@ def apply_rebuild(
     drop_consolation: str = "none",
 ) -> RebuildResult:
     """Regenerate slots and reassign all remaining matches."""
-    from app.services.schedule_sequence import build_master_sequence
 
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -999,8 +1018,22 @@ def apply_rebuild(
     events = session.exec(select(Event).where(Event.id.in_(event_ids))).all() if event_ids else []
     event_map = {e.id: e.name for e in events}
 
-    master_seq = build_master_sequence(session, version_id)
-    rank_by_id = {rm.match_id: rm.rank for rm in master_seq}
+    # Load current assignments and slots BEFORE deleting them, to determine original order
+    pre_assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version_id,
+        )
+    ).all()
+    pre_assign_by_match = {a.match_id: a for a in pre_assignments}
+
+    pre_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == version_id,
+        )
+    ).all()
+    pre_slot_map = {s.id: s for s in pre_slots}
+
+    STAGE_PRECEDENCE = {"WF": 1, "RR": 2, "MAIN": 3, "CONSOLATION": 4, "PLACEMENT": 5}
 
     remaining: List[Match] = []
     dropped_matches: List[Match] = []
@@ -1014,12 +1047,19 @@ def apply_rebuild(
         else:
             remaining.append(m)
 
-    def _sort_key(m: Match) -> Tuple:
+    def _original_order_key(m: Match) -> Tuple:
+        """Sort by original slot assignment (day -> time -> court), unassigned at end."""
         status = (m.runtime_status or "SCHEDULED").upper()
         status_order = 0 if status == "IN_PROGRESS" else 1
-        return (status_order, rank_by_id.get(m.id, 999999), m.id)
+        assign = pre_assign_by_match.get(m.id)
+        slot = pre_slot_map.get(assign.slot_id) if assign else None
+        if slot:
+            return (status_order, 0, slot.day_date, slot.start_time, slot.court_number, m.id)
+        # Unassigned: fall to end, sorted by stage precedence
+        sp = STAGE_PRECEDENCE.get(m.match_type, 99)
+        return (status_order, 1, date.max, time.max, sp, m.round_index or 999, m.sequence_in_round or 999, m.id)
 
-    remaining.sort(key=_sort_key)
+    remaining.sort(key=_original_order_key)
 
     # Mark dropped consolation matches as CANCELLED
     dropped_ids: Set[int] = set()
@@ -1142,9 +1182,13 @@ def apply_rebuild(
     for s in new_slots:
         all_slot_map[s.id] = s
 
+    # Compute rest time from scoring format (rest = match duration)
+    # If all days use the same format, use that duration. Otherwise use the minimum.
+    rebuild_durations = [SCORING_FORMATS.get(dc.format, 105) for dc in day_configs]
+    rebuild_rest_minutes = min(rebuild_durations) if rebuild_durations else 105
+
     placed_end_times: Dict[int, datetime] = {}
     team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
-    team_day_count: Dict[Tuple[int, date], int] = {}
 
     for mid in final_match_ids:
         m = match_map.get(mid)
@@ -1160,8 +1204,6 @@ def apply_rebuild(
         for tid in (m.team_a_id, m.team_b_id):
             if tid is not None:
                 team_busy.setdefault(tid, []).append((start_dt, end_dt))
-                day_key = (tid, slot.day_date)
-                team_day_count[day_key] = team_day_count.get(day_key, 0) + 1
 
     # First-fit assignment with constraints
     occupied: Set[int] = set()
@@ -1202,19 +1244,15 @@ def apply_rebuild(
                         break
                 if not ok:
                     break
-                day_key = (tid, slot.day_date)
-                if team_day_count.get(day_key, 0) >= DAILY_CAP:
-                    ok = False
-                    break
                 for busy_start, busy_end in team_busy.get(tid, []):
                     if busy_end <= slot_start:
                         gap = (slot_start - busy_end).total_seconds() / 60
-                        if gap < MIN_REST_MINUTES:
+                        if gap < rebuild_rest_minutes:
                             ok = False
                             break
                     if slot_end <= busy_start:
                         gap = (busy_start - slot_end).total_seconds() / 60
-                        if gap < MIN_REST_MINUTES:
+                        if gap < rebuild_rest_minutes:
                             ok = False
                             break
                 if not ok:
@@ -1228,8 +1266,6 @@ def apply_rebuild(
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
-                    day_key = (tid, slot.day_date)
-                    team_day_count[day_key] = team_day_count.get(day_key, 0) + 1
 
             assignment = MatchAssignment(
                 schedule_version_id=version_id,
