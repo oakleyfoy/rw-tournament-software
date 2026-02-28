@@ -9,6 +9,18 @@ from app.models.sms_template import SmsTemplate, DEFAULT_SMS_TEMPLATES
 from app.models.tournament_sms_settings import TournamentSmsSettings
 
 
+@pytest.fixture(autouse=True)
+def _force_twilio_dry_run(monkeypatch):
+    """Ensure Twilio always runs in dry-run mode during tests."""
+    import app.services.twilio_service as _mod
+
+    monkeypatch.delenv("TWILIO_ACCOUNT_SID", raising=False)
+    monkeypatch.delenv("TWILIO_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("TWILIO_FROM_NUMBER", raising=False)
+    # Reset the singleton so it picks up the cleared env vars
+    _mod._twilio_service = None
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
