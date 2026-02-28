@@ -33,6 +33,10 @@ REQUIRED_TEAM_COLUMNS: List[Tuple[str, str, str]] = [
     ("player2_email", "TEXT", "TEXT"),
     ("is_defaulted", "INTEGER", "BOOLEAN"),
     ("notes", "TEXT", "TEXT"),
+    ("p1_cell", "TEXT", "TEXT"),
+    ("p1_email", "TEXT", "TEXT"),
+    ("p2_cell", "TEXT", "TEXT"),
+    ("p2_email", "TEXT", "TEXT"),
 ]
 
 

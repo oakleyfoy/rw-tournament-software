@@ -7,5 +7,6 @@ pytest-asyncio==0.21.1
 httpx==0.25.2
 python-dotenv==1.0.0
 requests==2.31.0
+twilio>=7.16.0
 # Optional: psycopg2-binary==2.9.9  # Only needed for PostgreSQL
 

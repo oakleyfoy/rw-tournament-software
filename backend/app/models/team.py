@@ -29,6 +29,10 @@ class Team(SQLModel, table=True):
     player1_email: Optional[str] = Field(default=None)
     player2_cellphone: Optional[str] = Field(default=None)
     player2_email: Optional[str] = Field(default=None)
+    p1_cell: Optional[str] = Field(default=None)
+    p1_email: Optional[str] = Field(default=None)
+    p2_cell: Optional[str] = Field(default=None)
+    p2_email: Optional[str] = Field(default=None)
     is_defaulted: bool = Field(default=False)
     notes: Optional[str] = Field(default=None)
 

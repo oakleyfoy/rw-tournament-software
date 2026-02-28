@@ -11,6 +11,9 @@ from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
+from app.models.sms_log import SmsLog
+from app.models.sms_template import SmsTemplate
+from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 
 __all__ = [
@@ -29,4 +32,7 @@ __all__ = [
     "Team",
     "TeamAvoidEdge",
     "PolicyRun",
+    "SmsLog",
+    "SmsTemplate",
+    "TournamentSmsSettings",
 ]
