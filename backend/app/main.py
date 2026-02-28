@@ -22,6 +22,7 @@ from app.routes import (
     schedule,
     schedule_builder,
     schedule_sanity,
+    sms,
     teams,
     time_windows,
     tournament_days,
@@ -110,6 +111,9 @@ app.include_router(public.router, prefix="/api", tags=["public"])
 
 # Desk runtime console (staff-only)
 app.include_router(desk.router, prefix="/api", tags=["desk"])
+
+# SMS endpoints (no extra prefix — router has its own /api/tournaments/{id}/sms)
+app.include_router(sms.router)
 app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"])
 
 
