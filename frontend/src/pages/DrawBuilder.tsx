@@ -1166,12 +1166,12 @@ function DrawBuilder() {
                   <div style={{ padding: '12px 14px' }}>
                     <div style={{ marginBottom: 16 }}>
                       <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                        Import Seeded Teams (paste tab-separated or space-separated)
+                        Import Seeded Teams (paste from WAR Tournaments / Excel)
                       </div>
                       <textarea
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
-                        placeholder={"1\ta\t9\tHeather Robinson / Shea Butler\n2\tb\t8.5\tJane Doe / Mary Smith\n..."}
+                        placeholder={"1\tB\tAlex / Torrie\tAlex Quiros, PA / Torrie Kline, PA\tWomens\t8.5\t8123612060\talex@mail.com\t6109696386\ttorrie@mail.com\n2\tA\tJeni / Marina\tJeni Dao, TX / Marina Wang, TX\tWomens\t8.5\t2819199929\tjeni@mail.com\t7133068878\tmarina@mail.com\n..."}
                         style={{
                           width: '100%', minHeight: 120, fontFamily: 'monospace', fontSize: 12,
                           padding: 8, border: '1px solid #ccc', borderRadius: 4, resize: 'vertical',
@@ -1188,7 +1188,7 @@ function DrawBuilder() {
                           {importLoading ? 'Importing...' : 'Import Teams'}
                         </button>
                         <span style={{ fontSize: 11, color: '#888' }}>
-                          Format: seed [avoid_group] rating team_name (tab or space separated)
+                          Format: seed  group  display_name  full_name  event  rating  p1_cell  p1_email  p2_cell  p2_email (tab separated)
                         </span>
                       </div>
                     </div>
@@ -1205,6 +1205,10 @@ function DrawBuilder() {
                               <th style={{ padding: '4px 8px' }}>Rating</th>
                               <th style={{ padding: '4px 8px' }}>Display Name</th>
                               <th style={{ padding: '4px 8px' }}>Full Name</th>
+                              <th style={{ padding: '4px 8px' }}>P1 Cell</th>
+                              <th style={{ padding: '4px 8px' }}>P1 Email</th>
+                              <th style={{ padding: '4px 8px' }}>P2 Cell</th>
+                              <th style={{ padding: '4px 8px' }}>P2 Email</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1215,6 +1219,10 @@ function DrawBuilder() {
                                 <td style={{ padding: '4px 8px' }}>{t.rating ?? '—'}</td>
                                 <td style={{ padding: '4px 8px' }}>{t.display_name ?? '—'}</td>
                                 <td style={{ padding: '4px 8px' }}>{t.name}</td>
+                                <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p1_cell ?? '—'}</td>
+                                <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p1_email ?? '—'}</td>
+                                <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p2_cell ?? '—'}</td>
+                                <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p2_email ?? '—'}</td>
                               </tr>
                             ))}
                           </tbody>

@@ -1657,6 +1657,10 @@ export interface TeamListItem {
   display_name: string | null
   created_at: string
   wf_group_index: number | null
+  p1_cell: string | null
+  p1_email: string | null
+  p2_cell: string | null
+  p2_email: string | null
 }
 
 export async function getEventTeams(

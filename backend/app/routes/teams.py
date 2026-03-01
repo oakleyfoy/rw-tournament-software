@@ -66,6 +66,10 @@ class TeamResponse(BaseModel):
     player1_email: Optional[str] = None
     player2_cellphone: Optional[str] = None
     player2_email: Optional[str] = None
+    p1_cell: Optional[str] = None
+    p1_email: Optional[str] = None
+    p2_cell: Optional[str] = None
+    p2_email: Optional[str] = None
     is_defaulted: bool = False
 
     @field_validator("is_defaulted", mode="before")
@@ -276,20 +280,49 @@ def _parse_seeded_line(raw: str, line_num: int) -> dict:
     """
     Parse a single line of tab-separated seeded team data.
 
-    Expected tab-separated columns (flexible ordering):
-      col0: seed (int), optionally followed by a single letter avoid_group
-      col1: rating (float)
-      col2+: team full name (remaining columns joined)
+    Handles two formats:
+    1. New 10-field WAR format: seed, avoid_group, display_name, full_name,
+       event_name, rating, p1_cell, p1_email, p2_cell, p2_email
+    2. Old 4-field format: seed, avoid_group, rating, full_name
 
-    Also handles space-separated fallback:
-      "1 a 9 Heather Robinson / Shea Butler"
-      "16 8 Mary Garvin / Lana Heinz"
+    Also handles space-separated fallback.
 
-    Returns dict with: seed, avoid_group, rating, full_name, display_name
+    Returns dict with: seed, avoid_group, rating, full_name, display_name,
+    player1_cellphone, player1_email, player2_cellphone, player2_email,
+    p1_cell, p1_email, p2_cell, p2_email
     Raises ValueError on parse failure.
     """
     # Try tab-separated first
     parts = raw.split("\t")
+
+    # 10+ fields: use the enhanced parser from team_import
+    if len(parts) >= 10:
+        from app.routes.team_import import parse_team_rows
+        rows = parse_team_rows(raw)
+        if not rows:
+            raise ValueError("Could not parse 10-field line")
+        r = rows[0]
+        if r.seed is None:
+            raise ValueError(f"Cannot parse seed from line {line_num}")
+        # full_name: use full_name if available, otherwise display_name
+        full_name = r.full_name or r.display_name
+        display_name = r.display_name or _make_display_name(full_name)
+        return {
+            "seed": r.seed,
+            "avoid_group": r.avoid_group,
+            "rating": r.rating,
+            "full_name": full_name,
+            "display_name": display_name,
+            "player1_cellphone": r.p1_cell,
+            "player1_email": r.p1_email,
+            "player2_cellphone": r.p2_cell,
+            "player2_email": r.p2_email,
+            "p1_cell": r.p1_cell,
+            "p1_email": r.p1_email,
+            "p2_cell": r.p2_cell,
+            "p2_email": r.p2_email,
+        }
+
     if len(parts) >= 3:
         return _parse_tab_parts(parts, line_num)
 
@@ -595,6 +628,8 @@ def import_seeded_teams(
 
     imported_count = 0
     updated_count = 0
+    # Track group memberships for avoid edge creation
+    group_map: dict[str, list[int]] = {}
 
     for row in parsed:
         seed = row["seed"]
@@ -618,8 +653,18 @@ def import_seeded_teams(
                 existing.player2_cellphone = row["player2_cellphone"]
             if row.get("player2_email"):
                 existing.player2_email = row["player2_email"]
+            if row.get("p1_cell"):
+                existing.p1_cell = row["p1_cell"]
+            if row.get("p1_email"):
+                existing.p1_email = row["p1_email"]
+            if row.get("p2_cell"):
+                existing.p2_cell = row["p2_cell"]
+            if row.get("p2_email"):
+                existing.p2_email = row["p2_email"]
             session.add(existing)
+            session.flush()
             updated_count += 1
+            team_id = existing.id
         else:
             team = Team(
                 event_id=event_id,
@@ -632,9 +677,58 @@ def import_seeded_teams(
                 player1_email=row.get("player1_email"),
                 player2_cellphone=row.get("player2_cellphone"),
                 player2_email=row.get("player2_email"),
+                p1_cell=row.get("p1_cell"),
+                p1_email=row.get("p1_email"),
+                p2_cell=row.get("p2_cell"),
+                p2_email=row.get("p2_email"),
             )
             session.add(team)
+            session.flush()
             imported_count += 1
+            team_id = team.id
+
+        # Track avoid group memberships (support multi-group like "A,B")
+        avoid_group = row.get("avoid_group")
+        if avoid_group:
+            groups = [g.strip().upper() for g in avoid_group.split(",")]
+            for g in groups:
+                if g not in group_map:
+                    group_map[g] = []
+                group_map[g].append(team_id)
+
+    # Create avoid edges for teams in the same group
+    avoid_edges_created = 0
+    try:
+        from app.models.team_avoid_edge import TeamAvoidEdge
+
+        for group_code, team_ids in group_map.items():
+            if len(team_ids) < 2:
+                continue
+            for i in range(len(team_ids)):
+                for j in range(i + 1, len(team_ids)):
+                    a_id = min(team_ids[i], team_ids[j])
+                    b_id = max(team_ids[i], team_ids[j])
+                    existing_edge = session.exec(
+                        select(TeamAvoidEdge).where(
+                            TeamAvoidEdge.event_id == event_id,
+                            TeamAvoidEdge.team_id_a == a_id,
+                            TeamAvoidEdge.team_id_b == b_id,
+                        )
+                    ).first()
+                    if not existing_edge:
+                        edge = TeamAvoidEdge(
+                            event_id=event_id,
+                            team_id_a=a_id,
+                            team_id_b=b_id,
+                            reason=f"group:{group_code}",
+                        )
+                        session.add(edge)
+                        avoid_edges_created += 1
+    except Exception as e:
+        warnings.append(f"Error creating avoid edges: {e}")
+
+    if avoid_edges_created > 0:
+        warnings.append(f"Created {avoid_edges_created} avoid edge(s) from group assignments")
 
     # Update event team_count to match actual teams
     total_teams = len(existing_teams) + imported_count
