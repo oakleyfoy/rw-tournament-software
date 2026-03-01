@@ -23,6 +23,7 @@ from app.routes import (
     schedule_builder,
     schedule_sanity,
     sms,
+    team_import,
     teams,
     time_windows,
     tournament_days,
@@ -114,6 +115,9 @@ app.include_router(desk.router, prefix="/api", tags=["desk"])
 
 # SMS endpoints (no extra prefix — router has its own /api/tournaments/{id}/sms)
 app.include_router(sms.router)
+
+# Enhanced team import (no extra prefix — router has its own /api/events/{id}/teams/import)
+app.include_router(team_import.router)
 app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"])
 
 
