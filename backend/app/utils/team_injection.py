@@ -120,6 +120,9 @@ def inject_bracket_8_teams(session: Session, event_id: int, schedule_version_id:
     for match, (team_a, team_b) in zip(qf_matches, assignments):
         match.team_a_id = team_a.id
         match.team_b_id = team_b.id
+        # Bracket = post-WF: use short display_name (fallback to full name)
+        match.placeholder_side_a = getattr(team_a, "display_name", None) or team_a.name or f"Team {team_a.id}"
+        match.placeholder_side_b = getattr(team_b, "display_name", None) or team_b.name or f"Team {team_b.id}"
         session.add(match)
         matches_updated += 1
 
@@ -198,6 +201,9 @@ def inject_round_robin_teams(session: Session, event_id: int, schedule_version_i
             for match, (team_a, team_b) in zip(pool_matches, pairings):
                 match.team_a_id = team_a.id
                 match.team_b_id = team_b.id
+                # Post-WF: use short display_name (fallback to full name)
+                match.placeholder_side_a = getattr(team_a, "display_name", None) or team_a.name or f"Team {team_a.id}"
+                match.placeholder_side_b = getattr(team_b, "display_name", None) or team_b.name or f"Team {team_b.id}"
                 session.add(match)
                 matches_updated += 1
 
@@ -224,6 +230,9 @@ def inject_round_robin_teams(session: Session, event_id: int, schedule_version_i
         for match, (team_a, team_b) in zip(rr_matches, pairings):
             match.team_a_id = team_a.id
             match.team_b_id = team_b.id
+            # Post-WF: use short display_name (fallback to full name)
+            match.placeholder_side_a = getattr(team_a, "display_name", None) or team_a.name or f"Team {team_a.id}"
+            match.placeholder_side_b = getattr(team_b, "display_name", None) or team_b.name or f"Team {team_b.id}"
             session.add(match)
             matches_updated += 1
 

@@ -66,6 +66,7 @@ def _get_wf_r1_pairing(
             team_id=t.id,
             avoid_group=getattr(t, "avoid_group", None),
             display_name=getattr(t, "display_name", None),
+            name=getattr(t, "name", None),
         ))
 
     seed_teams.sort(key=lambda x: x.seed)
@@ -719,11 +720,17 @@ def _generate_wf_to_pools_4(
             seed_a, seed_b = pairing.pairs[i]
             team_a_id = pairing.team_id_pairs[i][0]
             team_b_id = pairing.team_id_pairs[i][1]
+            # WF R1: use full name for match cards
+            name_a, name_b = pairing.name_pairs[i]
+            placeholder_a = name_a or f"Seed {seed_a}"
+            placeholder_b = name_b or f"Seed {seed_b}"
         else:
             seed_a = i + 1
             seed_b = i + half + 1
             team_a_id = teams[i] if have_all_teams else None
             team_b_id = teams[i + half] if have_all_teams else None
+            placeholder_a = f"Seed {seed_a}"
+            placeholder_b = f"Seed {seed_b}"
 
         match = Match(
             tournament_id=spec.tournament_id,
@@ -736,8 +743,8 @@ def _generate_wf_to_pools_4(
             sequence_in_round=i + 1,
             team_a_id=team_a_id,
             team_b_id=team_b_id,
-            placeholder_side_a=f"Seed {seed_a}",
-            placeholder_side_b=f"Seed {seed_b}",
+            placeholder_side_a=placeholder_a,
+            placeholder_side_b=placeholder_b,
             duration_minutes=spec.waterfall_minutes,
         )
         matches.append(match)
@@ -910,11 +917,17 @@ def _generate_wf_to_pools_dynamic(
             seed_a, seed_b = pairing.pairs[i]
             team_a_id = pairing.team_id_pairs[i][0]
             team_b_id = pairing.team_id_pairs[i][1]
+            # WF R1: use full name for match cards
+            name_a, name_b = pairing.name_pairs[i]
+            placeholder_a = name_a or f"Seed {seed_a}"
+            placeholder_b = name_b or f"Seed {seed_b}"
         else:
             seed_a = i + 1
             seed_b = i + half + 1
             team_a_id = teams[i] if have_all_teams and i < len(teams) else None
             team_b_id = teams[i + half] if have_all_teams and (i + half) < len(teams) else None
+            placeholder_a = f"Seed {seed_a}"
+            placeholder_b = f"Seed {seed_b}"
 
         match = Match(
             tournament_id=spec.tournament_id,
@@ -927,8 +940,8 @@ def _generate_wf_to_pools_dynamic(
             sequence_in_round=i + 1,
             team_a_id=team_a_id,
             team_b_id=team_b_id,
-            placeholder_side_a=f"Seed {seed_a}",
-            placeholder_side_b=f"Seed {seed_b}",
+            placeholder_side_a=placeholder_a,
+            placeholder_side_b=placeholder_b,
             duration_minutes=spec.waterfall_minutes,
         )
         matches.append(match)
@@ -1103,11 +1116,17 @@ def _generate_wf_to_brackets_8(
                     seed_a, seed_b = pairing.pairs[i]
                     team_a_id = pairing.team_id_pairs[i][0]
                     team_b_id = pairing.team_id_pairs[i][1]
+                    # WF R1: use full name for match cards
+                    name_a, name_b = pairing.name_pairs[i]
+                    placeholder_a = name_a or f"Seed {seed_a}"
+                    placeholder_b = name_b or f"Seed {seed_b}"
                 else:
                     seed_a = i + 1
                     seed_b = i + half_r1 + 1
                     team_a_id = teams[i] if have_all_teams else None
                     team_b_id = teams[i + half_r1] if have_all_teams else None
+                    placeholder_a = f"Seed {seed_a}"
+                    placeholder_b = f"Seed {seed_b}"
 
                 match = Match(
                     tournament_id=spec.tournament_id,
@@ -1120,8 +1139,8 @@ def _generate_wf_to_brackets_8(
                     sequence_in_round=i + 1,
                     team_a_id=team_a_id,
                     team_b_id=team_b_id,
-                    placeholder_side_a=f"Seed {seed_a}",
-                    placeholder_side_b=f"Seed {seed_b}",
+                    placeholder_side_a=placeholder_a,
+                    placeholder_side_b=placeholder_b,
                     duration_minutes=spec.waterfall_minutes,
                 )
                 matches.append(match)

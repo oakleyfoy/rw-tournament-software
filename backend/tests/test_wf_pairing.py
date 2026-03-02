@@ -13,11 +13,24 @@ from app.services.wf_pairing import (
 )
 
 
-def _make_teams(n: int, groups: dict[int, str] | None = None) -> list[TeamSeed]:
-    """Helper: create n teams with seeds 1..n, optional avoid_group map."""
+def _make_teams(
+    n: int,
+    groups: dict[int, str] | None = None,
+    names: dict[int, str] | None = None,
+    display_names: dict[int, str] | None = None,
+) -> list[TeamSeed]:
+    """Helper: create n teams with seeds 1..n, optional avoid_group/name/display_name maps."""
     groups = groups or {}
+    names = names or {}
+    display_names = display_names or {}
     return [
-        TeamSeed(seed=s, team_id=100 + s, avoid_group=groups.get(s))
+        TeamSeed(
+            seed=s,
+            team_id=100 + s,
+            avoid_group=groups.get(s),
+            name=names.get(s),
+            display_name=display_names.get(s),
+        )
         for s in range(1, n + 1)
     ]
 
@@ -321,3 +334,57 @@ class TestMultiGroupSupport:
         assert len(result.conflicts) == 4
         for c in result.conflicts:
             assert c.group == "x"
+
+
+class TestNamePairsAndDisplayNamePairs:
+    """Verify name_pairs and display_name_pairs are populated in PairingResult."""
+
+    def test_name_pairs_populated(self):
+        names = {s: f"Team {s} Full Name" for s in range(1, 9)}
+        teams = _make_teams(8, names=names)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.name_pairs) == 4
+        for name_a, name_b in result.name_pairs:
+            assert name_a != ""
+            assert name_b != ""
+            assert "Full Name" in name_a
+            assert "Full Name" in name_b
+
+    def test_display_name_pairs_populated(self):
+        display_names = {1: "Short 1", 2: "Short 2"}
+        teams = _make_teams(8, display_names=display_names)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.display_name_pairs) == 4
+        # Seeds 1 and 2 have display_names; others are None
+        found_short = False
+        for dn_a, dn_b in result.display_name_pairs:
+            if dn_a == "Short 1" or dn_b == "Short 1":
+                found_short = True
+            if dn_a == "Short 2" or dn_b == "Short 2":
+                found_short = True
+        assert found_short
+
+    def test_name_pairs_empty_when_no_names(self):
+        teams = _make_teams(8)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.name_pairs) == 4
+        for name_a, name_b in result.name_pairs:
+            assert name_a == ""
+            assert name_b == ""
+
+    def test_display_name_pairs_none_when_not_set(self):
+        teams = _make_teams(8)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.display_name_pairs) == 4
+        for dn_a, dn_b in result.display_name_pairs:
+            assert dn_a is None
+            assert dn_b is None
+
+    def test_name_pairs_follow_seed_pairs(self):
+        """name_pairs should correspond to the same teams as seed_pairs."""
+        names = {s: f"Name_{s}" for s in range(1, 9)}
+        teams = _make_teams(8, names=names)
+        result = build_wf_r1_pairings(teams, 8)
+        for (seed_a, seed_b), (name_a, name_b) in zip(result.pairs, result.name_pairs):
+            assert name_a == f"Name_{seed_a}"
+            assert name_b == f"Name_{seed_b}"

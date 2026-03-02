@@ -24,6 +24,7 @@ class TeamSeed:
     team_id: int
     avoid_group: Optional[str] = None
     display_name: Optional[str] = None
+    name: Optional[str] = None
 
 
 @dataclass
@@ -39,6 +40,8 @@ class PairingResult:
     pairs: List[Tuple[int, int]]
     team_id_pairs: List[Tuple[int, int]]
     conflicts: List[PairingConflict]
+    name_pairs: List[Tuple[str, str]] = field(default_factory=list)
+    display_name_pairs: List[Tuple[Optional[str], Optional[str]]] = field(default_factory=list)
 
 
 def bracket_fold_positions(n: int) -> List[int]:
@@ -175,11 +178,15 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     # Step 4: Build result with remaining (unavoidable) conflicts
     seed_pairs: List[Tuple[int, int]] = []
     team_id_pairs: List[Tuple[int, int]] = []
+    name_pairs: List[Tuple[str, str]] = []
+    display_name_pairs: List[Tuple[Optional[str], Optional[str]]] = []
     conflicts: List[PairingConflict] = []
 
     for a, b in resolved_pairs:
         seed_pairs.append((a.seed, b.seed))
         team_id_pairs.append((a.team_id, b.team_id))
+        name_pairs.append((a.name or "", b.name or ""))
+        display_name_pairs.append((a.display_name, b.display_name))
 
         shared = _groups_conflict(a.avoid_group, b.avoid_group)
         if shared:
@@ -197,4 +204,6 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
         pairs=seed_pairs,
         team_id_pairs=team_id_pairs,
         conflicts=conflicts,
+        name_pairs=name_pairs,
+        display_name_pairs=display_name_pairs,
     )

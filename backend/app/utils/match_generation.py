@@ -303,6 +303,13 @@ def generate_wf_matches(
                     team_a, team_b = all_pairs[pair_idx]
                     match_code = f"{event_prefix}_WF_G{group_index}_{round_num:02d}_{seq:02d}"
 
+                    # WF R1: full name; R2+: short display_name (fallback to full name)
+                    if round_num == 1:
+                        ph_a = team_a.name or f"Team {team_a.id}"
+                        ph_b = team_b.name or f"Team {team_b.id}"
+                    else:
+                        ph_a = getattr(team_a, "display_name", None) or team_a.name or f"Team {team_a.id}"
+                        ph_b = getattr(team_b, "display_name", None) or team_b.name or f"Team {team_b.id}"
                     match = Match(
                         tournament_id=tournament_id,
                         event_id=event.id,
@@ -313,8 +320,8 @@ def generate_wf_matches(
                         round_index=round_num,
                         sequence_in_round=match_num,  # Global sequence
                         duration_minutes=duration_minutes,
-                        placeholder_side_a=team_a.name or f"Team {team_a.id}",
-                        placeholder_side_b=team_b.name or f"Team {team_b.id}",
+                        placeholder_side_a=ph_a,
+                        placeholder_side_b=ph_b,
                         team_a_id=team_a.id,
                         team_b_id=team_b.id,
                         status="unscheduled",
@@ -359,8 +366,13 @@ def generate_wf_matches(
                 if seq - 1 < len(round_pairs):
                     ta, tb = round_pairs[seq - 1]
                     team_a_id, team_b_id = ta.id, tb.id
-                    placeholder_a = ta.name or f"Team {ta.id}"
-                    placeholder_b = tb.name or f"Team {tb.id}"
+                    # WF R1: full name; R2+: short display_name (fallback to full name)
+                    if round_num == 1:
+                        placeholder_a = ta.name or f"Team {ta.id}"
+                        placeholder_b = tb.name or f"Team {tb.id}"
+                    else:
+                        placeholder_a = getattr(ta, "display_name", None) or ta.name or f"Team {ta.id}"
+                        placeholder_b = getattr(tb, "display_name", None) or tb.name or f"Team {tb.id}"
             match = Match(
                 tournament_id=tournament_id,
                 event_id=event.id,
