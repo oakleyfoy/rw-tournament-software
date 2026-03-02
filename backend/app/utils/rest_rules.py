@@ -2,8 +2,17 @@
 Rest Rules V1 - Team rest time enforcement for match assignments
 
 Hard-coded rest requirements:
+- Universal minimum: 30 minutes between ANY consecutive matches
 - WF → Scoring: 60 minutes minimum rest
 - Scoring → Scoring: 90 minutes minimum rest
+- WF → WF: 30 minutes minimum rest (universal minimum)
+
+Feeder rest enforcement:
+- R2+ bracket matches have null team IDs but source_match_a_id / source_match_b_id
+  FKs pointing to their R1 feeder matches.
+- When a feeder match has been assigned a slot, its end time is used to enforce rest
+  for the child match (same stage-transition rules apply).
+- Processing order guarantees all R1 matches are assigned before any R2 match.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -27,6 +36,7 @@ STAGE_PRECEDENCE = {"WF": 1, "MAIN": 2, "CONSOLATION": 3, "PLACEMENT": 4}
 # Phase R1: Configuration (Hard-coded for V1)
 # ============================================================================
 
+REST_MINIMUM_ANY_MINUTES = 30
 REST_WF_TO_SCORING_MINUTES = 60
 REST_SCORING_TO_SCORING_MINUTES = 90
 
@@ -86,7 +96,7 @@ class RestViolation:
     def __init__(
         self,
         team_id: int,
-        violation_type: str,  # "REST_WF_TO_SCORING" or "REST_SCORING_TO_SCORING"
+        violation_type: str,  # "REST_WF_TO_SCORING", "REST_SCORING_TO_SCORING", "REST_MINIMUM_GAP", or "REST_FEEDER_GAP"
         required_rest_minutes: int,
         actual_gap_minutes: float,
         slot_start_time: datetime,
@@ -101,7 +111,12 @@ class RestViolation:
 
 
 def check_rest_compatibility(
-    slot: ScheduleSlot, match: Match, rest_tracker: RestStateTracker
+    slot: ScheduleSlot,
+    match: Match,
+    rest_tracker: RestStateTracker,
+    weather_reschedule: bool = False,
+    feeder_end_times: Optional[Dict[int, datetime]] = None,
+    match_map: Optional[Dict[int, "Match"]] = None,
 ) -> Tuple[bool, List[RestViolation]]:
     """
     Check if slot is compatible with match regarding rest requirements.
@@ -109,13 +124,21 @@ def check_rest_compatibility(
     Rules:
     - If team has no prior match: Pass
     - If last_stage=WF and current!=WF: Require 60 min rest
-    - Otherwise: Require 90 min rest
+    - If last_stage!=WF and current!=WF: Require 90 min rest
+    - Universal minimum: 30 min between ANY consecutive matches
+    - The effective rest is MAX(stage-specific, universal minimum)
+    - If weather_reschedule=True: universal minimum is bypassed
     - If team_id is null (placeholder): Skip rest check for that side
+    - Feeder rest: For placeholder sides with source_match FKs, enforce rest
+      based on the feeder match's end time using the same stage-transition rules.
 
     Args:
         slot: Candidate slot
         match: Match to potentially assign
         rest_tracker: Current rest state tracker
+        weather_reschedule: If True, bypass the 30-min universal minimum
+        feeder_end_times: Mapping of match_id → scheduled end time for assigned matches
+        match_map: Mapping of match_id → Match object for looking up feeder match_type
 
     Returns:
         (is_compatible, violations)
@@ -132,60 +155,152 @@ def check_rest_compatibility(
         team_a_state = rest_tracker.get_team_state(match.team_a_id)
 
         if team_a_state and team_a_state.has_previous_match():
-            # Determine required rest
+            # Determine stage-specific rest
             if team_a_state.last_match_stage == "WF" and match.match_type != "WF":
-                required_rest_minutes = REST_WF_TO_SCORING_MINUTES
-                violation_type = "REST_WF_TO_SCORING"
+                stage_rest_minutes = REST_WF_TO_SCORING_MINUTES
+                stage_violation_type = "REST_WF_TO_SCORING"
+            elif team_a_state.last_match_stage != "WF" and match.match_type != "WF":
+                stage_rest_minutes = REST_SCORING_TO_SCORING_MINUTES
+                stage_violation_type = "REST_SCORING_TO_SCORING"
             else:
-                required_rest_minutes = REST_SCORING_TO_SCORING_MINUTES
-                violation_type = "REST_SCORING_TO_SCORING"
+                # WF→WF or Scoring→WF: no stage-specific rule
+                stage_rest_minutes = 0
+                stage_violation_type = None
 
-            # Calculate earliest allowed time
-            earliest_allowed = team_a_state.last_match_end_time + timedelta(minutes=required_rest_minutes)
+            # Apply universal minimum (bypassed during weather reschedule)
+            if not weather_reschedule and REST_MINIMUM_ANY_MINUTES > stage_rest_minutes:
+                required_rest_minutes = REST_MINIMUM_ANY_MINUTES
+                violation_type = "REST_MINIMUM_GAP"
+            else:
+                required_rest_minutes = stage_rest_minutes
+                violation_type = stage_violation_type
 
-            # Check if slot violates rest requirement
-            if slot_datetime < earliest_allowed:
-                actual_gap = (slot_datetime - team_a_state.last_match_end_time).total_seconds() / 60
-                violations.append(
-                    RestViolation(
-                        team_id=match.team_a_id,
-                        violation_type=violation_type,
-                        required_rest_minutes=required_rest_minutes,
-                        actual_gap_minutes=actual_gap,
-                        slot_start_time=slot_datetime,
-                        earliest_allowed_time=earliest_allowed,
+            # Skip check if no rest requirement
+            if required_rest_minutes > 0:
+                # Calculate earliest allowed time
+                earliest_allowed = team_a_state.last_match_end_time + timedelta(minutes=required_rest_minutes)
+
+                # Check if slot violates rest requirement
+                if slot_datetime < earliest_allowed:
+                    actual_gap = (slot_datetime - team_a_state.last_match_end_time).total_seconds() / 60
+                    violations.append(
+                        RestViolation(
+                            team_id=match.team_a_id,
+                            violation_type=violation_type,
+                            required_rest_minutes=required_rest_minutes,
+                            actual_gap_minutes=actual_gap,
+                            slot_start_time=slot_datetime,
+                            earliest_allowed_time=earliest_allowed,
+                        )
                     )
-                )
 
     # Check team B
     if match.team_b_id is not None:
         team_b_state = rest_tracker.get_team_state(match.team_b_id)
 
         if team_b_state and team_b_state.has_previous_match():
-            # Determine required rest
+            # Determine stage-specific rest
             if team_b_state.last_match_stage == "WF" and match.match_type != "WF":
-                required_rest_minutes = REST_WF_TO_SCORING_MINUTES
-                violation_type = "REST_WF_TO_SCORING"
+                stage_rest_minutes = REST_WF_TO_SCORING_MINUTES
+                stage_violation_type = "REST_WF_TO_SCORING"
+            elif team_b_state.last_match_stage != "WF" and match.match_type != "WF":
+                stage_rest_minutes = REST_SCORING_TO_SCORING_MINUTES
+                stage_violation_type = "REST_SCORING_TO_SCORING"
             else:
-                required_rest_minutes = REST_SCORING_TO_SCORING_MINUTES
-                violation_type = "REST_SCORING_TO_SCORING"
+                # WF→WF or Scoring→WF: no stage-specific rule
+                stage_rest_minutes = 0
+                stage_violation_type = None
 
-            # Calculate earliest allowed time
-            earliest_allowed = team_b_state.last_match_end_time + timedelta(minutes=required_rest_minutes)
+            # Apply universal minimum (bypassed during weather reschedule)
+            if not weather_reschedule and REST_MINIMUM_ANY_MINUTES > stage_rest_minutes:
+                required_rest_minutes = REST_MINIMUM_ANY_MINUTES
+                violation_type = "REST_MINIMUM_GAP"
+            else:
+                required_rest_minutes = stage_rest_minutes
+                violation_type = stage_violation_type
 
-            # Check if slot violates rest requirement
-            if slot_datetime < earliest_allowed:
-                actual_gap = (slot_datetime - team_b_state.last_match_end_time).total_seconds() / 60
-                violations.append(
-                    RestViolation(
-                        team_id=match.team_b_id,
-                        violation_type=violation_type,
-                        required_rest_minutes=required_rest_minutes,
-                        actual_gap_minutes=actual_gap,
-                        slot_start_time=slot_datetime,
-                        earliest_allowed_time=earliest_allowed,
+            # Skip check if no rest requirement
+            if required_rest_minutes > 0:
+                # Calculate earliest allowed time
+                earliest_allowed = team_b_state.last_match_end_time + timedelta(minutes=required_rest_minutes)
+
+                # Check if slot violates rest requirement
+                if slot_datetime < earliest_allowed:
+                    actual_gap = (slot_datetime - team_b_state.last_match_end_time).total_seconds() / 60
+                    violations.append(
+                        RestViolation(
+                            team_id=match.team_b_id,
+                            violation_type=violation_type,
+                            required_rest_minutes=required_rest_minutes,
+                            actual_gap_minutes=actual_gap,
+                            slot_start_time=slot_datetime,
+                            earliest_allowed_time=earliest_allowed,
+                        )
                     )
-                )
+
+    # Check feeder rest for placeholder sides with source_match FKs
+    if feeder_end_times is not None and match_map is not None:
+        checked_feeders: Set[int] = set()
+
+        feeder_sides = []
+        if match.team_a_id is None and getattr(match, "source_match_a_id", None) is not None:
+            feeder_sides.append(match.source_match_a_id)
+        if match.team_b_id is None and getattr(match, "source_match_b_id", None) is not None:
+            feeder_sides.append(match.source_match_b_id)
+
+        for source_match_id in feeder_sides:
+            # Deduplicate: if both sides reference the same feeder, check once
+            if source_match_id in checked_feeders:
+                continue
+            checked_feeders.add(source_match_id)
+
+            # Skip if feeder hasn't been assigned yet
+            feeder_end = feeder_end_times.get(source_match_id)
+            if feeder_end is None:
+                continue
+
+            feeder_match = match_map.get(source_match_id)
+            if feeder_match is None:
+                continue
+
+            # Determine stage-specific rest using feeder's match_type → child's match_type
+            feeder_stage = feeder_match.match_type
+            child_stage = match.match_type
+
+            if feeder_stage == "WF" and child_stage != "WF":
+                stage_rest_minutes = REST_WF_TO_SCORING_MINUTES
+                stage_violation_type = "REST_FEEDER_GAP"
+            elif feeder_stage != "WF" and child_stage != "WF":
+                stage_rest_minutes = REST_SCORING_TO_SCORING_MINUTES
+                stage_violation_type = "REST_FEEDER_GAP"
+            else:
+                # WF→WF or Scoring→WF: no stage-specific rule
+                stage_rest_minutes = 0
+                stage_violation_type = None
+
+            # Apply universal minimum (bypassed during weather reschedule)
+            if not weather_reschedule and REST_MINIMUM_ANY_MINUTES > stage_rest_minutes:
+                required_rest_minutes = REST_MINIMUM_ANY_MINUTES
+                violation_type = "REST_FEEDER_GAP"
+            else:
+                required_rest_minutes = stage_rest_minutes
+                violation_type = stage_violation_type
+
+            if required_rest_minutes > 0:
+                earliest_allowed = feeder_end + timedelta(minutes=required_rest_minutes)
+
+                if slot_datetime < earliest_allowed:
+                    actual_gap = (slot_datetime - feeder_end).total_seconds() / 60
+                    violations.append(
+                        RestViolation(
+                            team_id=0,  # sentinel for unknown team, feeder-based check
+                            violation_type=violation_type,
+                            required_rest_minutes=required_rest_minutes,
+                            actual_gap_minutes=actual_gap,
+                            slot_start_time=slot_datetime,
+                            earliest_allowed_time=earliest_allowed,
+                        )
+                    )
 
     is_compatible = len(violations) == 0
     return is_compatible, violations
@@ -226,6 +341,7 @@ def auto_assign_with_rest(
     schedule_version_id: int,
     clear_existing: bool = True,
     allow_teamless: bool = True,
+    weather_reschedule: bool = False,
     *,
     _transactional: bool = False,
 ) -> Dict:
@@ -294,6 +410,8 @@ def auto_assign_with_rest(
             assigned_match_ids.add(assignment.match_id)
 
     # Load matches in deterministic order (WF first, then MAIN, etc.)
+    # Within each stage+round, group by event_id so all matches for one
+    # event are assigned together before moving to the next event.
     all_matches = session.exec(
         select(Match)
         .where(Match.schedule_version_id == schedule_version_id)
@@ -306,6 +424,7 @@ def auto_assign_with_rest(
                 else_=999,
             ),
             Match.round_number,
+            Match.event_id,
             Match.sequence_in_round,
             Match.id,
         )
@@ -324,6 +443,12 @@ def auto_assign_with_rest(
         .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
     ).all()
 
+    # Build match_map for feeder lookups
+    match_map: Dict[int, Match] = {m.id: m for m in all_matches}
+
+    # Track feeder end times: match_id → scheduled end time (for feeder rest enforcement)
+    feeder_end_times: Dict[int, datetime] = {}
+
     # Track which slots are occupied
     occupied_slot_ids: Set[int] = set()
 
@@ -339,7 +464,6 @@ def auto_assign_with_rest(
     if not clear_existing and existing_assignments:
         # Build lookup maps
         slot_map = {slot.id: slot for slot in slots}
-        match_map = {match.id: match for match in all_matches}
 
         # Sort existing assignments chronologically by slot time
         assignments_with_time = []
@@ -355,11 +479,13 @@ def auto_assign_with_rest(
         # Sort by end time to process in chronological order
         assignments_with_time.sort(key=lambda x: x["end_time"])
 
-        # Update rest tracker, team_busy, and team_day_match_count from existing assignments
+        # Update rest tracker, team_busy, team_day_match_count, and feeder_end_times from existing assignments
         for item in assignments_with_time:
             match = item["match"]
             end_time = item["end_time"]
             slot = item.get("slot")
+            # Track feeder end time for every assigned match
+            feeder_end_times[match.id] = end_time
             # Update team rest state for both teams
             if match.team_a_id is not None:
                 rest_tracker.update_team_state(match.team_a_id, end_time, match.match_type)
@@ -475,7 +601,10 @@ def auto_assign_with_rest(
                 continue
 
             # Check rest compatibility
-            rest_compatible, rest_violations = check_rest_compatibility(slot, match, rest_tracker)
+            rest_compatible, rest_violations = check_rest_compatibility(
+                slot, match, rest_tracker, weather_reschedule=weather_reschedule,
+                feeder_end_times=feeder_end_times, match_map=match_map,
+            )
 
             if not rest_compatible:
                 # This slot violates rest rules, skip it
@@ -567,9 +696,12 @@ def auto_assign_with_rest(
             if not has_known_teams:
                 unknown_team_matches_assigned += 1
 
-            # Update team rest states and team_busy for overlap constraint
+            # Update team rest states, team_busy, and feeder_end_times for overlap/rest constraints
             slot_datetime = datetime.fromisoformat(f"{slot.day_date}T{slot.start_time}")
             end_time = slot_datetime + timedelta(minutes=match.duration_minutes)
+
+            # Track feeder end time for this match (used by downstream R2+ matches)
+            feeder_end_times[match.id] = end_time
 
             if match.team_a_id is not None:
                 rest_tracker.update_team_state(match.team_a_id, end_time, match.match_type)
@@ -601,7 +733,10 @@ def auto_assign_with_rest(
                 failure_reason = "NO_REST_COMPATIBLE_SLOT"
                 # Check first available slot with correct duration for violation details
                 best_slot = duration_ok_slots[0]
-                _, rest_violations_list = check_rest_compatibility(best_slot, match, rest_tracker)
+                _, rest_violations_list = check_rest_compatibility(
+                    best_slot, match, rest_tracker, weather_reschedule=weather_reschedule,
+                    feeder_end_times=feeder_end_times, match_map=match_map,
+                )
 
             results.append(
                 AssignmentResult(
@@ -643,6 +778,8 @@ def auto_assign_with_rest(
     # Build rest violations summary
     rest_blocked_wf_scoring = 0
     rest_blocked_scoring_scoring = 0
+    rest_blocked_minimum_gap = 0
+    rest_blocked_feeder_gap = 0
 
     for result in results:
         if not result.assigned and result.failure_reason == "NO_REST_COMPATIBLE_SLOT":
@@ -651,6 +788,10 @@ def auto_assign_with_rest(
                     rest_blocked_wf_scoring += 1
                 elif violation.violation_type == "REST_SCORING_TO_SCORING":
                     rest_blocked_scoring_scoring += 1
+                elif violation.violation_type == "REST_MINIMUM_GAP":
+                    rest_blocked_minimum_gap += 1
+                elif violation.violation_type == "REST_FEEDER_GAP":
+                    rest_blocked_feeder_gap += 1
 
     unassigned_count = len(matches) - assigned_count
 
@@ -662,7 +803,9 @@ def auto_assign_with_rest(
         "rest_violations_summary": {
             "wf_to_scoring_violations": rest_blocked_wf_scoring,
             "scoring_to_scoring_violations": rest_blocked_scoring_scoring,
-            "total_rest_blocked": rest_blocked_wf_scoring + rest_blocked_scoring_scoring,
+            "minimum_gap_violations": rest_blocked_minimum_gap,
+            "feeder_gap_violations": rest_blocked_feeder_gap,
+            "total_rest_blocked": rest_blocked_wf_scoring + rest_blocked_scoring_scoring + rest_blocked_minimum_gap + rest_blocked_feeder_gap,
         },
         "preferred_day_metrics": {
             "preferred_day_hits": preferred_day_hits,

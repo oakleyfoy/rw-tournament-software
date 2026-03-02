@@ -512,8 +512,8 @@ def verify_full_schedule(
     Auto-detects whether the tournament is capacity-tight. If so, the
     spare-court invariant becomes advisory (not a hard stop).
     """
-    # Auto-detect capacity: if tight, don't hard-fail on spares
-    spare_enabled = not _is_capacity_tight(session, version_id)
+    # Spare court policy is disabled — all courts are included in the schedule.
+    spare_enabled = False
 
     # Get all days that have slots
     all_slots = session.exec(

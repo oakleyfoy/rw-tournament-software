@@ -333,7 +333,6 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
         setLastFullPolicyResult({
           total_assigned: 0,
           total_failed: 0,
-          total_reserved_spares: 0,
           duration_ms: null,
           day_results: [],
           invariant_ok: false,
@@ -469,19 +468,19 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     if (!scheduleReport) return
 
     const rows: string[] = []
-    rows.push('Day,Time,Event,Stage,Match Count,Total Courts,Reserved Courts,Assigned Matches,Spare Courts')
+    rows.push('Day,Time,Event,Stage,Match Count,Total Courts,Assigned Matches')
 
     for (const dayReport of scheduleReport.days) {
       for (const timeSlot of dayReport.time_slots) {
         if (timeSlot.breakdown.length === 0) {
           // Empty time slot - still include it
           rows.push(
-            `${dayReport.day},${timeSlot.time},,,,${timeSlot.total_courts},${timeSlot.reserved_courts},${timeSlot.assigned_matches},${timeSlot.spare_courts}`
+            `${dayReport.day},${timeSlot.time},,,,${timeSlot.total_courts},${timeSlot.assigned_matches}`
           )
         } else {
           for (const breakdown of timeSlot.breakdown) {
             rows.push(
-              `${dayReport.day},${timeSlot.time},"${breakdown.event_name}",${breakdown.stage},${breakdown.match_count},${timeSlot.total_courts},${timeSlot.reserved_courts},${timeSlot.assigned_matches},${timeSlot.spare_courts}`
+              `${dayReport.day},${timeSlot.time},"${breakdown.event_name}",${breakdown.stage},${breakdown.match_count},${timeSlot.total_courts},${timeSlot.assigned_matches}`
             )
           }
         }
@@ -959,8 +958,8 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
         <div style={{ marginBottom: '20px' }}>
           <strong style={{ display: 'block', marginBottom: 8 }}>C) Policy Placement (by day)</strong>
           <div style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>
-            Runs deterministic batch-based placement for each day: event priority rotation, team cap (2/day), spare court
-            reservations, and layered stage ordering.
+            Runs deterministic batch-based placement for each day: event priority rotation, team cap (2/day),
+            and layered stage ordering.
           </div>
 
           <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -996,7 +995,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
               disabled={anyBusy || !activeVersion || loadingQuality}
               onClick={handleValidateSchedule}
               style={{ fontSize: 14, padding: '8px 20px', color: '#000' }}
-              title="Validate schedule: completeness, sequencing, rest, daily cap, staggering, spare courts"
+              title="Validate schedule: completeness, sequencing, rest, daily cap, staggering"
             >
               {loadingQuality ? 'Validating...' : 'Validate Schedule'}
             </button>
@@ -1050,8 +1049,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
                   Teams&gt;2: {lastFullPolicyResult.invariant_stats.teams_over_cap} |
                   Fairness: {lastFullPolicyResult.invariant_stats.fairness_violations} |
                   Deps: {lastFullPolicyResult.invariant_stats.unresolved_scheduled} |
-                  Cons: {lastFullPolicyResult.invariant_stats.consolation_partial} |
-                  Spare: {lastFullPolicyResult.invariant_stats.spare_violations}
+                  Cons: {lastFullPolicyResult.invariant_stats.consolation_partial}
                 </span>
               )}
             </div>
@@ -1426,7 +1424,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
                       }}
                     >
                       <div style={{ marginBottom: '8px', fontWeight: 600 }}>
-                        {timeSlot.time} — {timeSlot.total_courts} courts ({timeSlot.reserved_courts} reserved, {timeSlot.assigned_matches} assigned, {timeSlot.spare_courts} spare)
+                        {timeSlot.time} — {timeSlot.total_courts} courts ({timeSlot.assigned_matches} assigned)
                       </div>
                       {timeSlot.breakdown.length > 0 ? (
                         <table

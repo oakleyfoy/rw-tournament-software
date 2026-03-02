@@ -3472,10 +3472,8 @@ def run_policy(
     Build and execute the daily policy placement plan.
 
     1. Builds ordered batches for the specified day.
-    2. Reserves spare courts (temporarily deactivates slots).
-    3. Executes each batch via assign_by_match_ids (deterministic first-fit).
-    4. Restores reserved slots.
-    5. Returns per-batch results.
+    2. Executes each batch via assign_by_match_ids (deterministic first-fit).
+    3. Returns per-batch results.
     """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -3526,7 +3524,7 @@ class FullPolicyDayResult(BaseModel):
     day: str
     assigned: int
     failed: int
-    reserved_spares: int
+    reserved_spares: int = 0  # kept for backward compat with stored snapshots; always 0
     duration_ms: Optional[int] = None
     batches: List[dict]
 
@@ -3534,7 +3532,7 @@ class FullPolicyDayResult(BaseModel):
 class FullPolicyRunResponse(BaseModel):
     total_assigned: int
     total_failed: int
-    total_reserved_spares: int
+    total_reserved_spares: int = 0  # kept for backward compat; always 0
     duration_ms: Optional[int] = None
     day_results: List[FullPolicyDayResult]
     input_hash: Optional[str] = None
@@ -3788,9 +3786,7 @@ class EventStageBreakdown(BaseModel):
 class TimeSlotReport(BaseModel):
     time: str  # HH:MM format
     total_courts: int
-    reserved_courts: int
     assigned_matches: int
-    spare_courts: int
     breakdown: List[EventStageBreakdown]
 
 
@@ -3816,7 +3812,7 @@ def get_schedule_report(
     Generate a detailed schedule report by time slot.
 
     Returns breakdown by day and time slot showing:
-    - Total courts, reserved courts, assigned matches, spare courts
+    - Total courts, assigned matches
     - Event/stage breakdown for each time slot
     """
     tournament = session.get(Tournament, tournament_id)
@@ -3865,14 +3861,9 @@ def get_schedule_report(
             
             # Count totals
             total_courts = len(day_slots)
-            reserved_courts = sum(1 for s in day_slots if not s.is_active)
-            
+
             # Count assigned matches for this time slot
             assigned_matches = sum(1 for s in day_slots if s.id in assigned_slot_ids)
-            
-            # Calculate spare (active slots not assigned)
-            active_slots = sum(1 for s in day_slots if s.is_active)
-            spare_courts = active_slots - assigned_matches
             
             # Build event/stage breakdown
             breakdown_dict: Dict[Tuple[int, str], int] = defaultdict(int)
@@ -3902,9 +3893,7 @@ def get_schedule_report(
             time_slots_list.append(TimeSlotReport(
                 time=time_str,
                 total_courts=total_courts,
-                reserved_courts=reserved_courts,
                 assigned_matches=assigned_matches,
-                spare_courts=spare_courts,
                 breakdown=breakdown_list,
             ))
         
@@ -3924,7 +3913,7 @@ def get_schedule_report(
 @router.get(
     "/tournaments/{tournament_id}/schedule/versions/{version_id}/quality-report",
     summary="Get schedule quality report",
-    description="Validates a schedule version against quality rules: completeness, sequencing, rest, daily cap, staggering, spare courts.",
+    description="Validates a schedule version against quality rules: completeness, sequencing, rest, daily cap, staggering.",
 )
 def get_quality_report(
     tournament_id: int,
@@ -3962,7 +3951,7 @@ class PolicyRunSummary(BaseModel):
     ok: bool
     total_assigned: int
     total_failed: int
-    total_reserved_spares: int
+    total_reserved_spares: int = 0  # kept for backward compat; always 0
     duration_ms: int
 
 

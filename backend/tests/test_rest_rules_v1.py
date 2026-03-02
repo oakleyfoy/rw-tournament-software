@@ -6,6 +6,7 @@ Tests rest time enforcement between matches:
 - Scoring → Scoring: 90 minutes minimum
 - Placeholder matches: Rest rules skipped
 - Determinism: Same input → same output
+- Feeder rest: R2+ bracket matches enforce rest via source_match FKs
 """
 
 from datetime import date, datetime, time, timedelta
@@ -21,7 +22,13 @@ from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
-from app.utils.rest_rules import _intervals_overlap, auto_assign_with_rest
+from app.utils.rest_rules import (
+    REST_MINIMUM_ANY_MINUTES,
+    RestStateTracker,
+    _intervals_overlap,
+    auto_assign_with_rest,
+    check_rest_compatibility,
+)
 
 
 @pytest.fixture
@@ -591,11 +598,13 @@ def test_no_team_scheduled_inside_rest_window(client: TestClient, setup_rest_tes
 
             gap_minutes = (next_match["start"] - current["end"]).total_seconds() / 60
 
-            # Determine required rest
+            # Determine required rest based on stage transitions
             if current["stage"] == "WF" and next_match["stage"] != "WF":
-                required_rest = 60
+                required_rest = 60  # WF → Scoring
+            elif current["stage"] != "WF" and next_match["stage"] != "WF":
+                required_rest = 90  # Scoring → Scoring
             else:
-                required_rest = 90
+                required_rest = REST_MINIMUM_ANY_MINUTES  # WF→WF or Scoring→WF
 
             # Verify gap meets requirement
             assert gap_minutes >= required_rest, (
@@ -718,3 +727,1037 @@ def test_rr_no_team_overlapping_slots(session: Session):
                 assert not _intervals_overlap(a_start, a_end, b_start, b_end), (
                     f"Team {team_id}: overlapping slots {intervals[i]} and {intervals[j]}"
                 )
+
+
+def test_wf_to_wf_30_minutes_enforced(session: Session):
+    """
+    Test that WF → WF enforces the 30-minute universal minimum rest.
+
+    Two WF matches for the same team: WF_01 ends at 10:00, WF_02 must not
+    start before 10:30. A slot at 10:20 should be rejected; 10:30 should pass.
+    """
+    tournament = Tournament(
+        name="WF-WF Rest Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 1),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        category=EventCategory.mixed,
+        name="WF-WF Event",
+        team_count=3,
+        draw_status="final",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    teams = []
+    for i in range(1, 4):
+        t = Team(event_id=event.id, name=f"Team {i}", seed=i, rating=1000.0)
+        session.add(t)
+        teams.append(t)
+    session.commit()
+    for t in teams:
+        session.refresh(t)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    day = date(2026, 3, 1)
+
+    # WF_01: Team 1 vs Team 2, 60 min
+    wf1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+    # WF_02: Team 1 vs Team 3, 60 min
+    wf2 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T3",
+    )
+    session.add_all([wf1, wf2])
+    session.commit()
+    session.refresh(wf1)
+    session.refresh(wf2)
+
+    # Slot A: 9:00-10:00 (for WF_01)
+    slot_a = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    # Slot B: 10:20 — only 20 min after WF_01 ends (should be rejected)
+    slot_b = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(10, 20),
+        end_time=time(11, 20),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    # Slot C: 10:30 — exactly 30 min after WF_01 ends (should pass)
+    slot_c = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        block_minutes=60,
+        court_number=3,
+        court_label="C3",
+        is_active=True,
+    )
+    session.add_all([slot_a, slot_b, slot_c])
+    session.commit()
+
+    result = auto_assign_with_rest(session, version.id, clear_existing=True)
+
+    # Both WF matches should be assigned
+    assert result["assigned_count"] == 2, f"Expected 2 assigned, got: {result}"
+    assert result["unassigned_count"] == 0
+
+    # Verify Team 1's gap is at least 30 minutes
+    assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
+    ).all()
+
+    team1_entries = []
+    for a in assignments:
+        match = session.get(Match, a.match_id)
+        slot = session.get(ScheduleSlot, a.slot_id)
+        if teams[0].id in (match.team_a_id, match.team_b_id):
+            start_dt = datetime.combine(slot.day_date, slot.start_time)
+            end_dt = start_dt + timedelta(minutes=match.duration_minutes)
+            team1_entries.append((start_dt, end_dt, match.match_code))
+
+    team1_entries.sort()
+    assert len(team1_entries) == 2
+    gap = (team1_entries[1][0] - team1_entries[0][1]).total_seconds() / 60
+    assert gap >= 30, f"WF→WF gap was {gap} min, expected >= 30"
+    # Slot B (10:20) should have been skipped; WF_02 lands on slot C (10:30)
+    assert team1_entries[1][0] == datetime(2026, 3, 1, 10, 30)
+
+
+def test_wf_to_wf_unit_check_rest_compatibility():
+    """
+    Unit test: check_rest_compatibility correctly enforces 30 min WF→WF
+    and reports REST_MINIMUM_GAP violation type.
+    """
+    tracker = RestStateTracker()
+    # Simulate: Team 1 finished a WF match at 10:00
+    tracker.update_team_state(team_id=1, end_time=datetime(2026, 3, 1, 10, 0), stage="WF")
+
+    # Build a fake match (WF) involving team 1
+    match = Match(
+        id=100,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    # Slot at 10:20 — 20 min gap → should fail
+    slot_early = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 20),
+        end_time=time(11, 20),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(slot_early, match, tracker)
+    assert not ok
+    assert len(violations) == 1
+    assert violations[0].violation_type == "REST_MINIMUM_GAP"
+    assert violations[0].required_rest_minutes == REST_MINIMUM_ANY_MINUTES
+
+    # Slot at 10:30 — exactly 30 min gap → should pass
+    slot_ok = ScheduleSlot(
+        id=201,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(slot_ok, match, tracker)
+    assert ok
+    assert len(violations) == 0
+
+
+def test_weather_reschedule_bypasses_minimum(session: Session):
+    """
+    Test that weather_reschedule=True bypasses the 30-minute universal minimum
+    for WF→WF, while stage-specific rules (WF→Scoring, Scoring→Scoring) still apply.
+    """
+    tournament = Tournament(
+        name="Weather Override Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 1),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        category=EventCategory.mixed,
+        name="Weather Event",
+        team_count=3,
+        draw_status="final",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    teams = []
+    for i in range(1, 4):
+        t = Team(event_id=event.id, name=f"Team {i}", seed=i, rating=1000.0)
+        session.add(t)
+        teams.append(t)
+    session.commit()
+    for t in teams:
+        session.refresh(t)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    day = date(2026, 3, 1)
+
+    # WF_01: Team 1 vs Team 2, 60 min
+    wf1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+    # WF_02: Team 1 vs Team 3, 60 min
+    wf2 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T3",
+    )
+    session.add_all([wf1, wf2])
+    session.commit()
+    session.refresh(wf1)
+    session.refresh(wf2)
+
+    # Slot A: 9:00-10:00 (for WF_01)
+    slot_a = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    # Slot B: 10:10 — only 10 min after WF_01 ends (normally rejected, but weather=True)
+    slot_b = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(10, 10),
+        end_time=time(11, 10),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    session.add_all([slot_a, slot_b])
+    session.commit()
+
+    # Without weather_reschedule: WF_02 should NOT fit in slot_b (only 10 min gap < 30 min)
+    result_normal = auto_assign_with_rest(session, version.id, clear_existing=True, weather_reschedule=False)
+    assert result_normal["assigned_count"] == 1, f"Normal mode: expected 1 assigned, got {result_normal}"
+    assert result_normal["unassigned_count"] == 1
+
+    # With weather_reschedule: WF_02 SHOULD fit in slot_b (30 min minimum bypassed)
+    result_weather = auto_assign_with_rest(session, version.id, clear_existing=True, weather_reschedule=True)
+    assert result_weather["assigned_count"] == 2, f"Weather mode: expected 2 assigned, got {result_weather}"
+    assert result_weather["unassigned_count"] == 0
+
+
+def test_weather_reschedule_still_enforces_stage_rules(session: Session):
+    """
+    Test that weather_reschedule=True does NOT bypass the stage-specific rules
+    (WF→Scoring 60 min, Scoring→Scoring 90 min).
+    """
+    tracker = RestStateTracker()
+    # Simulate: Team 1 finished a WF match at 10:00
+    tracker.update_team_state(team_id=1, end_time=datetime(2026, 3, 1, 10, 0), stage="WF")
+
+    # Build a MAIN match involving team 1
+    main_match = Match(
+        id=100,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="MAIN_01",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    # Slot at 10:50 — 50 min gap, violates WF→Scoring 60 min even with weather=True
+    slot_50 = ScheduleSlot(
+        id=300,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 50),
+        end_time=time(11, 50),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(slot_50, main_match, tracker, weather_reschedule=True)
+    assert not ok
+    assert violations[0].violation_type == "REST_WF_TO_SCORING"
+    assert violations[0].required_rest_minutes == 60
+
+    # Slot at 11:00 — exactly 60 min → should pass with weather=True
+    slot_60 = ScheduleSlot(
+        id=301,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(11, 0),
+        end_time=time(12, 0),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(slot_60, main_match, tracker, weather_reschedule=True)
+    assert ok
+    assert len(violations) == 0
+
+
+# ============================================================================
+# Feeder Rest Enforcement Tests
+# ============================================================================
+
+
+def test_feeder_rest_wf_to_wf_30min():
+    """
+    Unit test: WF R1 feeder → WF R2 child enforces 30-min universal minimum.
+    20-min gap fails with REST_FEEDER_GAP, 30-min gap passes.
+    """
+    tracker = RestStateTracker()
+
+    # Feeder match (WF R1) — ends at 10:00
+    feeder = Match(
+        id=10,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    # Child match (WF R2) — null teams, wired to feeder
+    child = Match(
+        id=20,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R2_1",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=10,
+        source_match_b_id=None,
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="TBD",
+    )
+
+    feeder_end_times = {10: datetime(2026, 3, 1, 10, 0)}
+    match_map = {10: feeder, 20: child}
+
+    # Slot at 10:20 — 20 min gap → should fail
+    slot_early = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 20),
+        end_time=time(11, 20),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot_early, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert not ok
+    assert len(violations) == 1
+    assert violations[0].violation_type == "REST_FEEDER_GAP"
+    assert violations[0].team_id == 0  # sentinel
+    assert violations[0].required_rest_minutes == 30
+
+    # Slot at 10:30 — exactly 30 min → should pass
+    slot_ok = ScheduleSlot(
+        id=201,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot_ok, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert ok
+    assert len(violations) == 0
+
+
+def test_feeder_rest_wf_to_scoring_60min():
+    """
+    Unit test: WF feeder → MAIN (scoring) child enforces 60-min stage-transition rest.
+    """
+    tracker = RestStateTracker()
+
+    feeder = Match(
+        id=10,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    child = Match(
+        id=30,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="MAIN_R1_1",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=10,
+        source_match_b_id=None,
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="TBD",
+    )
+
+    feeder_end_times = {10: datetime(2026, 3, 1, 10, 0)}
+    match_map = {10: feeder, 30: child}
+
+    # Slot at 10:50 — 50 min gap → should fail (needs 60)
+    slot_early = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 50),
+        end_time=time(12, 20),
+        block_minutes=90,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot_early, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert not ok
+    assert violations[0].violation_type == "REST_FEEDER_GAP"
+    assert violations[0].required_rest_minutes == 60
+
+    # Slot at 11:00 — exactly 60 min → should pass
+    slot_ok = ScheduleSlot(
+        id=201,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(11, 0),
+        end_time=time(12, 30),
+        block_minutes=90,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot_ok, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert ok
+    assert len(violations) == 0
+
+
+def test_feeder_rest_weather_bypass():
+    """
+    Unit test: weather_reschedule=True bypasses WF→WF feeder 30-min universal minimum.
+    """
+    tracker = RestStateTracker()
+
+    feeder = Match(
+        id=10,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    child = Match(
+        id=20,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R2_1",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=10,
+        source_match_b_id=None,
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="TBD",
+    )
+
+    feeder_end_times = {10: datetime(2026, 3, 1, 10, 0)}
+    match_map = {10: feeder, 20: child}
+
+    # Slot at 10:10 — only 10 min gap, normally fails for WF→WF (30 min)
+    slot = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 10),
+        end_time=time(11, 10),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+
+    # Without weather: should fail
+    ok, violations = check_rest_compatibility(
+        slot, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert not ok
+
+    # With weather: should pass (WF→WF has no stage-specific rule, only universal min)
+    ok, violations = check_rest_compatibility(
+        slot, child, tracker,
+        weather_reschedule=True,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert ok
+    assert len(violations) == 0
+
+
+def test_feeder_rest_weather_preserves_stage_rules():
+    """
+    Unit test: weather_reschedule=True still enforces WF→Scoring 60-min feeder rest.
+    """
+    tracker = RestStateTracker()
+
+    feeder = Match(
+        id=10,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    child = Match(
+        id=30,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="MAIN_R1_1",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=10,
+        source_match_b_id=None,
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="TBD",
+    )
+
+    feeder_end_times = {10: datetime(2026, 3, 1, 10, 0)}
+    match_map = {10: feeder, 30: child}
+
+    # Slot at 10:50 — 50 min gap → should still fail with weather=True
+    slot = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 50),
+        end_time=time(12, 20),
+        block_minutes=90,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot, child, tracker,
+        weather_reschedule=True,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert not ok
+    assert violations[0].violation_type == "REST_FEEDER_GAP"
+    assert violations[0].required_rest_minutes == 60
+
+
+def test_feeder_rest_integration(session: Session):
+    """
+    Integration test: auto_assign places R2 match in a far-enough slot,
+    skipping a too-close slot based on feeder rest.
+    """
+    tournament = Tournament(
+        name="Feeder Rest Integration",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 1),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        category=EventCategory.mixed,
+        name="Feeder Event",
+        team_count=4,
+        draw_status="final",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    teams = []
+    for i in range(1, 5):
+        t = Team(event_id=event.id, name=f"Team {i}", seed=i, rating=1000.0)
+        session.add(t)
+        teams.append(t)
+    session.commit()
+    for t in teams:
+        session.refresh(t)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    day = date(2026, 3, 1)
+
+    # WF R1: two matches with known teams (60 min each)
+    wf_r1_1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+    wf_r1_2 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_R1_2",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[2].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="T3",
+        placeholder_side_b="T4",
+    )
+    session.add_all([wf_r1_1, wf_r1_2])
+    session.commit()
+    session.refresh(wf_r1_1)
+    session.refresh(wf_r1_2)
+
+    # WF R2: placeholder match wired to both R1 feeders
+    wf_r2 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_R2_1",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=wf_r1_1.id,
+        source_match_b_id=wf_r1_2.id,
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="W(WF_R1_2)",
+    )
+    session.add(wf_r2)
+    session.commit()
+    session.refresh(wf_r2)
+
+    # Slots:
+    # Slot 1: 9:00 (for WF_R1_1 — ends at 10:00)
+    # Slot 2: 9:00 court 2 (for WF_R1_2 — ends at 10:00)
+    # Slot 3: 10:15 — only 15 min after R1 ends → should be SKIPPED for R2
+    # Slot 4: 10:30 — exactly 30 min after R1 ends → should be USED for R2
+    slot1 = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    slot2 = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    slot3 = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(10, 15),
+        end_time=time(11, 15),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    slot4 = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        block_minutes=60,
+        court_number=2,
+        court_label="C2",
+        is_active=True,
+    )
+    session.add_all([slot1, slot2, slot3, slot4])
+    session.commit()
+    session.refresh(slot3)
+    session.refresh(slot4)
+
+    result = auto_assign_with_rest(session, version.id, clear_existing=True)
+
+    # All 3 matches should be assigned
+    assert result["assigned_count"] == 3, f"Expected 3, got: {result}"
+    assert result["unassigned_count"] == 0
+
+    # Verify R2 match was NOT placed in the too-close slot (10:15)
+    r2_assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version.id,
+            MatchAssignment.match_id == wf_r2.id,
+        )
+    ).first()
+    assert r2_assignment is not None
+    r2_slot = session.get(ScheduleSlot, r2_assignment.slot_id)
+    r2_start = datetime.combine(r2_slot.day_date, r2_slot.start_time)
+    # R2 should be at 10:30 (slot4), not 10:15 (slot3)
+    assert r2_start == datetime(2026, 3, 1, 10, 30), f"R2 placed at {r2_start}, expected 10:30"
+
+
+def test_feeder_rest_skips_when_unassigned():
+    """
+    Unit test: If feeder match is not in feeder_end_times (unassigned),
+    no crash occurs and no violation is produced.
+    """
+    tracker = RestStateTracker()
+
+    feeder = Match(
+        id=10,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    child = Match(
+        id=20,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R2_1",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=10,
+        source_match_b_id=None,
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="TBD",
+    )
+
+    # feeder_end_times is empty — feeder not assigned
+    feeder_end_times = {}
+    match_map = {10: feeder, 20: child}
+
+    slot = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 5),
+        end_time=time(11, 5),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    # Should pass — no feeder data means no violation
+    assert ok
+    assert len(violations) == 0
+
+
+def test_feeder_rest_dedup_same_source():
+    """
+    Unit test: Both sides reference the same feeder match → only one violation produced.
+    """
+    tracker = RestStateTracker()
+
+    feeder = Match(
+        id=10,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R1_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=1,
+        team_b_id=2,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+    )
+
+    # Both sides wired to the same feeder (unusual but possible edge case)
+    child = Match(
+        id=20,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="WF_R2_1",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=None,
+        team_b_id=None,
+        source_match_a_id=10,
+        source_match_b_id=10,  # same feeder on both sides
+        placeholder_side_a="W(WF_R1_1)",
+        placeholder_side_b="L(WF_R1_1)",
+    )
+
+    feeder_end_times = {10: datetime(2026, 3, 1, 10, 0)}
+    match_map = {10: feeder, 20: child}
+
+    # Slot at 10:15 — violates 30-min minimum
+    slot = ScheduleSlot(
+        id=200,
+        tournament_id=1,
+        schedule_version_id=1,
+        day_date=date(2026, 3, 1),
+        start_time=time(10, 15),
+        end_time=time(11, 15),
+        block_minutes=60,
+        court_number=1,
+        court_label="C1",
+        is_active=True,
+    )
+    ok, violations = check_rest_compatibility(
+        slot, child, tracker,
+        feeder_end_times=feeder_end_times, match_map=match_map,
+    )
+    assert not ok
+    # Should have exactly 1 violation, not 2 (dedup)
+    assert len(violations) == 1
+    assert violations[0].violation_type == "REST_FEEDER_GAP"

@@ -1322,9 +1322,7 @@ export interface EventStageBreakdown {
 export interface TimeSlotReport {
   time: string
   total_courts: number
-  reserved_courts: number
   assigned_matches: number
-  spare_courts: number
   breakdown: EventStageBreakdown[]
 }
 
@@ -1447,7 +1445,6 @@ export interface FullPolicyDayResult {
   day: string
   assigned: number
   failed: number
-  reserved_spares: number
   duration_ms: number | null
   batches: Array<{ name: string; attempted: number; assigned: number; failed_count: number }>
 }
@@ -1455,7 +1452,6 @@ export interface FullPolicyDayResult {
 export interface FullPolicyRunResponse {
   total_assigned: number
   total_failed: number
-  total_reserved_spares: number
   duration_ms: number | null
   day_results: FullPolicyDayResult[]
   input_hash?: string | null
@@ -1474,7 +1470,6 @@ export interface FullPolicyRunResponse {
     fairness_violations: number
     unresolved_scheduled: number
     consolation_partial: number
-    spare_violations: number
   } | null
   policy_run_id?: number | null
 }
@@ -1505,7 +1500,6 @@ export interface PolicyRunSummary {
   ok: boolean
   total_assigned: number
   total_failed: number
-  total_reserved_spares: number
   duration_ms: number
 }
 

@@ -502,7 +502,7 @@ def _fill_spare_courts_with_consolation(
     assigned_match_ids: Set[int],
     team_day_counts: Dict[int, int],
     fill_all_available: bool = True,
-    max_spare_per_slot: int = 2,
+    max_spare_per_slot: int = 0,
     min_start_time: Optional[time] = None,
     max_round_index: Optional[int] = None,
     blocked_slot_ids: Optional[Set[int]] = None,
@@ -757,22 +757,13 @@ def compute_spare_reservations(
     """
     Reserve spare courts for a day.
 
-    Two modes:
+    DISABLED: Spare court reservation has been removed. All courts are
+    included in the schedule. This function now always returns an empty list.
 
-    **Legacy (total_matches_planned=None):**
-        - Never reserve in the first time bucket.
-        - 1-2 spares per non-first bucket.
-
-    **Proportional (total_matches_planned given):**
-        - total_spare = total_slots - total_matches_planned
-        - Distribute spare evenly: floor(total_spare / num_buckets) per bucket,
-          remainder distributed to the latest buckets first.
-        - Ensures every time slot gets roughly equal spare courts.
-        - Never reserve more courts than a bucket has available.
-        - Optional max_spare_per_bucket caps the per-bucket reservation.
-
-    Returns list of slot IDs to reserve (highest court_number first).
+    Returns empty list (no reservations).
     """
+    return []
+    # -- Legacy implementation below (kept for reference) --
     # Load slots for this day
     slots = session.exec(
         select(ScheduleSlot).where(
@@ -1978,10 +1969,8 @@ def run_daily_policy(
     # Handle deferred MAIN matches and fill spare courts with consolation
     # For Day 2+ (not Day 1)
 
-    # Restore reserved slots BEFORE consolation fill so the fill function
-    # can see ALL courts.  The fill function has its own max_spare_per_slot
-    # logic to keep some courts empty — the reservation's only purpose was
-    # to prevent MAIN/RR batches from consuming every court.
+    # Restore reserved slots (no-op now that spare reservations are disabled).
+    # Kept for safety in case any slots were reserved by other means.
     for slot_id, was_active in reserved_original_states:
         slot = session.get(ScheduleSlot, slot_id)
         if slot:
@@ -2008,7 +1997,7 @@ def run_daily_policy(
             consolation_assigned = _fill_spare_courts_with_consolation(
                 session, schedule_version_id, day_date, all_matches,
                 current_assigned_ids, live_team_counts,
-                fill_all_available=True, max_spare_per_slot=2,
+                fill_all_available=True, max_spare_per_slot=0,
                 max_round_index=1,  # Day 2: only consolation semis (C1+C2, round_index=1)
                 blocked_slot_ids=blocked_slot_ids,
             )

@@ -74,21 +74,19 @@ def get_match_sort_key(match: Match) -> Tuple:
     """
     Generate deterministic sort key for matches.
 
-    Order: stage_order → round_index → sequence_in_round → id
+    Order: stage_order → round_index → event_id → sequence_in_round → id
 
     This ensures:
     - WF matches process first
     - Then MAIN (QF → SF → Final)
     - Then CONSOLATION (Tier 1 → Tier 2)
     - Then PLACEMENT
-
-    NOTE: This does NOT include event ordering. Callers that need
-    event-priority ordering (largest draw first) should use their
-    own sort key — see assign_with_scope and assign_by_match_ids.
+    - Within each stage+round, all matches for one event are grouped
+      together (filling courts) before moving to the next event.
     """
     stage_order = STAGE_PRECEDENCE.get(match.match_type, 999)
 
-    return (stage_order, match.round_index or 999, match.sequence_in_round or 999, match.id or 999)
+    return (stage_order, match.round_index or 999, match.event_id or 0, match.sequence_in_round or 999, match.id or 999)
 
 
 def get_slot_sort_key(slot: ScheduleSlot) -> Tuple:
