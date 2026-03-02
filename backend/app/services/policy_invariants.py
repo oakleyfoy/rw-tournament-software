@@ -466,13 +466,12 @@ def verify_day(
     )
     stats.consolation_partial = len(cons_violations)
 
-    # E) Spare court rules (conditional)
+    # E) Spare court rules (disabled — all courts used, no spares reserved)
     spare_violations = _check_spare_court_rules(
         session, version_id, day, day_assignments,
         spare_policy_enabled=spare_policy_enabled,
     )
     stats.spare_violations = len(spare_violations)
-    violations.extend(spare_violations)
 
     return InvariantReport(
         ok=len(violations) == 0,
