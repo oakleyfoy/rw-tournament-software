@@ -26,7 +26,7 @@ from app.models.schedule_version import ScheduleVersion
 from app.models.tournament import Tournament
 from app.utils.courts import court_label_for_index
 
-DAILY_CAP = 3
+DAILY_CAP = 2
 MIN_REST_MINUTES = 45
 
 SCORING_FORMATS = {
