@@ -275,11 +275,11 @@ def _build_match_box(
 def _team_full_name(
     team_id: Optional[int], placeholder: str, team_map: Dict[int, Team]
 ) -> str:
-    """Team name for R1 center boxes — use display_name (short) if available."""
+    """Team name for R1 center boxes — always use full name (with city/state)."""
     if team_id is not None:
         team = team_map.get(team_id)
         if team:
-            return team.display_name or team.name
+            return team.name
     return placeholder or "TBD"
 
 
