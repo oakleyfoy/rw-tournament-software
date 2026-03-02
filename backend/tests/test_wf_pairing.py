@@ -1,12 +1,15 @@
 """
-Tests for WF Round 1 pairing — half-split matchups in bracket-fold order.
+Tests for WF Round 1 pairing — half-split matchups in bracket-fold order,
+with avoid-group conflict resolution.
 """
 
 from app.services.wf_pairing import (
+    PairingConflict,
     PairingResult,
     TeamSeed,
     bracket_fold_positions,
     build_wf_r1_pairings,
+    _groups_conflict,
 )
 
 
@@ -92,27 +95,28 @@ class TestNoConflicts:
 
 
 class TestConflictsReported:
-    """Conflicts are reported when half-split opponents share avoid_group."""
+    """Conflicts are reported when half-split opponents share avoid_group
+    and cannot be resolved by swapping within the bracket quarter."""
 
-    def test_single_conflict(self):
-        # Seed 1 and seed 5 both in group 'a' — they're half-split opponents
+    def test_single_conflict_resolved_by_swap(self):
+        # Seed 1 and seed 5 both in group 'a' — half-split opponents.
+        # Quarter [(1,5), (4,8)]: swap → (1,8), (4,5) — no conflict.
         groups = {1: "a", 5: "a"}
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)
-        assert len(result.conflicts) == 1
-        c = result.conflicts[0]
-        assert c.seed_a == 1
-        assert c.seed_b == 5
-        assert c.group == "a"
+        assert len(result.conflicts) == 0  # resolved by swap
 
-    def test_multiple_conflicts(self):
+    def test_multiple_conflicts_resolved_by_swap(self):
         # Seeds 1v5 both 'a', seeds 2v6 both 'b'
+        # Quarter 1: [(1,5), (4,8)] → swap resolves 1v5
+        # Quarter 2: [(2,6), (3,7)] → swap resolves 2v6
         groups = {1: "a", 5: "a", 2: "b", 6: "b"}
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)
-        assert len(result.conflicts) == 2
+        assert len(result.conflicts) == 0  # both resolved by swaps
 
     def test_all_same_group(self):
+        # Every team in group 'x' — swaps can't help, all conflicts remain
         groups = {s: "x" for s in range(1, 9)}
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)
@@ -120,6 +124,7 @@ class TestConflictsReported:
         assert len(result.conflicts) == 4
 
     def test_conflict_fields(self):
+        # All teams in group 'z' — unavoidable conflicts
         groups = {s: "z" for s in range(1, 9)}
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)
@@ -206,3 +211,113 @@ class TestEdgeCases:
         assert len(result.conflicts) == 0
         all_seeds = [s for p in result.pairs for s in p]
         assert sorted(all_seeds) == list(range(1, 33))
+
+
+class TestSwapResolution:
+    """Verify that avoid-group conflicts are resolved by swapping
+    bottom-half teams within the same bracket quarter."""
+
+    def test_swap_resolves_conflict(self):
+        # 8 teams, seed 1 & 5 both group 'a' (half-split opponents).
+        # Quarter: [(1,5), (4,8)]. Swap → (1,8), (4,5). Conflict gone.
+        groups = {1: "a", 5: "a"}
+        teams = _make_teams(8, groups)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) == 0
+        # Verify the swap actually happened: seed 1 is NOT paired with seed 5
+        for sa, sb in result.pairs:
+            if sa == 1 or sb == 1:
+                assert sb != 5 and sa != 5
+
+    def test_swap_does_not_introduce_new_conflicts(self):
+        # Seed 1 & 5 both 'a'. Seed 4 has group 'b', seed 8 has group 'c'.
+        # After swap: (1,8) → groups 'a' vs 'c' = OK.
+        #             (4,5) → groups 'b' vs 'a' = OK.
+        groups = {1: "a", 5: "a", 4: "b", 8: "c"}
+        teams = _make_teams(8, groups)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) == 0
+
+    def test_swap_rejected_if_creates_new_conflict(self):
+        # Seed 1 & 5 both 'a'. Seed 4 & 8 both 'a' too.
+        # Swap (1,5)↔(4,8) → (1,8) still group 'a' vs 'a'. Can't resolve.
+        # Both pairs remain conflicting.
+        groups = {1: "a", 5: "a", 4: "a", 8: "a"}
+        teams = _make_teams(8, groups)
+        result = build_wf_r1_pairings(teams, 8)
+        # First quarter has 2 unavoidable conflicts
+        quarter_conflicts = [c for c in result.conflicts
+                             if c.seed_a in (1, 4) or c.seed_b in (5, 8)]
+        assert len(quarter_conflicts) >= 2
+
+    def test_all_seeds_present_after_swap(self):
+        # After any swaps, every seed must still appear exactly once
+        groups = {1: "a", 5: "a", 2: "b", 6: "b"}
+        teams = _make_teams(8, groups)
+        result = build_wf_r1_pairings(teams, 8)
+        all_seeds = [s for p in result.pairs for s in p]
+        assert sorted(all_seeds) == list(range(1, 9))
+
+    def test_unavoidable_conflicts_still_reported(self):
+        # 4 teams, seeds 1&3 both 'a', seeds 2&4 both 'a'.
+        # Only one quarter of 2 matches — both conflicting, swap can't help.
+        groups = {1: "a", 3: "a", 2: "a", 4: "a"}
+        teams = _make_teams(4, groups)
+        result = build_wf_r1_pairings(teams, 4)
+        assert len(result.conflicts) == 2
+        for c in result.conflicts:
+            assert c.group == "a"
+            assert "unavoidable" in c.reason.lower()
+
+    def test_swap_in_16_team_bracket(self):
+        # 16 teams, conflict: seed 1 & 9 both 'a' (half-split opponents).
+        # They're in the same quarter so swap can resolve it.
+        groups = {1: "a", 9: "a"}
+        teams = _make_teams(16, groups)
+        result = build_wf_r1_pairings(teams, 16)
+        assert len(result.conflicts) == 0
+        # Verify seed 1 is no longer paired with seed 9
+        for sa, sb in result.pairs:
+            if sa == 1 or sb == 1:
+                assert sb != 9 and sa != 9
+
+
+class TestMultiGroupSupport:
+    """Verify multi-group avoid strings like 'A,B' work correctly."""
+
+    def test_groups_conflict_helper(self):
+        assert _groups_conflict("a", "a") == "a"
+        assert _groups_conflict("a", "b") is None
+        assert _groups_conflict("a,b", "b,c") == "b"
+        assert _groups_conflict("a,b", "c,d") is None
+        assert _groups_conflict(None, "a") is None
+        assert _groups_conflict("a", None) is None
+        assert _groups_conflict(None, None) is None
+
+    def test_multi_group_conflict_detected(self):
+        # Seed 1 has 'a,b', seed 5 has 'b,c' — shared group 'b'
+        groups = {1: "a,b", 5: "b,c"}
+        teams = _make_teams(8, groups)
+        # Without swap resolution this would be a conflict.
+        # With swap resolution it should be resolved.
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) == 0
+
+    def test_multi_group_no_overlap(self):
+        # Seed 1 has 'a,b', seed 5 has 'c,d' — no overlap
+        groups = {1: "a,b", 5: "c,d"}
+        teams = _make_teams(8, groups)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) == 0
+
+    def test_multi_group_unavoidable(self):
+        # All teams share group 'x' via multi-group strings
+        groups = {
+            1: "x,a", 2: "x,b", 3: "x,c", 4: "x,d",
+            5: "x,e", 6: "x,f", 7: "x,g", 8: "x,h",
+        }
+        teams = _make_teams(8, groups)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) == 4
+        for c in result.conflicts:
+            assert c.group == "x"
