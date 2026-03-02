@@ -292,7 +292,7 @@ def place_matches_into_slots(
     Place all matches into slots using the master sequence.
 
     Rules:
-      1. 1 spare court reserved per time slot (except first slot of each day)
+      1. All courts used (spare court reservation disabled)
       2. Fill matches in master-sequence rank order until day is full
       3. Next day picks up where previous day stopped
       4. Event rotation: Day 1 starts with event A, Day 2 with B, Day 3 with C
@@ -328,7 +328,7 @@ def place_matches_into_slots(
         time_info = []
         for i, t in enumerate(sorted_times):
             total_courts = len(by_time[t])
-            reserve = 0 if i == 0 else 1  # first slot: no reserve
+            reserve = 0  # spare court reservation disabled — use all courts
             available = total_courts - reserve
             usable += available
             time_info.append((t, total_courts, reserve, available))
@@ -485,7 +485,7 @@ def run_sequence_schedule(
         .duration_ms, .day_results (list of dicts)
 
     Rules applied:
-      1. One spare court reserved per time slot (except first slot of day)
+      1. All courts used (spare court reservation disabled)
       2. Matches filled in master-sequence rank order
       3. No team plays more than 2 matches per day (enforced by pairing
          2 team-rounds per day; overflow carries to next day)
@@ -532,9 +532,8 @@ def run_sequence_schedule(
         for i, t in enumerate(sorted_times):
             court_slots = slots_by_day[day][t]
             total = len(court_slots)
-            reserve = 0 if i == 0 else 1
+            reserve = 0  # spare court reservation disabled — use all courts
             available = total - reserve
-            # Reserve the LAST court (highest number) as spare
             usable_slots = court_slots[:available]
             usable += available
             time_details.append((t, total, reserve, available, usable_slots))

@@ -384,10 +384,7 @@ def _is_capacity_tight(
 ) -> bool:
     """
     Determine whether a tournament is capacity-tight (total matches >= total
-    usable slots after reserving 1 spare per non-first time bucket per day).
-
-    If capacity-tight, the spare-court invariant should be advisory rather
-    than a hard stop, since there's no room for spares.
+    usable slots).  Spare court reservation is disabled — all courts are usable.
     """
     # Count total matches
     match_count = session.exec(
@@ -396,32 +393,15 @@ def _is_capacity_tight(
         )
     ).one()
 
-    # Count total active slots
-    all_slots = session.exec(
-        select(ScheduleSlot).where(
+    # Count total active slots (all courts usable, no spare reservation)
+    slot_count = session.exec(
+        select(func.count(ScheduleSlot.id)).where(
             ScheduleSlot.schedule_version_id == version_id,
             ScheduleSlot.is_active == True,
         )
-    ).all()
+    ).one()
 
-    # Compute usable slots (total minus 1 spare per non-first time bucket)
-    from collections import defaultdict as _dd
-    by_day_time: Dict[Tuple, int] = _dd(int)
-    for s in all_slots:
-        by_day_time[(s.day_date, s.start_time)] += 1
-
-    day_times: Dict[object, List] = _dd(list)
-    for (d, t), cnt in by_day_time.items():
-        day_times[d].append((t, cnt))
-
-    usable = 0
-    for d, time_list in day_times.items():
-        sorted_tl = sorted(time_list, key=lambda x: x[0])
-        for i, (t, cnt) in enumerate(sorted_tl):
-            reserve = 0 if i == 0 else 1
-            usable += max(0, cnt - reserve)
-
-    return match_count >= usable
+    return match_count >= slot_count
 
 
 # ─── Main verifier ────────────────────────────────────────────────────────
