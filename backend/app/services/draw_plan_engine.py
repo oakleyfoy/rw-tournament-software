@@ -76,6 +76,22 @@ def _get_wf_r1_pairing(
     return build_wf_r1_pairings(seed_teams, n)
 
 
+def _load_teams_by_seed(session, event_id: int) -> dict:
+    """Load team objects indexed by seed for partial binding.
+
+    Returns {seed: Team} for every team that has a seed assigned.
+    Used as fallback when the full pairing engine can't run
+    (not all teams imported yet).
+    """
+    from app.models.team import Team
+    from sqlmodel import select
+
+    teams = session.exec(
+        select(Team).where(Team.event_id == event_id)
+    ).all()
+    return {t.seed: t for t in teams if t.seed is not None}
+
+
 def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
     """
     Load teams for the event and compute WF R2 wiring.
@@ -703,9 +719,6 @@ def _generate_wf_to_pools_4(
         warnings.append(f"WF_TO_POOLS_4 requires 16 teams, got {spec.team_count}")
         return matches, warnings
 
-    # Ensure we have teams (may be fewer than 16 during early setup)
-    teams = linked_team_ids[:16] if len(linked_team_ids) >= 16 else linked_team_ids
-    have_all_teams = len(teams) == 16
     prefix = spec.match_code_prefix
 
     # -------------------------------------------------------------------------
@@ -714,6 +727,8 @@ def _generate_wf_to_pools_4(
     half = 8
     r1_matches = []
     pairing = _get_wf_r1_pairing(session, spec.event_id, linked_team_ids, 16)
+    # Fallback: load whatever teams exist by seed for partial binding
+    team_by_seed = _load_teams_by_seed(session, spec.event_id) if not pairing else {}
 
     for i in range(half):
         if pairing:
@@ -727,10 +742,13 @@ def _generate_wf_to_pools_4(
         else:
             seed_a = i + 1
             seed_b = i + half + 1
-            team_a_id = teams[i] if have_all_teams else None
-            team_b_id = teams[i + half] if have_all_teams else None
-            placeholder_a = f"Seed {seed_a}"
-            placeholder_b = f"Seed {seed_b}"
+            ta = team_by_seed.get(seed_a)
+            tb = team_by_seed.get(seed_b)
+            team_a_id = ta.id if ta else None
+            team_b_id = tb.id if tb else None
+            # WF R1: use full name for match cards
+            placeholder_a = (ta.name if ta else None) or f"Seed {seed_a}"
+            placeholder_b = (tb.name if tb else None) or f"Seed {seed_b}"
 
         match = Match(
             tournament_id=spec.tournament_id,
@@ -897,10 +915,8 @@ def _generate_wf_to_pools_dynamic(
         )
         return matches, warnings
 
-    teams = linked_team_ids[:n] if len(linked_team_ids) >= n else linked_team_ids
-    have_all_teams = len(teams) == n
     prefix = spec.match_code_prefix
-    
+
     # Determine pool structure using rules module
     pools_count, teams_per_pool = pool_config(n)
 
@@ -911,6 +927,8 @@ def _generate_wf_to_pools_dynamic(
     half = matches_per_wf_round
     r1_matches = []
     pairing = _get_wf_r1_pairing(session, spec.event_id, linked_team_ids, n)
+    # Fallback: load whatever teams exist by seed for partial binding
+    team_by_seed = _load_teams_by_seed(session, spec.event_id) if not pairing else {}
 
     for i in range(matches_per_wf_round):
         if pairing:
@@ -924,10 +942,13 @@ def _generate_wf_to_pools_dynamic(
         else:
             seed_a = i + 1
             seed_b = i + half + 1
-            team_a_id = teams[i] if have_all_teams and i < len(teams) else None
-            team_b_id = teams[i + half] if have_all_teams and (i + half) < len(teams) else None
-            placeholder_a = f"Seed {seed_a}"
-            placeholder_b = f"Seed {seed_b}"
+            ta = team_by_seed.get(seed_a)
+            tb = team_by_seed.get(seed_b)
+            team_a_id = ta.id if ta else None
+            team_b_id = tb.id if tb else None
+            # WF R1: use full name for match cards
+            placeholder_a = (ta.name if ta else None) or f"Seed {seed_a}"
+            placeholder_b = (tb.name if tb else None) or f"Seed {seed_b}"
 
         match = Match(
             tournament_id=spec.tournament_id,
@@ -1083,9 +1104,6 @@ def _generate_wf_to_brackets_8(
         warnings.append(f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,32}}, got {n}")
         return matches, warnings
 
-    teams = linked_team_ids[:n] if len(linked_team_ids) >= n else linked_team_ids
-    have_all_teams = len(teams) == n
-
     # Determine bracket count
     if n == 8:
         bracket_count = 1
@@ -1110,6 +1128,8 @@ def _generate_wf_to_brackets_8(
             # WF R1: avoid-group-aware pairing (falls back to half-split)
             half_r1 = matches_in_round
             pairing = _get_wf_r1_pairing(session, spec.event_id, linked_team_ids, n)
+            # Fallback: load whatever teams exist by seed for partial binding
+            team_by_seed = _load_teams_by_seed(session, spec.event_id) if not pairing else {}
 
             for i in range(matches_in_round):
                 if pairing:
@@ -1123,10 +1143,13 @@ def _generate_wf_to_brackets_8(
                 else:
                     seed_a = i + 1
                     seed_b = i + half_r1 + 1
-                    team_a_id = teams[i] if have_all_teams else None
-                    team_b_id = teams[i + half_r1] if have_all_teams else None
-                    placeholder_a = f"Seed {seed_a}"
-                    placeholder_b = f"Seed {seed_b}"
+                    ta = team_by_seed.get(seed_a)
+                    tb = team_by_seed.get(seed_b)
+                    team_a_id = ta.id if ta else None
+                    team_b_id = tb.id if tb else None
+                    # WF R1: use full name for match cards
+                    placeholder_a = (ta.name if ta else None) or f"Seed {seed_a}"
+                    placeholder_b = (tb.name if tb else None) or f"Seed {seed_b}"
 
                 match = Match(
                     tournament_id=spec.tournament_id,
