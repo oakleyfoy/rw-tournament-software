@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { timeTo12Hour } from '../../../utils/timeFormat'
 import {
   getScheduleGrid,
   ScheduleGridV1,
@@ -300,7 +301,7 @@ export default function ScheduleInventoryPanel({
 
   const formatTime = (t: string) => {
     if (!t) return '—'
-    return t.slice(0, 5)
+    return timeTo12Hour(t)
   }
 
   const handleCopyUnassigned = useCallback(() => {

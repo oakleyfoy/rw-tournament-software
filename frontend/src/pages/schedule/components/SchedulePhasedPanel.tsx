@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { timeTo12Hour } from '../../../utils/timeFormat'
 import {
   generateMatchesOnly,
   generateSlotsOnly,
@@ -475,12 +476,12 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
         if (timeSlot.breakdown.length === 0) {
           // Empty time slot - still include it
           rows.push(
-            `${dayReport.day},${timeSlot.time},,,,${timeSlot.total_courts},${timeSlot.assigned_matches}`
+            `${dayReport.day},${timeTo12Hour(timeSlot.time)},,,,${timeSlot.total_courts},${timeSlot.assigned_matches}`
           )
         } else {
           for (const breakdown of timeSlot.breakdown) {
             rows.push(
-              `${dayReport.day},${timeSlot.time},"${breakdown.event_name}",${breakdown.stage},${breakdown.match_count},${timeSlot.total_courts},${timeSlot.assigned_matches}`
+              `${dayReport.day},${timeTo12Hour(timeSlot.time)},"${breakdown.event_name}",${breakdown.stage},${breakdown.match_count},${timeSlot.total_courts},${timeSlot.assigned_matches}`
             )
           }
         }
@@ -1424,7 +1425,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
                       }}
                     >
                       <div style={{ marginBottom: '8px', fontWeight: 600 }}>
-                        {timeSlot.time} — {timeSlot.total_courts} courts ({timeSlot.assigned_matches} assigned)
+                        {timeTo12Hour(timeSlot.time)} — {timeSlot.total_courts} courts ({timeSlot.assigned_matches} assigned)
                       </div>
                       {timeSlot.breakdown.length > 0 ? (
                         <table

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { GridSlot, GridAssignment, GridMatch, TeamInfo } from '../../../../api/client';
+import { timeTo12Hour } from '../../../../utils/timeFormat';
 import { DraggableAssignment } from './DraggableAssignment';
 import { DroppableSlot } from './DroppableSlot';
 
@@ -157,7 +158,7 @@ export function EditorGrid({
               <tbody>
                 {timeSlots.map((time) => (
                   <tr key={time}>
-                    <td>{time}</td>
+                    <td>{timeTo12Hour(time)}</td>
                     {courts.map(([courtNum]) => {
                       const matchInfo = getMatchForTimeSlot(day, time, courtNum);
 
