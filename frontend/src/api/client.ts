@@ -2703,3 +2703,280 @@ export async function updateTeam(
     { method: 'PATCH', body: JSON.stringify(payload) }
   )
 }
+
+// ── SMS ─────────────────────────────────────────────────────────────────
+
+export interface SmsStatusResponse {
+  twilio_configured: boolean
+  from_number: string | null
+  tournament_has_settings: boolean
+  total_teams: number
+  teams_with_phones: number
+}
+
+export interface SmsSendResult {
+  phone: string
+  team_id: number | null
+  team_name: string | null
+  player_id: number | null
+  player_name: string | null
+  status: string
+  error: string | null
+}
+
+export interface SmsSendRequest {
+  message: string
+  dedupe_key?: string
+}
+
+export interface SmsSendResponse {
+  total: number
+  sent: number
+  failed: number
+  skipped_no_phone: number
+  skipped_consent: number
+  skipped_dedupe: number
+  message_type: string
+  results: SmsSendResult[]
+}
+
+export interface SmsPreviewRecipient {
+  team_id: number | null
+  team_name: string | null
+  player_id: number | null
+  player_name: string | null
+  phones: string[]
+  message: string
+}
+
+export interface SmsPreviewResponse {
+  total_teams: number
+  total_messages: number
+  teams_without_phone: number
+  recipients: SmsPreviewRecipient[]
+}
+
+export interface SmsLogEntry {
+  id: number
+  tournament_id: number
+  team_id: number | null
+  phone_number: string
+  message_body: string
+  message_type: string
+  twilio_sid: string | null
+  status: string
+  error_message: string | null
+  trigger: string
+  dedupe_key: string | null
+  sent_at: string
+}
+
+export interface SmsSettingsResponse {
+  tournament_id: number
+  auto_first_match: boolean
+  auto_post_match_next: boolean
+  auto_on_deck: boolean
+  auto_up_next: boolean
+  auto_court_change: boolean
+}
+
+export interface SmsTemplateResponse {
+  id: number
+  tournament_id: number
+  message_type: string
+  template_body: string
+  is_active: boolean
+}
+
+export interface SmsTimeslotRequest {
+  message: string
+  day_date: string
+  start_time: string
+  schedule_version_id: number
+  dedupe_key?: string
+}
+
+export async function getSmsStatus(tournamentId: number): Promise<SmsStatusResponse> {
+  return fetchJson<SmsStatusResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/status`
+  )
+}
+
+export async function sendSmsBlast(
+  tournamentId: number,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/blast`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsEvent(
+  tournamentId: number,
+  eventId: number,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/event/${eventId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsDivision(
+  tournamentId: number,
+  division: 'mixed' | 'womens',
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/division/${division}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsTeam(
+  tournamentId: number,
+  teamId: number,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/team/${teamId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsPlayer(
+  tournamentId: number,
+  playerId: number,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/player/${playerId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsMatch(
+  tournamentId: number,
+  matchId: number,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/match/${matchId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsTimeslot(
+  tournamentId: number,
+  payload: SmsTimeslotRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/timeslot`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsBlast(
+  tournamentId: number,
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/blast`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsEvent(
+  tournamentId: number,
+  eventId: number,
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/event/${eventId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsDivision(
+  tournamentId: number,
+  division: 'mixed' | 'womens',
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/division/${division}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsPlayer(
+  tournamentId: number,
+  playerId: number,
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/player/${playerId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function getSmsLog(
+  tournamentId: number,
+  opts?: { limit?: number; message_type?: string }
+): Promise<SmsLogEntry[]> {
+  const params = new URLSearchParams()
+  if (opts?.limit != null) params.append('limit', String(opts.limit))
+  if (opts?.message_type) params.append('message_type', opts.message_type)
+  const qs = params.toString()
+  return fetchJson<SmsLogEntry[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/log${qs ? `?${qs}` : ''}`
+  )
+}
+
+export async function getSmsSettings(
+  tournamentId: number
+): Promise<SmsSettingsResponse> {
+  return fetchJson<SmsSettingsResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/settings`
+  )
+}
+
+export async function patchSmsSettings(
+  tournamentId: number,
+  payload: Partial<Pick<SmsSettingsResponse,
+    'auto_first_match' | 'auto_post_match_next' | 'auto_on_deck' | 'auto_up_next' | 'auto_court_change'
+  >>
+): Promise<SmsSettingsResponse> {
+  return fetchJson<SmsSettingsResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/settings`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function getSmsTemplates(
+  tournamentId: number
+): Promise<SmsTemplateResponse[]> {
+  return fetchJson<SmsTemplateResponse[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/templates`
+  )
+}
+
+export async function putSmsTemplate(
+  tournamentId: number,
+  messageType: string,
+  payload: { template_body: string; is_active?: boolean }
+): Promise<SmsTemplateResponse> {
+  return fetchJson<SmsTemplateResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/templates/${messageType}`,
+    { method: 'PUT', body: JSON.stringify(payload) }
+  )
+}
+
+export async function resetSmsTemplates(
+  tournamentId: number
+): Promise<{ deleted: number; message: string }> {
+  return fetchJson<{ deleted: number; message: string }>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/templates/reset`,
+    { method: 'POST' }
+  )
+}

@@ -10,15 +10,19 @@ Provides endpoints for:
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
+from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_log import SmsLog
 from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
@@ -46,6 +50,8 @@ class SmsSendResult(BaseModel):
     phone: str
     team_id: Optional[int] = None
     team_name: Optional[str] = None
+    player_id: Optional[int] = None
+    player_name: Optional[str] = None
     status: str  # queued|sent|dry_run|failed
     error: Optional[str] = None
 
@@ -57,6 +63,8 @@ class SmsSendResponse(BaseModel):
     sent: int
     failed: int
     skipped_no_phone: int
+    skipped_consent: int = 0
+    skipped_dedupe: int = 0
     message_type: str
     results: List[SmsSendResult]
 
@@ -64,8 +72,10 @@ class SmsSendResponse(BaseModel):
 class SmsPreviewRecipient(BaseModel):
     """Preview of who would receive a text."""
 
-    team_id: int
-    team_name: str
+    team_id: Optional[int] = None
+    team_name: Optional[str] = None
+    player_id: Optional[int] = None
+    player_name: Optional[str] = None
     phones: List[str]
     message: str
 
@@ -94,6 +104,7 @@ class SmsLogResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     trigger: str
+    dedupe_key: Optional[str] = None
     sent_at: datetime
 
 
@@ -143,6 +154,7 @@ class SmsSendRequest(BaseModel):
     """Request body for manual send endpoints."""
 
     message: str
+    dedupe_key: Optional[str] = None
 
 
 class SmsTimeslotRequest(BaseModel):
@@ -152,6 +164,7 @@ class SmsTimeslotRequest(BaseModel):
     day_date: str  # "2026-03-15"
     start_time: str  # "10:00" or "10:00:00"
     schedule_version_id: int
+    dedupe_key: Optional[str] = None
 
 
 class SmsStatusResponse(BaseModel):
@@ -162,6 +175,23 @@ class SmsStatusResponse(BaseModel):
     tournament_has_settings: bool
     total_teams: int
     teams_with_phones: int
+
+
+class SmsWebhookResponse(BaseModel):
+    """Response for inbound Twilio webhook processing."""
+
+    ok: bool
+    deduped: bool = False
+    event_type: str
+    phone_number: str
+    player_id: Optional[int] = None
+
+
+class SmsStatusCallbackResponse(BaseModel):
+    """Response for Twilio delivery status callback processing."""
+
+    ok: bool
+    updated: bool
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +228,214 @@ def _get_all_teams_for_tournament(
     return list(teams)
 
 
+def _is_phone_send_allowed(
+    session: Session,
+    tournament_id: int,
+    phone_e164: str,
+) -> tuple[bool, str]:
+    """
+    Determine if SMS can be sent to a phone number.
+
+    Backward-compatible policy:
+    - If no Player record exists for the phone, allow send (legacy team-phone flow).
+    - If Player exists with opted_out status, block send.
+    - Otherwise allow send.
+    """
+    player = session.exec(
+        select(Player).where(
+            Player.tournament_id == tournament_id,
+            Player.phone_e164 == phone_e164,
+        )
+    ).first()
+    if not player:
+        return True, "unknown"
+
+    consent = (player.sms_consent_status or "unknown").lower()
+    if consent == "opted_out":
+        return False, consent
+    return True, consent
+
+
+def _validate_twilio_signature(
+    request: Request,
+    form_values: dict[str, str],
+) -> None:
+    """
+    Validate X-Twilio-Signature when auth token is configured.
+
+    In local/test mode without Twilio auth token configured, validation is skipped.
+    """
+    twilio = get_twilio_service()
+    auth_token = twilio.auth_token
+    if not auth_token:
+        return
+
+    signature = request.headers.get("X-Twilio-Signature")
+    if not signature:
+        raise HTTPException(403, "Missing Twilio signature")
+
+    try:
+        from twilio.request_validator import RequestValidator
+
+        validator = RequestValidator(auth_token)
+        is_valid = validator.validate(
+            str(request.url),
+            form_values,
+            signature,
+        )
+    except Exception as exc:
+        logger.exception("Twilio signature verification error: %s", exc)
+        raise HTTPException(403, "Invalid Twilio signature")
+
+    if not is_valid:
+        raise HTTPException(403, "Invalid Twilio signature")
+
+
+async def _parse_twilio_form(request: Request) -> dict[str, str]:
+    """
+    Parse x-www-form-urlencoded Twilio webhook payload without python-multipart.
+    """
+    raw_body = (await request.body()).decode("utf-8")
+    return {k: v for k, v in parse_qsl(raw_body, keep_blank_values=True)}
+
+
+_STOP_KEYWORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"}
+_START_KEYWORDS = {"START", "UNSTOP"}
+_HELP_KEYWORDS = {"HELP"}
+
+
+def _send_to_phone_targets(
+    session: Session,
+    tournament_id: int,
+    targets: List[dict],
+    message: str,
+    message_type: str,
+    trigger: str = "manual",
+    dedupe_key: Optional[str] = None,
+    skipped_no_phone: int = 0,
+) -> SmsSendResponse:
+    """Send to explicit phone targets with consent + dedupe protections."""
+    twilio = get_twilio_service()
+    results: List[SmsSendResult] = []
+    sent_count = 0
+    failed_count = 0
+    skipped_consent_count = 0
+    skipped_dedupe_count = 0
+
+    for target in targets:
+        phone = target["phone"]
+        team_id = target.get("team_id")
+        team_name = target.get("team_name")
+        player_id = target.get("player_id")
+        player_name = target.get("player_name")
+
+        if dedupe_key:
+            existing = session.exec(
+                select(SmsLog.id).where(
+                    SmsLog.tournament_id == tournament_id,
+                    SmsLog.phone_number == phone,
+                    SmsLog.message_type == message_type,
+                    SmsLog.dedupe_key == dedupe_key,
+                )
+            ).first()
+            if existing:
+                skipped_dedupe_count += 1
+                results.append(
+                    SmsSendResult(
+                        phone=phone,
+                        team_id=team_id,
+                        team_name=team_name,
+                        player_id=player_id,
+                        player_name=player_name,
+                        status="deduped",
+                        error=f"Skipped duplicate send for dedupe_key={dedupe_key}",
+                    )
+                )
+                continue
+
+        is_allowed, consent_state = _is_phone_send_allowed(
+            session=session,
+            tournament_id=tournament_id,
+            phone_e164=phone,
+        )
+        if not is_allowed:
+            skipped_consent_count += 1
+            blocked_reason = "Recipient has opted out of SMS for this tournament"
+            session.add(
+                SmsLog(
+                    tournament_id=tournament_id,
+                    team_id=team_id,
+                    phone_number=phone,
+                    message_body=message,
+                    message_type=message_type,
+                    twilio_sid=None,
+                    status="blocked_consent",
+                    error_message=blocked_reason,
+                    trigger=trigger,
+                    dedupe_key=dedupe_key,
+                    sent_at=datetime.now(timezone.utc),
+                )
+            )
+            results.append(
+                SmsSendResult(
+                    phone=phone,
+                    team_id=team_id,
+                    team_name=team_name,
+                    player_id=player_id,
+                    player_name=player_name,
+                    status="blocked_consent",
+                    error=f"{blocked_reason} (state={consent_state})",
+                )
+            )
+            continue
+
+        send_result = twilio.send_sms(phone, message)
+        status = send_result.get("status", "failed")
+        if status in ("queued", "sent", "dry_run"):
+            sent_count += 1
+        else:
+            failed_count += 1
+
+        session.add(
+            SmsLog(
+                tournament_id=tournament_id,
+                team_id=team_id,
+                phone_number=phone,
+                message_body=message,
+                message_type=message_type,
+                twilio_sid=send_result.get("sid"),
+                status=status,
+                error_message=send_result.get("error"),
+                trigger=trigger,
+                dedupe_key=dedupe_key,
+                sent_at=datetime.now(timezone.utc),
+            )
+        )
+        results.append(
+            SmsSendResult(
+                phone=phone,
+                team_id=team_id,
+                team_name=team_name,
+                player_id=player_id,
+                player_name=player_name,
+                status=status,
+                error=send_result.get("error"),
+            )
+        )
+
+    session.commit()
+    return SmsSendResponse(
+        total=len(results),
+        sent=sent_count,
+        failed=failed_count,
+        skipped_no_phone=skipped_no_phone,
+        skipped_consent=skipped_consent_count,
+        skipped_dedupe=skipped_dedupe_count,
+        message_type=message_type,
+        results=results,
+    )
+
+
 def _send_to_teams(
     session: Session,
     tournament_id: int,
@@ -205,66 +443,110 @@ def _send_to_teams(
     message: str,
     message_type: str,
     trigger: str = "manual",
+    dedupe_key: Optional[str] = None,
 ) -> SmsSendResponse:
-    """
-    Core send logic: takes a list of teams and a message, sends to all phone numbers.
-    Logs every send attempt to sms_log.
-    """
-    twilio = get_twilio_service()
-    results: List[SmsSendResult] = []
-    sent_count = 0
-    failed_count = 0
-    skipped_count = 0
-
+    """Send to all phone numbers found on a team list."""
+    targets: List[dict] = []
+    skipped_no_phone = 0
     for team in teams:
         phones = get_team_phone_numbers(team)
         if not phones:
-            skipped_count += 1
+            skipped_no_phone += 1
             continue
-
         for phone in phones:
-            send_result = twilio.send_sms(phone, message)
-
-            # Log to database
-            log_entry = SmsLog(
-                tournament_id=tournament_id,
-                team_id=team.id,
-                phone_number=phone,
-                message_body=message,
-                message_type=message_type,
-                twilio_sid=send_result.get("sid"),
-                status=send_result.get("status", "failed"),
-                error_message=send_result.get("error"),
-                trigger=trigger,
-                sent_at=datetime.now(timezone.utc),
-            )
-            session.add(log_entry)
-
-            status = send_result.get("status", "failed")
-            if status in ("queued", "sent", "dry_run"):
-                sent_count += 1
-            else:
-                failed_count += 1
-
-            results.append(
-                SmsSendResult(
-                    phone=phone,
-                    team_id=team.id,
-                    team_name=team.name,
-                    status=status,
-                    error=send_result.get("error"),
-                )
+            targets.append(
+                {
+                    "phone": phone,
+                    "team_id": team.id,
+                    "team_name": team.name,
+                    "player_id": None,
+                    "player_name": None,
+                }
             )
 
-    session.commit()
-
-    return SmsSendResponse(
-        total=len(results),
-        sent=sent_count,
-        failed=failed_count,
-        skipped_no_phone=skipped_count,
+    return _send_to_phone_targets(
+        session=session,
+        tournament_id=tournament_id,
+        targets=targets,
+        message=message,
         message_type=message_type,
-        results=results,
+        trigger=trigger,
+        dedupe_key=dedupe_key,
+        skipped_no_phone=skipped_no_phone,
+    )
+
+
+def _get_teams_for_event(
+    session: Session,
+    tournament_id: int,
+    event_id: int,
+) -> List[Team]:
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(404, f"Event {event_id} not found in tournament")
+
+    teams = session.exec(
+        select(Team).where(Team.event_id == event_id)
+    ).all()
+    return list(teams)
+
+
+def _get_teams_for_division(
+    session: Session,
+    tournament_id: int,
+    division: str,
+) -> List[Team]:
+    division_norm = division.strip().lower()
+    valid_divisions = {c.value for c in EventCategory}
+    if division_norm not in valid_divisions:
+        raise HTTPException(
+            400,
+            f"Invalid division '{division}'. Must be one of: {', '.join(sorted(valid_divisions))}",
+        )
+
+    events = session.exec(
+        select(Event).where(
+            Event.tournament_id == tournament_id,
+            Event.category == division_norm,
+        )
+    ).all()
+    event_ids = [e.id for e in events]
+    if not event_ids:
+        return []
+
+    teams = session.exec(
+        select(Team).where(Team.event_id.in_(event_ids))  # type: ignore
+    ).all()
+    return list(teams)
+
+
+def _preview_for_teams(
+    teams: List[Team],
+    message: str,
+) -> SmsPreviewResponse:
+    recipients = []
+    teams_without = 0
+    total_messages = 0
+    for team in teams:
+        phones = get_team_phone_numbers(team)
+        if not phones:
+            teams_without += 1
+            continue
+        total_messages += len(phones)
+        recipients.append(
+            SmsPreviewRecipient(
+                team_id=team.id,
+                team_name=team.name,
+                phones=phones,
+                message=message,
+            )
+        )
+
+    return SmsPreviewResponse(
+        total_teams=len(teams),
+        total_messages=total_messages,
+        teams_without_phone=teams_without,
+        recipients=recipients,
     )
 
 
@@ -327,6 +609,167 @@ def get_sms_status(
 
 
 # ---------------------------------------------------------------------------
+# Twilio webhook endpoints (inbound + delivery status)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/webhook/inbound", response_model=SmsWebhookResponse)
+async def handle_inbound_webhook(
+    tournament_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """
+    Handle inbound SMS (STOP/START/HELP) and persist consent transitions.
+    """
+    _get_tournament_or_404(session, tournament_id)
+    form_data = await _parse_twilio_form(request)
+    _validate_twilio_signature(request, form_data)
+
+    from_raw = form_data.get("From", "").strip()
+    if not from_raw:
+        raise HTTPException(400, "Missing From phone number")
+
+    try:
+        from_phone = format_e164(from_raw)
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid From phone number: {exc}")
+
+    body = (form_data.get("Body") or "").strip()
+    first_word = body.split()[0].upper() if body else ""
+    message_sid = form_data.get("MessageSid")
+    dedupe_key = f"inbound:{message_sid}" if message_sid else None
+
+    if dedupe_key:
+        existing = session.exec(
+            select(SmsConsentEvent).where(
+                SmsConsentEvent.tournament_id == tournament_id,
+                SmsConsentEvent.dedupe_key == dedupe_key,
+            )
+        ).first()
+        if existing:
+            return SmsWebhookResponse(
+                ok=True,
+                deduped=True,
+                event_type=existing.event_type,
+                phone_number=from_phone,
+                player_id=existing.player_id,
+            )
+
+    if first_word in _STOP_KEYWORDS:
+        event_type = "opted_out"
+        new_status = "opted_out"
+    elif first_word in _START_KEYWORDS:
+        event_type = "opted_in"
+        new_status = "opted_in"
+    elif first_word in _HELP_KEYWORDS:
+        event_type = "help"
+        new_status = None
+    else:
+        event_type = "other"
+        new_status = None
+
+    player = session.exec(
+        select(Player).where(
+            Player.tournament_id == tournament_id,
+            Player.phone_e164 == from_phone,
+        )
+    ).first()
+
+    if not player and new_status is not None:
+        player = Player(
+            tournament_id=tournament_id,
+            full_name=f"Unknown ({from_phone})",
+            phone_e164=from_phone,
+            sms_consent_status="unknown",
+        )
+        session.add(player)
+        session.flush()
+
+    if player and new_status is not None:
+        now_utc = datetime.now(timezone.utc)
+        player.sms_consent_status = new_status
+        player.sms_consent_source = "twilio_webhook"
+        player.sms_consent_updated_at = now_utc
+        player.updated_at = now_utc
+        if new_status == "opted_in":
+            player.sms_consented_at = now_utc
+            player.sms_opted_out_at = None
+        elif new_status == "opted_out":
+            player.sms_opted_out_at = now_utc
+        session.add(player)
+
+    consent_event = SmsConsentEvent(
+        tournament_id=tournament_id,
+        player_id=player.id if player else None,
+        phone_number=from_phone,
+        event_type=event_type,
+        source="twilio_webhook",
+        message_text=body or None,
+        provider_message_sid=message_sid,
+        dedupe_key=dedupe_key,
+        occurred_at=datetime.now(timezone.utc),
+    )
+    session.add(consent_event)
+    session.commit()
+
+    return SmsWebhookResponse(
+        ok=True,
+        deduped=False,
+        event_type=event_type,
+        phone_number=from_phone,
+        player_id=player.id if player else None,
+    )
+
+
+@router.post(
+    "/webhook/status-callback",
+    response_model=SmsStatusCallbackResponse,
+)
+async def handle_status_callback(
+    tournament_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """Handle Twilio delivery status callbacks and update sms_log status."""
+    _get_tournament_or_404(session, tournament_id)
+    form_data = await _parse_twilio_form(request)
+    _validate_twilio_signature(request, form_data)
+
+    message_sid = (form_data.get("MessageSid") or "").strip()
+    message_status = (form_data.get("MessageStatus") or "").strip()
+    if not message_sid or not message_status:
+        raise HTTPException(400, "Missing MessageSid or MessageStatus")
+
+    log_entry = session.exec(
+        select(SmsLog)
+        .where(
+            SmsLog.tournament_id == tournament_id,
+            SmsLog.twilio_sid == message_sid,
+        )
+        .order_by(SmsLog.id.desc())
+    ).first()
+
+    if not log_entry:
+        return SmsStatusCallbackResponse(ok=True, updated=False)
+
+    log_entry.status = message_status
+    err_code = (form_data.get("ErrorCode") or "").strip()
+    err_message = (form_data.get("ErrorMessage") or "").strip()
+    if err_code or err_message:
+        if err_code and err_message:
+            log_entry.error_message = f"Twilio {err_code}: {err_message}"
+        elif err_code:
+            log_entry.error_message = f"Twilio {err_code}"
+        else:
+            log_entry.error_message = err_message
+    session.add(log_entry)
+    session.commit()
+
+    return SmsStatusCallbackResponse(ok=True, updated=True)
+
+
+# ---------------------------------------------------------------------------
 # Send endpoints
 # ---------------------------------------------------------------------------
 
@@ -350,6 +793,100 @@ def send_tournament_blast(
         message=body.message,
         message_type="tournament_blast",
         trigger="manual",
+        dedupe_key=body.dedupe_key,
+    )
+
+
+@router.post("/event/{event_id}", response_model=SmsSendResponse)
+def send_event_text(
+    tournament_id: int,
+    event_id: int,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Text all teams in a specific event."""
+    _get_tournament_or_404(session, tournament_id)
+    teams = _get_teams_for_event(session, tournament_id, event_id)
+    if not teams:
+        raise HTTPException(400, "No teams found in this event")
+
+    return _send_to_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+        message_type="event_blast",
+        trigger="manual",
+        dedupe_key=body.dedupe_key,
+    )
+
+
+@router.post("/division/{division}", response_model=SmsSendResponse)
+def send_division_text(
+    tournament_id: int,
+    division: str,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Text all teams in a division.
+
+    Division currently maps to Event.category values (mixed|womens).
+    """
+    _get_tournament_or_404(session, tournament_id)
+    teams = _get_teams_for_division(session, tournament_id, division)
+    if not teams:
+        raise HTTPException(400, f"No teams found in division '{division}'")
+
+    return _send_to_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+        message_type="division_blast",
+        trigger="manual",
+        dedupe_key=body.dedupe_key,
+    )
+
+
+@router.post("/player/{player_id}", response_model=SmsSendResponse)
+def send_player_text(
+    tournament_id: int,
+    player_id: int,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Text a specific player by Player ID."""
+    _get_tournament_or_404(session, tournament_id)
+    player = session.get(Player, player_id)
+    if not player or player.tournament_id != tournament_id:
+        raise HTTPException(404, f"Player {player_id} not found in tournament")
+    if not player.phone_e164:
+        raise HTTPException(400, "Player has no phone_e164 on file")
+
+    try:
+        phone = format_e164(player.phone_e164)
+    except ValueError as exc:
+        raise HTTPException(400, f"Player phone is invalid: {exc}")
+
+    targets = [
+        {
+            "phone": phone,
+            "team_id": None,
+            "team_name": None,
+            "player_id": player.id,
+            "player_name": player.display_name or player.full_name,
+        }
+    ]
+    return _send_to_phone_targets(
+        session=session,
+        tournament_id=tournament_id,
+        targets=targets,
+        message=body.message,
+        message_type="player_direct",
+        trigger="manual",
+        dedupe_key=body.dedupe_key,
+        skipped_no_phone=0,
     )
 
 
@@ -380,6 +917,7 @@ def send_team_text(
         message=body.message,
         message_type="team_direct",
         trigger="manual",
+        dedupe_key=body.dedupe_key,
     )
 
 
@@ -419,6 +957,7 @@ def send_match_text(
         message=body.message,
         message_type="match_specific",
         trigger="manual",
+        dedupe_key=body.dedupe_key,
     )
 
 
@@ -495,6 +1034,7 @@ def send_timeslot_text(
         message=body.message,
         message_type="time_slot_blast",
         trigger="manual",
+        dedupe_key=body.dedupe_key,
     )
 
 
@@ -512,30 +1052,72 @@ def preview_blast(
     """Preview who would receive a tournament blast (no texts sent)."""
     _get_tournament_or_404(session, tournament_id)
     teams = _get_all_teams_for_tournament(session, tournament_id)
+    return _preview_for_teams(teams=teams, message=body.message)
+
+
+@router.post("/preview/event/{event_id}", response_model=SmsPreviewResponse)
+def preview_event(
+    tournament_id: int,
+    event_id: int,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Preview recipients for an event-wide send."""
+    _get_tournament_or_404(session, tournament_id)
+    teams = _get_teams_for_event(session, tournament_id, event_id)
+    return _preview_for_teams(teams=teams, message=body.message)
+
+
+@router.post("/preview/division/{division}", response_model=SmsPreviewResponse)
+def preview_division(
+    tournament_id: int,
+    division: str,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Preview recipients for a division-wide send."""
+    _get_tournament_or_404(session, tournament_id)
+    teams = _get_teams_for_division(session, tournament_id, division)
+    return _preview_for_teams(teams=teams, message=body.message)
+
+
+@router.post("/preview/player/{player_id}", response_model=SmsPreviewResponse)
+def preview_player(
+    tournament_id: int,
+    player_id: int,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Preview recipient for a player-specific send."""
+    _get_tournament_or_404(session, tournament_id)
+    player = session.get(Player, player_id)
+    if not player or player.tournament_id != tournament_id:
+        raise HTTPException(404, f"Player {player_id} not found in tournament")
+
+    phones: List[str] = []
+    if player.phone_e164:
+        try:
+            phones.append(format_e164(player.phone_e164))
+        except ValueError:
+            phones = []
 
     recipients = []
-    teams_without = 0
-    total_messages = 0
-
-    for team in teams:
-        phones = get_team_phone_numbers(team)
-        if not phones:
-            teams_without += 1
-            continue
-        total_messages += len(phones)
+    if phones:
         recipients.append(
             SmsPreviewRecipient(
-                team_id=team.id,
-                team_name=team.name,
+                team_id=None,
+                team_name=None,
+                player_id=player.id,
+                player_name=player.display_name or player.full_name,
                 phones=phones,
                 message=body.message,
             )
         )
 
     return SmsPreviewResponse(
-        total_teams=len(teams),
-        total_messages=total_messages,
-        teams_without_phone=teams_without,
+        total_teams=1,
+        total_messages=len(phones),
+        teams_without_phone=0 if phones else 1,
         recipients=recipients,
     )
 
