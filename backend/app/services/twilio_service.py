@@ -70,7 +70,15 @@ def get_team_phone_numbers(team) -> list[str]:
         List of valid E.164 phone numbers (0-2 items)
     """
     phones = []
-    for field in [team.p1_cell, team.p2_cell]:
+    # Support both legacy (player1_cellphone/player2_cellphone)
+    # and SMS-phase fields (p1_cell/p2_cell).
+    candidate_fields = [
+        getattr(team, "p1_cell", None),
+        getattr(team, "player1_cellphone", None),
+        getattr(team, "p2_cell", None),
+        getattr(team, "player2_cellphone", None),
+    ]
+    for field in candidate_fields:
         if not field or not field.strip():
             continue
         # Skip placeholder values

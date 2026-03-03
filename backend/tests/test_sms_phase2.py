@@ -183,6 +183,34 @@ def test_team_text_no_phone(client, session, setup_tournament_with_teams):
     assert "no phone" in resp.json()["detail"].lower()
 
 
+def test_team_text_with_legacy_player_cellphone_fields(client, session, setup_tournament_with_teams):
+    """Team texts should work when phone exists only in legacy cellphone fields."""
+    tournament, event, _ = setup_tournament_with_teams
+    from app.models.team import Team
+
+    legacy_team = Team(
+        event_id=event.id,
+        name="Legacy Phone Team",
+        seed=99,
+        p1_cell=None,
+        p2_cell=None,
+        player1_cellphone="9013593035",
+        player2_cellphone=None,
+    )
+    session.add(legacy_team)
+    session.commit()
+    session.refresh(legacy_team)
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{legacy_team.id}",
+        json={"message": "Legacy field test"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] == 1
+    assert data["message_type"] == "team_direct"
+
+
 def test_team_text_404(client, session, setup_tournament_with_teams):
     """Send text to nonexistent team should 404."""
     tournament, _, _ = setup_tournament_with_teams

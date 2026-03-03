@@ -100,9 +100,22 @@ class TestValidateE164:
 class TestGetTeamPhoneNumbers:
     """Test extracting phone numbers from Team objects."""
 
-    def _make_team(self, p1_cell=None, p2_cell=None, team_id=1):
+    def _make_team(
+        self,
+        p1_cell=None,
+        p2_cell=None,
+        player1_cellphone=None,
+        player2_cellphone=None,
+        team_id=1,
+    ):
         """Create a fake team object with phone fields."""
-        return SimpleNamespace(id=team_id, p1_cell=p1_cell, p2_cell=p2_cell)
+        return SimpleNamespace(
+            id=team_id,
+            p1_cell=p1_cell,
+            p2_cell=p2_cell,
+            player1_cellphone=player1_cellphone,
+            player2_cellphone=player2_cellphone,
+        )
 
     def test_both_players(self):
         team = self._make_team(p1_cell="9013593035", p2_cell="5551234567")
@@ -146,6 +159,17 @@ class TestGetTeamPhoneNumbers:
         team = self._make_team(p1_cell="9013593035", p2_cell="123")
         phones = get_team_phone_numbers(team)
         assert phones == ["+19013593035"]
+
+    def test_legacy_cellphone_fields_supported(self):
+        """UI-edited legacy phone fields should still be used for SMS."""
+        team = self._make_team(
+            p1_cell=None,
+            p2_cell=None,
+            player1_cellphone="9013593035",
+            player2_cellphone="9703092022",
+        )
+        phones = get_team_phone_numbers(team)
+        assert phones == ["+19013593035", "+19703092022"]
 
 
 # ---------------------------------------------------------------------------
