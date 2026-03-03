@@ -5214,14 +5214,18 @@ function SmsAdminTab({
             </div>
           </div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: 8, marginBottom: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.2fr) minmax(220px, 1fr) minmax(220px, 1fr)', gap: 8, marginBottom: 8 }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
           <label style={{ fontSize: 12, color: '#666' }}>
             {scope === 'division' ? 'Division' : scope === 'blast' ? 'Target' : 'Target ID'}
           </label>
           <label style={{ fontSize: 12, color: '#666' }}>Dedupe Key (optional)</label>
 
-          <select value={scope} onChange={e => setScope(e.target.value as SmsScope)} style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}>
+          <select
+            value={scope}
+            onChange={e => setScope(e.target.value as SmsScope)}
+            style={{ width: '100%', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+          >
             <option value="team">Team</option>
             <option value="player">Player</option>
             <option value="event">Event</option>
