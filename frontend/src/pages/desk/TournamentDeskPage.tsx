@@ -5008,6 +5008,8 @@ function SmsAdminTab({
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
   const [logLimit, setLogLimit] = useState(100)
+  const [teams, setTeams] = useState<DeskTeamItem[]>([])
+  const [teamSearch, setTeamSearch] = useState('')
 
   const loadStatusAndSettings = useCallback(async () => {
     const [statusResp, settingsResp] = await Promise.all([
@@ -5034,17 +5036,22 @@ function SmsAdminTab({
     setLogs(rows)
   }, [tournamentId, logLimit, logTypeFilter])
 
+  const loadTeams = useCallback(async () => {
+    const rows = await getDeskTeams(tournamentId)
+    setTeams(rows)
+  }, [tournamentId])
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      await Promise.all([loadStatusAndSettings(), loadTemplates(), loadLogs()])
+      await Promise.all([loadStatusAndSettings(), loadTemplates(), loadLogs(), loadTeams()])
     } catch (e: any) {
       setError(e?.message || 'Failed to load SMS admin data')
     } finally {
       setLoading(false)
     }
-  }, [loadStatusAndSettings, loadTemplates, loadLogs])
+  }, [loadStatusAndSettings, loadTemplates, loadLogs, loadTeams])
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -5060,6 +5067,49 @@ function SmsAdminTab({
   useEffect(() => {
     setConfirmText('')
   }, [scope])
+
+  const formatTeamLabel = useCallback((team: DeskTeamItem) => {
+    return (team.display_name || team.name || `Team ${team.team_id}`).trim()
+  }, [])
+
+  const sortedTeams = useMemo(() => {
+    const rows = [...teams]
+    rows.sort((a, b) => {
+      const byEvent = a.event_name.localeCompare(b.event_name, undefined, { sensitivity: 'base' })
+      if (byEvent !== 0) return byEvent
+      return formatTeamLabel(a).localeCompare(formatTeamLabel(b), undefined, { sensitivity: 'base' })
+    })
+    return rows
+  }, [teams, formatTeamLabel])
+
+  const filteredTeams = useMemo(() => {
+    const query = teamSearch.trim().toLowerCase()
+    if (!query) return sortedTeams
+    return sortedTeams.filter(team => {
+      const haystack = [
+        team.event_name,
+        team.name,
+        team.display_name || '',
+        String(team.team_id),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [sortedTeams, teamSearch])
+
+  const teamGroups = useMemo(() => {
+    const groups: Array<{ eventName: string; teams: DeskTeamItem[] }> = []
+    for (const team of filteredTeams) {
+      const last = groups[groups.length - 1]
+      if (!last || last.eventName !== team.event_name) {
+        groups.push({ eventName: team.event_name, teams: [team] })
+      } else {
+        last.teams.push(team)
+      }
+    }
+    return groups
+  }, [filteredTeams])
 
   const handlePreview = async () => {
     if (!message.trim()) {
@@ -5233,7 +5283,36 @@ function SmsAdminTab({
             <option value="blast">Tournament Blast (ALL teams)</option>
           </select>
 
-          {scope === 'division' ? (
+          {scope === 'team' ? (
+            <div style={{ display: 'grid', gap: 6 }}>
+              <input
+                type="text"
+                value={teamSearch}
+                onChange={e => setTeamSearch(e.target.value)}
+                placeholder="Search by team, partner, event, or team ID"
+                style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+              />
+              <select
+                value={targetId}
+                onChange={e => setTargetId(e.target.value)}
+                style={{ width: '100%', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+              >
+                <option value="">Select team ID…</option>
+                {teamGroups.map(group => (
+                  <optgroup key={group.eventName} label={group.eventName}>
+                    {group.teams.map(team => (
+                      <option key={team.team_id} value={String(team.team_id)}>
+                        {formatTeamLabel(team)} (ID {team.team_id})
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: '#777' }}>
+                Showing {filteredTeams.length} of {sortedTeams.length} teams
+              </div>
+            </div>
+          ) : scope === 'division' ? (
             <select value={division} onChange={e => setDivision(e.target.value as 'mixed' | 'womens')} style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}>
               <option value="mixed">mixed</option>
               <option value="womens">womens</option>
@@ -5244,7 +5323,7 @@ function SmsAdminTab({
               value={scope === 'blast' ? 'All teams in tournament (high impact)' : targetId}
               onChange={e => setTargetId(e.target.value)}
               disabled={scope === 'blast'}
-              placeholder={scope === 'event' ? 'event_id' : scope === 'team' ? 'team_id' : scope === 'player' ? 'player_id' : ''}
+              placeholder={scope === 'event' ? 'event_id' : scope === 'player' ? 'player_id' : ''}
               style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc', backgroundColor: scope === 'blast' ? '#f7f7f7' : '#fff' }}
             />
           )}
