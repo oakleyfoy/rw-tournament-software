@@ -5288,7 +5288,19 @@ function SmsAdminTab({
   }, [matches, matchSearch])
 
   const formatLogTime = useCallback((iso: string) => {
-    const dt = new Date(iso)
+    const raw = (iso || '').trim()
+    if (!raw) return iso
+
+    // SQLite/JSON can drop timezone info (e.g. "2026-03-03T21:03:32").
+    // Treat timezone-less timestamps as UTC before rendering in tournament TZ.
+    const hasTz = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(raw)
+    const normalizedBase = raw.includes('T') ? raw : raw.replace(' ', 'T')
+    const normalized = hasTz ? normalizedBase : `${normalizedBase}Z`
+
+    let dt = new Date(normalized)
+    if (Number.isNaN(dt.getTime())) {
+      dt = new Date(raw)
+    }
     if (Number.isNaN(dt.getTime())) return iso
     try {
       return new Intl.DateTimeFormat(undefined, {
