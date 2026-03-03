@@ -4979,11 +4979,12 @@ function SmsAdminTab({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [scope, setScope] = useState<SmsScope>('blast')
+  const [scope, setScope] = useState<SmsScope>('team')
   const [targetId, setTargetId] = useState('')
   const [division, setDivision] = useState<'mixed' | 'womens'>('mixed')
   const [message, setMessage] = useState('')
   const [dedupeKey, setDedupeKey] = useState('')
+  const [confirmText, setConfirmText] = useState('')
   const [preview, setPreview] = useState<SmsPreviewResponse | null>(null)
   const [sendResult, setSendResult] = useState<SmsSendResponse | null>(null)
   const [previewing, setPreviewing] = useState(false)
@@ -5052,6 +5053,14 @@ function SmsAdminTab({
     return Number.isFinite(n) && n > 0 ? n : null
   }
 
+  const requiresBroadConfirm = scope === 'blast' || scope === 'event' || scope === 'division'
+  const hasValidTarget = scope === 'blast' || scope === 'division' || parseTargetId() !== null
+  const confirmOk = !requiresBroadConfirm || confirmText.trim().toUpperCase() === 'SEND'
+
+  useEffect(() => {
+    setConfirmText('')
+  }, [scope])
+
   const handlePreview = async () => {
     if (!message.trim()) {
       setError('Message is required for preview')
@@ -5084,6 +5093,14 @@ function SmsAdminTab({
   const handleSend = async () => {
     if (!message.trim()) {
       setError('Message is required to send')
+      return
+    }
+    if (!hasValidTarget) {
+      setError('Target ID is required for this scope')
+      return
+    }
+    if (requiresBroadConfirm && !confirmOk) {
+      setError("Type SEND to confirm broad-audience send")
       return
     }
     setSending(true)
@@ -5194,11 +5211,11 @@ function SmsAdminTab({
           <label style={{ fontSize: 12, color: '#666' }}>Dedupe Key (optional)</label>
 
           <select value={scope} onChange={e => setScope(e.target.value as SmsScope)} style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}>
-            <option value="blast">Tournament Blast</option>
-            <option value="event">Event</option>
-            <option value="division">Division</option>
             <option value="team">Team</option>
             <option value="player">Player</option>
+            <option value="event">Event</option>
+            <option value="division">Division</option>
+            <option value="blast">Tournament Blast (ALL teams)</option>
           </select>
 
           {scope === 'division' ? (
@@ -5209,7 +5226,7 @@ function SmsAdminTab({
           ) : (
             <input
               type="text"
-              value={scope === 'blast' ? 'All teams in tournament' : targetId}
+              value={scope === 'blast' ? 'All teams in tournament (high impact)' : targetId}
               onChange={e => setTargetId(e.target.value)}
               disabled={scope === 'blast'}
               placeholder={scope === 'event' ? 'event_id' : scope === 'team' ? 'team_id' : scope === 'player' ? 'player_id' : ''}
@@ -5226,6 +5243,26 @@ function SmsAdminTab({
           />
         </div>
 
+        {requiresBroadConfirm && (
+          <div style={{ marginBottom: 8, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
+            <div style={{ fontSize: 12, color: '#e65100', fontWeight: 700, marginBottom: 6 }}>
+              High-impact send: this can notify many recipients.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 8 }}>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                Confirm intent by typing <strong>SEND</strong> before sending.
+              </div>
+              <input
+                type="text"
+                value={confirmText}
+                onChange={e => setConfirmText(e.target.value)}
+                placeholder="Type SEND"
+                style={{ padding: 6, borderRadius: 4, border: `1px solid ${confirmOk ? '#81c784' : '#ffcc80'}` }}
+              />
+            </div>
+          </div>
+        )}
+
         <textarea
           value={message}
           onChange={e => setMessage(e.target.value)}
@@ -5237,7 +5274,19 @@ function SmsAdminTab({
           <button onClick={handlePreview} disabled={previewing || sending} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
             {previewing ? 'Previewing…' : 'Preview'}
           </button>
-          <button onClick={handleSend} disabled={sending || previewing} style={{ padding: '7px 14px', fontWeight: 700, backgroundColor: '#1a237e', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+          <button
+            onClick={handleSend}
+            disabled={sending || previewing || !message.trim() || !hasValidTarget || !confirmOk}
+            style={{
+              padding: '7px 14px',
+              fontWeight: 700,
+              backgroundColor: (sending || previewing || !message.trim() || !hasValidTarget || !confirmOk) ? '#9fa8da' : '#1a237e',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: (sending || previewing || !message.trim() || !hasValidTarget || !confirmOk) ? 'not-allowed' : 'pointer',
+            }}
+          >
             {sending ? 'Sending…' : 'Send'}
           </button>
         </div>
