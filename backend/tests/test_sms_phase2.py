@@ -211,6 +211,37 @@ def test_team_text_with_legacy_player_cellphone_fields(client, session, setup_to
     assert data["message_type"] == "team_direct"
 
 
+def test_team_text_prefers_ui_edited_cellphones_over_stale_p_fields(
+    client, session, setup_tournament_with_teams
+):
+    """
+    Team send should use UI-edited cellphone fields when both field sets exist.
+    """
+    tournament, event, teams = setup_tournament_with_teams
+    target_team = teams[0]
+
+    update_resp = client.patch(
+        f"/api/events/{event.id}/teams/{target_team.id}",
+        json={
+            "player1_cellphone": "9703092022",
+            "player2_cellphone": "8328591001",
+        },
+    )
+    assert update_resp.status_code == 200
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{target_team.id}",
+        json={"message": "Prefer UI-edited numbers"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+
+    phones = sorted(r["phone"] for r in data["results"])
+    assert phones == sorted(["+19703092022", "+18328591001"])
+    assert "+15551112222" not in phones  # stale p2_cell from fixture
+    assert "+19013593035" not in phones  # stale p1_cell from fixture
+
+
 def test_team_text_404(client, session, setup_tournament_with_teams):
     """Send text to nonexistent team should 404."""
     tournament, _, _ = setup_tournament_with_teams

@@ -63,33 +63,45 @@ def get_team_phone_numbers(team) -> list[str]:
     """
     Extract all valid phone numbers from a Team object.
 
-    Reads p1_cell and p2_cell, formats to E.164, skips blanks/invalid.
+    Per-player precedence:
+      - P1: player1_cellphone, fallback p1_cell
+      - P2: player2_cellphone, fallback p2_cell
+
+    This avoids sending to stale legacy values when UI-edited values exist.
+    Formats to E.164 and skips blanks/invalid placeholders.
     Both P1 and P2 get texts.
 
     Returns:
         List of valid E.164 phone numbers (0-2 items)
     """
-    phones = []
-    # Support both legacy (player1_cellphone/player2_cellphone)
-    # and SMS-phase fields (p1_cell/p2_cell).
-    candidate_fields = [
-        getattr(team, "p1_cell", None),
-        getattr(team, "player1_cellphone", None),
-        getattr(team, "p2_cell", None),
-        getattr(team, "player2_cellphone", None),
-    ]
-    for field in candidate_fields:
-        if not field or not field.strip():
-            continue
-        # Skip placeholder values
-        if field.strip() in ("—", "-", "N/A", "n/a", "none", "None"):
-            continue
-        try:
-            formatted = format_e164(field.strip())
-            if formatted not in phones:  # Dedupe (P1 and P2 might be same person)
-                phones.append(formatted)
-        except ValueError:
-            logger.warning(f"Skipping invalid phone number on team {team.id}: '{field}'")
+    def _first_valid_phone(*field_names: str) -> Optional[str]:
+        for field_name in field_names:
+            raw = getattr(team, field_name, None)
+            if raw is None:
+                continue
+            field = str(raw).strip()
+            if not field:
+                continue
+            if field in ("—", "-", "N/A", "n/a", "none", "None"):
+                continue
+            try:
+                return format_e164(field)
+            except ValueError:
+                logger.warning(
+                    "Skipping invalid phone number on team %s (%s): '%s'",
+                    getattr(team, "id", "unknown"),
+                    field_name,
+                    field,
+                )
+        return None
+
+    p1 = _first_valid_phone("player1_cellphone", "p1_cell")
+    p2 = _first_valid_phone("player2_cellphone", "p2_cell")
+
+    phones: list[str] = []
+    for phone in (p1, p2):
+        if phone and phone not in phones:
+            phones.append(phone)
     return phones
 
 

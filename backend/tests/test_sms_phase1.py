@@ -171,6 +171,17 @@ class TestGetTeamPhoneNumbers:
         phones = get_team_phone_numbers(team)
         assert phones == ["+19013593035", "+19703092022"]
 
+    def test_ui_edited_cellphones_take_precedence_over_p_fields(self):
+        """If both field sets exist, prefer UI-edited legacy cellphone fields."""
+        team = self._make_team(
+            p1_cell="8328591001",
+            p2_cell="3462241467",
+            player1_cellphone="9013593035",
+            player2_cellphone="9703092022",
+        )
+        phones = get_team_phone_numbers(team)
+        assert phones == ["+19013593035", "+19703092022"]
+
 
 # ---------------------------------------------------------------------------
 # Model CRUD tests (require database fixture)
