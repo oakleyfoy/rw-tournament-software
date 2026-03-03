@@ -5232,6 +5232,19 @@ function SmsAdminTab({
 
   if (loading) return <div style={{ padding: 20, color: '#888' }}>Loading SMS admin…</div>
 
+  const compactControlStyle: React.CSSProperties = {
+    height: 34,
+    minHeight: 34,
+    boxSizing: 'border-box',
+    padding: '4px 8px',
+    borderRadius: 4,
+    border: '1px solid #ccc',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    color: '#1f2937',
+    backgroundColor: '#fff',
+  }
+
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       {error && (
@@ -5274,7 +5287,7 @@ function SmsAdminTab({
           <select
             value={scope}
             onChange={e => setScope(e.target.value as SmsScope)}
-            style={{ width: '100%', height: 34, boxSizing: 'border-box', padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc' }}
+            style={{ width: '100%', ...compactControlStyle }}
           >
             <option value="team">Team</option>
             <option value="player">Player</option>
@@ -5290,12 +5303,12 @@ function SmsAdminTab({
                 value={teamSearch}
                 onChange={e => setTeamSearch(e.target.value)}
                 placeholder="Search by team, partner, event, or team ID"
-                style={{ height: 34, boxSizing: 'border-box', padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc' }}
+                style={compactControlStyle}
               />
               <select
                 value={targetId}
                 onChange={e => setTargetId(e.target.value)}
-                style={{ width: '100%', height: 34, boxSizing: 'border-box', padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc' }}
+                style={{ width: '100%', ...compactControlStyle }}
               >
                 <option value="">Select team ID…</option>
                 {teamGroups.map(group => (
@@ -5313,7 +5326,7 @@ function SmsAdminTab({
               </div>
             </div>
           ) : scope === 'division' ? (
-            <select value={division} onChange={e => setDivision(e.target.value as 'mixed' | 'womens')} style={{ height: 34, boxSizing: 'border-box', padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc' }}>
+            <select value={division} onChange={e => setDivision(e.target.value as 'mixed' | 'womens')} style={compactControlStyle}>
               <option value="mixed">mixed</option>
               <option value="womens">womens</option>
             </select>
@@ -5324,7 +5337,7 @@ function SmsAdminTab({
               onChange={e => setTargetId(e.target.value)}
               disabled={scope === 'blast'}
               placeholder={scope === 'event' ? 'event_id' : scope === 'player' ? 'player_id' : ''}
-              style={{ height: 34, boxSizing: 'border-box', padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', backgroundColor: scope === 'blast' ? '#f7f7f7' : '#fff' }}
+              style={{ ...compactControlStyle, backgroundColor: scope === 'blast' ? '#f7f7f7' : '#fff' }}
             />
           )}
 
@@ -5333,7 +5346,7 @@ function SmsAdminTab({
             value={dedupeKey}
             onChange={e => setDedupeKey(e.target.value)}
             placeholder="e.g. smoke-2026-03-03-01"
-            style={{ height: 34, boxSizing: 'border-box', padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc' }}
+            style={compactControlStyle}
           />
         </div>
 
@@ -5899,11 +5912,11 @@ export default function TournamentDeskPage() {
               backgroundColor: 'transparent',
               color: activeTab === tab ? '#1a237e' : '#888',
               cursor: 'pointer',
-              textTransform: 'capitalize',
+              textTransform: tab === 'sms' ? 'none' : 'capitalize',
               marginBottom: -2,
             }}
           >
-            {tab}
+            {tab === 'sms' ? 'SMS' : tab}
           </button>
         ))}
       </div>
