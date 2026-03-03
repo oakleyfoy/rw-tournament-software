@@ -33,26 +33,32 @@ This backend implements the tournament management system with the following feat
 
 ### Setup
 
+Recommended (from repository root):
+```bash
+scripts/prepare-agent-env.sh --backend-only
+```
+
+Manual setup (from `backend/`):
 1. Install dependencies:
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 2. Run migrations:
 ```bash
-alembic upgrade head
+python3 -m alembic upgrade head
 ```
 
 3. Start the server:
 ```bash
-uvicorn app.main:app --reload
+python3 -m uvicorn app.main:app --reload
 ```
 
 ### Testing
 
 Run tests with:
 ```bash
-pytest
+python3 -m pytest
 ```
 
 ### Database

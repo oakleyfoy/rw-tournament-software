@@ -2,9 +2,15 @@
 
 ## Setup
 
+Recommended (from repository root):
+```bash
+scripts/prepare-agent-env.sh --frontend-only
+```
+
+Manual setup (from `frontend/`):
 1. Install dependencies:
 ```bash
-npm install
+npm ci
 ```
 
 2. Start development server:
@@ -13,6 +19,12 @@ npm run dev
 ```
 
 The app will be available at http://localhost:3000
+
+## Build check
+
+```bash
+npm run build
+```
 
 ## Features
 
