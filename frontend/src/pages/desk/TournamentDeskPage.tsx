@@ -5713,10 +5713,12 @@ export default function TournamentDeskPage() {
       {/* Tab bar */}
       <div style={{
         display: 'flex',
+        flexWrap: 'wrap',
         gap: 0,
         backgroundColor: '#fff',
         borderBottom: '2px solid #e0e0e0',
         paddingLeft: 24,
+        paddingRight: 24,
       }}>
         {(['courts', 'schedule', 'draws', 'impact', 'pools', 'bulk', 'grid', 'weather', 'teams', 'sms'] as const).map(tab => (
           <button
