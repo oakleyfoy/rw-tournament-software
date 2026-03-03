@@ -225,6 +225,14 @@ class SmsMatchLookupItem(BaseModel):
     display_label: str
 
 
+class SmsDivisionLookupItem(BaseModel):
+    """Lookup row for selecting a division inside an event."""
+
+    division_label: str
+    match_count: int
+    team_count: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -421,6 +429,67 @@ def _team_player_names(team: Team) -> tuple[str, str]:
     return (p1, p2)
 
 
+_BRACKET_DIVISION_CODES = {
+    "BWW": "Division I",
+    "BWL": "Division II",
+    "BLW": "Division III",
+    "BLL": "Division IV",
+}
+
+_POOL_DIVISION_CODES = {
+    "POOLA": "Division I",
+    "POOLB": "Division II",
+    "POOLC": "Division III",
+    "POOLD": "Division IV",
+}
+
+
+def _match_division_label(match_code: str, match_type: str) -> Optional[str]:
+    code = (match_code or "").upper()
+    mtype = (match_type or "").upper()
+    if mtype == "RR":
+        for pool_code, label in _POOL_DIVISION_CODES.items():
+            if f"_{pool_code}_" in code:
+                return label
+        return None
+    for div_code, label in _BRACKET_DIVISION_CODES.items():
+        if f"_{div_code}_" in code:
+            return label
+    return None
+
+
+def _canonical_division_label(value: str) -> Optional[str]:
+    norm = _normalize_match_key(value)
+    mapping = {
+        "division i": "Division I",
+        "div i": "Division I",
+        "i": "Division I",
+        "1": "Division I",
+        "division 1": "Division I",
+        "division ii": "Division II",
+        "div ii": "Division II",
+        "ii": "Division II",
+        "2": "Division II",
+        "division 2": "Division II",
+        "division iii": "Division III",
+        "div iii": "Division III",
+        "iii": "Division III",
+        "3": "Division III",
+        "division 3": "Division III",
+        "division iv": "Division IV",
+        "div iv": "Division IV",
+        "iv": "Division IV",
+        "4": "Division IV",
+        "division 4": "Division IV",
+    }
+    if norm in mapping:
+        return mapping[norm]
+    for label in ("Division I", "Division II", "Division III", "Division IV"):
+        if norm == _normalize_match_key(label):
+            return label
+    return None
+
+
 def _match_is_completed(match: Match) -> bool:
     runtime = (match.runtime_status or "").upper()
     status = (match.status or "").lower()
@@ -461,6 +530,55 @@ def _get_match_teams_for_tournament(
             "No teams assigned to this match yet (team IDs are null)",
         )
     return match, teams
+
+
+def _get_teams_for_event_division(
+    session: Session,
+    tournament_id: int,
+    event_id: int,
+    division_label: str,
+) -> List[Team]:
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(404, f"Event {event_id} not found in tournament")
+
+    canonical = _canonical_division_label(division_label)
+    if not canonical:
+        raise HTTPException(
+            400,
+            f"Invalid division '{division_label}'. Must be Division I/II/III/IV",
+        )
+
+    tournament = _get_tournament_or_404(session, tournament_id)
+    version = _resolve_match_lookup_version(session, tournament)
+    if not version:
+        return []
+
+    matches = session.exec(
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version.id,
+            Match.event_id == event_id,
+        )
+    ).all()
+
+    team_ids: set[int] = set()
+    for match in matches:
+        match_division = _match_division_label(match.match_code, match.match_type)
+        if match_division != canonical:
+            continue
+        if match.team_a_id:
+            team_ids.add(match.team_a_id)
+        if match.team_b_id:
+            team_ids.add(match.team_b_id)
+
+    if not team_ids:
+        return []
+
+    teams = session.exec(
+        select(Team).where(Team.id.in_(list(team_ids)))  # type: ignore
+    ).all()
+    return list(teams)
 
 
 def _settings_to_response(
@@ -1168,6 +1286,60 @@ def get_sms_matches(
     return [item for item, _key in rows]
 
 
+@router.get("/event/{event_id}/divisions", response_model=List[SmsDivisionLookupItem])
+def get_sms_event_divisions(
+    tournament_id: int,
+    event_id: int,
+    session: Session = Depends(get_session),
+):
+    """List available division choices (I-IV) for an event from active version matches."""
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(404, f"Event {event_id} not found in tournament")
+
+    tournament = _get_tournament_or_404(session, tournament_id)
+    version = _resolve_match_lookup_version(session, tournament)
+    if not version:
+        return []
+
+    matches = session.exec(
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version.id,
+            Match.event_id == event_id,
+        )
+    ).all()
+
+    counts: dict[str, dict[str, int | set[int]]] = {}
+    for m in matches:
+        label = _match_division_label(m.match_code, m.match_type)
+        if not label:
+            continue
+        row = counts.setdefault(label, {"match_count": 0, "team_ids": set()})
+        row["match_count"] = int(row["match_count"]) + 1
+        team_ids = row["team_ids"]
+        if m.team_a_id:
+            team_ids.add(m.team_a_id)
+        if m.team_b_id:
+            team_ids.add(m.team_b_id)
+
+    order = ["Division I", "Division II", "Division III", "Division IV"]
+    result: List[SmsDivisionLookupItem] = []
+    for label in order:
+        row = counts.get(label)
+        if not row:
+            continue
+        team_ids = row["team_ids"]
+        result.append(
+            SmsDivisionLookupItem(
+                division_label=label,
+                match_count=int(row["match_count"]),
+                team_count=len(team_ids),
+            )
+        )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Twilio webhook endpoints (inbound + delivery status)
 # ---------------------------------------------------------------------------
@@ -1376,6 +1548,39 @@ def send_event_text(
         teams=teams,
         message=body.message,
         message_type="event_blast",
+        trigger="manual",
+        dedupe_key=body.dedupe_key,
+    )
+
+
+@router.post("/event/{event_id}/division/{division}", response_model=SmsSendResponse)
+def send_event_division_text(
+    tournament_id: int,
+    event_id: int,
+    division: str,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Text teams in a specific event + division (Division I/II/III/IV)."""
+    _get_tournament_or_404(session, tournament_id)
+    teams = _get_teams_for_event_division(
+        session=session,
+        tournament_id=tournament_id,
+        event_id=event_id,
+        division_label=division,
+    )
+    if not teams:
+        raise HTTPException(
+            400,
+            f"No teams found in event {event_id} for division '{division}'",
+        )
+
+    return _send_to_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+        message_type="event_division_blast",
         trigger="manual",
         dedupe_key=body.dedupe_key,
     )
@@ -1626,6 +1831,28 @@ def preview_division(
     """Preview recipients for category- or event-labeled division send."""
     _get_tournament_or_404(session, tournament_id)
     teams = _get_teams_for_division(session, tournament_id, division)
+    return _preview_for_teams(teams=teams, message=body.message)
+
+
+@router.post(
+    "/preview/event/{event_id}/division/{division}",
+    response_model=SmsPreviewResponse,
+)
+def preview_event_division(
+    tournament_id: int,
+    event_id: int,
+    division: str,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Preview recipients for event + division (Division I/II/III/IV)."""
+    _get_tournament_or_404(session, tournament_id)
+    teams = _get_teams_for_event_division(
+        session=session,
+        tournament_id=tournament_id,
+        event_id=event_id,
+        division_label=division,
+    )
     return _preview_for_teams(teams=teams, message=body.message)
 
 

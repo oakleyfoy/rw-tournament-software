@@ -377,6 +377,96 @@ def test_preview_match(client, session, setup_tournament_with_teams):
     assert data["teams_without_phone"] == 0
 
 
+def test_event_division_lookup_and_send(client, session, setup_tournament_with_teams):
+    """Event division lookup should list divisions and target only selected division teams."""
+    tournament, event, teams = setup_tournament_with_teams
+    from app.models.match import Match
+    from app.models.schedule_version import ScheduleVersion
+    from app.models.team import Team
+
+    # Extra team to verify division filtering (should not be included in Division I send)
+    extra_team = Team(
+        event_id=event.id,
+        name="Extra Div Team",
+        seed=99,
+        p1_cell="9018889999",
+    )
+    session.add(extra_team)
+    session.commit()
+    session.refresh(extra_team)
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="draft",
+        notes="Desk Draft",
+    )
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    div1_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=5,
+        duration_minutes=60,
+        match_code="WOM_WOM_E11_BWW_M1",
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+    )
+    div2_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=6,
+        duration_minutes=60,
+        match_code="WOM_WOM_E11_BWL_M1",
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        team_a_id=teams[0].id,
+        team_b_id=extra_team.id,
+    )
+    session.add(div1_match)
+    session.add(div2_match)
+    session.commit()
+
+    lookup = client.get(
+        f"/api/tournaments/{tournament.id}/sms/event/{event.id}/divisions"
+    )
+    assert lookup.status_code == 200
+    rows = lookup.json()
+    labels = [r["division_label"] for r in rows]
+    assert "Division I" in labels
+    assert "Division II" in labels
+
+    preview = client.post(
+        f"/api/tournaments/{tournament.id}/sms/preview/event/{event.id}/division/Division%20I",
+        json={"message": "Division I preview"},
+    )
+    assert preview.status_code == 200
+    preview_data = preview.json()
+    assert preview_data["total_messages"] == 3
+
+    send = client.post(
+        f"/api/tournaments/{tournament.id}/sms/event/{event.id}/division/Division%20I",
+        json={"message": "Division I send"},
+    )
+    assert send.status_code == 200
+    send_data = send.json()
+    assert send_data["sent"] == 3
+    phones = {r["phone"] for r in send_data["results"]}
+    assert "+19018889999" not in phones
+
+
 def test_match_lookup_filters_completed_vs_upcoming(client, session, setup_tournament_with_teams):
     """Match lookup endpoint should filter by phase and include assigned matches."""
     tournament, event, teams = setup_tournament_with_teams

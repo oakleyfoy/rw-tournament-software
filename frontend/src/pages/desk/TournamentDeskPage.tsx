@@ -46,16 +46,17 @@ import {
   DeskTeamItem,
   getSmsStatus,
   getSmsMatches,
+  getSmsEventDivisions,
   getSmsPlayers,
   sendSmsBlast,
   sendSmsEvent,
-  sendSmsDivision,
+  sendSmsEventDivision,
   sendSmsTeam,
   sendSmsPlayer,
   sendSmsMatch,
   previewSmsBlast,
   previewSmsEvent,
-  previewSmsDivision,
+  previewSmsEventDivision,
   previewSmsPlayer,
   previewSmsMatch,
   getSmsLog,
@@ -70,6 +71,7 @@ import {
   SmsSettingsResponse,
   SmsTemplateResponse,
   SmsMatchLookupItem,
+  SmsDivisionLookupItem,
   SmsPlayerLookupItem,
 } from '../../api/client'
 import {
@@ -5000,8 +5002,10 @@ function SmsAdminTab({
 
   const [scope, setScope] = useState<SmsScope>('team')
   const [targetId, setTargetId] = useState('')
-  const [divisionEventCategory, setDivisionEventCategory] = useState<'mixed' | 'womens' | ''>('')
+  const [divisionEventId, setDivisionEventId] = useState('')
   const [division, setDivision] = useState('')
+  const [divisionChoices, setDivisionChoices] = useState<SmsDivisionLookupItem[]>([])
+  const [loadingDivisionChoices, setLoadingDivisionChoices] = useState(false)
   const [message, setMessage] = useState('')
   const [dedupeKey, setDedupeKey] = useState('')
   const [confirmText, setConfirmText] = useState('')
@@ -5079,6 +5083,20 @@ function SmsAdminTab({
     }
   }, [tournamentId])
 
+  const loadDivisionChoices = useCallback(async (eventId: number) => {
+    setLoadingDivisionChoices(true)
+    try {
+      const rows = await getSmsEventDivisions(tournamentId, eventId)
+      setDivisionChoices(rows)
+      setDivision(prev => {
+        if (prev && rows.some(r => r.division_label === prev)) return prev
+        return rows[0]?.division_label || ''
+      })
+    } finally {
+      setLoadingDivisionChoices(false)
+    }
+  }, [tournamentId])
+
   const loadLookups = useCallback(async () => {
     const [eventRows, playerRows, tournament] = await Promise.all([
       getEvents(tournamentId),
@@ -5090,10 +5108,7 @@ function SmsAdminTab({
     setTournamentTimezone(tournament.timezone || null)
     if (eventRows.length > 0) {
       const first = eventRows[0]
-      const firstCategory = first.category
-      const firstDivision = formatEventScopeLabel(first)
-      setDivisionEventCategory(prev => prev || firstCategory)
-      setDivision(prev => prev || firstDivision)
+      setDivisionEventId(prev => prev || String(first.id))
     }
   }, [tournamentId])
 
@@ -5127,7 +5142,7 @@ function SmsAdminTab({
   const hasValidTarget = scope === 'blast'
     ? true
     : scope === 'division'
-      ? Boolean(division.trim())
+      ? Boolean(divisionEventId && division.trim())
       : parseTargetId() !== null
   const confirmOk = !requiresBroadConfirm || confirmText.trim().toUpperCase() === 'SEND'
 
@@ -5151,6 +5166,23 @@ function SmsAdminTab({
       setTargetId('')
     }
   }, [matchPhase, scope])
+
+  useEffect(() => {
+    if (!divisionEventId) {
+      setDivisionChoices([])
+      setDivision('')
+      return
+    }
+    const eventId = parseInt(divisionEventId, 10)
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      setDivisionChoices([])
+      setDivision('')
+      return
+    }
+    loadDivisionChoices(eventId).catch((e: any) => {
+      setError(e?.message || 'Failed to load division choices')
+    })
+  }, [divisionEventId, loadDivisionChoices])
 
   const formatTeamLabel = useCallback((team: DeskTeamItem) => {
     return (team.display_name || team.name || `Team ${team.team_id}`).trim()
@@ -5206,19 +5238,13 @@ function SmsAdminTab({
   }, [events])
 
   const divisionEventOptions = useMemo(() => {
-    const present = new Set(sortedEvents.map(e => e.category))
-    const out: Array<{ value: 'mixed' | 'womens'; label: string }> = []
-    if (present.has('mixed')) out.push({ value: 'mixed', label: 'Mixed' })
-    if (present.has('womens')) out.push({ value: 'womens', label: "Women's" })
-    return out
+    return sortedEvents.map(event => ({
+      value: String(event.id),
+      label: formatEventScopeLabel(event),
+    }))
   }, [sortedEvents])
 
-  const divisionChoicesForEvent = useMemo(() => {
-    if (!divisionEventCategory) return []
-    return sortedEvents
-      .filter(e => e.category === divisionEventCategory)
-      .map(e => formatEventScopeLabel(e))
-  }, [sortedEvents, divisionEventCategory])
+  const divisionChoicesForEvent = useMemo(() => divisionChoices, [divisionChoices])
 
   const sortedPlayers = useMemo(() => {
     const rows = [...players]
@@ -5300,7 +5326,11 @@ function SmsAdminTab({
       if (scope === 'blast') {
         resp = await previewSmsBlast(tournamentId, { message })
       } else if (scope === 'division') {
-        resp = await previewSmsDivision(tournamentId, division.trim(), { message })
+        const eventId = parseInt(divisionEventId, 10)
+        if (!Number.isFinite(eventId) || eventId <= 0 || !division.trim()) {
+          throw new Error('Event and division choice are required')
+        }
+        resp = await previewSmsEventDivision(tournamentId, eventId, division.trim(), { message })
       } else {
         const id = parseTargetId()
         if (!id) throw new Error('Target ID is required for this scope')
@@ -5342,7 +5372,11 @@ function SmsAdminTab({
       if (scope === 'blast') {
         resp = await sendSmsBlast(tournamentId, payload)
       } else if (scope === 'division') {
-        resp = await sendSmsDivision(tournamentId, division.trim(), payload)
+        const eventId = parseInt(divisionEventId, 10)
+        if (!Number.isFinite(eventId) || eventId <= 0 || !division.trim()) {
+          throw new Error('Event and division choice are required')
+        }
+        resp = await sendSmsEventDivision(tournamentId, eventId, division.trim(), payload)
       } else {
         const id = parseTargetId()
         if (!id) throw new Error('Target ID is required for this scope')
@@ -5601,18 +5635,10 @@ function SmsAdminTab({
           ) : scope === 'division' ? (
             <div style={{ display: 'grid', gap: 6 }}>
               <select
-                value={divisionEventCategory}
+                value={divisionEventId}
                 onChange={e => {
-                  const next = e.target.value as 'mixed' | 'womens' | ''
-                  setDivisionEventCategory(next)
-                  if (!next) {
-                    setDivision('')
-                    return
-                  }
-                  const choices = sortedEvents
-                    .filter(ev => ev.category === next)
-                    .map(ev => formatEventScopeLabel(ev))
-                  setDivision(choices[0] || '')
+                  setDivisionEventId(e.target.value)
+                  setDivision('')
                 }}
                 className="sms-compact-control"
                 style={compactControlStyle}
@@ -5629,15 +5655,20 @@ function SmsAdminTab({
                 onChange={e => setDivision(e.target.value)}
                 className="sms-compact-control"
                 style={compactControlStyle}
-                disabled={!divisionEventCategory}
+                disabled={!divisionEventId}
               >
                 <option value="">Select division choice…</option>
-                {divisionChoicesForEvent.map(label => (
-                  <option key={label} value={label}>
-                    {label}
+                {divisionChoicesForEvent.map(item => (
+                  <option key={item.division_label} value={item.division_label}>
+                    {item.division_label}
                   </option>
                 ))}
               </select>
+              <div style={{ fontSize: 11, color: '#777' }}>
+                {loadingDivisionChoices
+                  ? 'Loading division choices…'
+                  : `Showing ${divisionChoicesForEvent.length} division choices`}
+              </div>
             </div>
           ) : (
             <input

@@ -2819,6 +2819,12 @@ export interface SmsMatchLookupItem {
   display_label: string
 }
 
+export interface SmsDivisionLookupItem {
+  division_label: string
+  match_count: number
+  team_count: number
+}
+
 export async function getSmsStatus(tournamentId: number): Promise<SmsStatusResponse> {
   return fetchJson<SmsStatusResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/status`
@@ -2844,6 +2850,15 @@ export async function getSmsMatches(
   )
 }
 
+export async function getSmsEventDivisions(
+  tournamentId: number,
+  eventId: number
+): Promise<SmsDivisionLookupItem[]> {
+  return fetchJson<SmsDivisionLookupItem[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/event/${eventId}/divisions`
+  )
+}
+
 export async function sendSmsBlast(
   tournamentId: number,
   payload: SmsSendRequest
@@ -2861,6 +2876,18 @@ export async function sendSmsEvent(
 ): Promise<SmsSendResponse> {
   return fetchJson<SmsSendResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/event/${eventId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsEventDivision(
+  tournamentId: number,
+  eventId: number,
+  division: string,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/event/${eventId}/division/${encodeURIComponent(division)}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }
@@ -2936,6 +2963,18 @@ export async function previewSmsEvent(
 ): Promise<SmsPreviewResponse> {
   return fetchJson<SmsPreviewResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/event/${eventId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsEventDivision(
+  tournamentId: number,
+  eventId: number,
+  division: string,
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/event/${eventId}/division/${encodeURIComponent(division)}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }
