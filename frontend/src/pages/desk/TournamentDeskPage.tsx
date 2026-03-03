@@ -41,6 +41,27 @@ import {
   defaultTeamWeekend,
   updateTeam,
   DeskTeamItem,
+  getSmsStatus,
+  sendSmsBlast,
+  sendSmsEvent,
+  sendSmsDivision,
+  sendSmsTeam,
+  sendSmsPlayer,
+  previewSmsBlast,
+  previewSmsEvent,
+  previewSmsDivision,
+  previewSmsPlayer,
+  getSmsLog,
+  getSmsSettings,
+  patchSmsSettings,
+  getSmsTemplates,
+  putSmsTemplate,
+  resetSmsTemplates,
+  SmsLogEntry,
+  SmsPreviewResponse,
+  SmsSendResponse,
+  SmsSettingsResponse,
+  SmsTemplateResponse,
 } from '../../api/client'
 import {
   DndContext,
@@ -4946,6 +4967,446 @@ function TeamsTab({
 }
 
 
+// ── SMS Admin Tab ──────────────────────────────────────────────────────
+
+type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player'
+
+function SmsAdminTab({
+  tournamentId,
+}: {
+  tournamentId: number
+}) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [scope, setScope] = useState<SmsScope>('blast')
+  const [targetId, setTargetId] = useState('')
+  const [division, setDivision] = useState<'mixed' | 'womens'>('mixed')
+  const [message, setMessage] = useState('')
+  const [dedupeKey, setDedupeKey] = useState('')
+  const [preview, setPreview] = useState<SmsPreviewResponse | null>(null)
+  const [sendResult, setSendResult] = useState<SmsSendResponse | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [sending, setSending] = useState(false)
+
+  const [status, setStatus] = useState<{
+    twilio_configured: boolean
+    from_number: string | null
+    tournament_has_settings: boolean
+    total_teams: number
+    teams_with_phones: number
+  } | null>(null)
+
+  const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
+  const [savingSettings, setSavingSettings] = useState(false)
+
+  const [templates, setTemplates] = useState<SmsTemplateResponse[]>([])
+  const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
+  const [savingTemplateType, setSavingTemplateType] = useState<string | null>(null)
+
+  const [logs, setLogs] = useState<SmsLogEntry[]>([])
+  const [logTypeFilter, setLogTypeFilter] = useState('')
+  const [logLimit, setLogLimit] = useState(100)
+
+  const loadStatusAndSettings = useCallback(async () => {
+    const [statusResp, settingsResp] = await Promise.all([
+      getSmsStatus(tournamentId),
+      getSmsSettings(tournamentId),
+    ])
+    setStatus(statusResp)
+    setSettingsDraft(settingsResp)
+  }, [tournamentId])
+
+  const loadTemplates = useCallback(async () => {
+    const rows = await getSmsTemplates(tournamentId)
+    setTemplates(rows)
+    const bodies: Record<string, string> = {}
+    rows.forEach(t => { bodies[t.message_type] = t.template_body })
+    setTemplateBodies(bodies)
+  }, [tournamentId])
+
+  const loadLogs = useCallback(async () => {
+    const rows = await getSmsLog(tournamentId, {
+      limit: logLimit,
+      message_type: logTypeFilter || undefined,
+    })
+    setLogs(rows)
+  }, [tournamentId, logLimit, logTypeFilter])
+
+  const loadAll = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      await Promise.all([loadStatusAndSettings(), loadTemplates(), loadLogs()])
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load SMS admin data')
+    } finally {
+      setLoading(false)
+    }
+  }, [loadStatusAndSettings, loadTemplates, loadLogs])
+
+  useEffect(() => { loadAll() }, [loadAll])
+
+  const parseTargetId = (): number | null => {
+    const n = parseInt(targetId, 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+
+  const handlePreview = async () => {
+    if (!message.trim()) {
+      setError('Message is required for preview')
+      return
+    }
+    setPreviewing(true)
+    setError(null)
+    try {
+      let resp: SmsPreviewResponse
+      if (scope === 'blast') {
+        resp = await previewSmsBlast(tournamentId, { message })
+      } else if (scope === 'division') {
+        resp = await previewSmsDivision(tournamentId, division, { message })
+      } else {
+        const id = parseTargetId()
+        if (!id) throw new Error('Target ID is required for this scope')
+        if (scope === 'event') resp = await previewSmsEvent(tournamentId, id, { message })
+        else if (scope === 'player') resp = await previewSmsPlayer(tournamentId, id, { message })
+        else resp = await previewSmsBlast(tournamentId, { message })
+      }
+      setPreview(resp)
+      setSendResult(null)
+    } catch (e: any) {
+      setError(e?.message || 'Preview failed')
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  const handleSend = async () => {
+    if (!message.trim()) {
+      setError('Message is required to send')
+      return
+    }
+    setSending(true)
+    setError(null)
+    try {
+      const payload = {
+        message,
+        dedupe_key: dedupeKey.trim() || undefined,
+      }
+      let resp: SmsSendResponse
+      if (scope === 'blast') {
+        resp = await sendSmsBlast(tournamentId, payload)
+      } else if (scope === 'division') {
+        resp = await sendSmsDivision(tournamentId, division, payload)
+      } else {
+        const id = parseTargetId()
+        if (!id) throw new Error('Target ID is required for this scope')
+        if (scope === 'event') resp = await sendSmsEvent(tournamentId, id, payload)
+        else if (scope === 'team') resp = await sendSmsTeam(tournamentId, id, payload)
+        else if (scope === 'player') resp = await sendSmsPlayer(tournamentId, id, payload)
+        else resp = await sendSmsBlast(tournamentId, payload)
+      }
+      setSendResult(resp)
+      await loadLogs()
+    } catch (e: any) {
+      setError(e?.message || 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const saveSettings = async () => {
+    if (!settingsDraft) return
+    setSavingSettings(true)
+    setError(null)
+    try {
+      const updated = await patchSmsSettings(tournamentId, {
+        auto_first_match: settingsDraft.auto_first_match,
+        auto_post_match_next: settingsDraft.auto_post_match_next,
+        auto_on_deck: settingsDraft.auto_on_deck,
+        auto_up_next: settingsDraft.auto_up_next,
+        auto_court_change: settingsDraft.auto_court_change,
+      })
+      setSettingsDraft(updated)
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save settings')
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
+  const saveTemplate = async (row: SmsTemplateResponse) => {
+    setSavingTemplateType(row.message_type)
+    setError(null)
+    try {
+      await putSmsTemplate(tournamentId, row.message_type, {
+        template_body: templateBodies[row.message_type] ?? row.template_body,
+        is_active: row.is_active,
+      })
+      await loadTemplates()
+    } catch (e: any) {
+      setError(e?.message || `Failed to save template ${row.message_type}`)
+    } finally {
+      setSavingTemplateType(null)
+    }
+  }
+
+  const handleResetTemplates = async () => {
+    setError(null)
+    try {
+      await resetSmsTemplates(tournamentId)
+      await loadTemplates()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to reset templates')
+    }
+  }
+
+  if (loading) return <div style={{ padding: 20, color: '#888' }}>Loading SMS admin…</div>
+
+  return (
+    <div style={{ display: 'grid', gap: 18 }}>
+      {error && (
+        <div style={{ padding: '10px 12px', backgroundColor: '#fce4ec', color: '#ad1457', borderRadius: 6, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>SMS Status</h3>
+          <button onClick={loadStatusAndSettings} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>Refresh</button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, fontSize: 13 }}>
+          <div><strong>Twilio:</strong> {status?.twilio_configured ? 'Configured' : 'Not Configured'}</div>
+          <div><strong>From #:</strong> {status?.from_number || '—'}</div>
+          <div><strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones</div>
+          <div><strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}</div>
+        </div>
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Manual Send / Preview</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: 8, marginBottom: 8 }}>
+          <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
+          <label style={{ fontSize: 12, color: '#666' }}>
+            {scope === 'division' ? 'Division' : scope === 'blast' ? 'Target' : 'Target ID'}
+          </label>
+          <label style={{ fontSize: 12, color: '#666' }}>Dedupe Key (optional)</label>
+
+          <select value={scope} onChange={e => setScope(e.target.value as SmsScope)} style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}>
+            <option value="blast">Tournament Blast</option>
+            <option value="event">Event</option>
+            <option value="division">Division</option>
+            <option value="team">Team</option>
+            <option value="player">Player</option>
+          </select>
+
+          {scope === 'division' ? (
+            <select value={division} onChange={e => setDivision(e.target.value as 'mixed' | 'womens')} style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}>
+              <option value="mixed">mixed</option>
+              <option value="womens">womens</option>
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={scope === 'blast' ? 'All teams in tournament' : targetId}
+              onChange={e => setTargetId(e.target.value)}
+              disabled={scope === 'blast'}
+              placeholder={scope === 'event' ? 'event_id' : scope === 'team' ? 'team_id' : scope === 'player' ? 'player_id' : ''}
+              style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc', backgroundColor: scope === 'blast' ? '#f7f7f7' : '#fff' }}
+            />
+          )}
+
+          <input
+            type="text"
+            value={dedupeKey}
+            onChange={e => setDedupeKey(e.target.value)}
+            placeholder="e.g. smoke-2026-03-03-01"
+            style={{ padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+          />
+        </div>
+
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          placeholder="Type message..."
+          rows={4}
+          style={{ width: '100%', boxSizing: 'border-box', padding: 8, borderRadius: 4, border: '1px solid #ccc', marginBottom: 8 }}
+        />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handlePreview} disabled={previewing || sending} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
+            {previewing ? 'Previewing…' : 'Preview'}
+          </button>
+          <button onClick={handleSend} disabled={sending || previewing} style={{ padding: '7px 14px', fontWeight: 700, backgroundColor: '#1a237e', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+
+        {preview && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
+            <div style={{ fontSize: 13, marginBottom: 6 }}>
+              <strong>Preview:</strong> {preview.total_messages} messages, {preview.teams_without_phone} targets without phone
+            </div>
+            <div style={{ maxHeight: 160, overflowY: 'auto', fontSize: 12 }}>
+              {preview.recipients.slice(0, 25).map((r, idx) => (
+                <div key={`${r.team_id ?? 'p'}-${r.player_id ?? idx}`} style={{ padding: '3px 0', borderBottom: '1px dotted #eee' }}>
+                  {(r.player_name || r.team_name || 'Recipient')} → {r.phones.join(', ')}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {sendResult && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
+            <div style={{ fontSize: 13, marginBottom: 6 }}>
+              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, deduped {sendResult.skipped_dedupe}
+            </div>
+            <div style={{ maxHeight: 180, overflowY: 'auto', fontSize: 12 }}>
+              {sendResult.results.slice(0, 25).map((r, idx) => (
+                <div key={`${r.phone}-${idx}`} style={{ padding: '3px 0', borderBottom: '1px dotted #eee' }}>
+                  {r.phone} — <strong>{r.status}</strong>{r.error ? ` (${r.error})` : ''}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Automation Toggles</h3>
+        {settingsDraft && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6, marginBottom: 10, fontSize: 13 }}>
+              {([
+                ['auto_first_match', 'First match alert'],
+                ['auto_post_match_next', 'Post-match next'],
+                ['auto_on_deck', 'On deck'],
+                ['auto_up_next', 'Up next'],
+                ['auto_court_change', 'Court change'],
+              ] as const).map(([key, label]) => (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settingsDraft[key])}
+                    onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, [key]: e.target.checked }) : prev)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <button onClick={saveSettings} disabled={savingSettings} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
+              {savingSettings ? 'Saving…' : 'Save Toggles'}
+            </button>
+          </>
+        )}
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
+          <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+            Reset to defaults
+          </button>
+        </div>
+        <div style={{ display: 'grid', gap: 10 }}>
+          {templates.map(row => (
+            <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{row.message_type}</div>
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={row.is_active}
+                    onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
+                  />{' '}
+                  Active
+                </label>
+              </div>
+              <textarea
+                rows={3}
+                value={templateBodies[row.message_type] ?? row.template_body}
+                onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
+                style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+              />
+              <div style={{ marginTop: 6 }}>
+                <button
+                  onClick={() => saveTemplate(row)}
+                  disabled={savingTemplateType === row.message_type}
+                  style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>SMS Log</h3>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text"
+              value={logTypeFilter}
+              onChange={e => setLogTypeFilter(e.target.value)}
+              placeholder="message_type filter"
+              style={{ padding: 5, borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
+            />
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={logLimit}
+              onChange={e => setLogLimit(Math.max(1, Math.min(500, parseInt(e.target.value || '100', 10))))}
+              style={{ width: 80, padding: 5, borderRadius: 4, border: '1px solid #ccc', fontSize: 12 }}
+            />
+            <button onClick={loadLogs} style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}>Refresh</button>
+          </div>
+        </div>
+        <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #eee', borderRadius: 6 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ backgroundColor: '#fafafa' }}>
+                <th style={{ textAlign: 'left', padding: 6 }}>Time</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Type</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Phone</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Status</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Dedupe</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map(l => (
+                <tr key={l.id} style={{ borderTop: '1px solid #f0f0f0' }}>
+                  <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{new Date(l.sent_at).toLocaleString()}</td>
+                  <td style={{ padding: 6 }}>{l.message_type}</td>
+                  <td style={{ padding: 6 }}>{l.phone_number}</td>
+                  <td style={{ padding: 6 }}>{l.status}</td>
+                  <td style={{ padding: 6 }}>{l.dedupe_key || '—'}</td>
+                  <td style={{ padding: 6, color: '#c62828' }}>{l.error_message || '—'}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ padding: 10, color: '#888', fontStyle: 'italic' }}>
+                    No log entries yet
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 11, color: '#666' }}>
+          Webhook setup for compliance: <code>/api/tournaments/{tournamentId}/sms/webhook/inbound</code> and <code>/api/tournaments/{tournamentId}/sms/webhook/status-callback</code>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 export default function TournamentDeskPage() {
   const { tournamentId } = useParams<{ tournamentId: string }>()
   const navigate = useNavigate()
@@ -4960,7 +5421,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams'>('courts')
+  const [activeTab, setActiveTab] = useState<'courts' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
   const [bulkToast, setBulkToast] = useState<string | null>(null)
@@ -5257,7 +5718,7 @@ export default function TournamentDeskPage() {
         borderBottom: '2px solid #e0e0e0',
         paddingLeft: 24,
       }}>
-        {(['courts', 'schedule', 'draws', 'impact', 'pools', 'bulk', 'grid', 'weather', 'teams'] as const).map(tab => (
+        {(['courts', 'schedule', 'draws', 'impact', 'pools', 'bulk', 'grid', 'weather', 'teams', 'sms'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -5580,6 +6041,10 @@ export default function TournamentDeskPage() {
             versionId={data.version_id}
             onRefresh={() => loadSnapshot(data.version_id)}
           />
+        )}
+
+        {activeTab === 'sms' && (
+          <SmsAdminTab tournamentId={tid!} />
         )}
       </div>
 
