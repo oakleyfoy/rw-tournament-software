@@ -258,6 +258,27 @@ table th {
   color: white;
 }
 
+/* SMS Desk compact controls (override global bubbly form styling) */
+.sms-compact-control {
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  border: 1px solid #ccc !important;
+  background: #fff !important;
+  color: #1f2937 !important;
+  font-size: 13px !important;
+  line-height: 1.2 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  appearance: auto !important;
+}
+
+.sms-compact-control:focus {
+  border-color: #1a237e !important;
+  box-shadow: 0 0 0 2px rgba(26, 35, 126, 0.15) !important;
+}
+
 table tr:hover {
   background-color: var(--theme-table-row-hover);
 }
