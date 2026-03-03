@@ -44,16 +44,19 @@ import {
   updateTeam,
   DeskTeamItem,
   getSmsStatus,
+  getSmsMatches,
   getSmsPlayers,
   sendSmsBlast,
   sendSmsEvent,
   sendSmsDivision,
   sendSmsTeam,
   sendSmsPlayer,
+  sendSmsMatch,
   previewSmsBlast,
   previewSmsEvent,
   previewSmsDivision,
   previewSmsPlayer,
+  previewSmsMatch,
   getSmsLog,
   getSmsSettings,
   patchSmsSettings,
@@ -65,6 +68,7 @@ import {
   SmsSendResponse,
   SmsSettingsResponse,
   SmsTemplateResponse,
+  SmsMatchLookupItem,
   SmsPlayerLookupItem,
 } from '../../api/client'
 import {
@@ -4973,7 +4977,7 @@ function TeamsTab({
 
 // ── SMS Admin Tab ──────────────────────────────────────────────────────
 
-type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player'
+type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player' | 'match'
 
 function formatEventScopeLabel(event: Event): string {
   const categoryPrefix = event.category === 'womens' ? "Women's" : 'Mixed'
@@ -5024,6 +5028,10 @@ function SmsAdminTab({
   const [logLimit, setLogLimit] = useState(100)
   const [events, setEvents] = useState<Event[]>([])
   const [players, setPlayers] = useState<SmsPlayerLookupItem[]>([])
+  const [matches, setMatches] = useState<SmsMatchLookupItem[]>([])
+  const [matchPhase, setMatchPhase] = useState<'upcoming' | 'completed'>('upcoming')
+  const [matchSearch, setMatchSearch] = useState('')
+  const [loadingMatches, setLoadingMatches] = useState(false)
   const [teams, setTeams] = useState<DeskTeamItem[]>([])
   const [teamSearch, setTeamSearch] = useState('')
   const [playerSearch, setPlayerSearch] = useState('')
@@ -5058,6 +5066,16 @@ function SmsAdminTab({
     setTeams(rows)
   }, [tournamentId])
 
+  const loadMatches = useCallback(async (phase: 'upcoming' | 'completed') => {
+    setLoadingMatches(true)
+    try {
+      const rows = await getSmsMatches(tournamentId, phase)
+      setMatches(rows)
+    } finally {
+      setLoadingMatches(false)
+    }
+  }, [tournamentId])
+
   const loadLookups = useCallback(async () => {
     const [eventRows, playerRows] = await Promise.all([
       getEvents(tournamentId),
@@ -5080,13 +5098,14 @@ function SmsAdminTab({
         loadLogs(),
         loadTeams(),
         loadLookups(),
+        loadMatches('upcoming'),
       ])
     } catch (e: any) {
       setError(e?.message || 'Failed to load SMS admin data')
     } finally {
       setLoading(false)
     }
-  }, [loadStatusAndSettings, loadTemplates, loadLogs, loadTeams, loadLookups])
+  }, [loadStatusAndSettings, loadTemplates, loadLogs, loadTeams, loadLookups, loadMatches])
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -5108,7 +5127,21 @@ function SmsAdminTab({
     setTargetId('')
     if (scope !== 'team') setTeamSearch('')
     if (scope !== 'player') setPlayerSearch('')
+    if (scope !== 'match') setMatchSearch('')
   }, [scope])
+
+  useEffect(() => {
+    if (scope !== 'match') return
+    loadMatches(matchPhase).catch((e: any) => {
+      setError(e?.message || 'Failed to load match lookup')
+    })
+  }, [scope, matchPhase, loadMatches])
+
+  useEffect(() => {
+    if (scope === 'match') {
+      setTargetId('')
+    }
+  }, [matchPhase, scope])
 
   const formatTeamLabel = useCallback((team: DeskTeamItem) => {
     return (team.display_name || team.name || `Team ${team.team_id}`).trim()
@@ -5200,6 +5233,23 @@ function SmsAdminTab({
     })
   }, [sortedPlayers, playerSearch])
 
+  const filteredMatches = useMemo(() => {
+    const query = matchSearch.trim().toLowerCase()
+    if (!query) return matches
+    return matches.filter(match => {
+      const haystack = [
+        match.display_label,
+        match.event_name,
+        match.match_code,
+        match.team_a_name,
+        match.team_b_name,
+        String(match.match_id),
+        match.runtime_status,
+      ].join(' ').toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [matches, matchSearch])
+
   const handlePreview = async () => {
     if (!message.trim()) {
       setError('Message is required for preview')
@@ -5207,7 +5257,7 @@ function SmsAdminTab({
     }
     if (
       (scope === 'division' && !division.trim()) ||
-      ((scope === 'event' || scope === 'team' || scope === 'player') && parseTargetId() === null)
+      ((scope === 'event' || scope === 'team' || scope === 'player' || scope === 'match') && parseTargetId() === null)
     ) {
       setError('Target is required for this scope')
       return
@@ -5225,6 +5275,7 @@ function SmsAdminTab({
         if (!id) throw new Error('Target ID is required for this scope')
         if (scope === 'event') resp = await previewSmsEvent(tournamentId, id, { message })
         else if (scope === 'player') resp = await previewSmsPlayer(tournamentId, id, { message })
+        else if (scope === 'match') resp = await previewSmsMatch(tournamentId, id, { message })
         else resp = await previewSmsBlast(tournamentId, { message })
       }
       setPreview(resp)
@@ -5267,6 +5318,7 @@ function SmsAdminTab({
         if (scope === 'event') resp = await sendSmsEvent(tournamentId, id, payload)
         else if (scope === 'team') resp = await sendSmsTeam(tournamentId, id, payload)
         else if (scope === 'player') resp = await sendSmsPlayer(tournamentId, id, payload)
+        else if (scope === 'match') resp = await sendSmsMatch(tournamentId, id, payload)
         else resp = await sendSmsBlast(tournamentId, payload)
       }
       setSendResult(resp)
@@ -5372,6 +5424,8 @@ function SmsAdminTab({
               ? 'Team'
               : scope === 'player'
                 ? 'Player'
+                : scope === 'match'
+                  ? 'Match'
                 : scope === 'event'
                   ? 'Event'
                   : scope === 'division'
@@ -5388,6 +5442,7 @@ function SmsAdminTab({
           >
             <option value="team">Team</option>
             <option value="player">Player</option>
+            <option value="match">Match</option>
             <option value="event">Event</option>
             <option value="division">Division</option>
             <option value="blast">Tournament Blast (ALL teams)</option>
@@ -5449,6 +5504,53 @@ function SmsAdminTab({
               </select>
               <div style={{ fontSize: 11, color: '#777' }}>
                 Showing {filteredPlayers.length} of {sortedPlayers.length} players
+              </div>
+            </div>
+          ) : scope === 'match' ? (
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    type="radio"
+                    name="sms-match-phase"
+                    checked={matchPhase === 'upcoming'}
+                    onChange={() => setMatchPhase('upcoming')}
+                  />
+                  Next Upcoming
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    type="radio"
+                    name="sms-match-phase"
+                    checked={matchPhase === 'completed'}
+                    onChange={() => setMatchPhase('completed')}
+                  />
+                  Completed
+                </label>
+              </div>
+              <input
+                type="text"
+                value={matchSearch}
+                onChange={e => setMatchSearch(e.target.value)}
+                placeholder="Search by player/team/event/match"
+                className="sms-compact-control"
+                style={compactControlStyle}
+              />
+              <select
+                value={targetId}
+                onChange={e => setTargetId(e.target.value)}
+                className="sms-compact-control"
+                style={compactControlStyle}
+              >
+                <option value="">Select match…</option>
+                {filteredMatches.map(match => (
+                  <option key={match.match_id} value={String(match.match_id)}>
+                    {match.display_label}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: '#777' }}>
+                {loadingMatches ? 'Loading matches…' : `Showing ${filteredMatches.length} of ${matches.length} matches (${matchPhase})`}
               </div>
             </div>
           ) : scope === 'event' ? (

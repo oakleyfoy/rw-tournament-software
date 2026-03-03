@@ -334,6 +334,146 @@ def test_match_text_no_teams_assigned(client, session, setup_tournament_with_tea
     assert resp.status_code == 400
 
 
+def test_preview_match(client, session, setup_tournament_with_teams):
+    """Preview should support match-specific recipient preview."""
+    tournament, event, teams = setup_tournament_with_teams
+    from app.models.match import Match
+    from app.models.schedule_version import ScheduleVersion
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id, version_number=1, status="draft"
+    )
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        match_code="TEST_QF2",
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+    )
+    session.add(match)
+    session.commit()
+    session.refresh(match)
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/preview/match/{match.id}",
+        json={"message": "Preview match message"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_teams"] == 2
+    assert data["total_messages"] == 3
+    assert data["teams_without_phone"] == 0
+
+
+def test_match_lookup_filters_completed_vs_upcoming(client, session, setup_tournament_with_teams):
+    """Match lookup endpoint should filter by phase and include assigned matches."""
+    tournament, event, teams = setup_tournament_with_teams
+    from app.models.match import Match
+    from app.models.match_assignment import MatchAssignment
+    from app.models.schedule_slot import ScheduleSlot
+    from app.models.schedule_version import ScheduleVersion
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id, version_number=1, status="draft"
+    )
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 3, 15),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="Court 1",
+        block_minutes=60,
+        label="Morning",
+        is_active=True,
+    )
+    session.add(slot)
+    session.commit()
+    session.refresh(slot)
+
+    upcoming_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=3,
+        duration_minutes=60,
+        match_code="UPCOMING_M1",
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        runtime_status="SCHEDULED",
+    )
+    completed_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=4,
+        duration_minutes=60,
+        match_code="COMPLETE_M1",
+        placeholder_side_a="Seed 3",
+        placeholder_side_b="Seed 4",
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        runtime_status="FINAL",
+        completed_at=datetime.now(timezone.utc),
+    )
+    session.add(upcoming_match)
+    session.add(completed_match)
+    session.commit()
+    session.refresh(upcoming_match)
+    session.refresh(completed_match)
+
+    assign = MatchAssignment(
+        schedule_version_id=version.id,
+        match_id=upcoming_match.id,
+        slot_id=slot.id,
+    )
+    session.add(assign)
+    session.commit()
+
+    upcoming_resp = client.get(
+        f"/api/tournaments/{tournament.id}/sms/matches",
+        params={"phase": "upcoming"},
+    )
+    assert upcoming_resp.status_code == 200
+    upcoming_rows = upcoming_resp.json()
+    assert any(r["match_id"] == upcoming_match.id for r in upcoming_rows)
+    assert all(r["match_id"] != completed_match.id for r in upcoming_rows)
+
+    completed_resp = client.get(
+        f"/api/tournaments/{tournament.id}/sms/matches",
+        params={"phase": "completed"},
+    )
+    assert completed_resp.status_code == 200
+    completed_rows = completed_resp.json()
+    assert any(r["match_id"] == completed_match.id for r in completed_rows)
+    assert all(r["match_id"] != upcoming_match.id for r in completed_rows)
+
+
 # ---------------------------------------------------------------------------
 # Preview endpoint
 # ---------------------------------------------------------------------------

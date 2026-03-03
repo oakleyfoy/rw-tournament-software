@@ -209,6 +209,21 @@ class SmsPlayerLookupItem(BaseModel):
     consent_status: str
 
 
+class SmsMatchLookupItem(BaseModel):
+    """Lookup row for selecting a match target in UI."""
+
+    match_id: int
+    match_code: str
+    event_name: str
+    team_a_name: str
+    team_b_name: str
+    runtime_status: str
+    phase: str  # upcoming|completed
+    day_date: Optional[str] = None
+    start_time: Optional[str] = None
+    display_label: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -300,6 +315,48 @@ def _event_lookup_keys(event: Event) -> set[str]:
         _normalize_match_key(f"{category_label} {name}"),
     }
     return {k for k in keys if k}
+
+
+def _match_is_completed(match: Match) -> bool:
+    runtime = (match.runtime_status or "").upper()
+    status = (match.status or "").lower()
+    return runtime == "FINAL" or status in {"complete", "completed"}
+
+
+def _team_name_for_lookup(team: Optional[Team], placeholder: Optional[str]) -> str:
+    if team:
+        return (team.display_name or team.name or f"Team {team.id}").strip()
+    if placeholder and placeholder.strip():
+        return placeholder.strip()
+    return "TBD"
+
+
+def _get_match_teams_for_tournament(
+    session: Session,
+    tournament_id: int,
+    match_id: int,
+) -> tuple[Match, List[Team]]:
+    """Get a match + assigned teams, ensuring it belongs to tournament."""
+    match = session.get(Match, match_id)
+    if not match or match.tournament_id != tournament_id:
+        raise HTTPException(404, f"Match {match_id} not found in tournament")
+
+    teams: List[Team] = []
+    if match.team_a_id:
+        team_a = session.get(Team, match.team_a_id)
+        if team_a:
+            teams.append(team_a)
+    if match.team_b_id:
+        team_b = session.get(Team, match.team_b_id)
+        if team_b:
+            teams.append(team_b)
+
+    if not teams:
+        raise HTTPException(
+            400,
+            "No teams assigned to this match yet (team IDs are null)",
+        )
+    return match, teams
 
 
 def _settings_to_response(
@@ -819,6 +876,137 @@ def get_sms_players(
     ]
 
 
+@router.get("/matches", response_model=List[SmsMatchLookupItem])
+def get_sms_matches(
+    tournament_id: int,
+    phase: str = Query(default="upcoming"),
+    session: Session = Depends(get_session),
+):
+    """
+    List tournament matches for SMS targeting lookup.
+
+    phase:
+    - upcoming: matches not completed
+    - completed: finalized/completed matches
+    """
+    _get_tournament_or_404(session, tournament_id)
+    phase_norm = (phase or "upcoming").strip().lower()
+    if phase_norm not in {"upcoming", "completed"}:
+        raise HTTPException(400, "phase must be 'upcoming' or 'completed'")
+
+    matches = session.exec(
+        select(Match).where(Match.tournament_id == tournament_id)
+    ).all()
+    if not matches:
+        return []
+
+    match_ids = [m.id for m in matches if m.id is not None]
+    assignments = []
+    if match_ids:
+        assignments = session.exec(
+            select(MatchAssignment).where(MatchAssignment.match_id.in_(match_ids))  # type: ignore
+        ).all()
+    assignment_by_match_id = {a.match_id: a for a in assignments}
+
+    slot_ids = [a.slot_id for a in assignments if a.slot_id is not None]
+    slots = []
+    if slot_ids:
+        slots = session.exec(
+            select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))  # type: ignore
+        ).all()
+    slot_by_id = {s.id: s for s in slots if s.id is not None}
+
+    team_ids = {
+        team_id
+        for m in matches
+        for team_id in (m.team_a_id, m.team_b_id)
+        if team_id is not None
+    }
+    teams = []
+    if team_ids:
+        teams = session.exec(
+            select(Team).where(Team.id.in_(team_ids))  # type: ignore
+        ).all()
+    team_by_id = {t.id: t for t in teams if t.id is not None}
+
+    event_ids = {m.event_id for m in matches if m.event_id is not None}
+    events = []
+    if event_ids:
+        events = session.exec(
+            select(Event).where(Event.id.in_(event_ids))  # type: ignore
+        ).all()
+    event_name_by_id = {e.id: e.name for e in events if e.id is not None}
+
+    rows: List[tuple[SmsMatchLookupItem, tuple]] = []
+    for m in matches:
+        # Match scope is intended for messaging all 4 players.
+        # Require both teams assigned for lookup results.
+        if not (m.team_a_id and m.team_b_id):
+            continue
+
+        is_completed = _match_is_completed(m)
+        if phase_norm == "completed" and not is_completed:
+            continue
+        if phase_norm == "upcoming" and is_completed:
+            continue
+
+        team_a_name = _team_name_for_lookup(team_by_id.get(m.team_a_id), m.placeholder_side_a)
+        team_b_name = _team_name_for_lookup(team_by_id.get(m.team_b_id), m.placeholder_side_b)
+        event_name = event_name_by_id.get(m.event_id, "")
+
+        assignment = assignment_by_match_id.get(m.id)
+        slot = slot_by_id.get(assignment.slot_id) if assignment else None
+        day_date = slot.day_date.isoformat() if slot else None
+        start_time = slot.start_time.strftime("%H:%M") if slot else None
+
+        when_bits = []
+        if day_date:
+            when_bits.append(day_date)
+        if start_time:
+            when_bits.append(start_time)
+        when_text = f"{' '.join(when_bits)} | " if when_bits else ""
+        display_label = (
+            f"{when_text}{event_name} | {m.match_code} | {team_a_name} vs {team_b_name}"
+        ).strip(" |")
+
+        item = SmsMatchLookupItem(
+            match_id=m.id,  # type: ignore[arg-type]
+            match_code=m.match_code,
+            event_name=event_name,
+            team_a_name=team_a_name,
+            team_b_name=team_b_name,
+            runtime_status=(m.runtime_status or "SCHEDULED"),
+            phase="completed" if is_completed else "upcoming",
+            day_date=day_date,
+            start_time=start_time,
+            display_label=display_label,
+        )
+
+        if phase_norm == "upcoming":
+            sort_key = (
+                0 if (m.runtime_status or "").upper() == "IN_PROGRESS" else 1,
+                day_date or "9999-12-31",
+                start_time or "23:59",
+                event_name.lower(),
+                m.match_code,
+                m.id or 0,
+            )
+            rows.append((item, sort_key))
+        else:
+            sort_key = (
+                m.completed_at.isoformat() if m.completed_at else "",
+                m.id or 0,
+            )
+            rows.append((item, sort_key))
+
+    if phase_norm == "upcoming":
+        rows.sort(key=lambda pair: pair[1])
+    else:
+        rows.sort(key=lambda pair: pair[1], reverse=True)
+
+    return [item for item, _key in rows]
+
+
 # ---------------------------------------------------------------------------
 # Twilio webhook endpoints (inbound + delivery status)
 # ---------------------------------------------------------------------------
@@ -1143,25 +1331,11 @@ def send_match_text(
 ):
     """Text both teams in a specific match."""
     _get_tournament_or_404(session, tournament_id)
-    match = session.get(Match, match_id)
-    if not match:
-        raise HTTPException(404, f"Match {match_id} not found")
-
-    teams = []
-    if match.team_a_id:
-        team_a = session.get(Team, match.team_a_id)
-        if team_a:
-            teams.append(team_a)
-    if match.team_b_id:
-        team_b = session.get(Team, match.team_b_id)
-        if team_b:
-            teams.append(team_b)
-
-    if not teams:
-        raise HTTPException(
-            400,
-            "No teams assigned to this match yet (team IDs are null)",
-        )
+    _match, teams = _get_match_teams_for_tournament(
+        session=session,
+        tournament_id=tournament_id,
+        match_id=match_id,
+    )
 
     return _send_to_teams(
         session=session,
@@ -1333,6 +1507,23 @@ def preview_player(
         teams_without_phone=0 if phones else 1,
         recipients=recipients,
     )
+
+
+@router.post("/preview/match/{match_id}", response_model=SmsPreviewResponse)
+def preview_match(
+    tournament_id: int,
+    match_id: int,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    """Preview recipients for a specific match (both assigned teams)."""
+    _get_tournament_or_404(session, tournament_id)
+    _match, teams = _get_match_teams_for_tournament(
+        session=session,
+        tournament_id=tournament_id,
+        match_id=match_id,
+    )
+    return _preview_for_teams(teams=teams, message=body.message)
 
 
 # ---------------------------------------------------------------------------

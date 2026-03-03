@@ -2806,6 +2806,19 @@ export interface SmsPlayerLookupItem {
   consent_status: string
 }
 
+export interface SmsMatchLookupItem {
+  match_id: number
+  match_code: string
+  event_name: string
+  team_a_name: string
+  team_b_name: string
+  runtime_status: string
+  phase: 'upcoming' | 'completed'
+  day_date: string | null
+  start_time: string | null
+  display_label: string
+}
+
 export async function getSmsStatus(tournamentId: number): Promise<SmsStatusResponse> {
   return fetchJson<SmsStatusResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/status`
@@ -2817,6 +2830,17 @@ export async function getSmsPlayers(
 ): Promise<SmsPlayerLookupItem[]> {
   return fetchJson<SmsPlayerLookupItem[]>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/players`
+  )
+}
+
+export async function getSmsMatches(
+  tournamentId: number,
+  phase: 'upcoming' | 'completed'
+): Promise<SmsMatchLookupItem[]> {
+  const params = new URLSearchParams()
+  params.set('phase', phase)
+  return fetchJson<SmsMatchLookupItem[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/matches?${params.toString()}`
   )
 }
 
@@ -2934,6 +2958,17 @@ export async function previewSmsPlayer(
 ): Promise<SmsPreviewResponse> {
   return fetchJson<SmsPreviewResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/player/${playerId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsMatch(
+  tournamentId: number,
+  matchId: number,
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/match/${matchId}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }
