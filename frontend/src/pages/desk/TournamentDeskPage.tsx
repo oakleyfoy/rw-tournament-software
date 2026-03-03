@@ -4700,6 +4700,8 @@ function TeamsTab({
       })
       setEditingId(null)
       await loadTeams()
+      // Keep all desk tabs in sync (courts/schedule/grid use snapshot data).
+      onRefresh()
       setToast('Team updated')
       setTimeout(() => setToast(null), 3000)
     } catch (e: any) {
