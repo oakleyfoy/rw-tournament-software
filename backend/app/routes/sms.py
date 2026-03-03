@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models.event import Event, EventCategory
+from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.player import Player
@@ -200,6 +200,15 @@ class SmsStatusCallbackResponse(BaseModel):
     updated: bool
 
 
+class SmsPlayerLookupItem(BaseModel):
+    """Lookup row for selecting a player target in UI."""
+
+    player_id: int
+    player_name: str
+    phone_e164: Optional[str] = None
+    consent_status: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -266,6 +275,31 @@ def _allowlist_set(raw: Optional[str]) -> set[str]:
     if not raw:
         return set()
     return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _normalize_match_key(value: str) -> str:
+    """Case-insensitive, punctuation-insensitive normalization for matching."""
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _event_category_text(event: Event) -> str:
+    category = event.category
+    if hasattr(category, "value"):
+        return str(category.value)
+    return str(category)
+
+
+def _event_lookup_keys(event: Event) -> set[str]:
+    """Build normalized keys that may identify an event as a 'division'."""
+    category = _event_category_text(event)
+    category_label = "women's" if category == "womens" else "mixed"
+    name = (event.name or "").strip()
+    keys = {
+        _normalize_match_key(name),
+        _normalize_match_key(f"{category} {name}"),
+        _normalize_match_key(f"{category_label} {name}"),
+    }
+    return {k for k in keys if k}
 
 
 def _settings_to_response(
@@ -608,26 +642,60 @@ def _get_teams_for_division(
     tournament_id: int,
     division: str,
 ) -> List[Team]:
-    division_norm = division.strip().lower()
-    valid_divisions = {c.value for c in EventCategory}
-    if division_norm not in valid_divisions:
-        raise HTTPException(
-            400,
-            f"Invalid division '{division}'. Must be one of: {', '.join(sorted(valid_divisions))}",
-        )
+    raw = division.strip()
+    division_norm = _normalize_match_key(raw)
 
     events = session.exec(
-        select(Event).where(
-            Event.tournament_id == tournament_id,
-            Event.category == division_norm,
-        )
+        select(Event).where(Event.tournament_id == tournament_id)
     ).all()
-    event_ids = [e.id for e in events]
-    if not event_ids:
+    if not events:
         return []
 
+    # Backward-compatible category matching ("mixed" / "womens")
+    category_aliases = {
+        "mixed": "mixed",
+        "womens": "womens",
+        "women": "womens",
+        "women s": "womens",
+        "women's": "womens",
+    }
+    category_match = category_aliases.get(division_norm)
+
+    matched_event_ids: List[int] = []
+    if category_match:
+        matched_event_ids = [
+            e.id for e in events if _event_category_text(e) == category_match
+        ]
+    else:
+        matched_event_ids = [
+            e.id for e in events if division_norm in _event_lookup_keys(e)
+        ]
+
+    if not matched_event_ids:
+        valid_divisions = sorted(
+            {
+                _event_category_text(e)
+                for e in events
+            }
+        )
+        sample_named = sorted(
+            {
+                (("Women's" if _event_category_text(e) == "womens" else "Mixed") + f" {e.name}").strip()
+                for e in events
+            }
+        )
+        raise HTTPException(
+            400,
+            "Invalid division '{division}'. Must be one of: {valid}. "
+            "Or an event-style division label like: {example}".format(
+                division=division,
+                valid=", ".join(valid_divisions),
+                example=", ".join(sample_named[:6]),
+            ),
+        )
+
     teams = session.exec(
-        select(Team).where(Team.event_id.in_(event_ids))  # type: ignore
+        select(Team).where(Team.event_id.in_(matched_event_ids))  # type: ignore
     ).all()
     return list(teams)
 
@@ -718,6 +786,37 @@ def get_sms_status(
         total_teams=len(teams),
         teams_with_phones=teams_with_phones,
     )
+
+
+@router.get("/players", response_model=List[SmsPlayerLookupItem])
+def get_sms_players(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    """List known players for player-target lookup in SMS UI."""
+    _get_tournament_or_404(session, tournament_id)
+    rows = session.exec(
+        select(Player).where(Player.tournament_id == tournament_id)
+    ).all()
+
+    players = list(rows)
+    players.sort(
+        key=lambda p: (
+            (p.display_name or p.full_name or "").lower(),
+            (p.phone_e164 or ""),
+            p.id or 0,
+        )
+    )
+    return [
+        SmsPlayerLookupItem(
+            player_id=p.id,  # type: ignore[arg-type]
+            player_name=p.display_name or p.full_name,
+            phone_e164=p.phone_e164,
+            consent_status=(p.sms_consent_status or "unknown").lower(),
+        )
+        for p in players
+        if p.id is not None
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -943,7 +1042,9 @@ def send_division_text(
     """
     Text all teams in a division.
 
-    Division currently maps to Event.category values (mixed|womens).
+    Division can be either:
+    - Category-level: mixed | womens
+    - Event-style label: e.g., "Mixed A Div I", "Women's Open"
     """
     _get_tournament_or_404(session, tournament_id)
     teams = _get_teams_for_division(session, tournament_id, division)
@@ -1187,7 +1288,7 @@ def preview_division(
     body: SmsSendRequest,
     session: Session = Depends(get_session),
 ):
-    """Preview recipients for a division-wide send."""
+    """Preview recipients for category- or event-labeled division send."""
     _get_tournament_or_404(session, tournament_id)
     teams = _get_teams_for_division(session, tournament_id, division)
     return _preview_for_teams(teams=teams, message=body.message)

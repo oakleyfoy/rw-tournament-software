@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
+  getEvents,
   getDeskSnapshot,
   getDeskImpact,
   getPoolProjection,
@@ -24,6 +25,7 @@ import {
   rescheduleApply,
   DeskSnapshotResponse,
   DeskMatchItem,
+  Event,
   SnapshotSlot,
   MatchImpactItem,
   ImpactTarget,
@@ -42,6 +44,7 @@ import {
   updateTeam,
   DeskTeamItem,
   getSmsStatus,
+  getSmsPlayers,
   sendSmsBlast,
   sendSmsEvent,
   sendSmsDivision,
@@ -62,6 +65,7 @@ import {
   SmsSendResponse,
   SmsSettingsResponse,
   SmsTemplateResponse,
+  SmsPlayerLookupItem,
 } from '../../api/client'
 import {
   DndContext,
@@ -4971,6 +4975,16 @@ function TeamsTab({
 
 type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player'
 
+function formatEventScopeLabel(event: Event): string {
+  const categoryPrefix = event.category === 'womens' ? "Women's" : 'Mixed'
+  const name = (event.name || '').trim()
+  const lower = name.toLowerCase()
+  if (lower.startsWith('mixed') || lower.startsWith('women')) {
+    return name
+  }
+  return `${categoryPrefix} ${name}`.trim()
+}
+
 function SmsAdminTab({
   tournamentId,
 }: {
@@ -4981,7 +4995,7 @@ function SmsAdminTab({
 
   const [scope, setScope] = useState<SmsScope>('team')
   const [targetId, setTargetId] = useState('')
-  const [division, setDivision] = useState<'mixed' | 'womens'>('mixed')
+  const [division, setDivision] = useState('')
   const [message, setMessage] = useState('')
   const [dedupeKey, setDedupeKey] = useState('')
   const [confirmText, setConfirmText] = useState('')
@@ -5008,8 +5022,11 @@ function SmsAdminTab({
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
   const [logLimit, setLogLimit] = useState(100)
+  const [events, setEvents] = useState<Event[]>([])
+  const [players, setPlayers] = useState<SmsPlayerLookupItem[]>([])
   const [teams, setTeams] = useState<DeskTeamItem[]>([])
   const [teamSearch, setTeamSearch] = useState('')
+  const [playerSearch, setPlayerSearch] = useState('')
 
   const loadStatusAndSettings = useCallback(async () => {
     const [statusResp, settingsResp] = await Promise.all([
@@ -5041,17 +5058,35 @@ function SmsAdminTab({
     setTeams(rows)
   }, [tournamentId])
 
+  const loadLookups = useCallback(async () => {
+    const [eventRows, playerRows] = await Promise.all([
+      getEvents(tournamentId),
+      getSmsPlayers(tournamentId),
+    ])
+    setEvents(eventRows)
+    setPlayers(playerRows)
+    if (eventRows.length > 0) {
+      setDivision(prev => prev || formatEventScopeLabel(eventRows[0]))
+    }
+  }, [tournamentId])
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      await Promise.all([loadStatusAndSettings(), loadTemplates(), loadLogs(), loadTeams()])
+      await Promise.all([
+        loadStatusAndSettings(),
+        loadTemplates(),
+        loadLogs(),
+        loadTeams(),
+        loadLookups(),
+      ])
     } catch (e: any) {
       setError(e?.message || 'Failed to load SMS admin data')
     } finally {
       setLoading(false)
     }
-  }, [loadStatusAndSettings, loadTemplates, loadLogs, loadTeams])
+  }, [loadStatusAndSettings, loadTemplates, loadLogs, loadTeams, loadLookups])
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -5061,11 +5096,18 @@ function SmsAdminTab({
   }
 
   const requiresBroadConfirm = scope === 'blast' || scope === 'event' || scope === 'division'
-  const hasValidTarget = scope === 'blast' || scope === 'division' || parseTargetId() !== null
+  const hasValidTarget = scope === 'blast'
+    ? true
+    : scope === 'division'
+      ? Boolean(division.trim())
+      : parseTargetId() !== null
   const confirmOk = !requiresBroadConfirm || confirmText.trim().toUpperCase() === 'SEND'
 
   useEffect(() => {
     setConfirmText('')
+    setTargetId('')
+    if (scope !== 'team') setTeamSearch('')
+    if (scope !== 'player') setPlayerSearch('')
   }, [scope])
 
   const formatTeamLabel = useCallback((team: DeskTeamItem) => {
@@ -5111,9 +5153,63 @@ function SmsAdminTab({
     return groups
   }, [filteredTeams])
 
+  const sortedEvents = useMemo(() => {
+    const rows = [...events]
+    rows.sort((a, b) => {
+      const aLabel = formatEventScopeLabel(a).toLowerCase()
+      const bLabel = formatEventScopeLabel(b).toLowerCase()
+      return aLabel.localeCompare(bLabel)
+    })
+    return rows
+  }, [events])
+
+  const divisionOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const options: string[] = []
+    for (const event of sortedEvents) {
+      const label = formatEventScopeLabel(event)
+      const key = label.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      options.push(label)
+    }
+    return options
+  }, [sortedEvents])
+
+  const sortedPlayers = useMemo(() => {
+    const rows = [...players]
+    rows.sort((a, b) => {
+      const byName = (a.player_name || '').localeCompare(b.player_name || '', undefined, { sensitivity: 'base' })
+      if (byName !== 0) return byName
+      return a.player_id - b.player_id
+    })
+    return rows
+  }, [players])
+
+  const filteredPlayers = useMemo(() => {
+    const query = playerSearch.trim().toLowerCase()
+    if (!query) return sortedPlayers
+    return sortedPlayers.filter(player => {
+      const haystack = [
+        player.player_name,
+        player.phone_e164 || '',
+        String(player.player_id),
+        player.consent_status,
+      ].join(' ').toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [sortedPlayers, playerSearch])
+
   const handlePreview = async () => {
     if (!message.trim()) {
       setError('Message is required for preview')
+      return
+    }
+    if (
+      (scope === 'division' && !division.trim()) ||
+      ((scope === 'event' || scope === 'team' || scope === 'player') && parseTargetId() === null)
+    ) {
+      setError('Target is required for this scope')
       return
     }
     setPreviewing(true)
@@ -5123,7 +5219,7 @@ function SmsAdminTab({
       if (scope === 'blast') {
         resp = await previewSmsBlast(tournamentId, { message })
       } else if (scope === 'division') {
-        resp = await previewSmsDivision(tournamentId, division, { message })
+        resp = await previewSmsDivision(tournamentId, division.trim(), { message })
       } else {
         const id = parseTargetId()
         if (!id) throw new Error('Target ID is required for this scope')
@@ -5146,7 +5242,7 @@ function SmsAdminTab({
       return
     }
     if (!hasValidTarget) {
-      setError('Target ID is required for this scope')
+      setError('Target is required for this scope')
       return
     }
     if (requiresBroadConfirm && !confirmOk) {
@@ -5164,7 +5260,7 @@ function SmsAdminTab({
       if (scope === 'blast') {
         resp = await sendSmsBlast(tournamentId, payload)
       } else if (scope === 'division') {
-        resp = await sendSmsDivision(tournamentId, division, payload)
+        resp = await sendSmsDivision(tournamentId, division.trim(), payload)
       } else {
         const id = parseTargetId()
         if (!id) throw new Error('Target ID is required for this scope')
@@ -5272,7 +5368,15 @@ function SmsAdminTab({
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.2fr) minmax(220px, 1fr) minmax(220px, 1fr)', gap: 8, marginBottom: 8, alignItems: 'start' }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
           <label style={{ fontSize: 12, color: '#666' }}>
-            {scope === 'division' ? 'Division' : scope === 'blast' ? 'Target' : 'Target ID'}
+            {scope === 'team'
+              ? 'Team'
+              : scope === 'player'
+                ? 'Player'
+                : scope === 'event'
+                  ? 'Event'
+                  : scope === 'division'
+                    ? 'Division'
+                    : 'Target'}
           </label>
           <label style={{ fontSize: 12, color: '#666' }}>Dedupe Key (optional)</label>
 
@@ -5320,15 +5424,60 @@ function SmsAdminTab({
                 Showing {filteredTeams.length} of {sortedTeams.length} teams
               </div>
             </div>
-          ) : scope === 'division' ? (
+          ) : scope === 'player' ? (
+            <div style={{ display: 'grid', gap: 6 }}>
+              <input
+                type="text"
+                value={playerSearch}
+                onChange={e => setPlayerSearch(e.target.value)}
+                placeholder="Search by player name, phone, consent, or player ID"
+                className="sms-compact-control"
+                style={compactControlStyle}
+              />
+              <select
+                value={targetId}
+                onChange={e => setTargetId(e.target.value)}
+                className="sms-compact-control"
+                style={compactControlStyle}
+              >
+                <option value="">Select player ID…</option>
+                {filteredPlayers.map(player => (
+                  <option key={player.player_id} value={String(player.player_id)}>
+                    {player.player_name} ({player.phone_e164 || 'no phone'}) [ID {player.player_id}]
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: '#777' }}>
+                Showing {filteredPlayers.length} of {sortedPlayers.length} players
+              </div>
+            </div>
+          ) : scope === 'event' ? (
             <select
-              value={division}
-              onChange={e => setDivision(e.target.value as 'mixed' | 'womens')}
+              value={targetId}
+              onChange={e => setTargetId(e.target.value)}
               className="sms-compact-control"
               style={compactControlStyle}
             >
-              <option value="mixed">mixed</option>
-              <option value="womens">womens</option>
+              <option value="">Select event…</option>
+              {sortedEvents.map(event => (
+                <option key={event.id} value={String(event.id)}>
+                  {formatEventScopeLabel(event)} (ID {event.id})
+                </option>
+              ))}
+            </select>
+          ) : scope === 'division' ? (
+            <select
+              value={division}
+              onChange={e => setDivision(e.target.value)}
+              className="sms-compact-control"
+              style={compactControlStyle}
+            >
+              <option value="">Select division…</option>
+              {divisionOptions.map(label => (
+                <option key={label} value={label}>
+                  {label}
+                </option>
+              ))}
             </select>
           ) : (
             <input
@@ -5336,7 +5485,7 @@ function SmsAdminTab({
               value={scope === 'blast' ? 'All teams in tournament (high impact)' : targetId}
               onChange={e => setTargetId(e.target.value)}
               disabled={scope === 'blast'}
-              placeholder={scope === 'event' ? 'event_id' : scope === 'player' ? 'player_id' : ''}
+              placeholder=""
               className="sms-compact-control"
               style={{ ...compactControlStyle, backgroundColor: scope === 'blast' ? '#f7f7f7' : '#fff' }}
             />

@@ -1,6 +1,7 @@
 """Tests for expanded SMS targeting endpoints and dedupe behavior."""
 
 from datetime import date
+from urllib.parse import quote
 
 import pytest
 from sqlmodel import Session, select
@@ -113,6 +114,20 @@ def test_division_scope_send(client, session, setup_targeting_data):
     assert data["sent"] == 1
 
 
+def test_division_scope_send_by_event_style_label(client, session, setup_targeting_data):
+    tournament, mixed_event, _, _, _, _ = setup_targeting_data
+    division_label = quote(mixed_event.name, safe="")
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/division/{division_label}",
+        json={"message": "Division by event name"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["message_type"] == "division_blast"
+    assert data["sent"] == 1
+
+
 def test_player_scope_preview_and_send(client, session, setup_targeting_data):
     tournament, _, _, _, _, player = setup_targeting_data
 
@@ -134,6 +149,11 @@ def test_player_scope_preview_and_send(client, session, setup_targeting_data):
     assert send_data["message_type"] == "player_direct"
     assert send_data["sent"] == 1
     assert send_data["results"][0]["player_id"] == player.id
+
+    lookup = client.get(f"/api/tournaments/{tournament.id}/sms/players")
+    assert lookup.status_code == 200
+    lookup_data = lookup.json()
+    assert any(row["player_id"] == player.id for row in lookup_data)
 
 
 def test_dedupe_key_prevents_duplicate_retries(client, session, setup_targeting_data):

@@ -2799,9 +2799,24 @@ export interface SmsTimeslotRequest {
   dedupe_key?: string
 }
 
+export interface SmsPlayerLookupItem {
+  player_id: number
+  player_name: string
+  phone_e164: string | null
+  consent_status: string
+}
+
 export async function getSmsStatus(tournamentId: number): Promise<SmsStatusResponse> {
   return fetchJson<SmsStatusResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/status`
+  )
+}
+
+export async function getSmsPlayers(
+  tournamentId: number
+): Promise<SmsPlayerLookupItem[]> {
+  return fetchJson<SmsPlayerLookupItem[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/players`
   )
 }
 
@@ -2828,11 +2843,11 @@ export async function sendSmsEvent(
 
 export async function sendSmsDivision(
   tournamentId: number,
-  division: 'mixed' | 'womens',
+  division: string,
   payload: SmsSendRequest
 ): Promise<SmsSendResponse> {
   return fetchJson<SmsSendResponse>(
-    `${API_BASE_URL}/tournaments/${tournamentId}/sms/division/${division}`,
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/division/${encodeURIComponent(division)}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }
@@ -2903,11 +2918,11 @@ export async function previewSmsEvent(
 
 export async function previewSmsDivision(
   tournamentId: number,
-  division: 'mixed' | 'womens',
+  division: string,
   payload: SmsSendRequest
 ): Promise<SmsPreviewResponse> {
   return fetchJson<SmsPreviewResponse>(
-    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/division/${division}`,
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/division/${encodeURIComponent(division)}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }
