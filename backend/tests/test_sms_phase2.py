@@ -474,6 +474,82 @@ def test_match_lookup_filters_completed_vs_upcoming(client, session, setup_tourn
     assert all(r["match_id"] != upcoming_match.id for r in completed_rows)
 
 
+def test_match_lookup_uses_single_active_version_not_old_versions(
+    client, session, setup_tournament_with_teams
+):
+    """Lookup should only use active desk/public/final version, not all versions."""
+    tournament, event, teams = setup_tournament_with_teams
+    from app.models.match import Match
+    from app.models.schedule_version import ScheduleVersion
+
+    old_final = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="final",
+        notes="Old Final",
+    )
+    active_desk = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=2,
+        status="draft",
+        notes="Desk Draft",
+    )
+    session.add(old_final)
+    session.add(active_desk)
+    session.commit()
+    session.refresh(old_final)
+    session.refresh(active_desk)
+
+    old_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=old_final.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=10,
+        duration_minutes=60,
+        match_code="DUP_M1",
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        runtime_status="SCHEDULED",
+    )
+    active_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=active_desk.id,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=11,
+        duration_minutes=60,
+        match_code="DUP_M1",
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        runtime_status="SCHEDULED",
+    )
+    session.add(old_match)
+    session.add(active_match)
+    session.commit()
+    session.refresh(old_match)
+    session.refresh(active_match)
+
+    resp = client.get(
+        f"/api/tournaments/{tournament.id}/sms/matches",
+        params={"phase": "upcoming"},
+    )
+    assert resp.status_code == 200
+    rows = resp.json()
+
+    ids = {r["match_id"] for r in rows}
+    assert active_match.id in ids
+    assert old_match.id not in ids
+
+
 # ---------------------------------------------------------------------------
 # Preview endpoint
 # ---------------------------------------------------------------------------

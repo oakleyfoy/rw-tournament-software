@@ -22,6 +22,7 @@ from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.player import Player
+from app.models.schedule_version import ScheduleVersion
 from app.models.schedule_slot import ScheduleSlot
 from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_log import SmsLog
@@ -256,6 +257,58 @@ def _get_all_teams_for_tournament(
         select(Team).where(Team.event_id.in_(event_ids))  # type: ignore
     ).all()
     return list(teams)
+
+
+def _resolve_match_lookup_version(
+    session: Session,
+    tournament: Tournament,
+) -> Optional[ScheduleVersion]:
+    """
+    Resolve single schedule version for match lookup to avoid cross-version duplicates.
+
+    Priority mirrors desk behavior:
+    1) Desk Draft (draft + notes "Desk Draft")
+    2) Tournament public schedule version pointer
+    3) Latest final version
+    4) Latest draft version (fallback)
+    """
+    desk_draft = session.exec(
+        select(ScheduleVersion)
+        .where(
+            ScheduleVersion.tournament_id == tournament.id,
+            ScheduleVersion.status == "draft",
+            ScheduleVersion.notes == "Desk Draft",
+        )
+        .order_by(ScheduleVersion.version_number.desc())
+    ).first()
+    if desk_draft:
+        return desk_draft
+
+    if tournament.public_schedule_version_id:
+        pointed = session.get(ScheduleVersion, tournament.public_schedule_version_id)
+        if pointed and pointed.tournament_id == tournament.id:
+            return pointed
+
+    latest_final = session.exec(
+        select(ScheduleVersion)
+        .where(
+            ScheduleVersion.tournament_id == tournament.id,
+            ScheduleVersion.status == "final",
+        )
+        .order_by(ScheduleVersion.version_number.desc())
+    ).first()
+    if latest_final:
+        return latest_final
+
+    latest_draft = session.exec(
+        select(ScheduleVersion)
+        .where(
+            ScheduleVersion.tournament_id == tournament.id,
+            ScheduleVersion.status == "draft",
+        )
+        .order_by(ScheduleVersion.version_number.desc())
+    ).first()
+    return latest_draft
 
 
 def _normalize_allowlist_text(raw: Optional[str]) -> str:
@@ -990,13 +1043,20 @@ def get_sms_matches(
     - upcoming: matches not completed
     - completed: finalized/completed matches
     """
-    _get_tournament_or_404(session, tournament_id)
+    tournament = _get_tournament_or_404(session, tournament_id)
     phase_norm = (phase or "upcoming").strip().lower()
     if phase_norm not in {"upcoming", "completed"}:
         raise HTTPException(400, "phase must be 'upcoming' or 'completed'")
 
+    version = _resolve_match_lookup_version(session, tournament)
+    if not version:
+        return []
+
     matches = session.exec(
-        select(Match).where(Match.tournament_id == tournament_id)
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version.id,
+        )
     ).all()
     if not matches:
         return []
