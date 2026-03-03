@@ -317,6 +317,57 @@ def _event_lookup_keys(event: Event) -> set[str]:
     return {k for k in keys if k}
 
 
+def _normalize_team_phone(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if not value:
+        return None
+    if value in {"—", "-", "N/A", "n/a", "none", "None"}:
+        return None
+    try:
+        return format_e164(value)
+    except ValueError:
+        return None
+
+
+def _team_slot_phone(team: Team, slot: int) -> Optional[str]:
+    if slot == 1:
+        return (
+            _normalize_team_phone(getattr(team, "player1_cellphone", None))
+            or _normalize_team_phone(getattr(team, "p1_cell", None))
+        )
+    return (
+        _normalize_team_phone(getattr(team, "player2_cellphone", None))
+        or _normalize_team_phone(getattr(team, "p2_cell", None))
+    )
+
+
+def _team_player_names(team: Team) -> tuple[str, str]:
+    source = (
+        (getattr(team, "display_name", None) or "").strip()
+        or (getattr(team, "name", None) or "").strip()
+    )
+    if not source:
+        fallback = f"Team {getattr(team, 'id', 'Unknown')}"
+        return (f"{fallback} Player 1", f"{fallback} Player 2")
+
+    if "/" in source:
+        parts = [p.strip() for p in source.split("/") if p.strip()]
+    elif "&" in source:
+        parts = [p.strip() for p in source.split("&") if p.strip()]
+    else:
+        parts = [source]
+
+    if len(parts) == 1:
+        p1 = parts[0]
+        p2 = f"{parts[0]} (P2)"
+    else:
+        p1 = parts[0]
+        p2 = parts[1]
+    return (p1, p2)
+
+
 def _match_is_completed(match: Match) -> bool:
     runtime = (match.runtime_status or "").upper()
     status = (match.status or "").lower()
@@ -850,13 +901,63 @@ def get_sms_players(
     tournament_id: int,
     session: Session = Depends(get_session),
 ):
-    """List known players for player-target lookup in SMS UI."""
+    """List known players for player-target lookup in SMS UI.
+
+    If Player rows are missing (legacy team-only records), this endpoint
+    auto-provisions players from team phone slots for reliable player search.
+    """
     _get_tournament_or_404(session, tournament_id)
     rows = session.exec(
         select(Player).where(Player.tournament_id == tournament_id)
     ).all()
 
     players = list(rows)
+    players_by_phone: dict[str, Player] = {
+        p.phone_e164: p
+        for p in players
+        if p.phone_e164
+    }
+
+    teams = _get_all_teams_for_tournament(session, tournament_id)
+    changed = False
+    for team in teams:
+        p1_name, p2_name = _team_player_names(team)
+        for slot, player_name, phone_e164 in (
+            (1, p1_name, _team_slot_phone(team, 1)),
+            (2, p2_name, _team_slot_phone(team, 2)),
+        ):
+            if not phone_e164:
+                continue
+
+            existing = players_by_phone.get(phone_e164)
+            if existing:
+                if existing.full_name.startswith("Unknown (") and player_name:
+                    existing.full_name = player_name
+                    if not existing.display_name:
+                        existing.display_name = player_name
+                    existing.updated_at = datetime.now(timezone.utc)
+                    session.add(existing)
+                    changed = True
+                continue
+
+            created = Player(
+                tournament_id=tournament_id,
+                full_name=player_name or f"Team {team.id} Player {slot}",
+                display_name=player_name or None,
+                phone_e164=phone_e164,
+                sms_consent_status="unknown",
+                sms_consent_source="team_phone_sync",
+                sms_consent_updated_at=datetime.now(timezone.utc),
+            )
+            session.add(created)
+            session.flush()
+            players.append(created)
+            players_by_phone[phone_e164] = created
+            changed = True
+
+    if changed:
+        session.commit()
+
     players.sort(
         key=lambda p: (
             (p.display_name or p.full_name or "").lower(),

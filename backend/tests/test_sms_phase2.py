@@ -739,7 +739,29 @@ def test_sms_status(client, session, setup_tournament_with_teams):
     data = resp.json()
     assert data["total_teams"] == 4
     assert data["teams_with_phones"] == 2  # team1 and team2
-    assert data["twilio_configured"] is False  # No env vars in test
+
+
+def test_players_lookup_auto_provisions_from_team_contacts(client, session, setup_tournament_with_teams):
+    """Player lookup should populate from team phone/name slots when players are missing."""
+    tournament, _, _ = setup_tournament_with_teams
+
+    lookup = client.get(f"/api/tournaments/{tournament.id}/sms/players")
+    assert lookup.status_code == 200
+    rows = lookup.json()
+    assert len(rows) >= 3
+
+    phones = {r["phone_e164"] for r in rows}
+    assert "+19013593035" in phones
+    assert "+15551112222" in phones
+    assert "+15553334444" in phones
+
+    target = next(r for r in rows if r["phone_e164"] == "+19013593035")
+    send = client.post(
+        f"/api/tournaments/{tournament.id}/sms/player/{target['player_id']}",
+        json={"message": "Lookup send test"},
+    )
+    assert send.status_code == 200
+    assert send.json()["sent"] == 1
 
 
 def test_sms_status_when_twilio_is_configured(

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getEvents,
+  getTournament,
   getDeskSnapshot,
   getDeskImpact,
   getPoolProjection,
@@ -4999,6 +5000,7 @@ function SmsAdminTab({
 
   const [scope, setScope] = useState<SmsScope>('team')
   const [targetId, setTargetId] = useState('')
+  const [divisionEventCategory, setDivisionEventCategory] = useState<'mixed' | 'womens' | ''>('')
   const [division, setDivision] = useState('')
   const [message, setMessage] = useState('')
   const [dedupeKey, setDedupeKey] = useState('')
@@ -5015,6 +5017,7 @@ function SmsAdminTab({
     total_teams: number
     teams_with_phones: number
   } | null>(null)
+  const [tournamentTimezone, setTournamentTimezone] = useState<string | null>(null)
 
   const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -5077,14 +5080,20 @@ function SmsAdminTab({
   }, [tournamentId])
 
   const loadLookups = useCallback(async () => {
-    const [eventRows, playerRows] = await Promise.all([
+    const [eventRows, playerRows, tournament] = await Promise.all([
       getEvents(tournamentId),
       getSmsPlayers(tournamentId),
+      getTournament(tournamentId),
     ])
     setEvents(eventRows)
     setPlayers(playerRows)
+    setTournamentTimezone(tournament.timezone || null)
     if (eventRows.length > 0) {
-      setDivision(prev => prev || formatEventScopeLabel(eventRows[0]))
+      const first = eventRows[0]
+      const firstCategory = first.category
+      const firstDivision = formatEventScopeLabel(first)
+      setDivisionEventCategory(prev => prev || firstCategory)
+      setDivision(prev => prev || firstDivision)
     }
   }, [tournamentId])
 
@@ -5196,18 +5205,20 @@ function SmsAdminTab({
     return rows
   }, [events])
 
-  const divisionOptions = useMemo(() => {
-    const seen = new Set<string>()
-    const options: string[] = []
-    for (const event of sortedEvents) {
-      const label = formatEventScopeLabel(event)
-      const key = label.toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      options.push(label)
-    }
-    return options
+  const divisionEventOptions = useMemo(() => {
+    const present = new Set(sortedEvents.map(e => e.category))
+    const out: Array<{ value: 'mixed' | 'womens'; label: string }> = []
+    if (present.has('mixed')) out.push({ value: 'mixed', label: 'Mixed' })
+    if (present.has('womens')) out.push({ value: 'womens', label: "Women's" })
+    return out
   }, [sortedEvents])
+
+  const divisionChoicesForEvent = useMemo(() => {
+    if (!divisionEventCategory) return []
+    return sortedEvents
+      .filter(e => e.category === divisionEventCategory)
+      .map(e => formatEventScopeLabel(e))
+  }, [sortedEvents, divisionEventCategory])
 
   const sortedPlayers = useMemo(() => {
     const rows = [...players]
@@ -5249,6 +5260,26 @@ function SmsAdminTab({
       return haystack.includes(query)
     })
   }, [matches, matchSearch])
+
+  const formatLogTime = useCallback((iso: string) => {
+    const dt = new Date(iso)
+    if (Number.isNaN(dt.getTime())) return iso
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        timeZone: tournamentTimezone || undefined,
+        timeZoneName: 'short',
+      }).format(dt)
+    } catch {
+      return dt.toLocaleString()
+    }
+  }, [tournamentTimezone])
 
   const handlePreview = async () => {
     if (!message.trim()) {
@@ -5568,19 +5599,46 @@ function SmsAdminTab({
               ))}
             </select>
           ) : scope === 'division' ? (
-            <select
-              value={division}
-              onChange={e => setDivision(e.target.value)}
-              className="sms-compact-control"
-              style={compactControlStyle}
-            >
-              <option value="">Select division…</option>
-              {divisionOptions.map(label => (
-                <option key={label} value={label}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <select
+                value={divisionEventCategory}
+                onChange={e => {
+                  const next = e.target.value as 'mixed' | 'womens' | ''
+                  setDivisionEventCategory(next)
+                  if (!next) {
+                    setDivision('')
+                    return
+                  }
+                  const choices = sortedEvents
+                    .filter(ev => ev.category === next)
+                    .map(ev => formatEventScopeLabel(ev))
+                  setDivision(choices[0] || '')
+                }}
+                className="sms-compact-control"
+                style={compactControlStyle}
+              >
+                <option value="">Select event…</option>
+                {divisionEventOptions.map(eventOpt => (
+                  <option key={eventOpt.value} value={eventOpt.value}>
+                    {eventOpt.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={division}
+                onChange={e => setDivision(e.target.value)}
+                className="sms-compact-control"
+                style={compactControlStyle}
+                disabled={!divisionEventCategory}
+              >
+                <option value="">Select division choice…</option>
+                {divisionChoicesForEvent.map(label => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
           ) : (
             <input
               type="text"
@@ -5812,7 +5870,7 @@ function SmsAdminTab({
             <tbody>
               {logs.map(l => (
                 <tr key={l.id} style={{ borderTop: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{new Date(l.sent_at).toLocaleString()}</td>
+                  <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{formatLogTime(l.sent_at)}</td>
                   <td style={{ padding: 6 }}>{l.message_type}</td>
                   <td style={{ padding: 6 }}>{l.phone_number}</td>
                   <td style={{ padding: 6 }}>{l.status}</td>
@@ -5831,6 +5889,7 @@ function SmsAdminTab({
           </table>
         </div>
         <div style={{ marginTop: 8, fontSize: 11, color: '#666' }}>
+          Log times shown in: <strong>{tournamentTimezone || 'browser local time'}</strong>.<br />
           Webhook setup for compliance: <code>/api/tournaments/{tournamentId}/sms/webhook/inbound</code> and <code>/api/tournaments/{tournamentId}/sms/webhook/status-callback</code>
         </div>
       </div>
