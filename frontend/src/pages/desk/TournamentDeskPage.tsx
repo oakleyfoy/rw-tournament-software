@@ -288,6 +288,8 @@ function CourtCard({
   courtMatches,
   allMatches,
   onMatchClick,
+  onSmsTeamClick,
+  onSmsMatchClick,
 }: {
   courtName: string
   nowPlaying?: DeskMatchItem
@@ -300,6 +302,8 @@ function CourtCard({
   courtMatches: DeskMatchItem[]
   allMatches: DeskMatchItem[]
   onMatchClick?: (m: DeskMatchItem) => void
+  onSmsTeamClick?: (teamId: number) => void
+  onSmsMatchClick?: (matchId: number) => void
 }) {
   const [editingNote, setEditingNote] = useState(false)
   const [noteText, setNoteText] = useState(courtState?.note || '')
@@ -466,7 +470,16 @@ function CourtCard({
             <div style={{ fontSize: 9, fontWeight: 700, color: nowPlaying.status === 'PAUSED' ? '#c62828' : '#e65100', textTransform: 'uppercase', marginBottom: 2 }}>
               {nowPlaying.status === 'PAUSED' ? 'Paused' : 'Now Playing'}
             </div>
-            <MiniMatchCard match={nowPlaying} isDraft={isDraft} onAction={onAction} showActions allMatches={allMatches} onMatchClick={onMatchClick} />
+            <MiniMatchCard
+              match={nowPlaying}
+              isDraft={isDraft}
+              onAction={onAction}
+              showActions
+              allMatches={allMatches}
+              onMatchClick={onMatchClick}
+              onSmsTeamClick={onSmsTeamClick}
+              onSmsMatchClick={onSmsMatchClick}
+            />
           </div>
         ) : (
           <div style={{ fontSize: 10, color: '#bbb', marginBottom: 6, fontStyle: 'italic' }}>
@@ -478,7 +491,16 @@ function CourtCard({
             <div style={{ fontSize: 9, fontWeight: 700, color: '#555', textTransform: 'uppercase', marginBottom: 2 }}>
               Up Next
             </div>
-            <MiniMatchCard match={upNext} isDraft={isDraft} onAction={onAction} showActions allMatches={allMatches} onMatchClick={onMatchClick} />
+            <MiniMatchCard
+              match={upNext}
+              isDraft={isDraft}
+              onAction={onAction}
+              showActions
+              allMatches={allMatches}
+              onMatchClick={onMatchClick}
+              onSmsTeamClick={onSmsTeamClick}
+              onSmsMatchClick={onSmsMatchClick}
+            />
           </div>
         ) : (
           <div style={{ fontSize: 10, color: '#bbb', fontStyle: 'italic', marginBottom: onDeck ? 6 : 0 }}>
@@ -507,21 +529,41 @@ function CourtCard({
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 700, fontSize: 10 }}>#{onDeck.match_number}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontWeight: 700, fontSize: 10 }}>#{onDeck.match_number}</span>
+                      {onSmsMatchClick && (
+                        <SmsQuickActionButton
+                          title={`Text match #${onDeck.match_number}`}
+                          onClick={() => onSmsMatchClick(onDeck.match_id)}
+                        />
+                      )}
+                    </div>
                     <div style={{ display: 'flex', gap: 2 }}>
                       {deckDefault && <Badge label="DEFAULT" bg="#c62828" color="#fff" />}
                       <EventBadge name={onDeck.event_name} />
                       <Badge label={onDeck.stage} bg={STAGE_COLORS[onDeck.stage] || '#757575'} color="#fff" />
                     </div>
                   </div>
-                  <div style={{ fontWeight: 600, fontSize: 10 }}>
+                  <div style={{ fontWeight: 600, fontSize: 10, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
                     <span style={{ color: onDeck.team1_defaulted ? '#c62828' : '#555', textDecoration: onDeck.team1_defaulted ? 'line-through' : 'none' }}>
                       {onDeck.team1_display}
                     </span>
+                    {onSmsTeamClick && onDeck.team1_id && (
+                      <SmsQuickActionButton
+                        title={`Text ${onDeck.team1_display}`}
+                        onClick={() => onSmsTeamClick(onDeck.team1_id!)}
+                      />
+                    )}
                     <span style={{ color: '#999' }}> vs </span>
                     <span style={{ color: onDeck.team2_defaulted ? '#c62828' : '#555', textDecoration: onDeck.team2_defaulted ? 'line-through' : 'none' }}>
                       {onDeck.team2_display}
                     </span>
+                    {onSmsTeamClick && onDeck.team2_id && (
+                      <SmsQuickActionButton
+                        title={`Text ${onDeck.team2_display}`}
+                        onClick={() => onSmsTeamClick(onDeck.team2_id!)}
+                      />
+                    )}
                   </div>
                   {onDeck.scheduled_time && (
                     <div style={{ color: '#999', fontSize: 9 }}>{onDeck.scheduled_time}</div>
@@ -631,6 +673,39 @@ function NoteIcon({ note }: { note: string }) {
   )
 }
 
+function SmsQuickActionButton({ title, onClick }: { title: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={e => {
+        e.preventDefault()
+        e.stopPropagation()
+        onClick()
+      }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 15,
+        height: 15,
+        borderRadius: 3,
+        border: '1px solid #90caf9',
+        backgroundColor: '#e3f2fd',
+        color: '#0d47a1',
+        fontSize: 9,
+        lineHeight: 1,
+        padding: 0,
+        cursor: 'pointer',
+        flexShrink: 0,
+      }}
+    >
+      &#9993;
+    </button>
+  )
+}
+
 function MiniMatchCard({
   match,
   isDraft,
@@ -638,6 +713,8 @@ function MiniMatchCard({
   showActions,
   allMatches,
   onMatchClick,
+  onSmsTeamClick,
+  onSmsMatchClick,
 }: {
   match: DeskMatchItem
   isDraft: boolean
@@ -645,6 +722,8 @@ function MiniMatchCard({
   showActions?: boolean
   allMatches?: DeskMatchItem[]
   onMatchClick?: (m: DeskMatchItem) => void
+  onSmsTeamClick?: (teamId: number) => void
+  onSmsMatchClick?: (matchId: number) => void
 }) {
   const sc = STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED
   const team1TBD = !match.team1_id && match.source_match_a_id
@@ -664,7 +743,15 @@ function MiniMatchCard({
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-        <span style={{ fontWeight: 700, fontSize: 11 }}>#{match.match_number}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontWeight: 700, fontSize: 11 }}>#{match.match_number}</span>
+          {onSmsMatchClick && (
+            <SmsQuickActionButton
+              title={`Text match #${match.match_number}`}
+              onClick={() => onSmsMatchClick(match.match_id)}
+            />
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 3 }}>
           {hasDefault && <Badge label="DEFAULT" bg="#c62828" color="#fff" />}
           <EventBadge name={match.event_name} />
@@ -680,8 +767,14 @@ function MiniMatchCard({
         textDecoration: match.team1_defaulted ? 'line-through' : 'none',
         display: 'flex', alignItems: 'center', gap: 3,
       }}>
-        {match.team1_display}
+        <span>{match.team1_display}</span>
         {match.team1_notes && <NoteIcon note={match.team1_notes} />}
+        {onSmsTeamClick && match.team1_id && (
+          <SmsQuickActionButton
+            title={`Text ${match.team1_display}`}
+            onClick={() => onSmsTeamClick(match.team1_id!)}
+          />
+        )}
       </div>
       {team1TBD && allMatches && (
         <FeederMatchInfo sourceMatchId={match.source_match_a_id!} allMatches={allMatches} />
@@ -695,8 +788,14 @@ function MiniMatchCard({
         textDecoration: match.team2_defaulted ? 'line-through' : 'none',
         display: 'flex', alignItems: 'center', gap: 3,
       }}>
-        {match.team2_display}
+        <span>{match.team2_display}</span>
         {match.team2_notes && <NoteIcon note={match.team2_notes} />}
+        {onSmsTeamClick && match.team2_id && (
+          <SmsQuickActionButton
+            title={`Text ${match.team2_display}`}
+            onClick={() => onSmsTeamClick(match.team2_id!)}
+          />
+        )}
       </div>
       {team2TBD && allMatches && (
         <FeederMatchInfo sourceMatchId={match.source_match_b_id!} allMatches={allMatches} />
@@ -4982,6 +5081,11 @@ function TeamsTab({
 
 type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player' | 'match'
 
+type SmsQuickTargetPrefill = {
+  scope: 'team' | 'match'
+  targetId: number
+}
+
 function formatEventScopeLabel(event: Event): string {
   const categoryPrefix = event.category === 'womens' ? "Women's" : 'Mixed'
   const name = (event.name || '').trim()
@@ -4994,8 +5098,10 @@ function formatEventScopeLabel(event: Event): string {
 
 function SmsAdminTab({
   tournamentId,
+  quickTarget,
 }: {
   tournamentId: number
+  quickTarget?: SmsQuickTargetPrefill | null
 }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -5042,6 +5148,7 @@ function SmsAdminTab({
   const [teams, setTeams] = useState<DeskTeamItem[]>([])
   const [teamSearch, setTeamSearch] = useState('')
   const [playerSearch, setPlayerSearch] = useState('')
+  const skipScopeResetRef = useRef(false)
 
   const loadStatusAndSettings = useCallback(async () => {
     const [statusResp, settingsResp] = await Promise.all([
@@ -5148,11 +5255,39 @@ function SmsAdminTab({
 
   useEffect(() => {
     setConfirmText('')
+    if (skipScopeResetRef.current) {
+      skipScopeResetRef.current = false
+      return
+    }
     setTargetId('')
     if (scope !== 'team') setTeamSearch('')
     if (scope !== 'player') setPlayerSearch('')
     if (scope !== 'match') setMatchSearch('')
   }, [scope])
+
+  useEffect(() => {
+    if (!quickTarget) return
+    const desiredScope: SmsScope = quickTarget.scope
+    setScope(prev => {
+      if (prev !== desiredScope) {
+        skipScopeResetRef.current = true
+        return desiredScope
+      }
+      skipScopeResetRef.current = false
+      return prev
+    })
+    setError(null)
+    setPreview(null)
+    setSendResult(null)
+    setConfirmText('')
+    setTargetId(String(quickTarget.targetId))
+    if (desiredScope === 'team') {
+      setTeamSearch('')
+    } else {
+      setMatchPhase('upcoming')
+      setMatchSearch('')
+    }
+  }, [quickTarget])
 
   useEffect(() => {
     if (scope !== 'match') return
@@ -5956,6 +6091,7 @@ export default function TournamentDeskPage() {
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
   const [activeTab, setActiveTab] = useState<'courts' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
+  const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
   const [bulkToast, setBulkToast] = useState<string | null>(null)
@@ -6037,6 +6173,22 @@ export default function TournamentDeskPage() {
       setCourtStates(prev => ({ ...prev, [courtLabel]: updated }))
     } catch { /* ignore */ }
   }, [tid])
+
+  const handleQuickSmsTeam = useCallback((teamId: number) => {
+    setSmsQuickTarget({
+      scope: 'team',
+      targetId: teamId,
+    })
+    setActiveTab('sms')
+  }, [])
+
+  const handleQuickSmsMatch = useCallback((matchId: number) => {
+    setSmsQuickTarget({
+      scope: 'match',
+      targetId: matchId,
+    })
+    setActiveTab('sms')
+  }, [])
 
   const handleBulkPause = useCallback(async () => {
     if (!tid || !data) return
@@ -6425,6 +6577,8 @@ export default function TournamentDeskPage() {
                       courtMatches={courtMatches}
                       allMatches={data.matches}
                       onMatchClick={m => setDrawerMatch(m)}
+                      onSmsTeamClick={handleQuickSmsTeam}
+                      onSmsMatchClick={handleQuickSmsMatch}
                     />
                   )
                 })}
@@ -6580,7 +6734,7 @@ export default function TournamentDeskPage() {
         )}
 
         {activeTab === 'sms' && (
-          <SmsAdminTab tournamentId={tid!} />
+          <SmsAdminTab tournamentId={tid!} quickTarget={smsQuickTarget} />
         )}
       </div>
 
