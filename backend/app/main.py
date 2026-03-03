@@ -13,6 +13,7 @@ from app.db_schema_patch import (
     ensure_sms_log_columns,
     ensure_team_columns,
     ensure_tournament_columns,
+    ensure_tournament_sms_settings_columns,
 )
 from app.routes import (
     avoid_edges,
@@ -133,6 +134,7 @@ def on_startup():
     ensure_tournament_columns(engine)
     ensure_team_columns(engine)
     ensure_sms_log_columns(engine)
+    ensure_tournament_sms_settings_columns(engine)
 
     # Print all registered routes for debugging (full path stack)
     print("\n" + "=" * 80)

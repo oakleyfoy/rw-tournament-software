@@ -5143,6 +5143,8 @@ function SmsAdminTab({
         auto_on_deck: settingsDraft.auto_on_deck,
         auto_up_next: settingsDraft.auto_up_next,
         auto_court_change: settingsDraft.auto_court_change,
+        test_mode: settingsDraft.test_mode,
+        test_allowlist: settingsDraft.test_allowlist,
       })
       setSettingsDraft(updated)
     } catch (e: any) {
@@ -5198,11 +5200,20 @@ function SmsAdminTab({
           <div><strong>From #:</strong> {status?.from_number || '—'}</div>
           <div><strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones</div>
           <div><strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}</div>
+          <div><strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}</div>
         </div>
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Manual Send / Preview</h3>
+        {settingsDraft?.test_mode && (
+          <div style={{ marginBottom: 8, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100' }}>
+            TEST mode is ON. Sends are restricted to allowlisted numbers:
+            <div style={{ marginTop: 4, color: '#6d4c41' }}>
+              {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
+            </div>
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: 8, marginBottom: 8 }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
           <label style={{ fontSize: 12, color: '#666' }}>
@@ -5309,7 +5320,7 @@ function SmsAdminTab({
         {sendResult && (
           <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
             <div style={{ fontSize: 13, marginBottom: 6 }}>
-              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, deduped {sendResult.skipped_dedupe}
+              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, test-blocked {sendResult.skipped_test_mode}, deduped {sendResult.skipped_dedupe}
             </div>
             <div style={{ maxHeight: 180, overflowY: 'auto', fontSize: 12 }}>
               {sendResult.results.slice(0, 25).map((r, idx) => (
@@ -5344,8 +5355,31 @@ function SmsAdminTab({
                 </label>
               ))}
             </div>
+            <div style={{ marginBottom: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settingsDraft.test_mode)}
+                  onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_mode: e.target.checked }) : prev)}
+                />
+                TEST mode (allowlist-only delivery)
+              </label>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
+              </div>
+              <input
+                type="text"
+                value={settingsDraft.test_allowlist ?? ''}
+                onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_allowlist: e.target.value }) : prev)}
+                placeholder="+19013593035, +19703092022"
+                style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+              />
+              <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
+                Use comma or newline-separated numbers. They are normalized to E.164 on save.
+              </div>
+            </div>
             <button onClick={saveSettings} disabled={savingSettings} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
-              {savingSettings ? 'Saving…' : 'Save Toggles'}
+              {savingSettings ? 'Saving…' : 'Save Settings'}
             </button>
           </>
         )}

@@ -8,6 +8,7 @@ Provides endpoints for:
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import parse_qsl
@@ -65,6 +66,7 @@ class SmsSendResponse(BaseModel):
     skipped_no_phone: int
     skipped_consent: int = 0
     skipped_dedupe: int = 0
+    skipped_test_mode: int = 0
     message_type: str
     results: List[SmsSendResult]
 
@@ -119,6 +121,8 @@ class SmsSettingsResponse(BaseModel):
     auto_on_deck: bool
     auto_up_next: bool
     auto_court_change: bool
+    test_mode: bool
+    test_allowlist: Optional[str] = None
 
 
 class SmsSettingsUpdate(BaseModel):
@@ -129,6 +133,8 @@ class SmsSettingsUpdate(BaseModel):
     auto_on_deck: Optional[bool] = None
     auto_up_next: Optional[bool] = None
     auto_court_change: Optional[bool] = None
+    test_mode: Optional[bool] = None
+    test_allowlist: Optional[str] = None
 
 
 class SmsTemplateResponse(BaseModel):
@@ -228,6 +234,67 @@ def _get_all_teams_for_tournament(
     return list(teams)
 
 
+def _normalize_allowlist_text(raw: Optional[str]) -> str:
+    """Normalize CSV/newline-separated phone list to canonical E.164 CSV."""
+    if not raw or not raw.strip():
+        return ""
+
+    token_source = re.sub(r"[;\n]+", ",", raw)
+    tokens = [t.strip() for t in token_source.split(",") if t.strip()]
+    normalized: List[str] = []
+    seen = set()
+    invalid: List[str] = []
+    for token in tokens:
+        try:
+            phone = format_e164(token)
+        except ValueError:
+            invalid.append(token)
+            continue
+        if phone not in seen:
+            normalized.append(phone)
+            seen.add(phone)
+
+    if invalid:
+        raise HTTPException(
+            400,
+            f"Invalid phone(s) in test_allowlist: {', '.join(invalid)}",
+        )
+    return ",".join(normalized)
+
+
+def _allowlist_set(raw: Optional[str]) -> set[str]:
+    if not raw:
+        return set()
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _settings_to_response(
+    tournament_id: int,
+    settings: Optional[TournamentSmsSettings],
+) -> SmsSettingsResponse:
+    if not settings:
+        return SmsSettingsResponse(
+            tournament_id=tournament_id,
+            auto_first_match=False,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=True,
+            test_mode=False,
+            test_allowlist=None,
+        )
+    return SmsSettingsResponse(
+        tournament_id=settings.tournament_id,
+        auto_first_match=settings.auto_first_match,
+        auto_post_match_next=settings.auto_post_match_next,
+        auto_on_deck=settings.auto_on_deck,
+        auto_up_next=settings.auto_up_next,
+        auto_court_change=settings.auto_court_change,
+        test_mode=bool(getattr(settings, "test_mode", False)),
+        test_allowlist=getattr(settings, "test_allowlist", None),
+    )
+
+
 def _is_phone_send_allowed(
     session: Session,
     tournament_id: int,
@@ -316,11 +383,22 @@ def _send_to_phone_targets(
 ) -> SmsSendResponse:
     """Send to explicit phone targets with consent + dedupe protections."""
     twilio = get_twilio_service()
+    settings = session.exec(
+        select(TournamentSmsSettings).where(
+            TournamentSmsSettings.tournament_id == tournament_id
+        )
+    ).first()
+    test_mode_enabled = bool(settings and getattr(settings, "test_mode", False))
+    test_allowlist = _allowlist_set(
+        getattr(settings, "test_allowlist", None) if settings else None
+    )
+
     results: List[SmsSendResult] = []
     sent_count = 0
     failed_count = 0
     skipped_consent_count = 0
     skipped_dedupe_count = 0
+    skipped_test_mode_count = 0
 
     for target in targets:
         phone = target["phone"]
@@ -352,6 +430,39 @@ def _send_to_phone_targets(
                     )
                 )
                 continue
+
+        if test_mode_enabled and phone not in test_allowlist:
+            skipped_test_mode_count += 1
+            blocked_reason = (
+                "Test mode enabled: recipient not in test_allowlist"
+            )
+            session.add(
+                SmsLog(
+                    tournament_id=tournament_id,
+                    team_id=team_id,
+                    phone_number=phone,
+                    message_body=message,
+                    message_type=message_type,
+                    twilio_sid=None,
+                    status="blocked_test_mode",
+                    error_message=blocked_reason,
+                    trigger=trigger,
+                    dedupe_key=dedupe_key,
+                    sent_at=datetime.now(timezone.utc),
+                )
+            )
+            results.append(
+                SmsSendResult(
+                    phone=phone,
+                    team_id=team_id,
+                    team_name=team_name,
+                    player_id=player_id,
+                    player_name=player_name,
+                    status="blocked_test_mode",
+                    error=blocked_reason,
+                )
+            )
+            continue
 
         is_allowed, consent_state = _is_phone_send_allowed(
             session=session,
@@ -431,6 +542,7 @@ def _send_to_phone_targets(
         skipped_no_phone=skipped_no_phone,
         skipped_consent=skipped_consent_count,
         skipped_dedupe=skipped_dedupe_count,
+        skipped_test_mode=skipped_test_mode_count,
         message_type=message_type,
         results=results,
     )
@@ -1165,18 +1277,7 @@ def get_sms_settings(
         )
     ).first()
 
-    if not settings:
-        # Return defaults (not persisted yet)
-        return SmsSettingsResponse(
-            tournament_id=tournament_id,
-            auto_first_match=False,
-            auto_post_match_next=False,
-            auto_on_deck=False,
-            auto_up_next=False,
-            auto_court_change=True,
-        )
-
-    return settings
+    return _settings_to_response(tournament_id, settings)
 
 
 @router.patch("/settings", response_model=SmsSettingsResponse)
@@ -1200,6 +1301,10 @@ def update_sms_settings(
 
     # Apply only provided fields
     update_data = body.model_dump(exclude_unset=True)
+    if "test_allowlist" in update_data:
+        update_data["test_allowlist"] = _normalize_allowlist_text(
+            update_data["test_allowlist"]
+        ) or None
     for key, value in update_data.items():
         setattr(settings, key, value)
     settings.updated_at = datetime.now(timezone.utc)
@@ -1207,7 +1312,7 @@ def update_sms_settings(
     session.add(settings)
     session.commit()
     session.refresh(settings)
-    return settings
+    return _settings_to_response(tournament_id, settings)
 
 
 # ---------------------------------------------------------------------------

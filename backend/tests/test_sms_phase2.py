@@ -392,6 +392,8 @@ def test_settings_defaults(client, session, setup_tournament_with_teams):
     data = resp.json()
     assert data["auto_first_match"] is False
     assert data["auto_court_change"] is True  # Default ON
+    assert data["test_mode"] is False
+    assert data["test_allowlist"] is None
 
 
 def test_settings_update(client, session, setup_tournament_with_teams):
@@ -410,6 +412,35 @@ def test_settings_update(client, session, setup_tournament_with_teams):
     assert data["auto_court_change"] is True  # Default preserved
 
 
+def test_settings_update_test_mode_allowlist_normalizes(client, session, setup_tournament_with_teams):
+    """PATCH settings should normalize and persist test allowlist."""
+    tournament, _, _ = setup_tournament_with_teams
+
+    resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={
+            "test_mode": True,
+            "test_allowlist": "9013593035, +1 (970) 309-2022",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["test_mode"] is True
+    assert data["test_allowlist"] == "+19013593035,+19703092022"
+
+
+def test_settings_update_test_mode_allowlist_invalid_phone(client, session, setup_tournament_with_teams):
+    """PATCH settings should reject invalid allowlist phone numbers."""
+    tournament, _, _ = setup_tournament_with_teams
+
+    resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={"test_allowlist": "NOT-A-PHONE"},
+    )
+    assert resp.status_code == 400
+    assert "invalid phone" in resp.json()["detail"].lower()
+
+
 def test_settings_persist(client, session, setup_tournament_with_teams):
     """Settings should persist across requests."""
     tournament, _, _ = setup_tournament_with_teams
@@ -424,6 +455,36 @@ def test_settings_persist(client, session, setup_tournament_with_teams):
     resp = client.get(f"/api/tournaments/{tournament.id}/sms/settings")
     data = resp.json()
     assert data["auto_first_match"] is True
+
+
+def test_test_mode_blocks_non_allowlisted_numbers(client, session, setup_tournament_with_teams):
+    """When test mode is enabled, only allowlisted numbers can receive sends."""
+    tournament, _, _ = setup_tournament_with_teams
+
+    set_resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={
+            "test_mode": True,
+            "test_allowlist": "9013593035",
+        },
+    )
+    assert set_resp.status_code == 200
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": "Test-mode blast"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] == 1
+    assert data["skipped_test_mode"] == 2
+    assert data["skipped_no_phone"] == 2
+
+    blocked = [r for r in data["results"] if r["status"] == "blocked_test_mode"]
+    allowed = [r for r in data["results"] if r["status"] != "blocked_test_mode"]
+    assert len(blocked) == 2
+    assert len(allowed) == 1
+    assert allowed[0]["phone"] == "+19013593035"
 
 
 # ---------------------------------------------------------------------------

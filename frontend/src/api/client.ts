@@ -2736,6 +2736,7 @@ export interface SmsSendResponse {
   skipped_no_phone: number
   skipped_consent: number
   skipped_dedupe: number
+  skipped_test_mode: number
   message_type: string
   results: SmsSendResult[]
 }
@@ -2778,6 +2779,8 @@ export interface SmsSettingsResponse {
   auto_on_deck: boolean
   auto_up_next: boolean
   auto_court_change: boolean
+  test_mode: boolean
+  test_allowlist: string | null
 }
 
 export interface SmsTemplateResponse {
@@ -2944,7 +2947,13 @@ export async function getSmsSettings(
 export async function patchSmsSettings(
   tournamentId: number,
   payload: Partial<Pick<SmsSettingsResponse,
-    'auto_first_match' | 'auto_post_match_next' | 'auto_on_deck' | 'auto_up_next' | 'auto_court_change'
+    'auto_first_match' |
+    'auto_post_match_next' |
+    'auto_on_deck' |
+    'auto_up_next' |
+    'auto_court_change' |
+    'test_mode' |
+    'test_allowlist'
   >>
 ): Promise<SmsSettingsResponse> {
   return fetchJson<SmsSettingsResponse>(

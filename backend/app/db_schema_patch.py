@@ -44,6 +44,12 @@ REQUIRED_SMS_LOG_COLUMNS: List[Tuple[str, str, str]] = [
     ("dedupe_key", "TEXT", "TEXT"),
 ]
 
+# Columns we must ensure exist in the "tournament_sms_settings" table.
+REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
+    ("test_mode", "INTEGER", "BOOLEAN"),
+    ("test_allowlist", "TEXT", "TEXT"),
+]
+
 
 def _is_sqlite(engine: Engine) -> bool:
     return engine.dialect.name.lower() == "sqlite"
@@ -296,3 +302,61 @@ def ensure_sms_log_columns(engine: Engine) -> None:
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure sms_log columns (this is OK if table doesn't exist yet): {e}")
+
+
+def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
+    """
+    Idempotently adds required columns to the 'tournament_sms_settings' table if missing.
+    Safe to run at every startup.
+    """
+    try:
+        from app.models.tournament_sms_settings import TournamentSmsSettings
+
+        table = TournamentSmsSettings.__table__.name
+
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS:
+                    if name in existing:
+                        continue
+                    default = " DEFAULT 0" if name == "test_mode" else ""
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type}{default};"))
+        else:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    )
+                """
+                    ),
+                    {"table_name": table},
+                ).fetchone()
+                if not result or not result[0]:
+                    return
+
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS:
+                    if name in existing:
+                        continue
+                    default = " DEFAULT FALSE" if name == "test_mode" else ""
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type}{default};"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure tournament_sms_settings columns (this is OK if table doesn't exist yet): {e}"
+        )

@@ -21,6 +21,11 @@ class TournamentSmsSettings(SQLModel, table=True):
     auto_up_next: bool = Field(default=False)
     auto_court_change: bool = Field(default=True)  # Court changes default ON
 
+    # Safety mode for live testing:
+    # if enabled, sends are restricted to numbers in test_allowlist.
+    test_mode: bool = Field(default=False)
+    test_allowlist: Optional[str] = Field(default=None)
+
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
