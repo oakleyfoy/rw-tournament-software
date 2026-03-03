@@ -7,6 +7,7 @@ from sqlmodel import Field, Relationship, SQLModel
 if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.match import Match
+    from app.models.team_player import TeamPlayer
 
 
 class Team(SQLModel, table=True):
@@ -44,3 +45,4 @@ class Team(SQLModel, table=True):
     matches_as_team_b: List["Match"] = Relationship(
         back_populates="team_b", sa_relationship_kwargs={"foreign_keys": "Match.team_b_id"}
     )
+    player_links: List["TeamPlayer"] = Relationship(back_populates="team")

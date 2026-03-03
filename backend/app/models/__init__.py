@@ -12,7 +12,10 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.sms_log import SmsLog
+from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_template import SmsTemplate
+from app.models.player import Player
+from app.models.team_player import TeamPlayer
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 
@@ -33,6 +36,9 @@ __all__ = [
     "TeamAvoidEdge",
     "PolicyRun",
     "SmsLog",
+    "SmsConsentEvent",
     "SmsTemplate",
+    "Player",
+    "TeamPlayer",
     "TournamentSmsSettings",
 ]
