@@ -2015,23 +2015,35 @@ def get_sms_templates(
     templates = session.exec(
         select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)
     ).all()
+    custom_by_type = {t.message_type: t for t in templates}
 
-    # If no custom templates, return defaults as response objects
-    if not templates:
-        result = []
-        for msg_type, body in DEFAULT_SMS_TEMPLATES.items():
-            result.append(
-                SmsTemplateResponse(
-                    id=0,  # Indicates default (not persisted)
-                    tournament_id=tournament_id,
-                    message_type=msg_type,
-                    template_body=body,
-                    is_active=True,
-                )
+    # Always return the full template set in a stable order:
+    # defaults with custom overrides when present.
+    result: List[SmsTemplateResponse] = []
+    for msg_type, default_body in DEFAULT_SMS_TEMPLATES.items():
+        custom = custom_by_type.get(msg_type)
+        if custom is not None:
+            result.append(SmsTemplateResponse.model_validate(custom))
+            continue
+        result.append(
+            SmsTemplateResponse(
+                id=0,  # Indicates default (not persisted)
+                tournament_id=tournament_id,
+                message_type=msg_type,
+                template_body=default_body,
+                is_active=True,
             )
-        return result
+        )
 
-    return templates
+    # Include unexpected persisted rows (defensive), after known defaults.
+    extras = sorted(
+        (t for t in templates if t.message_type not in DEFAULT_SMS_TEMPLATES),
+        key=lambda t: (t.message_type, t.id or 0),
+    )
+    for extra in extras:
+        result.append(SmsTemplateResponse.model_validate(extra))
+
+    return result
 
 
 @router.put("/templates/{message_type}", response_model=SmsTemplateResponse)

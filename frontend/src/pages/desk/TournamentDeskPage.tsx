@@ -303,7 +303,7 @@ function CourtCard({
   allMatches: DeskMatchItem[]
   onMatchClick?: (m: DeskMatchItem) => void
   onSmsTeamClick?: (teamId: number) => void
-  onSmsMatchClick?: (matchId: number) => void
+  onSmsMatchClick?: (matchId: number, phaseHint?: 'upcoming' | 'completed') => void
 }) {
   const [editingNote, setEditingNote] = useState(false)
   const [noteText, setNoteText] = useState(courtState?.note || '')
@@ -534,7 +534,12 @@ function CourtCard({
                       {onSmsMatchClick && (
                         <SmsQuickActionButton
                           title={`Text match #${onDeck.match_number}`}
-                          onClick={() => onSmsMatchClick(onDeck.match_id)}
+                          onClick={() =>
+                            onSmsMatchClick(
+                              onDeck.match_id,
+                              onDeck.status === 'FINAL' ? 'completed' : 'upcoming'
+                            )
+                          }
                         />
                       )}
                     </div>
@@ -723,7 +728,7 @@ function MiniMatchCard({
   allMatches?: DeskMatchItem[]
   onMatchClick?: (m: DeskMatchItem) => void
   onSmsTeamClick?: (teamId: number) => void
-  onSmsMatchClick?: (matchId: number) => void
+  onSmsMatchClick?: (matchId: number, phaseHint?: 'upcoming' | 'completed') => void
 }) {
   const sc = STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED
   const team1TBD = !match.team1_id && match.source_match_a_id
@@ -748,7 +753,12 @@ function MiniMatchCard({
           {onSmsMatchClick && (
             <SmsQuickActionButton
               title={`Text match #${match.match_number}`}
-              onClick={() => onSmsMatchClick(match.match_id)}
+              onClick={() =>
+                onSmsMatchClick(
+                  match.match_id,
+                  match.status === 'FINAL' ? 'completed' : 'upcoming'
+                )
+              }
             />
           )}
         </div>
@@ -5084,6 +5094,7 @@ type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player' | 'match'
 type SmsQuickTargetPrefill = {
   scope: 'team' | 'match'
   targetId: number
+  matchPhase?: 'upcoming' | 'completed'
 }
 
 function formatEventScopeLabel(event: Event): string {
@@ -5135,6 +5146,7 @@ function SmsAdminTab({
   const [templates, setTemplates] = useState<SmsTemplateResponse[]>([])
   const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
   const [savingTemplateType, setSavingTemplateType] = useState<string | null>(null)
+  const [showTemplates, setShowTemplates] = useState(false)
 
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
@@ -5149,6 +5161,7 @@ function SmsAdminTab({
   const [teamSearch, setTeamSearch] = useState('')
   const [playerSearch, setPlayerSearch] = useState('')
   const skipScopeResetRef = useRef(false)
+  const skipMatchPhaseTargetResetRef = useRef(false)
 
   const loadStatusAndSettings = useCallback(async () => {
     const [statusResp, settingsResp] = await Promise.all([
@@ -5268,6 +5281,12 @@ function SmsAdminTab({
   useEffect(() => {
     if (!quickTarget) return
     const desiredScope: SmsScope = quickTarget.scope
+    const desiredMatchPhase = quickTarget.matchPhase || 'upcoming'
+    const willTriggerMatchTargetReset =
+      desiredScope === 'match' && (scope !== 'match' || matchPhase !== desiredMatchPhase)
+    if (willTriggerMatchTargetReset) {
+      skipMatchPhaseTargetResetRef.current = true
+    }
     setScope(prev => {
       if (prev !== desiredScope) {
         skipScopeResetRef.current = true
@@ -5284,7 +5303,7 @@ function SmsAdminTab({
     if (desiredScope === 'team') {
       setTeamSearch('')
     } else {
-      setMatchPhase('upcoming')
+      setMatchPhase(desiredMatchPhase)
       setMatchSearch('')
     }
   }, [quickTarget])
@@ -5298,6 +5317,10 @@ function SmsAdminTab({
 
   useEffect(() => {
     if (scope === 'match') {
+      if (skipMatchPhaseTargetResetRef.current) {
+        skipMatchPhaseTargetResetRef.current = false
+        return
+      }
       setTargetId('')
     }
   }, [matchPhase, scope])
@@ -5973,42 +5996,58 @@ function SmsAdminTab({
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
-          <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
-            Reset to defaults
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => setShowTemplates(v => !v)}
+              style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+            >
+              {showTemplates ? 'Hide templates' : 'Show templates'}
+            </button>
+            {showTemplates && (
+              <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                Reset to defaults
+              </button>
+            )}
+          </div>
         </div>
-        <div style={{ display: 'grid', gap: 10 }}>
-          {templates.map(row => (
-            <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <div style={{ fontWeight: 700, fontSize: 13 }}>{row.message_type}</div>
-                <label style={{ fontSize: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={row.is_active}
-                    onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
-                  />{' '}
-                  Active
-                </label>
+        {showTemplates ? (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {templates.map(row => (
+              <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{row.message_type}</div>
+                  <label style={{ fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={row.is_active}
+                      onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
+                    />{' '}
+                    Active
+                  </label>
+                </div>
+                <textarea
+                  rows={3}
+                  value={templateBodies[row.message_type] ?? row.template_body}
+                  onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+                />
+                <div style={{ marginTop: 6 }}>
+                  <button
+                    onClick={() => saveTemplate(row)}
+                    disabled={savingTemplateType === row.message_type}
+                    style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
+                  </button>
+                </div>
               </div>
-              <textarea
-                rows={3}
-                value={templateBodies[row.message_type] ?? row.template_body}
-                onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
-                style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
-              />
-              <div style={{ marginTop: 6 }}>
-                <button
-                  onClick={() => saveTemplate(row)}
-                  disabled={savingTemplateType === row.message_type}
-                  style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                >
-                  {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
+            Templates are hidden. Click "Show templates" to edit message templates.
+          </div>
+        )}
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
@@ -6182,10 +6221,11 @@ export default function TournamentDeskPage() {
     setActiveTab('sms')
   }, [])
 
-  const handleQuickSmsMatch = useCallback((matchId: number) => {
+  const handleQuickSmsMatch = useCallback((matchId: number, phaseHint?: 'upcoming' | 'completed') => {
     setSmsQuickTarget({
       scope: 'match',
       targetId: matchId,
+      matchPhase: phaseHint || 'upcoming',
     })
     setActiveTab('sms')
   }, [])

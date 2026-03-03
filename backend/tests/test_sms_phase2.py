@@ -857,6 +857,16 @@ def test_template_update(client, session, setup_tournament_with_teams):
     assert data["template_body"] == custom_body
     assert data["is_active"] is True
 
+    # After customizing one template, API should still return the full set.
+    all_resp = client.get(f"/api/tournaments/{tournament.id}/sms/templates")
+    assert all_resp.status_code == 200
+    all_templates = all_resp.json()
+    assert len(all_templates) == len(DEFAULT_SMS_TEMPLATES)
+
+    by_type = {row["message_type"]: row for row in all_templates}
+    assert by_type["on_deck"]["template_body"] == custom_body
+    assert "first_match" in by_type
+
 
 def test_template_invalid_type(client, session, setup_tournament_with_teams):
     """PUT with invalid message_type should 400."""
