@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database import engine, init_db
-from app.db_schema_patch import ensure_event_columns, ensure_team_columns, ensure_tournament_columns
+from app.db_schema_patch import (
+    ensure_event_columns,
+    ensure_sms_log_columns,
+    ensure_team_columns,
+    ensure_tournament_columns,
+)
 from app.routes import (
     avoid_edges,
     debug,
@@ -127,6 +132,7 @@ def on_startup():
     ensure_event_columns(engine)
     ensure_tournament_columns(engine)
     ensure_team_columns(engine)
+    ensure_sms_log_columns(engine)
 
     # Print all registered routes for debugging (full path stack)
     print("\n" + "=" * 80)

@@ -39,6 +39,11 @@ REQUIRED_TEAM_COLUMNS: List[Tuple[str, str, str]] = [
     ("p2_email", "TEXT", "TEXT"),
 ]
 
+# Columns we must ensure exist in the "sms_log" table.
+REQUIRED_SMS_LOG_COLUMNS: List[Tuple[str, str, str]] = [
+    ("dedupe_key", "TEXT", "TEXT"),
+]
+
 
 def _is_sqlite(engine: Engine) -> bool:
     return engine.dialect.name.lower() == "sqlite"
@@ -237,3 +242,57 @@ def ensure_team_columns(engine: Engine) -> None:
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure team columns (this is OK if table doesn't exist yet): {e}")
+
+
+def ensure_sms_log_columns(engine: Engine) -> None:
+    """
+    Idempotently adds required columns to the 'sms_log' table if missing.
+    Safe to run at every startup.
+    """
+    try:
+        from app.models.sms_log import SmsLog
+
+        table = SmsLog.__table__.name
+
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_SMS_LOG_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type};"))
+        else:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    )
+                """
+                    ),
+                    {"table_name": table},
+                ).fetchone()
+                if not result or not result[0]:
+                    return
+
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_SMS_LOG_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type};"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to ensure sms_log columns (this is OK if table doesn't exist yet): {e}")
