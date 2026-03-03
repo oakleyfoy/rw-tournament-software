@@ -480,3 +480,74 @@ def test_sms_status(client, session, setup_tournament_with_teams):
     assert data["total_teams"] == 4
     assert data["teams_with_phones"] == 2  # team1 and team2
     assert data["twilio_configured"] is False  # No env vars in test
+
+
+def test_sms_status_when_twilio_is_configured(
+    client, session, setup_tournament_with_teams, monkeypatch
+):
+    """Status should report configured Twilio when env vars are present."""
+    tournament, _, _ = setup_tournament_with_teams
+    import app.services.twilio_service as twilio_mod
+
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC" + ("1" * 32))
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "a" * 32)
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15551230000")
+    twilio_mod._twilio_service = None
+
+    resp = client.get(f"/api/tournaments/{tournament.id}/sms/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["twilio_configured"] is True
+    assert data["from_number"] == "+15551230000"
+
+    # Reset singleton for later tests
+    twilio_mod._twilio_service = None
+
+
+def test_manual_sms_workflow_preview_then_team_then_blast(
+    client, session, setup_tournament_with_teams
+):
+    """Validate the core manual workflow end-to-end."""
+    tournament, _, teams = setup_tournament_with_teams
+
+    preview = client.post(
+        f"/api/tournaments/{tournament.id}/sms/preview/blast",
+        json={"message": "Workflow preview"},
+    )
+    assert preview.status_code == 200
+    preview_data = preview.json()
+    assert preview_data["total_messages"] == 3
+
+    team_send = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{teams[0].id}",
+        json={"message": "Workflow team send"},
+    )
+    assert team_send.status_code == 200
+    team_data = team_send.json()
+    assert team_data["sent"] == 2
+    assert team_data["message_type"] == "team_direct"
+
+    blast_send = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": "Workflow blast"},
+    )
+    assert blast_send.status_code == 200
+    blast_data = blast_send.json()
+    assert blast_data["sent"] == 3
+    assert blast_data["message_type"] == "tournament_blast"
+
+    # Preview must not create logs; team+blast should create 5.
+    logs = session.exec(
+        select(SmsLog)
+        .where(SmsLog.tournament_id == tournament.id)
+        .order_by(SmsLog.id)
+    ).all()
+    assert len(logs) == 5
+    assert all(log.status == "dry_run" for log in logs)
+    assert [log.message_type for log in logs] == [
+        "team_direct",
+        "team_direct",
+        "tournament_blast",
+        "tournament_blast",
+        "tournament_blast",
+    ]
