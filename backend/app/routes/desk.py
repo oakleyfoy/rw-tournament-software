@@ -17,6 +17,7 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.slot_lock import SlotLock
 from app.models.team import Team
 from app.models.match_lock import MatchLock
 from app.models.tournament import Tournament
@@ -2839,6 +2840,37 @@ class AddSlotResponse(BaseModel):
     created_slots: List[AddSlotItem]
 
 
+class DeleteSlotRequest(BaseModel):
+    version_id: int
+    day_date: str  # ISO date string
+    start_time: str  # HH:MM
+    court_numbers: List[int]
+
+
+class DeleteSlotItem(BaseModel):
+    slot_id: int
+    day_date: str
+    start_time: str
+    court_number: int
+    court_label: str
+
+
+class DeleteSlotBlockedItem(BaseModel):
+    slot_id: int
+    day_date: str
+    start_time: str
+    court_number: int
+    court_label: str
+    match_id: Optional[int] = None
+    match_code: Optional[str] = None
+
+
+class DeleteSlotResponse(BaseModel):
+    success: bool
+    deleted_slots: List[DeleteSlotItem]
+    blocked_slots: List[DeleteSlotBlockedItem]
+
+
 @router.post(
     "/desk/tournaments/{tournament_id}/slots",
     response_model=AddSlotResponse,
@@ -2913,6 +2945,111 @@ def add_time_slots(
 
     session.commit()
     return AddSlotResponse(success=True, created_slots=created)
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/slots/delete",
+    response_model=DeleteSlotResponse,
+)
+def delete_time_slots(
+    tournament_id: int,
+    payload: DeleteSlotRequest,
+    session: Session = Depends(get_session),
+):
+    """Delete unassigned time slots for specified day/start/courts. DRAFT only."""
+    from datetime import date as date_type, time as time_type
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Slot deletion only allowed on DRAFT versions")
+
+    day = date_type.fromisoformat(payload.day_date)
+    st_parts = payload.start_time.split(":")
+    st = time_type(int(st_parts[0]), int(st_parts[1]))
+
+    slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.day_date == day,
+            ScheduleSlot.start_time == st,
+            ScheduleSlot.court_number.in_(payload.court_numbers),  # type: ignore
+        )
+    ).all()
+    if not slots:
+        return DeleteSlotResponse(success=True, deleted_slots=[], blocked_slots=[])
+
+    slot_ids = [s.id for s in slots if s.id is not None]
+    assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == payload.version_id,
+            MatchAssignment.slot_id.in_(slot_ids),  # type: ignore
+        )
+    ).all()
+    assignment_by_slot = {a.slot_id: a for a in assignments}
+
+    match_ids = [a.match_id for a in assignments if a.match_id is not None]
+    matches = session.exec(
+        select(Match).where(Match.id.in_(match_ids))  # type: ignore
+    ).all() if match_ids else []
+    match_by_id = {m.id: m for m in matches if m.id is not None}
+
+    slot_locks = session.exec(
+        select(SlotLock).where(
+            SlotLock.schedule_version_id == payload.version_id,
+            SlotLock.slot_id.in_(slot_ids),  # type: ignore
+        )
+    ).all() if slot_ids else []
+    locks_by_slot: Dict[int, List[SlotLock]] = {}
+    for lock in slot_locks:
+        locks_by_slot.setdefault(lock.slot_id, []).append(lock)
+
+    deleted: List[DeleteSlotItem] = []
+    blocked: List[DeleteSlotBlockedItem] = []
+
+    for slot in slots:
+        if slot.id is None:
+            continue
+        assignment = assignment_by_slot.get(slot.id)
+        if assignment is not None:
+            match = match_by_id.get(assignment.match_id)
+            blocked.append(
+                DeleteSlotBlockedItem(
+                    slot_id=slot.id,
+                    day_date=slot.day_date.isoformat(),
+                    start_time=payload.start_time,
+                    court_number=slot.court_number,
+                    court_label=slot.court_label,
+                    match_id=assignment.match_id,
+                    match_code=match.match_code if match is not None else None,
+                )
+            )
+            continue
+
+        for lock in locks_by_slot.get(slot.id, []):
+            session.delete(lock)
+        session.delete(slot)
+        deleted.append(
+            DeleteSlotItem(
+                slot_id=slot.id,
+                day_date=slot.day_date.isoformat(),
+                start_time=payload.start_time,
+                court_number=slot.court_number,
+                court_label=slot.court_label,
+            )
+        )
+
+    session.commit()
+    return DeleteSlotResponse(
+        success=True,
+        deleted_slots=deleted,
+        blocked_slots=blocked,
+    )
 
 
 # ── Add Court endpoint ───────────────────────────────────────────────────

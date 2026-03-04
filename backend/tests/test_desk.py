@@ -2075,6 +2075,94 @@ def test_add_time_slot(client, session):
     assert body["created_slots"][0]["start_time"] == "14:00"
 
 
+def test_delete_time_slot_unassigned(client, session):
+    """Deleting an unassigned time slot removes matching slots."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+
+    # Create a fresh row to delete.
+    add_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/slots",
+        json={
+            "version_id": v.id,
+            "day_date": "2026-07-01",
+            "start_time": "14:00",
+            "end_time": "15:00",
+            "court_numbers": [1, 2],
+        },
+    )
+    assert add_resp.status_code == 200
+    assert len(add_resp.json()["created_slots"]) == 2
+
+    del_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/slots/delete",
+        json={
+            "version_id": v.id,
+            "day_date": "2026-07-01",
+            "start_time": "14:00",
+            "court_numbers": [1, 2],
+        },
+    )
+    assert del_resp.status_code == 200
+    body = del_resp.json()
+    assert body["success"] is True
+    assert len(body["deleted_slots"]) == 2
+    assert len(body["blocked_slots"]) == 0
+
+    remaining = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == v.id,
+            ScheduleSlot.day_date == date(2026, 7, 1),
+            ScheduleSlot.start_time == time(14, 0),
+        )
+    ).all()
+    assert len(remaining) == 0
+
+
+def test_delete_time_slot_assigned_is_blocked(client, session):
+    """Deleting a slot with an assigned match should be blocked."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+    assigned_slot = slots[0]  # 9:00 court 1 has m1 assigned
+    assigned_match = matches[0]
+
+    del_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/slots/delete",
+        json={
+            "version_id": v.id,
+            "day_date": "2026-07-01",
+            "start_time": "09:00",
+            "court_numbers": [1],
+        },
+    )
+    assert del_resp.status_code == 200
+    body = del_resp.json()
+    assert body["success"] is True
+    assert len(body["deleted_slots"]) == 0
+    assert len(body["blocked_slots"]) == 1
+    blocked = body["blocked_slots"][0]
+    assert blocked["slot_id"] == assigned_slot.id
+    assert blocked["match_id"] == assigned_match.id
+    assert blocked["match_code"] == assigned_match.match_code
+
+    still_exists = session.get(ScheduleSlot, assigned_slot.id)
+    assert still_exists is not None
+
+
+def test_delete_time_slot_rejected_on_final_version(client, session):
+    """Deleting slots is rejected on a FINAL version."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/slots/delete",
+        json={
+            "version_id": v.id,
+            "day_date": "2026-06-05",
+            "start_time": "09:00",
+            "court_numbers": [1],
+        },
+    )
+    assert resp.status_code == 400
+    assert "DRAFT" in resp.json()["detail"]
+
+
 def test_add_court(client, session):
     """Adding a court appends to tournament.court_names."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

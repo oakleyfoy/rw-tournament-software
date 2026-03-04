@@ -2254,6 +2254,30 @@ export interface AddSlotResponse {
   created_slots: AddSlotItem[]
 }
 
+export interface DeleteSlotItem {
+  slot_id: number
+  day_date: string
+  start_time: string
+  court_number: number
+  court_label: string
+}
+
+export interface DeleteSlotBlockedItem {
+  slot_id: number
+  day_date: string
+  start_time: string
+  court_number: number
+  court_label: string
+  match_id: number | null
+  match_code: string | null
+}
+
+export interface DeleteSlotResponse {
+  success: boolean
+  deleted_slots: DeleteSlotItem[]
+  blocked_slots: DeleteSlotBlockedItem[]
+}
+
 export interface AddCourtResponse {
   success: boolean
   court_label: string
@@ -2268,6 +2292,16 @@ export async function deskAddSlots(
 ): Promise<AddSlotResponse> {
   return fetchJson<AddSlotResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/slots`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskDeleteSlots(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; start_time: string; court_numbers: number[] }
+): Promise<DeleteSlotResponse> {
+  return fetchJson<DeleteSlotResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/slots/delete`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }

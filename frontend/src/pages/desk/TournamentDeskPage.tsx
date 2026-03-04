@@ -15,6 +15,7 @@ import {
   deskMoveMatch,
   deskSwapMatches,
   deskAddSlots,
+  deskDeleteSlots,
   deskAddCourt,
   bulkPauseInProgress,
   bulkDelayAfter,
@@ -3998,6 +3999,7 @@ function DeskGridTab({
     targetSlotId: number
   } | null>(null)
   const [addSlotOpen, setAddSlotOpen] = useState(false)
+  const [deleteSlotOpen, setDeleteSlotOpen] = useState(false)
   const [addCourtOpen, setAddCourtOpen] = useState(false)
   const [gridToast, setGridToast] = useState<string | null>(null)
 
@@ -4160,6 +4162,32 @@ function DeskGridTab({
     }
   }
 
+  const handleDeleteSlot = async (dayDate: string, startTime: string, courtNums: number[]) => {
+    try {
+      const resp = await deskDeleteSlots(tid, {
+        version_id: data.version_id,
+        day_date: dayDate,
+        start_time: startTime,
+        court_numbers: courtNums,
+      })
+      const deleted = resp.deleted_slots.length
+      const blocked = resp.blocked_slots.length
+      if (deleted === 0 && blocked === 0) {
+        showToast('No matching slots found')
+      } else if (deleted > 0 && blocked > 0) {
+        showToast(`Deleted ${deleted} slot(s); skipped ${blocked} assigned slot(s)`)
+      } else if (deleted > 0) {
+        showToast(`Deleted ${deleted} slot(s)`)
+      } else {
+        showToast(`Could not delete: ${blocked} slot(s) have assigned matches`)
+      }
+      setDeleteSlotOpen(false)
+      onRefresh()
+    } catch (err: any) {
+      showToast(err?.detail || err?.message || 'Failed to delete slot')
+    }
+  }
+
   const handleAddCourt = async (courtLabel: string, createSlots: boolean) => {
     try {
       await deskAddCourt(tid, {
@@ -4224,6 +4252,21 @@ function DeskGridTab({
               }}
             >
               + Time Slot
+            </button>
+            <button
+              onClick={() => setDeleteSlotOpen(true)}
+              style={{
+                padding: '5px 12px',
+                fontSize: 11,
+                fontWeight: 600,
+                border: '1px solid #e53935',
+                borderRadius: 4,
+                backgroundColor: '#ffebee',
+                color: '#c62828',
+                cursor: 'pointer',
+              }}
+            >
+              - Time Slot
             </button>
             <button
               onClick={() => setAddCourtOpen(true)}
@@ -4536,6 +4579,17 @@ function DeskGridTab({
         />
       )}
 
+      {/* Delete Time Slot Modal */}
+      {deleteSlotOpen && (
+        <DeleteTimeSlotModal
+          days={days}
+          courtNumbers={courtNumbers}
+          courtLabels={courtLabels}
+          onClose={() => setDeleteSlotOpen(false)}
+          onSubmit={handleDeleteSlot}
+        />
+      )}
+
       {/* Add Court Modal */}
       {addCourtOpen && (
         <AddCourtModal
@@ -4679,6 +4733,125 @@ function AddTimeSlotModal({
             style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, border: 'none', borderRadius: 4, backgroundColor: '#2e7d32', color: '#fff', cursor: 'pointer' }}
           >
             Add Slot
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+// ── Delete Time Slot Modal ───────────────────────────────────────────────
+
+function DeleteTimeSlotModal({
+  days,
+  courtNumbers,
+  courtLabels,
+  onClose,
+  onSubmit,
+}: {
+  days: string[]
+  courtNumbers: number[]
+  courtLabels: Record<number, string>
+  onClose: () => void
+  onSubmit: (dayDate: string, startTime: string, courtNums: number[]) => void
+}) {
+  const [day, setDay] = useState(days[0] || '')
+  const [startTime, setStartTime] = useState('09:00')
+  const [selectedCourts, setSelectedCourts] = useState<number[]>([...courtNumbers])
+
+  const toggleCourt = (cn: number) => {
+    setSelectedCourts(prev =>
+      prev.includes(cn) ? prev.filter(c => c !== cn) : [...prev, cn]
+    )
+  }
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+        backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 1999,
+      }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        width: 400, backgroundColor: '#fff', borderRadius: 10,
+        boxShadow: '0 8px 30px rgba(0,0,0,0.3)', zIndex: 2000, overflow: 'hidden',
+      }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e0e0e0' }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Delete Time Slot</div>
+        </div>
+        <div style={{ padding: '16px 20px' }}>
+          <div style={{ marginBottom: 10, fontSize: 12, color: '#666' }}>
+            Deletes unassigned slots for the selected day/time/courts.
+            Assigned slots will be skipped for safety.
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Day</label>
+            <select
+              value={day}
+              onChange={e => setDay(e.target.value)}
+              style={{ width: '100%', padding: '6px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4 }}
+            >
+              {days.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Start Time</label>
+            <input
+              type="time"
+              value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+              style={{ width: '100%', padding: '6px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
+            />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <label style={{ fontSize: 11, fontWeight: 600 }}>Courts</label>
+              <button
+                onClick={() => setSelectedCourts([...courtNumbers])}
+                style={{ fontSize: 10, color: '#1a237e', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+              >
+                Select All
+              </button>
+              <button
+                onClick={() => setSelectedCourts([])}
+                style={{ fontSize: 10, color: '#c62828', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+              >
+                Unselect All
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {courtNumbers.map(cn => (
+                <label key={cn} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedCourts.includes(cn)}
+                    onChange={() => toggleCourt(cn)}
+                  />
+                  Court {courtLabels[cn] || cn}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{
+          padding: '12px 20px', borderTop: '1px solid #e0e0e0',
+          display: 'flex', justifyContent: 'flex-end', gap: 8,
+        }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, border: '1px solid #ccc', borderRadius: 4, backgroundColor: '#fff', cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              if (selectedCourts.length === 0) return
+              onSubmit(day, startTime, selectedCourts)
+            }}
+            style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, border: 'none', borderRadius: 4, backgroundColor: '#c62828', color: '#fff', cursor: 'pointer' }}
+          >
+            Delete Slot
           </button>
         </div>
       </div>
