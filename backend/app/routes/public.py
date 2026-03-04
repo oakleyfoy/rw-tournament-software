@@ -4,7 +4,7 @@ Public read-only API endpoints.
 No auth required. Used by public-facing bracket/waterfall pages.
 """
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -873,7 +873,8 @@ class RoundRobinResponse(BaseModel):
     standings: List[RRPoolStandings] = []
     tiebreaker_note: str = (
         "*Tie breakers are determined in this order: "
-        "1) Match Wins 2) Set Differential 3) Game Differential 4) Team Name"
+        "1) Match Wins 2) Set Differential 3) Game Differential "
+        "4) Head-to-Head (two-team ties)"
     )
 
 
@@ -1041,6 +1042,7 @@ def public_round_robin(
         rows_data: Dict[int, dict] = {}
         for tid in pool_team_ids:
             rows_data[tid] = {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0}
+        h2h_wins: Dict[int, Dict[int, int]] = {}
 
         for m in matches_in_pool:
             rt = (m.runtime_status or "SCHEDULED").upper()
@@ -1052,9 +1054,13 @@ def public_round_robin(
             if m.winner_team_id == a_id:
                 rows_data[a_id]["wins"] += 1
                 rows_data[b_id]["losses"] += 1
+                h2h_wins.setdefault(a_id, {})
+                h2h_wins[a_id][b_id] = h2h_wins[a_id].get(b_id, 0) + 1
             else:
                 rows_data[b_id]["wins"] += 1
                 rows_data[a_id]["losses"] += 1
+                h2h_wins.setdefault(b_id, {})
+                h2h_wins[b_id][a_id] = h2h_wins[b_id].get(a_id, 0) + 1
             rows_data[a_id]["played"] += 1
             rows_data[b_id]["played"] += 1
 
@@ -1073,7 +1079,7 @@ def public_round_robin(
             t = team_map.get(tid)
             return (t.display_name or t.name or f"Team {tid}") if t else f"Team {tid}"
 
-        sorted_rows = sorted(
+        base_sorted_rows = sorted(
             rows_data.items(),
             key=lambda item: (
                 -item[1]["wins"],
@@ -1082,6 +1088,34 @@ def public_round_robin(
                 _disp(item[0]),
             ),
         )
+        sorted_rows: List[Tuple[int, dict]] = []
+        idx = 0
+        while idx < len(base_sorted_rows):
+            key = (
+                base_sorted_rows[idx][1]["wins"],
+                base_sorted_rows[idx][1]["sets_won"] - base_sorted_rows[idx][1]["sets_lost"],
+                base_sorted_rows[idx][1]["games_won"] - base_sorted_rows[idx][1]["games_lost"],
+            )
+            start = idx
+            while idx < len(base_sorted_rows):
+                probe = (
+                    base_sorted_rows[idx][1]["wins"],
+                    base_sorted_rows[idx][1]["sets_won"] - base_sorted_rows[idx][1]["sets_lost"],
+                    base_sorted_rows[idx][1]["games_won"] - base_sorted_rows[idx][1]["games_lost"],
+                )
+                if probe != key:
+                    break
+                idx += 1
+
+            group = list(base_sorted_rows[start:idx])
+            if len(group) == 2:
+                left_tid, right_tid = group[0][0], group[1][0]
+                left_over_right = h2h_wins.get(left_tid, {}).get(right_tid, 0)
+                right_over_left = h2h_wins.get(right_tid, {}).get(left_tid, 0)
+                if right_over_left > left_over_right:
+                    group = [group[1], group[0]]
+
+            sorted_rows.extend(group)
 
         standings_list.append(RRPoolStandings(
             pool_code=pool_code,

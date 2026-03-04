@@ -1116,7 +1116,8 @@ function MatchDrawer({
     : 'View Waterfall Bracket'
 
   const nextScheduledByTeam = useMemo(() => {
-    if (!result || result.downstream_updates.length > 0) return []
+    if (effectiveMatch.stage !== 'RR' || effectiveStatus !== 'FINAL') return []
+    if (result && result.downstream_updates.length > 0) return []
 
     const sourceMatchId = effectiveMatch.match_id
     const sourceDay = effectiveMatch.day_index || 0
@@ -1161,6 +1162,8 @@ function MatchDrawer({
   }, [
     result,
     allMatches,
+    effectiveStatus,
+    effectiveMatch.stage,
     effectiveMatch.match_id,
     effectiveMatch.day_index,
     effectiveMatch.sort_time,
@@ -1729,32 +1732,6 @@ function MatchDrawer({
                 ))}
               </div>
             )}
-            {result.downstream_updates.length === 0 && nextScheduledByTeam.length > 0 && (
-              <div style={{
-                padding: '12px 16px',
-                backgroundColor: '#e8f5e9',
-                borderRadius: 6,
-                border: '1px solid #c8e6c9',
-                fontSize: 13,
-                marginBottom: 10,
-              }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: '#2e7d32' }}>
-                  Next Scheduled Matches
-                </div>
-                {nextScheduledByTeam.map((row, i) => (
-                  <div key={`${row.teamId}-${row.nextMatch.match_id}`} style={{ padding: '8px 0', borderTop: i > 0 ? '1px solid #c8e6c9' : 'none' }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{row.teamName}</div>
-                    <div style={{ marginTop: 2 }}>
-                      Match #{row.nextMatch.match_number} &middot; {row.nextMatch.day_label}
-                    </div>
-                    <div style={{ fontWeight: 600 }}>
-                      {row.nextMatch.scheduled_time} &middot; {row.nextMatch.court_name}
-                    </div>
-                    <div style={{ marginTop: 2 }}>vs <strong>{row.opponent}</strong></div>
-                  </div>
-                ))}
-              </div>
-            )}
             {result.downstream_updates.length === 0 && nextScheduledByTeam.length === 0 && result.warnings.length === 0 && (
               <div style={{
                 padding: '12px 16px',
@@ -1823,6 +1800,33 @@ function MatchDrawer({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {nextScheduledByTeam.length > 0 && (!result || result.downstream_updates.length === 0) && (
+          <div style={{
+            marginTop: 12,
+            padding: '12px 16px',
+            backgroundColor: '#e8f5e9',
+            borderRadius: 6,
+            border: '1px solid #c8e6c9',
+            fontSize: 13,
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: '#2e7d32' }}>
+              Next Scheduled Matches
+            </div>
+            {nextScheduledByTeam.map((row, i) => (
+              <div key={`${row.teamId}-${row.nextMatch.match_id}`} style={{ padding: '8px 0', borderTop: i > 0 ? '1px solid #c8e6c9' : 'none' }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{row.teamName}</div>
+                <div style={{ marginTop: 2 }}>
+                  Match #{row.nextMatch.match_number} &middot; {row.nextMatch.day_label}
+                </div>
+                <div style={{ fontWeight: 600 }}>
+                  {row.nextMatch.scheduled_time} &middot; {row.nextMatch.court_name}
+                </div>
+                <div style={{ marginTop: 2 }}>vs <strong>{row.opponent}</strong></div>
+              </div>
+            ))}
           </div>
         )}
       </div>

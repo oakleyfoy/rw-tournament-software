@@ -202,13 +202,13 @@ function PoolSection({ pool, eventName }: { pool: RRPool; eventName: string }) {
 function PoolStandingsTable({ standings }: { standings: RRPoolStandings }) {
   if (standings.rows.length === 0) return null
 
-  const th: React.CSSProperties = { padding: '3px 6px', fontWeight: 700, fontSize: 10, textAlign: 'center', whiteSpace: 'nowrap' }
-  const td: React.CSSProperties = { padding: '2px 6px', fontSize: 10, textAlign: 'center', whiteSpace: 'nowrap' }
+  const th: React.CSSProperties = { padding: '5px 8px', fontWeight: 700, fontSize: 11, textAlign: 'center', whiteSpace: 'nowrap' }
+  const td: React.CSSProperties = { padding: '4px 8px', fontSize: 11, textAlign: 'center', whiteSpace: 'nowrap' }
 
   return (
-    <div style={{ marginBottom: 4 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#1a237e', marginBottom: 2 }}>{standings.pool_label}</div>
-      <table style={{ borderCollapse: 'collapse', fontSize: 10, width: '100%' }}>
+    <div style={{ marginBottom: 4, border: '1px solid #dfe4ef', borderRadius: 6, backgroundColor: '#fff', padding: '8px 10px' }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#1a237e', marginBottom: 6 }}>{standings.pool_label}</div>
+      <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
         <thead>
           <tr style={{ backgroundColor: '#e8eaf6', borderBottom: '1px solid #c5cae9' }}>
             <th style={th}>#</th>
@@ -246,8 +246,8 @@ function StandingsSection({ standings }: { standings: RRPoolStandings[] }) {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-      gap: 16,
+      gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))',
+      gap: 18,
       marginBottom: 20,
     }}>
       {standings.map(s => (
@@ -275,7 +275,7 @@ function StandingsHelpPanel({ tiebreakerNote }: { tiebreakerNote: string }) {
   }
 
   return (
-    <div style={{ flex: '0 0 300px', maxWidth: 360, minWidth: 280 }}>
+    <div style={{ flex: '0 0 260px', maxWidth: 300, minWidth: 240 }}>
       <div style={cardStyle}>
         <div style={headingStyle}>Standings Abbreviations</div>
         <div style={{ fontSize: 11, color: '#455a64', lineHeight: 1.55 }}>
@@ -293,7 +293,7 @@ function StandingsHelpPanel({ tiebreakerNote }: { tiebreakerNote: string }) {
           <li>Most match wins (W)</li>
           <li>Best set differential</li>
           <li>Best game differential</li>
-          <li>Team name (alphabetical)</li>
+          <li>Head-to-head (for exact two-team ties)</li>
         </ol>
         <div style={{ fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
           {tiebreakerNote}
