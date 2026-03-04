@@ -1,6 +1,22 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 from fastapi.testclient import TestClient
+from sqlmodel import Session, select
+
+from app.models.court_state import TournamentCourtState
+from app.models.event import Event
+from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
+from app.models.player import Player
+from app.models.schedule_slot import ScheduleSlot
+from app.models.schedule_version import ScheduleVersion
+from app.models.sms_template import SmsTemplate
+from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
+from app.models.team_player import TeamPlayer
+from app.models.tournament import Tournament
+from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.models.tournament_time_window import TournamentTimeWindow
 
 
 def test_create_tournament_auto_creates_days(client: TestClient):
@@ -147,3 +163,257 @@ def test_update_tournament_date_range_manages_days(client: TestClient):
     # Check days were updated (should have 2 days now: 15-16)
     days_response = client.get(f"/api/tournaments/{tournament_id}/days")
     assert len(days_response.json()) == 2
+
+
+def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: Session):
+    """Duplicate should copy courts, events, teams, and schedule graph."""
+    source = Tournament(
+        name="Lake Conroe",
+        location="Conroe",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 10),
+        end_date=date(2026, 7, 12),
+        notes="Source snapshot",
+        use_time_windows=True,
+        court_names=["1", "2"],
+    )
+    session.add(source)
+    session.flush()
+
+    # Time windows + day state
+    session.add(
+        TournamentTimeWindow(
+            tournament_id=source.id,
+            day_date=date(2026, 7, 10),
+            start_time=time(8, 0),
+            end_time=time(20, 0),
+            courts_available=2,
+            block_minutes=90,
+            label="Main Day",
+            is_active=True,
+        )
+    )
+    session.add(
+        TournamentCourtState(
+            tournament_id=source.id,
+            court_label="2",
+            is_closed=True,
+            note="Wet court",
+        )
+    )
+
+    event = Event(
+        tournament_id=source.id,
+        category="mixed",
+        name="Mixed A",
+        team_count=2,
+    )
+    session.add(event)
+    session.flush()
+
+    team_a = Team(event_id=event.id, name="Alpha / One", seed=1, p1_cell="9013593035")
+    team_b = Team(event_id=event.id, name="Bravo / Two", seed=2, p1_cell="6155550100")
+    session.add_all([team_a, team_b])
+    session.flush()
+
+    session.add(
+        TeamAvoidEdge(
+            event_id=event.id,
+            team_id_a=min(team_a.id, team_b.id),
+            team_id_b=max(team_a.id, team_b.id),
+            reason="same club",
+        )
+    )
+
+    player_a = Player(
+        tournament_id=source.id,
+        full_name="Alpha Player",
+        phone_e164="+19013593035",
+        sms_consent_status="opted_in",
+    )
+    player_b = Player(
+        tournament_id=source.id,
+        full_name="Bravo Player",
+        phone_e164="+16155550100",
+        sms_consent_status="unknown",
+    )
+    session.add_all([player_a, player_b])
+    session.flush()
+    session.add_all(
+        [
+            TeamPlayer(team_id=team_a.id, player_id=player_a.id, lineup_slot=1, is_primary_contact=True),
+            TeamPlayer(team_id=team_b.id, player_id=player_b.id, lineup_slot=1, is_primary_contact=True),
+        ]
+    )
+
+    version = ScheduleVersion(
+        tournament_id=source.id,
+        version_number=7,
+        status="final",
+        notes="Published snapshot",
+    )
+    session.add(version)
+    session.flush()
+
+    slot1 = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 7, 10),
+        start_time=time(9, 0),
+        end_time=time(10, 30),
+        court_number=1,
+        court_label="1",
+        block_minutes=90,
+    )
+    slot2 = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 7, 10),
+        start_time=time(10, 30),
+        end_time=time(12, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=90,
+    )
+    session.add_all([slot1, slot2])
+    session.flush()
+
+    match1 = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_A_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="FINAL",
+        winner_team_id=team_a.id,
+    )
+    session.add(match1)
+    session.flush()
+
+    match2 = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_A_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        team_a_id=None,
+        team_b_id=None,
+        placeholder_side_a="Winner M01",
+        placeholder_side_b="BYE",
+        source_match_a_id=match1.id,
+        source_a_role="WINNER",
+    )
+    session.add(match2)
+    session.flush()
+
+    session.add_all(
+        [
+            MatchAssignment(schedule_version_id=version.id, match_id=match1.id, slot_id=slot1.id),
+            MatchAssignment(schedule_version_id=version.id, match_id=match2.id, slot_id=slot2.id),
+        ]
+    )
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=source.id,
+            auto_first_match=True,
+            player_contacts_only=True,
+        )
+    )
+    session.add(
+        SmsTemplate(
+            tournament_id=source.id,
+            message_type="on_deck",
+            template_body="Custom on deck",
+            is_active=True,
+        )
+    )
+
+    source.public_schedule_version_id = version.id
+    session.add(source)
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201
+    duplicated = resp.json()
+    duplicated_id = duplicated["id"]
+    assert duplicated["name"].endswith("(Copy)")
+    assert duplicated["court_names"] == ["1", "2"]
+    assert duplicated["use_time_windows"] is True
+
+    cloned = session.get(Tournament, duplicated_id)
+    assert cloned is not None
+    assert cloned.public_schedule_version_id is not None
+
+    cloned_events = session.exec(select(Event).where(Event.tournament_id == duplicated_id)).all()
+    assert len(cloned_events) == 1
+    assert cloned_events[0].name == "Mixed A"
+
+    cloned_teams = session.exec(
+        select(Team).where(Team.event_id == cloned_events[0].id)
+    ).all()
+    assert {t.name for t in cloned_teams} == {"Alpha / One", "Bravo / Two"}
+
+    cloned_versions = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
+    ).all()
+    assert len(cloned_versions) == 1
+    assert cloned_versions[0].version_number == 7
+    assert cloned.public_schedule_version_id == cloned_versions[0].id
+
+    cloned_slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.tournament_id == duplicated_id)
+    ).all()
+    assert len(cloned_slots) == 2
+
+    cloned_matches = session.exec(
+        select(Match).where(Match.tournament_id == duplicated_id)
+    ).all()
+    assert len(cloned_matches) == 2
+    by_code = {m.match_code: m for m in cloned_matches}
+    assert by_code["MIX_A_R2_M01"].source_match_a_id == by_code["MIX_A_R1_M01"].id
+
+    cloned_assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == cloned_versions[0].id
+        )
+    ).all()
+    assert len(cloned_assignments) == 2
+
+    cloned_players = session.exec(
+        select(Player).where(Player.tournament_id == duplicated_id)
+    ).all()
+    assert len(cloned_players) == 2
+
+    cloned_team_links = session.exec(
+        select(TeamPlayer).where(
+            TeamPlayer.team_id.in_([t.id for t in cloned_teams])  # type: ignore
+        )
+    ).all()
+    assert len(cloned_team_links) == 2
+
+    cloned_sms_settings = session.exec(
+        select(TournamentSmsSettings).where(
+            TournamentSmsSettings.tournament_id == duplicated_id
+        )
+    ).first()
+    assert cloned_sms_settings is not None
+    assert cloned_sms_settings.player_contacts_only is True
+
+    cloned_templates = session.exec(
+        select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)
+    ).all()
+    assert len(cloned_templates) == 1
+    assert cloned_templates[0].template_body == "Custom on deck"
