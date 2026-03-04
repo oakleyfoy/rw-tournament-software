@@ -1180,6 +1180,51 @@ def test_players_lookup_auto_provisions_from_team_contacts(client, session, setu
     assert send.json()["sent"] == 1
 
 
+def test_sync_player_contacts_endpoint_creates_links_for_new_team(
+    client, session, setup_tournament_with_teams
+):
+    """Manual sync endpoint should create Player/TeamPlayer links after team edits."""
+    tournament, event, _teams = setup_tournament_with_teams
+    from app.models.team import Team
+
+    set_resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={"player_contacts_only": True},
+    )
+    assert set_resp.status_code == 200
+
+    strict_team = Team(
+        event_id=event.id,
+        name="Sync Endpoint Team",
+        seed=88,
+        p1_cell="6155551001",
+        p2_cell=None,
+    )
+    session.add(strict_team)
+    session.commit()
+    session.refresh(strict_team)
+
+    blocked = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{strict_team.id}",
+        json={"message": "Before sync"},
+    )
+    assert blocked.status_code == 400
+
+    sync_resp = client.post(f"/api/tournaments/{tournament.id}/sms/sync-player-contacts")
+    assert sync_resp.status_code == 200
+    sync_data = sync_resp.json()
+    assert sync_data["tournament_id"] == tournament.id
+    assert sync_data["players_created"] >= 1
+    assert sync_data["links_created"] >= 1
+
+    allowed = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{strict_team.id}",
+        json={"message": "After sync"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["sent"] == 1
+
+
 def test_sms_status_when_twilio_is_configured(
     client, session, setup_tournament_with_teams, monkeypatch
 ):

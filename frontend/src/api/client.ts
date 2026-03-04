@@ -2807,6 +2807,15 @@ export interface SmsPlayerLookupItem {
   consent_status: string
 }
 
+export interface SmsPlayerSyncResponse {
+  tournament_id: number
+  players_created: number
+  players_updated: number
+  links_created: number
+  links_updated: number
+  links_removed: number
+}
+
 export interface SmsMatchLookupItem {
   match_id: number
   match_code: string
@@ -2896,6 +2905,15 @@ export async function getSmsPlayers(
 ): Promise<SmsPlayerLookupItem[]> {
   return fetchJson<SmsPlayerLookupItem[]>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/players`
+  )
+}
+
+export async function syncSmsPlayerContacts(
+  tournamentId: number
+): Promise<SmsPlayerSyncResponse> {
+  return fetchJson<SmsPlayerSyncResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/sync-player-contacts`,
+    { method: 'POST' }
   )
 }
 

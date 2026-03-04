@@ -304,6 +304,17 @@ class SmsRolloutMetricsResponse(BaseModel):
     recent_failures: List[SmsRolloutFailureItem]
 
 
+class SmsPlayerSyncResponse(BaseModel):
+    """Summary from syncing legacy team slots into Player/TeamPlayer."""
+
+    tournament_id: int
+    players_created: int
+    players_updated: int
+    links_created: int
+    links_updated: int
+    links_removed: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1499,6 +1510,33 @@ def get_sms_players(
         for p in players
         if p.id is not None
     ]
+
+
+@router.post("/sync-player-contacts", response_model=SmsPlayerSyncResponse)
+def sync_player_contacts(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Force-sync Player + TeamPlayer links from legacy team contact slots.
+
+    Useful after bulk team edits/imports when player-contacts-only mode is on.
+    """
+    _get_tournament_or_404(session, tournament_id)
+    stats = _sync_players_and_team_links_from_team_slots(
+        session=session,
+        tournament_id=tournament_id,
+    )
+    if any(stats.values()):
+        session.commit()
+    return SmsPlayerSyncResponse(
+        tournament_id=tournament_id,
+        players_created=int(stats["players_created"]),
+        players_updated=int(stats["players_updated"]),
+        links_created=int(stats["links_created"]),
+        links_updated=int(stats["links_updated"]),
+        links_removed=int(stats["links_removed"]),
+    )
 
 
 @router.get("/matches", response_model=List[SmsMatchLookupItem])

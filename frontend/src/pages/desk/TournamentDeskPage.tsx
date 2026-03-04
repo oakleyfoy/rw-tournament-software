@@ -48,6 +48,7 @@ import {
   getSmsMatches,
   getSmsEventDivisions,
   getSmsPlayers,
+  syncSmsPlayerContacts,
   sendSmsBlast,
   sendSmsEvent,
   sendSmsEventDivision,
@@ -77,6 +78,7 @@ import {
   SmsMatchLookupItem,
   SmsDivisionLookupItem,
   SmsPlayerLookupItem,
+  SmsPlayerSyncResponse,
 } from '../../api/client'
 import {
   DndContext,
@@ -5146,6 +5148,8 @@ function SmsAdminTab({
 
   const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [syncingPlayerContacts, setSyncingPlayerContacts] = useState(false)
+  const [playerSyncSummary, setPlayerSyncSummary] = useState<SmsPlayerSyncResponse | null>(null)
 
   const [templates, setTemplates] = useState<SmsTemplateResponse[]>([])
   const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
@@ -5607,6 +5611,23 @@ function SmsAdminTab({
       setError(e?.message || 'Failed to run first-match reminder scan')
     } finally {
       setRunningReminder(false)
+    }
+  }
+
+  const handleSyncPlayerContacts = async () => {
+    setSyncingPlayerContacts(true)
+    setError(null)
+    try {
+      const summary = await syncSmsPlayerContacts(tournamentId)
+      setPlayerSyncSummary(summary)
+      await Promise.all([
+        loadLookups(),
+        loadStatusAndSettings(),
+      ])
+    } catch (e: any) {
+      setError(e?.message || 'Failed to sync player contacts')
+    } finally {
+      setSyncingPlayerContacts(false)
     }
   }
 
@@ -6163,6 +6184,23 @@ function SmsAdminTab({
               <div style={{ fontSize: 12, color: '#555' }}>
                 When enabled, team/event/division/match sends use Player records linked to teams. Legacy team phone fields are no longer used directly for those sends.
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleSyncPlayerContacts}
+                  disabled={syncingPlayerContacts}
+                  style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  {syncingPlayerContacts ? 'Syncing…' : 'Sync Player Contacts Now'}
+                </button>
+                <span style={{ fontSize: 11, color: '#666' }}>
+                  Use this after team edits/imports to refresh Player links immediately.
+                </span>
+              </div>
+              {playerSyncSummary && (
+                <div style={{ fontSize: 11, color: '#444', marginTop: 6 }}>
+                  Last sync — players +{playerSyncSummary.players_created} created / {playerSyncSummary.players_updated} updated, links +{playerSyncSummary.links_created} created / {playerSyncSummary.links_updated} updated / {playerSyncSummary.links_removed} removed.
+                </div>
+              )}
             </div>
             <button onClick={saveSettings} disabled={savingSettings} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
               {savingSettings ? 'Saving…' : 'Save Settings'}
