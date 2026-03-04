@@ -417,3 +417,140 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
     ).all()
     assert len(cloned_templates) == 1
     assert cloned_templates[0].template_body == "Custom on deck"
+
+
+def test_print_packet_pdf_downloads_for_womens_and_mixed(client: TestClient, session: Session):
+    tournament = Tournament(
+        name="Print Packet Test",
+        location="Conroe",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 10),
+        end_date=date(2026, 7, 12),
+        court_names=["1", "2"],
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="final",
+    )
+    session.add(version)
+    session.flush()
+
+    womens_event = Event(
+        tournament_id=tournament.id,
+        category="womens",
+        name="Women's A",
+        team_count=2,
+    )
+    mixed_event = Event(
+        tournament_id=tournament.id,
+        category="mixed",
+        name="Mixed A",
+        team_count=2,
+    )
+    session.add_all([womens_event, mixed_event])
+    session.flush()
+
+    w1 = Team(event_id=womens_event.id, name="W Alpha", display_name="W Alpha")
+    w2 = Team(event_id=womens_event.id, name="W Bravo", display_name="W Bravo")
+    m1 = Team(event_id=mixed_event.id, name="M Alpha", display_name="M Alpha")
+    m2 = Team(event_id=mixed_event.id, name="M Bravo", display_name="M Bravo")
+    session.add_all([w1, w2, m1, m2])
+    session.flush()
+
+    slot1 = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 7, 10),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    slot2 = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 7, 10),
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add_all([slot1, slot2])
+    session.flush()
+
+    w_match = Match(
+        tournament_id=tournament.id,
+        event_id=womens_event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_E1_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=w1.id,
+        team_b_id=w2.id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        runtime_status="SCHEDULED",
+    )
+    m_match = Match(
+        tournament_id=tournament.id,
+        event_id=mixed_event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_E2_RR_POOLA_M01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=m1.id,
+        team_b_id=m2.id,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="SCHEDULED",
+    )
+    session.add_all([w_match, m_match])
+    session.flush()
+
+    session.add_all(
+        [
+            MatchAssignment(schedule_version_id=version.id, match_id=w_match.id, slot_id=slot1.id),
+            MatchAssignment(schedule_version_id=version.id, match_id=m_match.id, slot_id=slot2.id),
+        ]
+    )
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    women_resp = client.get(f"/api/tournaments/{tournament.id}/print-packet/womens.pdf")
+    assert women_resp.status_code == 200
+    assert women_resp.headers["content-type"] == "application/pdf"
+    assert women_resp.content.startswith(b"%PDF")
+
+    mixed_resp = client.get(f"/api/tournaments/{tournament.id}/print-packet/mixed.pdf")
+    assert mixed_resp.status_code == 200
+    assert mixed_resp.headers["content-type"] == "application/pdf"
+    assert mixed_resp.content.startswith(b"%PDF")
+
+
+def test_print_packet_invalid_category(client: TestClient):
+    create = client.post(
+        "/api/tournaments",
+        json={
+            "name": "Invalid Category Test",
+            "location": "x",
+            "timezone": "America/Chicago",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-02",
+        },
+    )
+    tid = create.json()["id"]
+    resp = client.get(f"/api/tournaments/{tid}/print-packet/coed.pdf")
+    assert resp.status_code == 400

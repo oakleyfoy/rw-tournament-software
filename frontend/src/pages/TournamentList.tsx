@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listTournaments, getEvents, duplicateTournament, deleteTournament, Tournament } from '../api/client'
+import {
+  listTournaments,
+  getEvents,
+  duplicateTournament,
+  deleteTournament,
+  downloadTournamentPrintPacket,
+  Tournament,
+} from '../api/client'
 import { showToast } from '../utils/toast'
 import { confirmDialog } from '../utils/confirm'
 import './TournamentList.css'
@@ -11,6 +18,7 @@ function TournamentList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [processing, setProcessing] = useState<Record<number, 'duplicate' | 'delete' | null>>({})
+  const [printing, setPrinting] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -118,6 +126,40 @@ function TournamentList() {
     navigate('/settings')
   }
 
+  const triggerBrowserDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const safeFileName = (name: string) => (name || 'tournament').replace(/[^a-z0-9_-]+/gi, '_')
+
+  const handlePrintPacketDownload = async (
+    tournament: Tournament,
+    category: 'womens' | 'mixed',
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const key = `${tournament.id}-${category}`
+    try {
+      setPrinting(prev => ({ ...prev, [key]: true }))
+      const blob = await downloadTournamentPrintPacket(tournament.id, category)
+      const filename = `${safeFileName(tournament.name)}_${category}_draw_packet.pdf`
+      triggerBrowserDownload(blob, filename)
+      showToast(`${category === 'womens' ? "Women's" : 'Mixed'} print packet downloaded`, 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to download print packet', 'error')
+    } finally {
+      setPrinting(prev => ({ ...prev, [key]: false }))
+    }
+  }
+
   if (loading) {
     return <div className="container"><div className="loading">Loading tournaments...</div></div>
   }
@@ -158,7 +200,7 @@ function TournamentList() {
                 <th>Location</th>
                 <th>Date Range</th>
                 <th>Timezone</th>
-                <th style={{ width: '210px' }}>Actions</th>
+                <th style={{ width: '420px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -192,7 +234,7 @@ function TournamentList() {
                       }}
                       style={{ position: 'relative', zIndex: 10 }}
                     >
-                      <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 11 }}>
+                      <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 11, flexWrap: 'wrap' }}>
                         <button
                           type="button"
                           className="btn btn-primary"
@@ -270,6 +312,26 @@ function TournamentList() {
                           title={eventCount > 0 ? `Delete tournament (will also delete ${eventCount} event${eventCount === 1 ? '' : 's'})` : 'Delete tournament'}
                         >
                           {isProcessing === 'delete' ? '...' : 'Delete'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12 }}
+                          onClick={(e) => handlePrintPacketDownload(tournament, 'womens', e)}
+                          disabled={!!isProcessing || !!printing[`${tournament.id}-womens`]}
+                          title="Download Women's 32x24 print PDF"
+                        >
+                          {printing[`${tournament.id}-womens`] ? '...' : "PDF Women's"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12 }}
+                          onClick={(e) => handlePrintPacketDownload(tournament, 'mixed', e)}
+                          disabled={!!isProcessing || !!printing[`${tournament.id}-mixed`]}
+                          title="Download Mixed 32x24 print PDF"
+                        >
+                          {printing[`${tournament.id}-mixed`] ? '...' : 'PDF Mixed'}
                         </button>
                       </div>
                     </td>

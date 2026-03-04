@@ -1,5 +1,7 @@
+import re
 from datetime import date, datetime, time, timedelta
-from typing import List, Optional
+from io import BytesIO
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
@@ -27,6 +29,12 @@ from app.models.tournament_time_window import TournamentTimeWindow
 from app.utils.courts import parse_court_names
 
 router = APIRouter()
+
+PRINT_PACKET_PAGE_SIZE = (32 * 72, 24 * 72)  # 32x24 in, points
+_PRINT_CATEGORY_LABEL = {
+    "womens": "Women's",
+    "mixed": "Mixed",
+}
 
 
 class TournamentCreate(BaseModel):
@@ -94,6 +102,267 @@ class TournamentResponse(BaseModel):
         from_attributes = True
 
 
+def _resolve_print_version(session: Session, tournament: Tournament) -> Optional[ScheduleVersion]:
+    """Prefer published pointer, then latest FINAL, then latest version."""
+    if tournament.public_schedule_version_id:
+        v = session.get(ScheduleVersion, tournament.public_schedule_version_id)
+        if v and v.tournament_id == tournament.id:
+            return v
+
+    latest_final = session.exec(
+        select(ScheduleVersion)
+        .where(
+            ScheduleVersion.tournament_id == tournament.id,
+            ScheduleVersion.status == "final",
+        )
+        .order_by(ScheduleVersion.version_number.desc(), ScheduleVersion.id.desc())
+    ).first()
+    if latest_final:
+        return latest_final
+
+    return session.exec(
+        select(ScheduleVersion)
+        .where(ScheduleVersion.tournament_id == tournament.id)
+        .order_by(ScheduleVersion.version_number.desc(), ScheduleVersion.id.desc())
+    ).first()
+
+
+def _score_display(score_json: Optional[dict]) -> str:
+    if not score_json:
+        return ""
+    if isinstance(score_json, str):
+        return score_json
+    if isinstance(score_json, dict):
+        if "display" in score_json:
+            return str(score_json["display"])
+        if "sets" in score_json and isinstance(score_json["sets"], list):
+            return " ".join(f"{s.get('a', 0)}-{s.get('b', 0)}" for s in score_json["sets"])
+        if "a" in score_json and "b" in score_json:
+            return f"{score_json['a']}-{score_json['b']}"
+    return str(score_json)
+
+
+def _format_slot_fields(slot: Optional[ScheduleSlot]) -> Tuple[str, str, str]:
+    if not slot:
+        return "", "", ""
+
+    day = slot.day_date.strftime("%a %m/%d")
+    st = slot.start_time
+    if isinstance(st, str):
+        parts = st.split(":")
+        hour = int(parts[0]) if parts else 0
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        ampm = "AM" if hour < 12 else "PM"
+        h12 = hour % 12 or 12
+        time_str = f"{h12}:{minute:02d} {ampm}"
+    else:
+        time_str = st.strftime("%I:%M %p").lstrip("0") if st else ""
+
+    cl = slot.court_label or str(slot.court_number)
+    court = f"Court {cl}" if cl and not str(cl).lower().startswith("court") else str(cl)
+    return day, time_str, court
+
+
+def _pool_from_match_code(match_code: str) -> str:
+    code = (match_code or "").upper()
+    for marker in ("POOLA", "POOLB", "POOLC", "POOLD"):
+        if f"_{marker}_" in code:
+            return marker
+    return ""
+
+
+def _build_print_packet_pdf(
+    tournament: Tournament,
+    category: str,
+    version: ScheduleVersion,
+    events: List[Event],
+    matches_by_event: Dict[int, List[Match]],
+    assignment_by_match: Dict[int, MatchAssignment],
+    slot_map: Dict[int, ScheduleSlot],
+    team_map: Dict[int, Team],
+) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    def _team_name(team_id: Optional[int], placeholder: Optional[str]) -> str:
+        if team_id and team_id in team_map:
+            t = team_map[team_id]
+            return t.display_name or t.name or f"Team {team_id}"
+        return placeholder or "TBD"
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=PRINT_PACKET_PAGE_SIZE,
+        leftMargin=28,
+        rightMargin=28,
+        topMargin=24,
+        bottomMargin=20,
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "PrintPacketTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=22,
+        leading=26,
+        textColor=colors.black,
+        spaceAfter=4,
+    )
+    subtitle_style = ParagraphStyle(
+        "PrintPacketSubtitle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=11,
+        leading=14,
+        textColor=colors.black,
+    )
+    section_style = ParagraphStyle(
+        "PrintPacketSection",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        leading=18,
+        textColor=colors.black,
+        spaceBefore=8,
+        spaceAfter=4,
+    )
+    event_style = ParagraphStyle(
+        "PrintPacketEvent",
+        parent=styles["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        textColor=colors.black,
+        spaceBefore=6,
+        spaceAfter=2,
+    )
+    body_style = ParagraphStyle(
+        "PrintPacketBody",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=10,
+        leading=12,
+        textColor=colors.black,
+    )
+
+    category_label = _PRINT_CATEGORY_LABEL.get(category, category.title())
+    generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    story: List = [
+        Paragraph(f"{tournament.name} — {category_label} Draw Packet", title_style),
+        Paragraph(
+            f"Version #{version.version_number} ({version.status.upper()}) &nbsp; | &nbsp; "
+            f"Includes Waterfall and Round Robin matches only (no standings). &nbsp; | &nbsp; "
+            f"Generated: {generated}",
+            subtitle_style,
+        ),
+        Spacer(1, 8),
+    ]
+
+    if not events:
+        story.append(Paragraph(f"No {category_label.lower()} events found.", body_style))
+        doc.build(story)
+        return buffer.getvalue()
+
+    table_header = [
+        "Match #",
+        "Code",
+        "Stage",
+        "Round",
+        "Pool",
+        "Team A",
+        "Team B",
+        "Day",
+        "Time",
+        "Court",
+        "Status",
+        "Score",
+    ]
+    col_widths = [52, 108, 44, 40, 45, 180, 180, 68, 56, 60, 52, 86]
+
+    for event in sorted(events, key=lambda e: (e.name or "").lower()):
+        event_matches = matches_by_event.get(event.id, [])
+        wf = sorted(
+            [m for m in event_matches if (m.match_type or "").upper() == "WF"],
+            key=lambda m: (m.round_index or 0, m.sequence_in_round or 0, m.id),
+        )
+        rr = sorted(
+            [m for m in event_matches if (m.match_type or "").upper() == "RR"],
+            key=lambda m: (
+                _pool_from_match_code(m.match_code or ""),
+                m.round_index or 0,
+                m.sequence_in_round or 0,
+                m.id,
+            ),
+        )
+        if not wf and not rr:
+            continue
+
+        story.append(Paragraph(event.name, event_style))
+
+        def _append_match_table(section_name: str, rows: List[Match]) -> None:
+            story.append(Paragraph(section_name, section_style))
+            if not rows:
+                story.append(Paragraph(f"No {section_name.lower()} matches.", body_style))
+                story.append(Spacer(1, 5))
+                return
+
+            data = [table_header]
+            for m in rows:
+                a = assignment_by_match.get(m.id)
+                slot = slot_map.get(a.slot_id) if a else None
+                day, tm, court = _format_slot_fields(slot)
+                status = (m.runtime_status or "SCHEDULED").upper()
+                score = _score_display(m.score_json) if status == "FINAL" else ""
+                data.append(
+                    [
+                        str(m.id),
+                        m.match_code or "",
+                        (m.match_type or "").upper(),
+                        f"R{m.round_index or 0}",
+                        _pool_from_match_code(m.match_code or "") if (m.match_type or "").upper() == "RR" else "",
+                        _team_name(m.team_a_id, m.placeholder_side_a),
+                        _team_name(m.team_b_id, m.placeholder_side_b),
+                        day,
+                        tm,
+                        court,
+                        status,
+                        score,
+                    ]
+                )
+
+            table = Table(data, colWidths=col_widths, repeatRows=1)
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.white),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                        ("ALIGN", (0, 0), (4, -1), "CENTER"),
+                        ("ALIGN", (7, 1), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, 0), 9),
+                        ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+                        ("GRID", (0, 0), (-1, -1), 0.3, colors.black),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.Color(0.97, 0.97, 0.97)]),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                        ("TOPPADDING", (0, 0), (-1, -1), 2),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ]
+                )
+            )
+            story.append(table)
+            story.append(Spacer(1, 8))
+
+        _append_match_table("Waterfall", wf)
+        _append_match_table("Round Robin", rr)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
 def generate_tournament_days(session: Session, tournament_id: int, start_date: date, end_date: date):
     """Generate tournament days for the date range"""
     current_date = start_date
@@ -147,6 +416,93 @@ def get_tournament(tournament_id: int, session: Session = Depends(get_session)):
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     return tournament
+
+
+@router.get("/tournaments/{tournament_id}/print-packet/{category}.pdf")
+def download_print_packet_pdf(
+    tournament_id: int,
+    category: str,
+    session: Session = Depends(get_session),
+):
+    """Download a 32x24 B/W print packet PDF for one category."""
+    cat = (category or "").strip().lower()
+    if cat not in _PRINT_CATEGORY_LABEL:
+        raise HTTPException(status_code=400, detail="category must be 'womens' or 'mixed'")
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = _resolve_print_version(session, tournament)
+    if not version:
+        raise HTTPException(status_code=400, detail="No schedule version found for this tournament")
+
+    events = session.exec(
+        select(Event).where(
+            Event.tournament_id == tournament_id,
+            Event.category == cat,
+        )
+    ).all()
+    event_ids = [e.id for e in events]
+
+    matches = session.exec(
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version.id,
+            Match.event_id.in_(event_ids),  # type: ignore
+            Match.match_type.in_(["WF", "RR"]),  # type: ignore
+        )
+    ).all() if event_ids else []
+    matches_by_event: Dict[int, List[Match]] = {}
+    for m in matches:
+        matches_by_event.setdefault(m.event_id, []).append(m)
+
+    match_ids = [m.id for m in matches]
+    assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version.id,
+            MatchAssignment.match_id.in_(match_ids),  # type: ignore
+        )
+    ).all() if match_ids else []
+    assignment_by_match = {a.match_id: a for a in assignments}
+
+    slot_ids = list({a.slot_id for a in assignments})
+    slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
+    ).all() if slot_ids else []
+    slot_map = {s.id: s for s in slots}
+
+    team_ids = set()
+    for m in matches:
+        if m.team_a_id:
+            team_ids.add(m.team_a_id)
+        if m.team_b_id:
+            team_ids.add(m.team_b_id)
+    teams = session.exec(
+        select(Team).where(Team.id.in_(list(team_ids)))
+    ).all() if team_ids else []
+    team_map = {t.id: t for t in teams}
+
+    try:
+        pdf_bytes = _build_print_packet_pdf(
+            tournament=tournament,
+            category=cat,
+            version=version,
+            events=events,
+            matches_by_event=matches_by_event,
+            assignment_by_match=assignment_by_match,
+            slot_map=slot_map,
+            team_map=team_map,
+        )
+    except ModuleNotFoundError as exc:
+        if "reportlab" in str(exc):
+            raise HTTPException(status_code=500, detail="PDF dependency missing: reportlab") from exc
+        raise
+
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", tournament.name).strip("_") or "tournament"
+    filename = f"{safe_name}_{cat}_draw_packet.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 @router.put("/tournaments/{tournament_id}", response_model=TournamentResponse)

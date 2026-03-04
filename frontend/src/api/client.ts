@@ -243,6 +243,25 @@ export async function deleteTournament(id: number): Promise<void> {
   });
 }
 
+export async function downloadTournamentPrintPacket(
+  id: number,
+  category: 'womens' | 'mixed'
+): Promise<Blob> {
+  const url = `${API_BASE_URL}/tournaments/${id}/print-packet/${category}.pdf`
+  const response = await fetch(url, { method: 'GET' })
+  if (!response.ok) {
+    let message = `Failed to download ${category} print packet`
+    try {
+      const err = await response.json()
+      if (typeof err?.detail === 'string') message = err.detail
+    } catch {
+      // keep default message
+    }
+    throw new Error(message)
+  }
+  return await response.blob()
+}
+
 // Tournament Days functions
 export async function getTournamentDays(tournamentId: number): Promise<TournamentDay[]> {
   return fetchJson<TournamentDay[]>(`${API_BASE_URL}/tournaments/${tournamentId}/days`);
