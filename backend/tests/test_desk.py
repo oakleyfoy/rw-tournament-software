@@ -748,6 +748,82 @@ def test_on_deck_with_in_progress(client, session):
     assert snap2["up_next_by_court"]["Court 1"]["sort_time"] < snap2["on_deck_by_court"]["Court 1"]["sort_time"]
 
 
+def test_courts_board_hides_next_day_matches_when_today_is_active(client, session):
+    """If the next scheduled match is on a different day, don't show it as up-next/on-deck."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+    m3 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
+
+    a3 = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == draft_id,
+            MatchAssignment.match_id == m3["match_id"],
+        )
+    ).first()
+    assert a3 is not None
+    slot3 = session.get(ScheduleSlot, a3.slot_id)
+    assert slot3 is not None
+    slot3.day_date = date(2026, 6, 6)
+    session.add(slot3)
+    session.commit()
+
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/status",
+        json={"version_id": draft_id, "status": "IN_PROGRESS"},
+    )
+
+    snap2 = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    assert snap2["now_playing_by_court"].get("Court 1") is not None
+    assert snap2["up_next_by_court"].get("Court 1") is None
+    assert snap2["on_deck_by_court"].get("Court 1") is None
+
+    court1 = [c for c in snap2["board_by_court"] if c["court_name"] == "Court 1"][0]
+    assert court1["up_next"] is None
+    assert court1["on_deck"] is None
+
+
+def test_finalize_does_not_auto_start_next_day_match(client, session):
+    """Finalizing today's match must not auto-start tomorrow's first slot."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+    m3 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
+
+    a3 = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == draft_id,
+            MatchAssignment.match_id == m3["match_id"],
+        )
+    ).first()
+    assert a3 is not None
+    slot3 = session.get(ScheduleSlot, a3.slot_id)
+    assert slot3 is not None
+    slot3.day_date = date(2026, 6, 6)
+    session.add(slot3)
+    session.commit()
+
+    fin_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "8-4", "winner_team_id": m1["team1_id"]},
+    )
+    assert fin_resp.status_code == 200
+    body = fin_resp.json()
+    assert body["auto_started"] is None
+
+    m3_obj = session.get(Match, m3["match_id"])
+    assert m3_obj is not None
+    assert (m3_obj.runtime_status or "SCHEDULED") == "SCHEDULED"
+
+
 # ── Impact endpoint tests ──────────────────────────────────────────────
 
 def test_impact_terminal_match_null_targets(client, session):
@@ -1552,15 +1628,21 @@ def test_standings_with_finalized_rr(client, session):
 
     # Alpha should be first with 2 wins
     assert rows[0]["team_display"] == "Alpha"
+    assert rows[0]["rank"] == 1
     assert rows[0]["wins"] == 2
     assert rows[0]["losses"] == 0
     assert rows[0]["played"] == 2
+    assert rows[0]["set_diff"] == rows[0]["sets_won"] - rows[0]["sets_lost"]
+    assert rows[0]["game_diff"] == rows[0]["games_won"] - rows[0]["games_lost"]
+    assert "W:" in rows[0]["rank_explanation"]
 
     # Bravo and Charlie each have 0 wins, 1 loss
     non_alpha = [r for r in rows if r["team_display"] != "Alpha"]
     for r in non_alpha:
         assert r["wins"] == 0
         assert r["losses"] == 1
+        assert isinstance(r["rank"], int)
+        assert "SetDiff" in r["rank_explanation"]
 
 
 def test_standings_sorting_by_set_diff(client, session):
@@ -1607,6 +1689,8 @@ def test_standings_sorting_by_set_diff(client, session):
     assert rows[0]["team_display"] == "Alpha"
     assert rows[1]["team_display"] == "Charlie"
     assert rows[2]["team_display"] == "Bravo"
+    assert [rows[0]["rank"], rows[1]["rank"], rows[2]["rank"]] == [1, 2, 3]
+    assert "GameDiff" in rows[0]["rank_explanation"]
 
 
 # ── Pool Projection + Placement tests ────────────────────────────────────

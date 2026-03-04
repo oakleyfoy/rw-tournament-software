@@ -641,6 +641,10 @@ def desk_snapshot(
             now_playing[court] = in_progress[0]
 
         non_final = [m for m in matches if m.status not in ("FINAL", "IN_PROGRESS", "PAUSED")]
+        reference_day = in_progress[0].day_date if in_progress and in_progress[0].day_date else None
+        if reference_day:
+            # Do not surface next-day matches as Up Next / On Deck while a court is active today.
+            non_final = [m for m in non_final if m.day_date == reference_day]
         if non_final:
             up_next[court] = non_final[0]
         if len(non_final) > 1:
@@ -662,6 +666,10 @@ def desk_snapshot(
 
         remaining = [m for m in non_final_cms if m.match_id != (board_now.match_id if board_now else -1)]
         scheduled = [m for m in remaining if m.status not in ("IN_PROGRESS", "PAUSED")]
+        reference_day = board_now.day_date if board_now and board_now.day_date else None
+        if reference_day:
+            # Keep the court board focused on the active day; hide cross-day spillover.
+            scheduled = [m for m in scheduled if m.day_date == reference_day]
         if scheduled:
             board_up = scheduled[0]
         if len(scheduled) > 1:
@@ -869,6 +877,7 @@ def finalize_match(
                 select(ScheduleSlot).where(
                     ScheduleSlot.schedule_version_id == payload.version_id,
                     ScheduleSlot.court_number == court_num,
+                    ScheduleSlot.day_date == finalized_slot.day_date,
                 ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
             ).all()
             court_slot_ids = [s.id for s in court_slots]
@@ -1894,14 +1903,18 @@ def confirm_pool_placement(
 class StandingsRow(BaseModel):
     team_id: int
     team_display: str
+    rank: int = 0
     wins: int = 0
     losses: int = 0
     sets_won: int = 0
     sets_lost: int = 0
+    set_diff: int = 0
     games_won: int = 0
     games_lost: int = 0
+    game_diff: int = 0
     point_diff: Optional[int] = None
     played: int = 0
+    rank_explanation: str = ""
 
 
 class StandingsEvent(BaseModel):
@@ -2078,9 +2091,17 @@ def get_standings(
                 StandingsRow(
                     team_id=tid,
                     team_display=_t_disp(tid),
+                    rank=idx + 1,
+                    set_diff=(r["sets_won"] - r["sets_lost"]),
+                    game_diff=(r["games_won"] - r["games_lost"]),
+                    rank_explanation=(
+                        f"W:{r['wins']} | "
+                        f"SetDiff:{(r['sets_won'] - r['sets_lost']):+d} | "
+                        f"GameDiff:{(r['games_won'] - r['games_lost']):+d}"
+                    ),
                     **r,
                 )
-                for tid, r in sorted_rows
+                for idx, (tid, r) in enumerate(sorted_rows)
             ],
             warnings=warnings,
         ))

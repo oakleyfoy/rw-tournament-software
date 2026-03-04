@@ -2396,14 +2396,18 @@ export async function patchCourtState(
 export interface StandingsRow {
   team_id: number
   team_display: string
+  rank: number
   wins: number
   losses: number
   sets_won: number
   sets_lost: number
+  set_diff: number
   games_won: number
   games_lost: number
+  game_diff: number
   point_diff: number | null
   played: number
+  rank_explanation: string
 }
 
 export interface StandingsEvent {

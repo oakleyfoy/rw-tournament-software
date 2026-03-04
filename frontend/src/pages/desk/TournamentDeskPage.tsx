@@ -6,6 +6,7 @@ import {
   getDeskSnapshot,
   getDeskImpact,
   getPoolProjection,
+  getDeskStandings,
   confirmPoolPlacement,
   checkDeskConflicts,
   createWorkingDraft,
@@ -36,6 +37,7 @@ import {
   FinalizeResponse,
   PoolProjectionResponse,
   EventProjection,
+  StandingsResponse,
   ReschedulePreviewResponse,
   rebuildPreview,
   rebuildApply,
@@ -2444,8 +2446,11 @@ function PoolProjectionPanel({
   onPlacementComplete?: () => void
 }) {
   const [data, setData] = useState<PoolProjectionResponse | null>(null)
+  const [standings, setStandings] = useState<StandingsResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingStandings, setLoadingStandings] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [standingsError, setStandingsError] = useState<string | null>(null)
   const [eventFilter, setEventFilter] = useState<number | ''>('')
   const [placing, setPlacing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -2454,18 +2459,36 @@ function PoolProjectionPanel({
 
   const fetchProjection = useCallback(async () => {
     setLoading(true)
+    setLoadingStandings(true)
     setError(null)
-    try {
-      const resp = await getPoolProjection(
-        tournamentId, versionId,
+    setStandingsError(null)
+    const [projectionResult, standingsResult] = await Promise.allSettled([
+      getPoolProjection(
+        tournamentId,
+        versionId,
         eventFilter !== '' ? eventFilter : undefined
-      )
-      setData(resp)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
-    } finally {
-      setLoading(false)
+      ),
+      getDeskStandings(
+        tournamentId,
+        versionId,
+        eventFilter !== '' ? eventFilter : undefined
+      ),
+    ])
+
+    if (projectionResult.status === 'fulfilled') {
+      setData(projectionResult.value)
+    } else {
+      setError(projectionResult.reason instanceof Error ? projectionResult.reason.message : 'Failed to load')
     }
+
+    if (standingsResult.status === 'fulfilled') {
+      setStandings(standingsResult.value)
+    } else {
+      setStandingsError(standingsResult.reason instanceof Error ? standingsResult.reason.message : 'Failed to load standings')
+    }
+
+    setLoading(false)
+    setLoadingStandings(false)
   }, [tournamentId, versionId, eventFilter])
 
   useEffect(() => { fetchProjection() }, [fetchProjection])
@@ -2524,6 +2547,12 @@ function PoolProjectionPanel({
             <option value="">All</option>
             {uniqueEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
           </select>
+        )}
+        {loadingStandings && (
+          <span style={{ fontSize: 10, color: '#888' }}>Loading standings...</span>
+        )}
+        {standingsError && !loadingStandings && (
+          <span style={{ fontSize: 10, color: '#c62828' }}>{standingsError}</span>
         )}
       </div>
 
@@ -2599,6 +2628,94 @@ function PoolProjectionPanel({
                 {placing ? 'Placing...' : 'Confirm Pool Placement'}
               </button>
             )}
+
+            {(() => {
+              const eventStandings = (standings?.events || []).filter(se => se.event_id === evt.event_id)
+              if (eventStandings.length === 0) return null
+              return (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginBottom: 4 }}>
+                    Pool standings totals
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+                    {eventStandings.map(se => {
+                      const totalMatches = Math.floor(se.rows.reduce((sum, row) => sum + row.played, 0) / 2)
+                      const totalSets = se.rows.reduce((sum, row) => sum + row.sets_won, 0)
+                      const totalGames = se.rows.reduce((sum, row) => sum + row.games_won, 0)
+                      return (
+                        <div
+                          key={`${se.event_id}-${se.division_name || 'all'}`}
+                          style={{ border: '1px solid #e0e0e0', borderRadius: 4, padding: 8, backgroundColor: '#fff' }}
+                        >
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#1a237e', marginBottom: 6 }}>
+                            {se.division_name || 'Round Robin standings'}
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                            {[
+                              { label: 'Teams', value: se.rows.length },
+                              { label: 'Completed Matches', value: totalMatches },
+                              { label: 'Sets Logged', value: totalSets },
+                              { label: 'Games Logged', value: totalGames },
+                            ].map(item => (
+                              <span
+                                key={item.label}
+                                style={{
+                                  fontSize: 9,
+                                  color: '#37474f',
+                                  border: '1px solid #dfe3e6',
+                                  backgroundColor: '#f8fafb',
+                                  borderRadius: 3,
+                                  padding: '1px 6px',
+                                }}
+                              >
+                                <strong>{item.value}</strong> {item.label}
+                              </span>
+                            ))}
+                          </div>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                              <thead>
+                                <tr>
+                                  <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>#</th>
+                                  <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Team</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>P</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>W-L</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Set +/-</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Game +/-</th>
+                                  <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>How ranked</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {se.rows.map(row => (
+                                  <tr key={row.team_id}>
+                                    <td style={{ padding: '3px 4px', fontWeight: 700, color: '#1a237e' }}>{row.rank}</td>
+                                    <td style={{ padding: '3px 4px', fontWeight: 600, color: '#333' }}>{row.team_display}</td>
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>{row.played}</td>
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>
+                                      {row.wins}-{row.losses}
+                                    </td>
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: row.set_diff >= 0 ? '#2e7d32' : '#c62828' }}>
+                                      {row.set_diff >= 0 ? '+' : ''}{row.set_diff}
+                                    </td>
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: row.game_diff >= 0 ? '#2e7d32' : '#c62828' }}>
+                                      {row.game_diff >= 0 ? '+' : ''}{row.game_diff}
+                                    </td>
+                                    <td style={{ padding: '3px 4px', color: '#666' }}>{row.rank_explanation}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div style={{ marginTop: 5, fontSize: 9, color: '#78909c' }}>
+                            {se.tiebreak_notes}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )
       })}
