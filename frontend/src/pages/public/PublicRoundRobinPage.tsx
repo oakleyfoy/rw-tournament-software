@@ -202,38 +202,67 @@ function PoolSection({ pool, eventName }: { pool: RRPool; eventName: string }) {
 function PoolStandingsTable({ standings }: { standings: RRPoolStandings }) {
   if (standings.rows.length === 0) return null
 
-  const th: React.CSSProperties = { padding: '5px 8px', fontWeight: 700, fontSize: 11, textAlign: 'center', whiteSpace: 'nowrap' }
-  const td: React.CSSProperties = { padding: '4px 8px', fontSize: 11, textAlign: 'center', whiteSpace: 'nowrap' }
+  const th: React.CSSProperties = {
+    padding: '5px 8px',
+    fontWeight: 700,
+    fontSize: 10,
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+  }
+  const td: React.CSSProperties = {
+    padding: '4px 8px',
+    fontSize: 10,
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+  }
 
   return (
     <div style={{ marginBottom: 4, border: '1px solid #dfe4ef', borderRadius: 6, backgroundColor: '#fff', padding: '8px 10px' }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: '#1a237e', marginBottom: 6 }}>{standings.pool_label}</div>
-      <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
-        <thead>
-          <tr style={{ backgroundColor: '#e8eaf6', borderBottom: '1px solid #c5cae9' }}>
-            <th style={th}>#</th>
-            <th style={{ ...th, textAlign: 'left' }}>Team</th>
-            <th style={th}>W</th>
-            <th style={th}>L</th>
-            <th style={th}>Sets</th>
-            <th style={th}>Games</th>
-            <th style={th}>P</th>
-          </tr>
-        </thead>
-        <tbody>
-          {standings.rows.map((row, idx) => (
-            <tr key={row.team_id} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: idx < 2 ? '#f1f8e9' : '#fff' }}>
-              <td style={td}>{idx + 1}</td>
-              <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{row.team_display}</td>
-              <td style={{ ...td, fontWeight: 700, color: '#2e7d32' }}>{row.wins}</td>
-              <td style={{ ...td, color: '#c62828' }}>{row.losses}</td>
-              <td style={td}>{row.sets_won}-{row.sets_lost}</td>
-              <td style={td}>{row.games_won}-{row.games_lost}</td>
-              <td style={td}>{row.played}</td>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 10, width: '100%' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#e8eaf6', borderBottom: '1px solid #c5cae9' }}>
+              <th style={th}>#</th>
+              <th style={{ ...th, textAlign: 'left' }}>Team</th>
+              <th style={th}>Wins</th>
+              <th style={th}>Losses</th>
+              <th style={th}>Sets Won</th>
+              <th style={th}>Sets Lost</th>
+              <th style={{ ...th, fontWeight: 800, color: '#2e7d32' }}>Set Diff</th>
+              <th style={th}>Games Won</th>
+              <th style={th}>Games Lost</th>
+              <th style={{ ...th, fontWeight: 800, color: '#1565c0' }}>Game Diff</th>
+              <th style={th}>Played</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {standings.rows.map((row, idx) => {
+              const setDiff = row.sets_won - row.sets_lost
+              const gameDiff = row.games_won - row.games_lost
+              return (
+                <tr key={row.team_id} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: idx < 2 ? '#f1f8e9' : '#fff' }}>
+                  <td style={td}>{idx + 1}</td>
+                  <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{row.team_display}</td>
+                  <td style={{ ...td, fontWeight: 700, color: '#2e7d32' }}>{row.wins}</td>
+                  <td style={{ ...td, color: '#c62828' }}>{row.losses}</td>
+                  <td style={td}>{row.sets_won}</td>
+                  <td style={td}>{row.sets_lost}</td>
+                  <td style={{ ...td, fontWeight: 800, color: setDiff >= 0 ? '#2e7d32' : '#c62828' }}>
+                    {setDiff >= 0 ? '+' : ''}{setDiff}
+                  </td>
+                  <td style={td}>{row.games_won}</td>
+                  <td style={td}>{row.games_lost}</td>
+                  <td style={{ ...td, fontWeight: 800, color: gameDiff >= 0 ? '#1565c0' : '#c62828' }}>
+                    {gameDiff >= 0 ? '+' : ''}{gameDiff}
+                  </td>
+                  <td style={td}>{row.played}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
