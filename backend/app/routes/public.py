@@ -872,8 +872,8 @@ class RoundRobinResponse(BaseModel):
     pools: List[RRPool]
     standings: List[RRPoolStandings] = []
     tiebreaker_note: str = (
-        "*Tie Breakers are determined in the following order: "
-        "1) Sets Lost 2) Games Lost 3) Head to Head"
+        "*Tie breakers are determined in this order: "
+        "1) Match Wins 2) Set Differential 3) Game Differential 4) Team Name"
     )
 
 
@@ -960,7 +960,7 @@ def public_round_robin(
             line1 = _rr_team_line(m.team_a_id, m.placeholder_side_a, team_map)
             line2 = _rr_team_line(m.team_b_id, m.placeholder_side_b, team_map)
 
-            status = (m.status or "UNSCHEDULED").upper()
+            status = (m.runtime_status or "SCHEDULED").upper()
             score_display = None
             if m.score_json:
                 import json

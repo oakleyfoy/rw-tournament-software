@@ -143,6 +143,110 @@ def _setup_published_tournament(session: Session):
     return t, v, ev1, ev2, m1, m2
 
 
+def _setup_published_rr_tournament(session: Session):
+    """Create a published tournament with RR matches for the public RR page."""
+    t = Tournament(
+        name="RR Public Test",
+        location="Test Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 6, 5),
+        end_date=date(2026, 6, 7),
+    )
+    session.add(t)
+    session.flush()
+
+    v = ScheduleVersion(
+        tournament_id=t.id,
+        version_number=1,
+        status="final",
+    )
+    session.add(v)
+    session.flush()
+
+    ev = Event(
+        tournament_id=t.id,
+        category="womens",
+        name="Women's A",
+        team_count=4,
+    )
+    session.add(ev)
+    session.flush()
+
+    team1 = Team(event_id=ev.id, name="Alpha / One", seed=1, display_name="Alpha / One")
+    team2 = Team(event_id=ev.id, name="Bravo / Two", seed=2, display_name="Bravo / Two")
+    team3 = Team(event_id=ev.id, name="Charlie / Three", seed=3, display_name="Charlie / Three")
+    team4 = Team(event_id=ev.id, name="Delta / Four", seed=4, display_name="Delta / Four")
+    session.add_all([team1, team2, team3, team4])
+    session.flush()
+
+    m1 = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="WOM_POOLA_RR_M01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team1.id,
+        team_b_id=team2.id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        runtime_status="FINAL",
+        winner_team_id=team1.id,
+        score_json={"display": "6-3, 6-4"},
+    )
+    m2 = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="WOM_POOLA_RR_M02",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=team3.id,
+        team_b_id=team4.id,
+        placeholder_side_a="Seed 3",
+        placeholder_side_b="Seed 4",
+        runtime_status="SCHEDULED",
+    )
+    session.add_all([m1, m2])
+    session.flush()
+
+    slot1 = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 6, 5),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    slot2 = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 6, 5),
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add_all([slot1, slot2])
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=m1.id, slot_id=slot1.id))
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=m2.id, slot_id=slot2.id))
+
+    t.public_schedule_version_id = v.id
+    session.add(t)
+    session.commit()
+    return t, ev, team1
+
+
 def test_unpublished_returns_not_published(client, session):
     """Schedule endpoint returns NOT_PUBLISHED when no pointer set."""
     t = Tournament(
@@ -246,3 +350,26 @@ def test_search_case_insensitive(client, session):
     assert len(body_upper["matches"]) == 1
     assert len(body_lower["matches"]) == 1
     assert body_upper["matches"][0]["match_id"] == body_lower["matches"][0]["match_id"]
+
+
+def test_public_round_robin_uses_runtime_status_for_score_and_winner(client, session):
+    """Public RR cards should show finalized score/winner from runtime_status data."""
+    t, ev, winner_team = _setup_published_rr_tournament(session)
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/events/{ev.id}/roundrobin")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["event_name"] == "Women's A"
+    assert len(body["pools"]) >= 1
+    first_match = body["pools"][0]["matches"][0]
+    assert first_match["status"] == "FINAL"
+    assert first_match["score_display"] == "6-3, 6-4"
+    assert first_match["winner_name"] == winner_team.display_name
+
+    assert len(body["standings"]) >= 1
+    rows = body["standings"][0]["rows"]
+    winner_row = [r for r in rows if r["team_id"] == winner_team.id][0]
+    assert winner_row["wins"] == 1
+    assert winner_row["played"] == 1
+    assert "Match Wins" in body["tiebreaker_note"]

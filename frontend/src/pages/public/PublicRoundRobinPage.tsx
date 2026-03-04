@@ -257,6 +257,52 @@ function StandingsSection({ standings }: { standings: RRPoolStandings[] }) {
   )
 }
 
+function StandingsHelpPanel({ tiebreakerNote }: { tiebreakerNote: string }) {
+  const cardStyle: React.CSSProperties = {
+    border: '1px solid #dde2f0',
+    borderRadius: 6,
+    padding: '10px 12px',
+    backgroundColor: '#fff',
+    marginBottom: 10,
+  }
+  const headingStyle: React.CSSProperties = {
+    fontSize: 12,
+    fontWeight: 700,
+    color: '#1a237e',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  }
+
+  return (
+    <div style={{ flex: '0 0 300px', maxWidth: 360, minWidth: 280 }}>
+      <div style={cardStyle}>
+        <div style={headingStyle}>Standings Abbreviations</div>
+        <div style={{ fontSize: 11, color: '#455a64', lineHeight: 1.55 }}>
+          <div><strong>W</strong> = Match Wins</div>
+          <div><strong>L</strong> = Match Losses</div>
+          <div><strong>Sets</strong> = Sets Won - Sets Lost</div>
+          <div><strong>Games</strong> = Games Won - Games Lost</div>
+          <div><strong>P</strong> = Matches Played</div>
+        </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={headingStyle}>Tiebreak Order</div>
+        <ol style={{ margin: '0 0 6px 18px', padding: 0, fontSize: 11, color: '#455a64', lineHeight: 1.55 }}>
+          <li>Most match wins (W)</li>
+          <li>Best set differential</li>
+          <li>Best game differential</li>
+          <li>Team name (alphabetical)</li>
+        </ol>
+        <div style={{ fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
+          {tiebreakerNote}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 // ── Main page ───────────────────────────────────────────────────────────
 
@@ -400,7 +446,12 @@ export default function PublicRoundRobinPage() {
       {/* Standings */}
       {data.standings && data.standings.length > 0 && (
         <div style={{ padding: '16px 24px 0' }}>
-          <StandingsSection standings={data.standings} />
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 720px', minWidth: 300 }}>
+              <StandingsSection standings={data.standings} />
+            </div>
+            <StandingsHelpPanel tiebreakerNote={data.tiebreaker_note} />
+          </div>
         </div>
       )}
 
@@ -422,16 +473,6 @@ export default function PublicRoundRobinPage() {
             </div>
           ))}
 
-          {/* Tiebreaker note */}
-          <div style={{
-            fontSize: 11,
-            color: '#666',
-            fontStyle: 'italic',
-            textAlign: 'center',
-            marginTop: 12,
-          }}>
-            {data.tiebreaker_note}
-          </div>
         </div>
       </div>
     </div>

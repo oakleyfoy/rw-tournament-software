@@ -1105,7 +1105,70 @@ function MatchDrawer({
     }
   }, [runWithConflictCheck, doSetStatus])
 
-  const sc = STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED
+  const effectiveMatch = corrResult?.match || result?.match || match
+  const effectiveStatus = effectiveMatch.status
+  const sc = STATUS_COLORS[effectiveStatus] || STATUS_COLORS.SCHEDULED
+  const contextLink = effectiveMatch.stage === 'RR'
+    ? `/t/${tournamentId}/draws/${effectiveMatch.event_id}/roundrobin?version_id=${versionId}`
+    : `/t/${tournamentId}/draws/${effectiveMatch.event_id}/waterfall?version_id=${versionId}`
+  const contextLinkLabel = effectiveMatch.stage === 'RR'
+    ? 'View Round Robin'
+    : 'View Waterfall Bracket'
+
+  const nextScheduledByTeam = useMemo(() => {
+    if (!result || result.downstream_updates.length > 0) return []
+
+    const sourceMatchId = effectiveMatch.match_id
+    const sourceDay = effectiveMatch.day_index || 0
+    const sourceTime = effectiveMatch.sort_time || ''
+    const teamPairs: Array<{ teamId: number; teamName: string }> = []
+    if (effectiveMatch.team1_id) {
+      teamPairs.push({ teamId: effectiveMatch.team1_id, teamName: effectiveMatch.team1_display })
+    }
+    if (effectiveMatch.team2_id) {
+      teamPairs.push({ teamId: effectiveMatch.team2_id, teamName: effectiveMatch.team2_display })
+    }
+
+    const rows: Array<{ teamId: number; teamName: string; nextMatch: DeskMatchItem; opponent: string }> = []
+    for (const t of teamPairs) {
+      const candidates = allMatches
+        .filter(m =>
+          m.match_id !== sourceMatchId &&
+          (m.team1_id === t.teamId || m.team2_id === t.teamId) &&
+          m.status !== 'FINAL' &&
+          m.status !== 'CANCELLED' &&
+          !!m.scheduled_time &&
+          m.day_index > 0
+        )
+        .filter(m => {
+          if (m.day_index > sourceDay) return true
+          if (m.day_index < sourceDay) return false
+          if (!sourceTime || !m.sort_time) return true
+          return m.sort_time >= sourceTime
+        })
+        .sort((a, b) =>
+          (a.day_index - b.day_index) ||
+          (a.sort_time || '').localeCompare(b.sort_time || '') ||
+          (a.court_name || '').localeCompare(b.court_name || '')
+        )
+
+      const nextMatch = candidates[0]
+      if (!nextMatch) continue
+      const opponent = nextMatch.team1_id === t.teamId ? nextMatch.team2_display : nextMatch.team1_display
+      rows.push({ teamId: t.teamId, teamName: t.teamName, nextMatch, opponent })
+    }
+    return rows
+  }, [
+    result,
+    allMatches,
+    effectiveMatch.match_id,
+    effectiveMatch.day_index,
+    effectiveMatch.sort_time,
+    effectiveMatch.team1_id,
+    effectiveMatch.team2_id,
+    effectiveMatch.team1_display,
+    effectiveMatch.team2_display,
+  ])
 
   return (
     <div style={{
@@ -1146,13 +1209,13 @@ function MatchDrawer({
 
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
         <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-          <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
-          <Badge label={STATUS_LABEL[match.status] || match.status} bg={sc.bg} color={sc.text} />
+          <Badge label={effectiveMatch.stage} bg={STAGE_COLORS[effectiveMatch.stage] || '#757575'} color="#fff" />
+          <Badge label={STATUS_LABEL[effectiveStatus] || effectiveStatus} bg={sc.bg} color={sc.text} />
         </div>
 
         <div style={{ marginBottom: 12, fontSize: 13, color: '#888' }}>
-          {match.event_name}
-          {match.division_name ? ` — ${match.division_name}` : ''}
+          {effectiveMatch.event_name}
+          {effectiveMatch.division_name ? ` — ${effectiveMatch.division_name}` : ''}
         </div>
 
         <div style={{ marginBottom: 16 }}>
@@ -1390,12 +1453,13 @@ function MatchDrawer({
           tournamentId={tournamentId}
           versionId={versionId}
           matchId={match.match_id}
-          matchStatus={match.status}
+          matchStatus={effectiveStatus}
+          stage={effectiveMatch.stage}
           onSwitchToImpact={undefined}
         />
 
         {/* Match History Timeline */}
-        <MatchTimeline match={match} />
+        <MatchTimeline match={effectiveMatch} />
 
         {!isDraft && (
           <div style={{
@@ -1665,7 +1729,33 @@ function MatchDrawer({
                 ))}
               </div>
             )}
-            {result.downstream_updates.length === 0 && result.warnings.length === 0 && (
+            {result.downstream_updates.length === 0 && nextScheduledByTeam.length > 0 && (
+              <div style={{
+                padding: '12px 16px',
+                backgroundColor: '#e8f5e9',
+                borderRadius: 6,
+                border: '1px solid #c8e6c9',
+                fontSize: 13,
+                marginBottom: 10,
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: '#2e7d32' }}>
+                  Next Scheduled Matches
+                </div>
+                {nextScheduledByTeam.map((row, i) => (
+                  <div key={`${row.teamId}-${row.nextMatch.match_id}`} style={{ padding: '8px 0', borderTop: i > 0 ? '1px solid #c8e6c9' : 'none' }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{row.teamName}</div>
+                    <div style={{ marginTop: 2 }}>
+                      Match #{row.nextMatch.match_number} &middot; {row.nextMatch.day_label}
+                    </div>
+                    <div style={{ fontWeight: 600 }}>
+                      {row.nextMatch.scheduled_time} &middot; {row.nextMatch.court_name}
+                    </div>
+                    <div style={{ marginTop: 2 }}>vs <strong>{row.opponent}</strong></div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {result.downstream_updates.length === 0 && nextScheduledByTeam.length === 0 && result.warnings.length === 0 && (
               <div style={{
                 padding: '12px 16px',
                 backgroundColor: '#f5f5f5',
@@ -1673,7 +1763,9 @@ function MatchDrawer({
                 fontSize: 13,
                 color: '#888',
               }}>
-                No downstream matches to advance into.
+                {effectiveMatch.stage === 'RR'
+                  ? 'Round Robin has no bracket advancement path.'
+                  : 'No downstream matches to advance into.'}
               </div>
             )}
             {result.warnings.length > 0 && (
@@ -1696,7 +1788,7 @@ function MatchDrawer({
             )}
             <button
               onClick={() => window.open(
-                `/t/${tournamentId}/draws/${match.event_id}/waterfall?version_id=${versionId}`,
+                contextLink,
                 '_blank'
               )}
               style={{
@@ -1712,7 +1804,7 @@ function MatchDrawer({
                 cursor: 'pointer',
               }}
             >
-              View Waterfall Bracket
+              {contextLinkLabel}
             </button>
             {result.auto_started && (
               <div style={{
@@ -1956,12 +2048,14 @@ function DrawerImpact({
   versionId,
   matchId,
   matchStatus,
+  stage,
   onSwitchToImpact,
 }: {
   tournamentId: number
   versionId: number
   matchId: number
   matchStatus: string
+  stage: string
   onSwitchToImpact: (() => void) | undefined
 }) {
   const [impact, setImpact] = useState<MatchImpactItem | null>(null)
@@ -1992,7 +2086,9 @@ function DrawerImpact({
         fontSize: 12,
         color: '#999',
       }}>
-        No downstream advancement paths.
+        {stage === 'RR'
+          ? 'Round Robin has no downstream advancement paths.'
+          : 'No downstream advancement paths.'}
       </div>
     )
   }
