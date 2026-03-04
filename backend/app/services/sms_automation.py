@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, time
-from typing import Dict, Optional, Tuple
+import os
+import threading
+import time as std_time
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, select
 
+from app.database import engine
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
@@ -17,6 +22,9 @@ from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 
 logger = logging.getLogger(__name__)
+
+_runner_lock = threading.Lock()
+_runner_started = False
 
 
 class SmsAutomationEngine:
@@ -204,6 +212,102 @@ class SmsAutomationEngine:
                 opponent=self._opponent_display(match, team.id),
             )
 
+    def run_first_match_24h_reminders(
+        self,
+        *,
+        now_utc: Optional[datetime] = None,
+        window_minutes: int = 60,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Send first-match reminders roughly 24h before each team's first match.
+
+        Uses the existing first_match template + message_type and shares the same
+        dedupe key shape as match-start fallback; whichever path fires first wins.
+        """
+        stats: Dict[str, Any] = {
+            "tournament_id": self.tournament.id,
+            "version_id": self.version_id,
+            "considered_teams": 0,
+            "eligible_teams": 0,
+            "outside_window": 0,
+            "sent": 0,
+            "deduped": 0,
+            "blocked_test_mode": 0,
+            "blocked_consent": 0,
+            "failed": 0,
+            "dry_run": dry_run,
+            "window_minutes": max(1, int(window_minutes)),
+            "now_utc": (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
+        }
+        if not self._is_enabled("auto_first_match", default=False):
+            stats["disabled"] = True
+            return stats
+
+        active, _template = self._template_for("first_match")
+        if not active:
+            stats["template_inactive"] = True
+            return stats
+
+        tournament_tz_name = (self.tournament.timezone or "UTC").strip() or "UTC"
+        try:
+            tournament_tz = ZoneInfo(tournament_tz_name)
+        except Exception:
+            tournament_tz = ZoneInfo("UTC")
+            tournament_tz_name = "UTC"
+        stats["timezone"] = tournament_tz_name
+
+        now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        now_local = now.astimezone(tournament_tz)
+        target_local = now_local + timedelta(hours=24)
+        half_window = timedelta(minutes=max(1, int(window_minutes)) / 2.0)
+        window_start = target_local - half_window
+        window_end = target_local + half_window
+
+        first_rows = self._first_match_rows_by_team()
+        stats["considered_teams"] = len(first_rows)
+
+        for team_id, row in first_rows.items():
+            team = row["team"]
+            match = row["match"]
+            slot = row["slot"]
+            match_local = datetime.combine(
+                slot.day_date,
+                self._coerce_time(slot.start_time),
+                tzinfo=tournament_tz,
+            )
+            if not (window_start <= match_local <= window_end):
+                stats["outside_window"] += 1
+                continue
+            stats["eligible_teams"] += 1
+
+            dedupe_key = self._dedupe_key(
+                "first_match",
+                f"v{self.version_id}",
+                f"t{team_id}",
+                f"m{match.id}",
+            )
+            if dry_run:
+                continue
+
+            resp = self._send_template_to_team(
+                team=team,
+                message_type="first_match",
+                dedupe_key=dedupe_key,
+                match=match,
+                slot=slot,
+                opponent=self._opponent_display(match, team.id),
+            )
+            if resp is None:
+                continue
+            stats["sent"] += int(resp.sent)
+            stats["deduped"] += int(resp.skipped_dedupe)
+            stats["blocked_test_mode"] += int(resp.skipped_test_mode)
+            stats["blocked_consent"] += int(resp.skipped_consent)
+            stats["failed"] += int(resp.failed)
+
+        return stats
+
     # ------------------------------------------------------------------
     # Sending/template helpers
     # ------------------------------------------------------------------
@@ -216,10 +320,10 @@ class SmsAutomationEngine:
         match: Optional[Match],
         slot: Optional[ScheduleSlot],
         opponent: Optional[str],
-    ) -> None:
+    ) -> Optional[Any]:
         active, template_body = self._template_for(message_type)
         if not active:
-            return
+            return None
 
         from app.routes.sms import _render_template, _send_to_teams
 
@@ -234,7 +338,7 @@ class SmsAutomationEngine:
             opponent=opponent,
             day_number=self._day_number(slot.day_date) if slot else None,
         )
-        _send_to_teams(
+        return _send_to_teams(
             session=self.session,
             tournament_id=self.tournament.id,  # type: ignore[arg-type]
             teams=[team],
@@ -354,21 +458,11 @@ class SmsAutomationEngine:
         return [m for _k, m in rows]
 
     def _is_team_first_match(self, team_id: int, match_id: int) -> bool:
-        matches = self.session.exec(
-            select(Match).where(Match.schedule_version_id == self.version_id)
-        ).all()
-        rows: list[tuple[tuple[date, time, int], int]] = []
-        for m in matches:
-            if team_id not in (m.team_a_id, m.team_b_id):
-                continue
-            slot = self._slot_for_match(m.id)  # type: ignore[arg-type]
-            if not slot:
-                continue
-            rows.append((self._slot_sort_key(slot), m.id))  # type: ignore[arg-type]
-        if not rows:
+        first_rows = self._first_match_rows_by_team()
+        row = first_rows.get(team_id)
+        if not row:
             return False
-        rows.sort(key=lambda pair: pair[0])
-        return rows[0][1] == match_id
+        return row["match"].id == match_id
 
     def _next_match_for_team(
         self,
@@ -400,6 +494,43 @@ class SmsAutomationEngine:
         candidates.sort(key=lambda row: row[0])
         _key, match, slot = candidates[0]
         return match, slot
+
+    def _first_match_rows_by_team(self) -> Dict[int, Dict[str, Any]]:
+        """
+        Return first scheduled match row per team in this version.
+
+        Each value includes:
+          - team: Team
+          - match: Match
+          - slot: ScheduleSlot
+          - sort_key: tuple
+        """
+        matches = self.session.exec(
+            select(Match).where(Match.schedule_version_id == self.version_id)
+        ).all()
+        result: Dict[int, Dict[str, Any]] = {}
+        for m in matches:
+            if m.id is None:
+                continue
+            slot = self._slot_for_match(m.id)
+            if not slot:
+                continue
+            sort_key = self._slot_sort_key(slot)
+            for team_id in (m.team_a_id, m.team_b_id):
+                if not team_id:
+                    continue
+                team = self._team_by_id(team_id)
+                if not team:
+                    continue
+                current = result.get(team_id)
+                if current is None or sort_key < current["sort_key"]:
+                    result[team_id] = {
+                        "team": team,
+                        "match": m,
+                        "slot": slot,
+                        "sort_key": sort_key,
+                    }
+        return result
 
     # ------------------------------------------------------------------
     # Formatting helpers
@@ -482,4 +613,169 @@ class SmsAutomationEngine:
                 continue
             out.append(str(item))
         return ":".join(out)
+
+
+def run_first_match_24h_for_tournament(
+    session: Session,
+    tournament_id: int,
+    *,
+    now_utc: Optional[datetime] = None,
+    window_minutes: int = 60,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Run the 24h first-match reminder scan for a single tournament."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        return {
+            "tournament_id": tournament_id,
+            "error": "tournament_not_found",
+        }
+
+    from app.routes.sms import _resolve_match_lookup_version
+
+    version = _resolve_match_lookup_version(session, tournament)
+    if not version:
+        return {
+            "tournament_id": tournament_id,
+            "version_id": None,
+            "disabled": False,
+            "no_active_version": True,
+            "considered_teams": 0,
+            "eligible_teams": 0,
+            "outside_window": 0,
+            "sent": 0,
+            "deduped": 0,
+            "blocked_test_mode": 0,
+            "blocked_consent": 0,
+            "failed": 0,
+            "dry_run": dry_run,
+            "window_minutes": max(1, int(window_minutes)),
+        }
+    engine = SmsAutomationEngine(session, tournament, version.id)  # type: ignore[arg-type]
+    return engine.run_first_match_24h_reminders(
+        now_utc=now_utc,
+        window_minutes=window_minutes,
+        dry_run=dry_run,
+    )
+
+
+def run_first_match_24h_for_all_tournaments(
+    session: Session,
+    *,
+    now_utc: Optional[datetime] = None,
+    window_minutes: int = 60,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Run first-match reminder scan across all tournaments."""
+    tournament_ids = session.exec(select(Tournament.id)).all()
+    runs = []
+    aggregate = {
+        "tournaments": 0,
+        "sent": 0,
+        "deduped": 0,
+        "blocked_test_mode": 0,
+        "blocked_consent": 0,
+        "failed": 0,
+        "eligible_teams": 0,
+        "considered_teams": 0,
+        "outside_window": 0,
+    }
+    for tid in tournament_ids:
+        run = run_first_match_24h_for_tournament(
+            session=session,
+            tournament_id=tid,
+            now_utc=now_utc,
+            window_minutes=window_minutes,
+            dry_run=dry_run,
+        )
+        runs.append(run)
+        aggregate["tournaments"] += 1
+        for key in (
+            "sent",
+            "deduped",
+            "blocked_test_mode",
+            "blocked_consent",
+            "failed",
+            "eligible_teams",
+            "considered_teams",
+            "outside_window",
+        ):
+            aggregate[key] += int(run.get(key, 0) or 0)
+    return {
+        "aggregate": aggregate,
+        "runs": runs,
+    }
+
+
+def _runner_interval_seconds() -> int:
+    raw = os.getenv("SMS_FIRST_MATCH_RUNNER_INTERVAL_SECONDS", "0").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
+def _runner_window_minutes() -> int:
+    raw = os.getenv("SMS_FIRST_MATCH_REMINDER_WINDOW_MINUTES", "60").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 60
+
+
+def start_first_match_runner_if_enabled() -> None:
+    """
+    Start background first-match reminder runner when interval is configured.
+
+    Disabled by default; set SMS_FIRST_MATCH_RUNNER_INTERVAL_SECONDS > 0 to enable.
+    """
+    global _runner_started
+    interval = _runner_interval_seconds()
+    if interval <= 0:
+        return
+    with _runner_lock:
+        if _runner_started:
+            return
+        thread = threading.Thread(
+            target=_runner_loop,
+            args=(interval,),
+            name="sms-first-match-runner",
+            daemon=True,
+        )
+        thread.start()
+        _runner_started = True
+    logger.info(
+        "Started first-match reminder runner (interval=%ss, window=%sm)",
+        interval,
+        _runner_window_minutes(),
+    )
+
+
+def _runner_loop(interval_seconds: int) -> None:
+    while True:
+        started = std_time.time()
+        try:
+            with Session(engine) as session:
+                summary = run_first_match_24h_for_all_tournaments(
+                    session=session,
+                    window_minutes=_runner_window_minutes(),
+                    dry_run=False,
+                )
+            agg = summary.get("aggregate", {})
+            sent = int(agg.get("sent", 0))
+            failed = int(agg.get("failed", 0))
+            if sent or failed:
+                logger.info(
+                    "First-match runner cycle: tournaments=%s sent=%s failed=%s deduped=%s",
+                    agg.get("tournaments", 0),
+                    sent,
+                    failed,
+                    agg.get("deduped", 0),
+                )
+        except Exception:
+            logger.exception("First-match reminder runner cycle failed")
+
+        elapsed = std_time.time() - started
+        delay = max(1.0, interval_seconds - elapsed)
+        std_time.sleep(delay)
 

@@ -109,6 +109,84 @@ def setup_tournament_with_teams(session: Session):
     return tournament, event, teams
 
 
+def _create_single_match_schedule(
+    session: Session,
+    tournament_id: int,
+    event_id: int,
+    team_a_id: int,
+    team_b_id: int,
+    *,
+    day_date: date,
+    start_time_local: time,
+    end_time_local: time,
+):
+    """Create one schedulable match + slot + assignment and publish version."""
+    from app.models.match import Match
+    from app.models.match_assignment import MatchAssignment
+    from app.models.schedule_slot import ScheduleSlot
+    from app.models.schedule_version import ScheduleVersion
+    from app.models.tournament import Tournament
+
+    version = ScheduleVersion(
+        tournament_id=tournament_id,
+        version_number=1,
+        status="final",
+    )
+    session.add(version)
+    session.flush()
+
+    match = Match(
+        tournament_id=tournament_id,
+        event_id=event_id,
+        schedule_version_id=version.id,
+        match_code="MIX_E1_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a_id,
+        team_b_id=team_b_id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        runtime_status="SCHEDULED",
+    )
+    session.add(match)
+    session.flush()
+
+    slot = ScheduleSlot(
+        tournament_id=tournament_id,
+        schedule_version_id=version.id,
+        day_date=day_date,
+        start_time=start_time_local,
+        end_time=end_time_local,
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+        is_active=True,
+    )
+    session.add(slot)
+    session.flush()
+
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=match.id,
+            slot_id=slot.id,
+            assigned_by="TEST",
+        )
+    )
+
+    tournament = session.get(Tournament, tournament_id)
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+    session.refresh(version)
+    session.refresh(match)
+    session.refresh(slot)
+    return version, match, slot
+
+
 # ---------------------------------------------------------------------------
 # Send endpoints
 # ---------------------------------------------------------------------------
@@ -960,6 +1038,141 @@ def test_sms_status_when_twilio_is_configured(
 
     # Reset singleton for later tests
     twilio_mod._twilio_service = None
+
+
+def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
+    client, session, setup_tournament_with_teams
+):
+    """First-match 24h runner supports dry-run, send, and dedupe behavior."""
+    tournament, event, teams = setup_tournament_with_teams
+
+    _create_single_match_schedule(
+        session=session,
+        tournament_id=tournament.id,
+        event_id=event.id,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        day_date=date(2026, 3, 15),
+        start_time_local=time(10, 0),
+        end_time_local=time(11, 0),
+    )
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=tournament.id,
+            auto_first_match=True,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    now_utc = datetime(2026, 3, 14, 14, 0, tzinfo=timezone.utc).isoformat()
+
+    dry = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={"now_utc": now_utc, "window_minutes": 60, "dry_run": "true"},
+    )
+    assert dry.status_code == 200
+    dry_data = dry.json()
+    assert dry_data["dry_run"] is True
+    assert dry_data["considered_teams"] == 2
+    assert dry_data["eligible_teams"] == 2
+    assert dry_data["sent"] == 0
+
+    send = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={"now_utc": now_utc, "window_minutes": 60, "dry_run": "false"},
+    )
+    assert send.status_code == 200
+    send_data = send.json()
+    assert send_data["dry_run"] is False
+    # Team1 has 2 phones, team2 has 1 = 3 total sends
+    assert send_data["sent"] == 3
+    assert send_data["deduped"] == 0
+
+    again = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={"now_utc": now_utc, "window_minutes": 60, "dry_run": "false"},
+    )
+    assert again.status_code == 200
+    again_data = again.json()
+    assert again_data["sent"] == 0
+    assert again_data["deduped"] == 3
+
+    logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == tournament.id,
+            SmsLog.message_type == "first_match",
+            SmsLog.trigger == "auto",
+        )
+    ).all()
+    assert len(logs) == 3
+
+
+def test_first_match_runner_endpoint_disabled_or_outside_window(
+    client, session, setup_tournament_with_teams
+):
+    """Runner returns disabled when toggle off, and outside-window stats when on."""
+    tournament, event, teams = setup_tournament_with_teams
+
+    _create_single_match_schedule(
+        session=session,
+        tournament_id=tournament.id,
+        event_id=event.id,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        day_date=date(2026, 3, 15),
+        start_time_local=time(10, 0),
+        end_time_local=time(11, 0),
+    )
+
+    # No settings row => auto_first_match defaults OFF
+    off = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={
+            "now_utc": datetime(2026, 3, 14, 14, 0, tzinfo=timezone.utc).isoformat(),
+            "window_minutes": 60,
+            "dry_run": "false",
+        },
+    )
+    assert off.status_code == 200
+    off_data = off.json()
+    assert off_data["disabled"] is True
+    assert off_data["sent"] == 0
+
+    # Turn on first-match automation, but run outside reminder window
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=tournament.id,
+            auto_first_match=True,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    outside = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={
+            "now_utc": datetime(2026, 3, 10, 14, 0, tzinfo=timezone.utc).isoformat(),
+            "window_minutes": 60,
+            "dry_run": "false",
+        },
+    )
+    assert outside.status_code == 200
+    outside_data = outside.json()
+    assert outside_data["disabled"] is False
+    assert outside_data["considered_teams"] == 2
+    assert outside_data["eligible_teams"] == 0
+    assert outside_data["outside_window"] == 2
+    assert outside_data["sent"] == 0
 
 
 def test_manual_sms_workflow_preview_then_team_then_blast(

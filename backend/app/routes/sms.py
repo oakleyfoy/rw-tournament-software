@@ -30,6 +30,7 @@ from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.services.sms_automation import run_first_match_24h_for_tournament
 from app.services.twilio_service import (
     format_e164,
     get_team_phone_numbers,
@@ -231,6 +232,28 @@ class SmsDivisionLookupItem(BaseModel):
     division_label: str
     match_count: int
     team_count: int
+
+
+class SmsAutomationRunResponse(BaseModel):
+    """Summary from running the first-match 24h reminder job."""
+
+    tournament_id: int
+    version_id: Optional[int] = None
+    disabled: bool = False
+    no_active_version: bool = False
+    dry_run: bool
+    window_minutes: int
+    timezone: Optional[str] = None
+    now_utc: Optional[str] = None
+    considered_teams: int
+    eligible_teams: int
+    outside_window: int
+    sent: int
+    deduped: int
+    blocked_test_mode: int
+    blocked_consent: int
+    failed: int
+    template_inactive: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2107,3 +2130,43 @@ def reset_sms_templates(
     session.commit()
 
     return {"deleted": len(templates), "message": "Templates reset to defaults"}
+
+
+@router.post("/automation/run-first-match-reminders", response_model=SmsAutomationRunResponse)
+def run_first_match_reminders(
+    tournament_id: int,
+    now_utc: Optional[str] = Query(default=None),
+    window_minutes: int = Query(default=60, ge=1, le=240),
+    dry_run: bool = Query(default=False),
+    session: Session = Depends(get_session),
+):
+    """
+    Run the 24-hour first-match reminder scan for this tournament.
+
+    - `now_utc`: optional ISO datetime override (useful for testing).
+    - `window_minutes`: matching window around now+24h.
+    - `dry_run`: if true, computes recipients but does not send.
+    """
+    _get_tournament_or_404(session, tournament_id)
+
+    now_dt: Optional[datetime] = None
+    if now_utc:
+        raw = now_utc.strip()
+        if raw:
+            normalized = raw.replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                raise HTTPException(400, "Invalid now_utc ISO datetime")
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            now_dt = parsed.astimezone(timezone.utc)
+
+    result = run_first_match_24h_for_tournament(
+        session=session,
+        tournament_id=tournament_id,
+        now_utc=now_dt,
+        window_minutes=window_minutes,
+        dry_run=dry_run,
+    )
+    return SmsAutomationRunResponse(**result)

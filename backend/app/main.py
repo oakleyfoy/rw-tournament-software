@@ -15,6 +15,7 @@ from app.db_schema_patch import (
     ensure_tournament_columns,
     ensure_tournament_sms_settings_columns,
 )
+from app.services.sms_automation import start_first_match_runner_if_enabled
 from app.routes import (
     avoid_edges,
     debug,
@@ -135,6 +136,7 @@ def on_startup():
     ensure_team_columns(engine)
     ensure_sms_log_columns(engine)
     ensure_tournament_sms_settings_columns(engine)
+    start_first_match_runner_if_enabled()
 
     # Print all registered routes for debugging (full path stack)
     print("\n" + "=" * 80)
