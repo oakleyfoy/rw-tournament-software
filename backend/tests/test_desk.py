@@ -15,6 +15,7 @@ from datetime import date, time
 
 import pytest
 from sqlmodel import Session, select
+from typing import List
 
 from app.models.event import Event
 from app.models.match import Match
@@ -22,8 +23,10 @@ from app.models.match_assignment import MatchAssignment
 from app.models.match_lock import MatchLock
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.sms_log import SmsLog
 from app.models.team import Team
 from app.models.tournament import Tournament
+from app.models.tournament_sms_settings import TournamentSmsSettings
 
 
 def _setup_tournament_with_matches(session: Session):
@@ -164,6 +167,17 @@ def _setup_tournament_with_matches(session: Session):
     session.commit()
 
     return t, v, ev, [team1, team2, team3, team4], [m1, m2, m3]
+
+
+def _set_team_test_phones(session: Session, teams: List[Team]) -> None:
+    """Attach a single valid phone to each team for SMS-trigger tests."""
+    for idx, team in enumerate(teams, start=1):
+        team.player1_cellphone = f"9015550{idx:03d}"
+        team.player2_cellphone = None
+        team.p1_cell = None
+        team.p2_cell = None
+        session.add(team)
+    session.commit()
 
 
 def test_working_draft_clones_from_published(client, session):
@@ -356,6 +370,189 @@ def test_snapshot_returns_court_grouping(client, session):
 
     # Court 1 should have M3 (11:00 AM) as up_next
     assert "Court 1" in snap2["up_next_by_court"]
+
+
+def test_sms_automation_status_triggers_up_next_on_deck_and_first_match(client, session):
+    """Starting a match triggers up_next + on_deck + first_match automation sends."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    _set_team_test_phones(session, teams)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+    draft_m3 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
+
+    # Ensure up-next match has teams, then add a third scheduled match for on-deck.
+    m3_obj = session.get(Match, draft_m3["match_id"])
+    m3_obj.team_a_id = teams[2].id
+    m3_obj.team_b_id = teams[3].id
+    session.add(m3_obj)
+    session.flush()
+
+    m4 = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=draft_id,
+        match_code="WOM_E1_WF_R3_M01",
+        match_type="WF",
+        round_number=3,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="TBD",
+        placeholder_side_b="TBD",
+    )
+    session.add(m4)
+    session.flush()
+    slot4 = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=draft_id,
+        day_date=date(2026, 6, 5),
+        start_time=time(13, 0),
+        end_time=time(14, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add(slot4)
+    session.flush()
+    session.add(
+        MatchAssignment(
+            schedule_version_id=draft_id,
+            match_id=m4.id,
+            slot_id=slot4.id,
+        )
+    )
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=t.id,
+            auto_first_match=True,
+            auto_post_match_next=False,
+            auto_on_deck=True,
+            auto_up_next=True,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    status_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/status",
+        json={"version_id": draft_id, "status": "IN_PROGRESS"},
+    )
+    assert status_resp.status_code == 200
+
+    logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == t.id,
+            SmsLog.trigger == "auto",
+        )
+    ).all()
+    by_type = {}
+    for row in logs:
+        by_type[row.message_type] = by_type.get(row.message_type, 0) + 1
+
+    assert by_type.get("up_next", 0) == 2
+    assert by_type.get("first_match", 0) == 2
+    assert by_type.get("on_deck", 0) == 2
+
+
+def test_sms_automation_finalize_triggers_post_match_next(client, session):
+    """Finalizing a match triggers post_match_next for teams with upcoming matches."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    _set_team_test_phones(session, teams)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=t.id,
+            auto_first_match=False,
+            auto_post_match_next=True,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    fin_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize",
+        json={
+            "version_id": draft_id,
+            "score": "8-4",
+            "winner_team_id": draft_m1["team1_id"],
+        },
+    )
+    assert fin_resp.status_code == 200
+
+    post_logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == t.id,
+            SmsLog.trigger == "auto",
+            SmsLog.message_type == "post_match_next",
+        )
+    ).all()
+    assert len(post_logs) >= 1
+
+
+def test_sms_automation_move_triggers_court_change(client, session):
+    """Moving a match to a new slot triggers court_change automation sends."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    _set_team_test_phones(session, teams)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+
+    new_slot = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=draft_id,
+        day_date=date(2026, 6, 5),
+        start_time=time(15, 0),
+        end_time=time(16, 0),
+        court_number=3,
+        court_label="3",
+        block_minutes=60,
+    )
+    session.add(new_slot)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=t.id,
+            auto_first_match=False,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=True,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    move_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/move",
+        json={"version_id": draft_id, "target_slot_id": new_slot.id},
+    )
+    assert move_resp.status_code == 200
+
+    court_change_logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == t.id,
+            SmsLog.trigger == "auto",
+            SmsLog.message_type == "court_change",
+        )
+    ).all()
+    assert len(court_change_logs) == 2
 
 
 def test_board_excludes_finals(client, session):

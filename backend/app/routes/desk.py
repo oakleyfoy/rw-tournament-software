@@ -21,6 +21,7 @@ from app.models.team import Team
 from app.models.match_lock import MatchLock
 from app.models.tournament import Tournament
 from app.services.advancement_service import apply_advancement_with_details, resolve_all_dependencies
+from app.services.sms_automation import SmsAutomationEngine
 from app.services.reschedule_engine import (
     RescheduleParams,
     compute_reschedule,
@@ -992,10 +993,27 @@ def finalize_match(
     ]
 
     auto_started_item = None
+    started_match = None
     if auto_started_match_id:
         started_match = session.get(Match, auto_started_match_id)
         if started_match:
             auto_started_item = _match_to_desk_item(started_match, session, tournament)
+
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        automation.handle_match_finalized(match)
+        if started_match:
+            automation.handle_match_status_change(
+                started_match,
+                previous_status="SCHEDULED",
+                new_status=(started_match.runtime_status or "SCHEDULED"),
+            )
+    except Exception:
+        logger.exception(
+            "SMS automation finalize trigger failed for tournament=%s match=%s",
+            tournament_id,
+            match_id,
+        )
 
     return FinalizeResponse(
         match=desk_item,
@@ -1352,12 +1370,27 @@ def set_match_status(
             detail="Cannot change status of a FINAL match",
         )
 
+    previous_status = (match.runtime_status or "SCHEDULED").upper()
     match.runtime_status = payload.status
     if payload.status == "IN_PROGRESS" and match.started_at is None:
         match.started_at = datetime.utcnow()
 
     session.add(match)
     session.commit()
+
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        automation.handle_match_status_change(
+            match=match,
+            previous_status=previous_status,
+            new_status=payload.status,
+        )
+    except Exception:
+        logger.exception(
+            "SMS automation status trigger failed for tournament=%s match=%s",
+            tournament_id,
+            match_id,
+        )
 
     return StatusResponse(match_id=match.id, status=match.runtime_status)
 
@@ -2626,6 +2659,8 @@ def move_match(
 
     warnings: List[str] = []
 
+    previous_slot_id = existing_assignment.slot_id if existing_assignment else None
+
     if existing_assignment:
         existing_assignment.slot_id = payload.target_slot_id
         existing_assignment.assigned_by = "DESK_MOVE"
@@ -2645,6 +2680,20 @@ def move_match(
 
     session.commit()
     session.refresh(match)
+
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        automation.handle_court_change(
+            match=match,
+            previous_slot_id=previous_slot_id,
+            new_slot_id=payload.target_slot_id,
+        )
+    except Exception:
+        logger.exception(
+            "SMS automation court-change trigger failed for tournament=%s match=%s",
+            tournament_id,
+            match_id,
+        )
 
     item = _match_to_desk_item(match, session, tournament)
     return MoveMatchResponse(success=True, match=item, warnings=warnings)
@@ -2738,6 +2787,26 @@ def swap_matches(
 
     session.refresh(match_a)
     session.refresh(match_b)
+
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        automation.handle_court_change(
+            match=match_a,
+            previous_slot_id=slot_a,
+            new_slot_id=slot_b,
+        )
+        automation.handle_court_change(
+            match=match_b,
+            previous_slot_id=slot_b,
+            new_slot_id=slot_a,
+        )
+    except Exception:
+        logger.exception(
+            "SMS automation swap trigger failed for tournament=%s matches=(%s,%s)",
+            tournament_id,
+            payload.match_a_id,
+            payload.match_b_id,
+        )
 
     item_a = _match_to_desk_item(match_a, session, tournament)
     item_b = _match_to_desk_item(match_b, session, tournament)
@@ -3142,6 +3211,38 @@ def reschedule_apply(
         dur_updates = {int(k): v for k, v in payload.duration_updates.items()}
 
     result = apply_reschedule(session, tournament_id, payload.version_id, payload.moves, dur_updates)
+
+    try:
+        tournament = session.get(Tournament, tournament_id)
+        if tournament:
+            automation = SmsAutomationEngine(session, tournament, payload.version_id)
+            for move in payload.moves:
+                match_id_raw = move.get("match_id")
+                old_slot_id_raw = move.get("old_slot_id")
+                new_slot_id_raw = move.get("new_slot_id")
+                if match_id_raw is None or old_slot_id_raw is None or new_slot_id_raw is None:
+                    continue
+                try:
+                    match_id = int(match_id_raw)
+                    old_slot_id = int(old_slot_id_raw)
+                    new_slot_id = int(new_slot_id_raw)
+                except (TypeError, ValueError):
+                    continue
+                moved_match = session.get(Match, match_id)
+                if not moved_match or moved_match.schedule_version_id != payload.version_id:
+                    continue
+                automation.handle_court_change(
+                    match=moved_match,
+                    previous_slot_id=old_slot_id,
+                    new_slot_id=new_slot_id,
+                )
+    except Exception:
+        logger.exception(
+            "SMS automation reschedule trigger failed for tournament=%s version=%s",
+            tournament_id,
+            payload.version_id,
+        )
+
     return RescheduleApplyResponse(**result)
 
 
