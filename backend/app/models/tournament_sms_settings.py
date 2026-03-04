@@ -26,6 +26,11 @@ class TournamentSmsSettings(SQLModel, table=True):
     test_mode: bool = Field(default=False)
     test_allowlist: Optional[str] = Field(default=None)
 
+    # Optional deprecation path:
+    # when enabled, team/event/division/match texting resolves recipients from
+    # Player/TeamPlayer records only (no direct legacy Team phone-field fallback).
+    player_contacts_only: bool = Field(default=False)
+
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

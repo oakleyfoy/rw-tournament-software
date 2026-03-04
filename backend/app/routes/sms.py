@@ -28,6 +28,7 @@ from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_log import SmsLog
 from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
+from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.services.sms_automation import run_first_match_24h_for_tournament
@@ -125,6 +126,7 @@ class SmsSettingsResponse(BaseModel):
     auto_court_change: bool
     test_mode: bool
     test_allowlist: Optional[str] = None
+    player_contacts_only: bool
 
 
 class SmsSettingsUpdate(BaseModel):
@@ -137,6 +139,7 @@ class SmsSettingsUpdate(BaseModel):
     auto_court_change: Optional[bool] = None
     test_mode: Optional[bool] = None
     test_allowlist: Optional[str] = None
+    player_contacts_only: Optional[bool] = None
 
 
 class SmsTemplateResponse(BaseModel):
@@ -663,6 +666,7 @@ def _settings_to_response(
             auto_court_change=True,
             test_mode=False,
             test_allowlist=None,
+            player_contacts_only=False,
         )
     return SmsSettingsResponse(
         tournament_id=settings.tournament_id,
@@ -673,7 +677,313 @@ def _settings_to_response(
         auto_court_change=settings.auto_court_change,
         test_mode=bool(getattr(settings, "test_mode", False)),
         test_allowlist=getattr(settings, "test_allowlist", None),
+        player_contacts_only=bool(getattr(settings, "player_contacts_only", False)),
     )
+
+
+def _get_sms_settings_row(
+    session: Session,
+    tournament_id: int,
+) -> Optional[TournamentSmsSettings]:
+    return session.exec(
+        select(TournamentSmsSettings).where(
+            TournamentSmsSettings.tournament_id == tournament_id
+        )
+    ).first()
+
+
+def _player_contacts_only_enabled(
+    session: Session,
+    tournament_id: int,
+) -> bool:
+    settings = _get_sms_settings_row(session, tournament_id)
+    return bool(settings and getattr(settings, "player_contacts_only", False))
+
+
+def _team_slot_email(team: Team, slot: int) -> Optional[str]:
+    candidates = (
+        ("player1_email", "p1_email")
+        if slot == 1
+        else ("player2_email", "p2_email")
+    )
+    for field_name in candidates:
+        raw = getattr(team, field_name, None)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value:
+            return value
+    return None
+
+
+def _sync_players_and_team_links_from_team_slots(
+    session: Session,
+    tournament_id: int,
+    *,
+    teams: Optional[List[Team]] = None,
+) -> dict[str, int]:
+    """
+    Sync legacy team phone slots into Player + TeamPlayer models.
+
+    This keeps player-based contact resolution warm while preserving backward
+    compatibility for tournaments still editing legacy team phone fields.
+    """
+    source_teams = teams if teams is not None else _get_all_teams_for_tournament(session, tournament_id)
+    team_rows = [t for t in source_teams if t.id is not None]
+    if not team_rows:
+        return {
+            "players_created": 0,
+            "players_updated": 0,
+            "links_created": 0,
+            "links_updated": 0,
+            "links_removed": 0,
+        }
+
+    players = session.exec(
+        select(Player).where(Player.tournament_id == tournament_id)
+    ).all()
+    players_by_phone: dict[str, Player] = {
+        p.phone_e164: p
+        for p in players
+        if p.phone_e164
+    }
+
+    team_ids = [t.id for t in team_rows if t.id is not None]
+    links = session.exec(
+        select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))  # type: ignore
+    ).all()
+    links_by_team_slot: dict[tuple[int, int], TeamPlayer] = {
+        (link.team_id, int(link.lineup_slot)): link
+        for link in links
+        if link.lineup_slot in (1, 2)
+    }
+    links_by_team_player: dict[tuple[int, int], TeamPlayer] = {
+        (link.team_id, link.player_id): link
+        for link in links
+    }
+
+    stats = {
+        "players_created": 0,
+        "players_updated": 0,
+        "links_created": 0,
+        "links_updated": 0,
+        "links_removed": 0,
+    }
+
+    for team in team_rows:
+        if team.id is None:
+            continue
+        team_id = team.id
+        p1_name, p2_name = _team_player_names(team)
+
+        desired_by_slot: dict[int, Player] = {}
+        seen_player_ids: set[int] = set()
+        for slot, player_name in ((1, p1_name), (2, p2_name)):
+            phone_e164 = _team_slot_phone(team, slot)
+            if not phone_e164:
+                continue
+
+            player = players_by_phone.get(phone_e164)
+            if not player:
+                player = Player(
+                    tournament_id=tournament_id,
+                    full_name=player_name or f"Team {team_id} Player {slot}",
+                    display_name=player_name or None,
+                    phone_e164=phone_e164,
+                    email=_team_slot_email(team, slot),
+                    sms_consent_status="unknown",
+                    sms_consent_source="team_phone_sync",
+                    sms_consent_updated_at=datetime.now(timezone.utc),
+                )
+                session.add(player)
+                session.flush()
+                players_by_phone[phone_e164] = player
+                stats["players_created"] += 1
+            else:
+                updated = False
+                if player_name and (
+                    not player.full_name
+                    or player.full_name.startswith("Unknown (")
+                ):
+                    player.full_name = player_name
+                    if not player.display_name:
+                        player.display_name = player_name
+                    updated = True
+                if not player.email:
+                    email = _team_slot_email(team, slot)
+                    if email:
+                        player.email = email
+                        updated = True
+                if updated:
+                    player.updated_at = datetime.now(timezone.utc)
+                    session.add(player)
+                    stats["players_updated"] += 1
+
+            player_id = player.id
+            if player_id is None or player_id in seen_player_ids:
+                continue
+            seen_player_ids.add(player_id)
+            desired_by_slot[slot] = player
+
+        # Remove stale slot links where no current phone exists for that slot.
+        for slot in (1, 2):
+            if slot in desired_by_slot:
+                continue
+            stale = links_by_team_slot.get((team_id, slot))
+            if stale is None:
+                continue
+            session.delete(stale)
+            stats["links_removed"] += 1
+            links_by_team_slot.pop((team_id, slot), None)
+            links_by_team_player.pop((team_id, stale.player_id), None)
+
+        for slot, player in desired_by_slot.items():
+            player_id = player.id
+            if player_id is None:
+                continue
+            existing_slot_link = links_by_team_slot.get((team_id, slot))
+            existing_pair_link = links_by_team_player.get((team_id, player_id))
+
+            if existing_pair_link:
+                changed = False
+                if existing_pair_link.lineup_slot != slot:
+                    existing_pair_link.lineup_slot = slot
+                    changed = True
+                if existing_pair_link.role is None:
+                    existing_pair_link.role = "player"
+                    changed = True
+                if existing_pair_link.is_primary_contact != (slot == 1):
+                    existing_pair_link.is_primary_contact = (slot == 1)
+                    changed = True
+                if changed:
+                    session.add(existing_pair_link)
+                    stats["links_updated"] += 1
+
+                if (
+                    existing_slot_link is not None
+                    and existing_slot_link.id != existing_pair_link.id
+                ):
+                    session.delete(existing_slot_link)
+                    stats["links_removed"] += 1
+                    links_by_team_player.pop((team_id, existing_slot_link.player_id), None)
+                    links_by_team_slot.pop((team_id, slot), None)
+
+                links_by_team_slot[(team_id, slot)] = existing_pair_link
+                links_by_team_player[(team_id, player_id)] = existing_pair_link
+                continue
+
+            if existing_slot_link is not None:
+                old_player_id = existing_slot_link.player_id
+                existing_slot_link.player_id = player_id
+                existing_slot_link.role = existing_slot_link.role or "player"
+                existing_slot_link.is_primary_contact = (slot == 1)
+                session.add(existing_slot_link)
+                stats["links_updated"] += 1
+                links_by_team_player.pop((team_id, old_player_id), None)
+                links_by_team_player[(team_id, player_id)] = existing_slot_link
+                links_by_team_slot[(team_id, slot)] = existing_slot_link
+                continue
+
+            created_link = TeamPlayer(
+                team_id=team_id,
+                player_id=player_id,
+                lineup_slot=slot,
+                role="player",
+                is_primary_contact=(slot == 1),
+            )
+            session.add(created_link)
+            session.flush()
+            links_by_team_slot[(team_id, slot)] = created_link
+            links_by_team_player[(team_id, player_id)] = created_link
+            stats["links_created"] += 1
+
+    return stats
+
+
+def _team_targets_from_player_contacts(
+    session: Session,
+    tournament_id: int,
+    team: Team,
+) -> List[dict]:
+    """Resolve team recipients from TeamPlayer -> Player links only."""
+    if team.id is None:
+        return []
+    links = session.exec(
+        select(TeamPlayer).where(
+            TeamPlayer.team_id == team.id,
+            TeamPlayer.lineup_slot.in_([1, 2]),  # type: ignore
+        )
+    ).all()
+    if not links:
+        return []
+
+    player_ids = [link.player_id for link in links if link.player_id is not None]
+    if not player_ids:
+        return []
+    players = session.exec(
+        select(Player).where(
+            Player.id.in_(player_ids),  # type: ignore
+            Player.tournament_id == tournament_id,
+        )
+    ).all()
+    player_by_id = {p.id: p for p in players if p.id is not None}
+
+    ordered_links = sorted(
+        links,
+        key=lambda l: (
+            99 if l.lineup_slot is None else int(l.lineup_slot),
+            0 if l.is_primary_contact else 1,
+            l.id or 0,
+        ),
+    )
+
+    targets: List[dict] = []
+    seen_phones: set[str] = set()
+    for link in ordered_links:
+        player = player_by_id.get(link.player_id)
+        if not player or not player.phone_e164:
+            continue
+        try:
+            phone = format_e164(player.phone_e164)
+        except ValueError:
+            continue
+        if phone in seen_phones:
+            continue
+        seen_phones.add(phone)
+        targets.append(
+            {
+                "phone": phone,
+                "team_id": team.id,
+                "team_name": team.name,
+                "player_id": player.id,
+                "player_name": player.display_name or player.full_name,
+            }
+        )
+    return targets
+
+
+def _team_sms_targets(
+    session: Session,
+    tournament_id: int,
+    team: Team,
+    *,
+    player_contacts_only: bool,
+) -> List[dict]:
+    if player_contacts_only:
+        return _team_targets_from_player_contacts(session, tournament_id, team)
+
+    targets: List[dict] = []
+    for phone in get_team_phone_numbers(team):
+        targets.append(
+            {
+                "phone": phone,
+                "team_id": team.id,
+                "team_name": team.name,
+                "player_id": None,
+                "player_name": None,
+            }
+        )
+    return targets
 
 
 def _is_phone_send_allowed(
@@ -939,23 +1249,20 @@ def _send_to_teams(
     dedupe_key: Optional[str] = None,
 ) -> SmsSendResponse:
     """Send to all phone numbers found on a team list."""
+    player_contacts_only = _player_contacts_only_enabled(session, tournament_id)
     targets: List[dict] = []
     skipped_no_phone = 0
     for team in teams:
-        phones = get_team_phone_numbers(team)
-        if not phones:
+        team_targets = _team_sms_targets(
+            session=session,
+            tournament_id=tournament_id,
+            team=team,
+            player_contacts_only=player_contacts_only,
+        )
+        if not team_targets:
             skipped_no_phone += 1
             continue
-        for phone in phones:
-            targets.append(
-                {
-                    "phone": phone,
-                    "team_id": team.id,
-                    "team_name": team.name,
-                    "player_id": None,
-                    "player_name": None,
-                }
-            )
+        targets.extend(team_targets)
 
     return _send_to_phone_targets(
         session=session,
@@ -1048,14 +1355,23 @@ def _get_teams_for_division(
 
 
 def _preview_for_teams(
+    session: Session,
+    tournament_id: int,
     teams: List[Team],
     message: str,
 ) -> SmsPreviewResponse:
+    player_contacts_only = _player_contacts_only_enabled(session, tournament_id)
     recipients = []
     teams_without = 0
     total_messages = 0
     for team in teams:
-        phones = get_team_phone_numbers(team)
+        team_targets = _team_sms_targets(
+            session=session,
+            tournament_id=tournament_id,
+            team=team,
+            player_contacts_only=player_contacts_only,
+        )
+        phones = [str(t["phone"]) for t in team_targets if t.get("phone")]
         if not phones:
             teams_without += 1
             continue
@@ -1118,7 +1434,17 @@ def get_sms_status(
     twilio = get_twilio_service()
 
     teams = _get_all_teams_for_tournament(session, tournament_id)
-    teams_with_phones = sum(1 for t in teams if get_team_phone_numbers(t))
+    player_contacts_only = _player_contacts_only_enabled(session, tournament_id)
+    teams_with_phones = sum(
+        1
+        for t in teams
+        if _team_sms_targets(
+            session=session,
+            tournament_id=tournament_id,
+            team=t,
+            player_contacts_only=player_contacts_only,
+        )
+    )
 
     settings = session.exec(
         select(TournamentSmsSettings).where(
@@ -1143,60 +1469,19 @@ def get_sms_players(
     """List known players for player-target lookup in SMS UI.
 
     If Player rows are missing (legacy team-only records), this endpoint
-    auto-provisions players from team phone slots for reliable player search.
+    auto-provisions players and TeamPlayer links from team phone slots.
     """
     _get_tournament_or_404(session, tournament_id)
-    rows = session.exec(
-        select(Player).where(Player.tournament_id == tournament_id)
-    ).all()
-
-    players = list(rows)
-    players_by_phone: dict[str, Player] = {
-        p.phone_e164: p
-        for p in players
-        if p.phone_e164
-    }
-
-    teams = _get_all_teams_for_tournament(session, tournament_id)
-    changed = False
-    for team in teams:
-        p1_name, p2_name = _team_player_names(team)
-        for slot, player_name, phone_e164 in (
-            (1, p1_name, _team_slot_phone(team, 1)),
-            (2, p2_name, _team_slot_phone(team, 2)),
-        ):
-            if not phone_e164:
-                continue
-
-            existing = players_by_phone.get(phone_e164)
-            if existing:
-                if existing.full_name.startswith("Unknown (") and player_name:
-                    existing.full_name = player_name
-                    if not existing.display_name:
-                        existing.display_name = player_name
-                    existing.updated_at = datetime.now(timezone.utc)
-                    session.add(existing)
-                    changed = True
-                continue
-
-            created = Player(
-                tournament_id=tournament_id,
-                full_name=player_name or f"Team {team.id} Player {slot}",
-                display_name=player_name or None,
-                phone_e164=phone_e164,
-                sms_consent_status="unknown",
-                sms_consent_source="team_phone_sync",
-                sms_consent_updated_at=datetime.now(timezone.utc),
-            )
-            session.add(created)
-            session.flush()
-            players.append(created)
-            players_by_phone[phone_e164] = created
-            changed = True
-
-    if changed:
+    sync_stats = _sync_players_and_team_links_from_team_slots(
+        session=session,
+        tournament_id=tournament_id,
+    )
+    if any(sync_stats.values()):
         session.commit()
 
+    players = session.exec(
+        select(Player).where(Player.tournament_id == tournament_id)
+    ).all()
     players.sort(
         key=lambda p: (
             (p.display_name or p.full_name or "").lower(),
@@ -1738,11 +2023,22 @@ def send_team_text(
     if not team:
         raise HTTPException(404, f"Team {team_id} not found")
 
-    phones = get_team_phone_numbers(team)
-    if not phones:
+    player_contacts_only = _player_contacts_only_enabled(session, tournament_id)
+    team_targets = _team_sms_targets(
+        session=session,
+        tournament_id=tournament_id,
+        team=team,
+        player_contacts_only=player_contacts_only,
+    )
+    if not team_targets:
+        detail = (
+            f"Team '{team.name}' has no player-linked contacts on file"
+            if player_contacts_only
+            else f"Team '{team.name}' has no phone numbers on file"
+        )
         raise HTTPException(
             400,
-            f"Team '{team.name}' has no phone numbers on file",
+            detail,
         )
 
     return _send_to_teams(
@@ -1873,7 +2169,12 @@ def preview_blast(
     """Preview who would receive a tournament blast (no texts sent)."""
     _get_tournament_or_404(session, tournament_id)
     teams = _get_all_teams_for_tournament(session, tournament_id)
-    return _preview_for_teams(teams=teams, message=body.message)
+    return _preview_for_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+    )
 
 
 @router.post("/preview/event/{event_id}", response_model=SmsPreviewResponse)
@@ -1886,7 +2187,12 @@ def preview_event(
     """Preview recipients for an event-wide send."""
     _get_tournament_or_404(session, tournament_id)
     teams = _get_teams_for_event(session, tournament_id, event_id)
-    return _preview_for_teams(teams=teams, message=body.message)
+    return _preview_for_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+    )
 
 
 @router.post("/preview/division/{division}", response_model=SmsPreviewResponse)
@@ -1899,7 +2205,12 @@ def preview_division(
     """Preview recipients for category- or event-labeled division send."""
     _get_tournament_or_404(session, tournament_id)
     teams = _get_teams_for_division(session, tournament_id, division)
-    return _preview_for_teams(teams=teams, message=body.message)
+    return _preview_for_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+    )
 
 
 @router.post(
@@ -1921,7 +2232,12 @@ def preview_event_division(
         event_id=event_id,
         division_label=division,
     )
-    return _preview_for_teams(teams=teams, message=body.message)
+    return _preview_for_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+    )
 
 
 @router.post("/preview/player/{player_id}", response_model=SmsPreviewResponse)
@@ -1979,7 +2295,12 @@ def preview_match(
         tournament_id=tournament_id,
         match_id=match_id,
     )
-    return _preview_for_teams(teams=teams, message=body.message)
+    return _preview_for_teams(
+        session=session,
+        tournament_id=tournament_id,
+        teams=teams,
+        message=body.message,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2182,6 +2503,9 @@ def update_sms_settings(
             TournamentSmsSettings.tournament_id == tournament_id
         )
     ).first()
+    was_player_contacts_only = bool(
+        settings and getattr(settings, "player_contacts_only", False)
+    )
 
     if not settings:
         # Create with defaults, then apply updates
@@ -2195,6 +2519,14 @@ def update_sms_settings(
         ) or None
     for key, value in update_data.items():
         setattr(settings, key, value)
+
+    now_player_contacts_only = bool(getattr(settings, "player_contacts_only", False))
+    if not was_player_contacts_only and now_player_contacts_only:
+        _sync_players_and_team_links_from_team_slots(
+            session=session,
+            tournament_id=tournament_id,
+        )
+
     settings.updated_at = datetime.now(timezone.utc)
 
     session.add(settings)

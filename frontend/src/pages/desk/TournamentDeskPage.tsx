@@ -5623,6 +5623,7 @@ function SmsAdminTab({
         auto_court_change: settingsDraft.auto_court_change,
         test_mode: settingsDraft.test_mode,
         test_allowlist: settingsDraft.test_allowlist,
+        player_contacts_only: settingsDraft.player_contacts_only,
       })
       setSettingsDraft(updated)
     } catch (e: any) {
@@ -5684,6 +5685,7 @@ function SmsAdminTab({
           <div><strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones</div>
           <div><strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}</div>
           <div><strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}</div>
+          <div><strong>Contact mode:</strong> {settingsDraft?.player_contacts_only ? 'Player records only' : 'Legacy team fields'}</div>
         </div>
       </div>
 
@@ -6147,6 +6149,19 @@ function SmsAdminTab({
               />
               <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
                 Use comma or newline-separated numbers. They are normalized to E.164 on save.
+              </div>
+            </div>
+            <div style={{ marginBottom: 10, padding: 10, border: '1px solid #e8eaf6', borderRadius: 6, backgroundColor: '#f5f7ff' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settingsDraft.player_contacts_only)}
+                  onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, player_contacts_only: e.target.checked }) : prev)}
+                />
+                Player contacts only (deprecate team-field texting)
+              </label>
+              <div style={{ fontSize: 12, color: '#555' }}>
+                When enabled, team/event/division/match sends use Player records linked to teams. Legacy team phone fields are no longer used directly for those sends.
               </div>
             </div>
             <button onClick={saveSettings} disabled={savingSettings} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>

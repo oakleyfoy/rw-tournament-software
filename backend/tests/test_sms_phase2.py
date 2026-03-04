@@ -904,6 +904,7 @@ def test_settings_defaults(client, session, setup_tournament_with_teams):
     assert data["auto_court_change"] is True  # Default ON
     assert data["test_mode"] is False
     assert data["test_allowlist"] is None
+    assert data["player_contacts_only"] is False
 
 
 def test_settings_update(client, session, setup_tournament_with_teams):
@@ -920,6 +921,7 @@ def test_settings_update(client, session, setup_tournament_with_teams):
     assert data["auto_on_deck"] is True
     assert data["auto_post_match_next"] is False  # Not changed
     assert data["auto_court_change"] is True  # Default preserved
+    assert data["player_contacts_only"] is False
 
 
 def test_settings_update_test_mode_allowlist_normalizes(client, session, setup_tournament_with_teams):
@@ -965,6 +967,71 @@ def test_settings_persist(client, session, setup_tournament_with_teams):
     resp = client.get(f"/api/tournaments/{tournament.id}/sms/settings")
     data = resp.json()
     assert data["auto_first_match"] is True
+
+
+def test_settings_player_contacts_only_toggle(client, session, setup_tournament_with_teams):
+    """Player-contacts-only toggle should persist via settings API."""
+    tournament, _, _ = setup_tournament_with_teams
+
+    resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={"player_contacts_only": True},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["player_contacts_only"] is True
+
+    get_resp = client.get(f"/api/tournaments/{tournament.id}/sms/settings")
+    assert get_resp.status_code == 200
+    get_data = get_resp.json()
+    assert get_data["player_contacts_only"] is True
+
+
+def test_player_contacts_only_requires_player_links_for_new_teams(
+    client, session, setup_tournament_with_teams
+):
+    """With player-only mode enabled, new team phone fields require player-link sync."""
+    tournament, event, _teams = setup_tournament_with_teams
+    from app.models.team import Team
+
+    # Enabling player_contacts_only performs initial sync for existing teams.
+    set_resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={"player_contacts_only": True},
+    )
+    assert set_resp.status_code == 200
+
+    # Create a new team after enabling; no TeamPlayer links exist yet.
+    strict_team = Team(
+        event_id=event.id,
+        name="Strict Mode Team",
+        seed=77,
+        p1_cell="6155551000",
+        p2_cell=None,
+    )
+    session.add(strict_team)
+    session.commit()
+    session.refresh(strict_team)
+
+    blocked = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{strict_team.id}",
+        json={"message": "Strict-mode test"},
+    )
+    assert blocked.status_code == 400
+    assert "player-linked contacts" in blocked.json()["detail"].lower()
+
+    # Player lookup endpoint runs sync and creates TeamPlayer links.
+    sync_resp = client.get(f"/api/tournaments/{tournament.id}/sms/players")
+    assert sync_resp.status_code == 200
+
+    allowed = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{strict_team.id}",
+        json={"message": "Strict-mode test"},
+    )
+    assert allowed.status_code == 200
+    data = allowed.json()
+    assert data["sent"] == 1
+    assert data["failed"] == 0
 
 
 def test_test_mode_blocks_non_allowlisted_numbers(client, session, setup_tournament_with_teams):

@@ -2781,6 +2781,7 @@ export interface SmsSettingsResponse {
   auto_court_change: boolean
   test_mode: boolean
   test_allowlist: string | null
+  player_contacts_only: boolean
 }
 
 export interface SmsTemplateResponse {
@@ -3127,7 +3128,8 @@ export async function patchSmsSettings(
     'auto_up_next' |
     'auto_court_change' |
     'test_mode' |
-    'test_allowlist'
+    'test_allowlist' |
+    'player_contacts_only'
   >>
 ): Promise<SmsSettingsResponse> {
   return fetchJson<SmsSettingsResponse>(

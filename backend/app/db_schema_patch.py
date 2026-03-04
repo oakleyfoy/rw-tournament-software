@@ -48,6 +48,7 @@ REQUIRED_SMS_LOG_COLUMNS: List[Tuple[str, str, str]] = [
 REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
     ("test_mode", "INTEGER", "BOOLEAN"),
     ("test_allowlist", "TEXT", "TEXT"),
+    ("player_contacts_only", "INTEGER", "BOOLEAN"),
 ]
 
 
@@ -328,7 +329,7 @@ def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
                 for name, sqlite_type, _pg_type in REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS:
                     if name in existing:
                         continue
-                    default = " DEFAULT 0" if name == "test_mode" else ""
+                    default = " DEFAULT 0" if name in {"test_mode", "player_contacts_only"} else ""
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type}{default};"))
         else:
             with engine.connect() as conn:
@@ -351,7 +352,7 @@ def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
                 for name, _sqlite_type, pg_type in REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS:
                     if name in existing:
                         continue
-                    default = " DEFAULT FALSE" if name == "test_mode" else ""
+                    default = " DEFAULT FALSE" if name in {"test_mode", "player_contacts_only"} else ""
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type}{default};"))
     except Exception as e:
         import logging
