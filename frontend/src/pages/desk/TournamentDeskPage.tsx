@@ -20,6 +20,7 @@ import {
   deskAddCourt,
   deskUpdateCourt,
   deskDeleteCourt,
+  deskFillCourtSlots,
   bulkPauseInProgress,
   bulkDelayAfter,
   bulkResumePaused,
@@ -4751,12 +4752,12 @@ function DeskGridTab({
     }
   }
 
-  const handleAddCourt = async (courtLabel: string, createSlots: boolean) => {
+  const handleAddCourt = async (courtLabel: string) => {
     try {
       await deskAddCourt(tid, {
         version_id: data.version_id,
         court_label: courtLabel,
-        create_matching_slots: createSlots,
+        create_matching_slots: true,
       })
       showToast(`Court "${courtLabel}" added`)
       setAddCourtOpen(false)
@@ -4764,6 +4765,20 @@ function DeskGridTab({
       onRefresh()
     } catch (err: any) {
       showToast(err?.detail || err || 'Failed to add court')
+    }
+  }
+
+  const handleFillCourtSlots = async (courtLabel: string) => {
+    try {
+      const resp = await deskFillCourtSlots(tid, courtLabel, { version_id: data.version_id })
+      if (resp.created_slots > 0) {
+        showToast(`Created ${resp.created_slots} open slot(s) for Court ${courtLabel}`)
+      } else {
+        showToast(`No missing slots found for Court ${courtLabel}`)
+      }
+      onRefresh()
+    } catch (err: any) {
+      showToast(err?.detail || err || 'Failed to create slots')
     }
   }
 
@@ -5227,6 +5242,7 @@ function DeskGridTab({
           onClose={() => setManageCourtOpen(false)}
           onRename={handleRenameCourt}
           onDelete={handleDeleteCourt}
+          onFillSlots={handleFillCourtSlots}
         />
       )}
 
@@ -5499,10 +5515,9 @@ function AddCourtModal({
   onSubmit,
 }: {
   onClose: () => void
-  onSubmit: (courtLabel: string, createSlots: boolean) => void
+  onSubmit: (courtLabel: string) => void
 }) {
   const [label, setLabel] = useState('')
-  const [createSlots, setCreateSlots] = useState(true)
 
   return (
     <>
@@ -5530,14 +5545,9 @@ function AddCourtModal({
               autoFocus
             />
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={createSlots}
-              onChange={e => setCreateSlots(e.target.checked)}
-            />
-            Create slots for all existing time windows
-          </label>
+          <div style={{ fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>
+            Matching open slots will be created automatically.
+          </div>
         </div>
         <div style={{
           padding: '12px 20px', borderTop: '1px solid #e0e0e0',
@@ -5552,7 +5562,7 @@ function AddCourtModal({
           <button
             onClick={() => {
               if (!label.trim()) return
-              onSubmit(label.trim(), createSlots)
+              onSubmit(label.trim())
             }}
             style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, border: 'none', borderRadius: 4, backgroundColor: '#1a237e', color: '#fff', cursor: 'pointer' }}
           >
@@ -5573,12 +5583,14 @@ function ManageCourtsModal({
   onClose,
   onRename,
   onDelete,
+  onFillSlots,
 }: {
   courts: string[]
   slotCountByCourtLabel: Record<string, number>
   onClose: () => void
   onRename: (oldLabel: string, newLabel: string) => Promise<void> | void
   onDelete: (courtLabel: string, deleteMatchingSlots: boolean) => Promise<void> | void
+  onFillSlots: (courtLabel: string) => Promise<void> | void
 }) {
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({})
   const [busyLabel, setBusyLabel] = useState<string | null>(null)
@@ -5614,6 +5626,7 @@ function ManageCourtsModal({
                   <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Current Label</th>
                   <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Slots</th>
                   <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Rename</th>
+                  <th style={{ textAlign: 'center', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Slots</th>
                   <th style={{ textAlign: 'right', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Delete</th>
                 </tr>
               </thead>
@@ -5663,6 +5676,27 @@ function ManageCourtsModal({
                             Rename
                           </button>
                         </div>
+                      </td>
+                      <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                        <button
+                          disabled={rowBusy}
+                          onClick={async () => {
+                            setBusyLabel(label)
+                            try {
+                              await onFillSlots(label)
+                            } finally {
+                              setBusyLabel(null)
+                            }
+                          }}
+                          style={{
+                            padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                            border: '1px solid #2e7d32', borderRadius: 4,
+                            backgroundColor: '#e8f5e9', color: '#2e7d32',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Create Slots
+                        </button>
                       </td>
                       <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0', textAlign: 'right' }}>
                         <button

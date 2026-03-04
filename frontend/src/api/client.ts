@@ -2319,6 +2319,13 @@ export interface DeleteCourtResponse {
   remaining_courts: string[]
 }
 
+export interface FillCourtSlotsResponse {
+  success: boolean
+  court_label: string
+  court_number: number
+  created_slots: number
+}
+
 export async function deskAddSlots(
   tournamentId: number,
   payload: { version_id: number; day_date: string; start_time: string; end_time: string; court_numbers: number[] }
@@ -2368,6 +2375,17 @@ export async function deskDeleteCourt(
   return fetchJson<DeleteCourtResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts/${encodeURIComponent(courtLabel)}`,
     { method: 'DELETE', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskFillCourtSlots(
+  tournamentId: number,
+  courtLabel: string,
+  payload: { version_id: number }
+): Promise<FillCourtSlotsResponse> {
+  return fetchJson<FillCourtSlotsResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts/${encodeURIComponent(courtLabel)}/slots/fill`,
+    { method: 'POST', body: JSON.stringify(payload) }
   )
 }
 

@@ -2423,6 +2423,41 @@ def test_delete_newest_court_requires_slot_opt_in_then_deletes(client, session):
     session.refresh(t)
     assert t.court_names == ["1", "2"]
 
+
+def test_fill_court_slots_creates_missing_open_slots(client, session):
+    """Fill endpoint backfills missing open slots for an existing court."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+
+    add_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/courts",
+        json={
+            "version_id": v.id,
+            "court_label": "3",
+            "create_matching_slots": False,
+        },
+    )
+    assert add_resp.status_code == 200
+    assert add_resp.json()["created_slots"] == 0
+
+    fill_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/courts/3/slots/fill",
+        json={"version_id": v.id},
+    )
+    assert fill_resp.status_code == 200
+    body = fill_resp.json()
+    assert body["success"] is True
+    assert body["court_label"] == "3"
+    assert body["created_slots"] > 0
+
+    c3_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == v.id,
+            ScheduleSlot.court_number == 3,
+        )
+    ).all()
+    assert len(c3_slots) == body["created_slots"]
+
+
 def test_conflict_check_move_day_cap(client, session):
     """Conflict check for MOVE detects day cap exceeded at target slot."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

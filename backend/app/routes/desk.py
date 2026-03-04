@@ -3313,6 +3313,17 @@ class DeleteCourtResponse(BaseModel):
     remaining_courts: List[str]
 
 
+class FillCourtSlotsRequest(BaseModel):
+    version_id: int
+
+
+class FillCourtSlotsResponse(BaseModel):
+    success: bool
+    court_label: str
+    court_number: int
+    created_slots: int = 0
+
+
 @router.post(
     "/desk/tournaments/{tournament_id}/courts",
     response_model=AddCourtResponse,
@@ -3575,6 +3586,92 @@ def delete_court(
         court_number=court_number,
         removed_slots=removed_slots,
         remaining_courts=court_names,
+    )
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/courts/{court_label}/slots/fill",
+    response_model=FillCourtSlotsResponse,
+)
+def fill_court_slots(
+    tournament_id: int,
+    court_label: str,
+    payload: FillCourtSlotsRequest,
+    session: Session = Depends(get_session),
+):
+    """Create missing open slots for a court using existing version time windows."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Court slot fill only allowed on DRAFT versions")
+
+    label = (court_label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="court_label is required")
+
+    court_names = list(tournament.court_names or [])
+    idx = next((i for i, c in enumerate(court_names) if (c or "").strip().lower() == label.lower()), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"Court '{label}' not found")
+    court_number = idx + 1
+
+    existing_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+        )
+    ).all()
+    if not existing_slots:
+        return FillCourtSlotsResponse(
+            success=True,
+            court_label=label,
+            court_number=court_number,
+            created_slots=0,
+        )
+
+    # Reference windows are all unique day/start/end tuples from existing slots.
+    reference_windows: Dict[Tuple[Any, Any, Any], int] = {}
+    for s in existing_slots:
+        key = (s.day_date, s.start_time, s.end_time)
+        if key not in reference_windows:
+            reference_windows[key] = s.block_minutes
+
+    existing_on_target = {
+        (s.day_date, s.start_time, s.end_time)
+        for s in existing_slots
+        if s.court_number == court_number
+    }
+
+    created = 0
+    for (day_date, start_time, end_time), block_minutes in reference_windows.items():
+        key = (day_date, start_time, end_time)
+        if key in existing_on_target:
+            continue
+        session.add(
+            ScheduleSlot(
+                tournament_id=tournament_id,
+                schedule_version_id=payload.version_id,
+                day_date=day_date,
+                start_time=start_time,
+                end_time=end_time,
+                court_number=court_number,
+                court_label=label,
+                block_minutes=block_minutes,
+                is_active=True,
+            )
+        )
+        created += 1
+
+    session.commit()
+    return FillCourtSlotsResponse(
+        success=True,
+        court_label=label,
+        court_number=court_number,
+        created_slots=created,
     )
 
 
