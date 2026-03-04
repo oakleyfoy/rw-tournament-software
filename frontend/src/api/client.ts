@@ -2303,6 +2303,22 @@ export interface AddCourtResponse {
   created_slots: number
 }
 
+export interface UpdateCourtResponse {
+  success: boolean
+  old_court_label: string
+  new_court_label: string
+  court_number: number
+  updated_slots: number
+}
+
+export interface DeleteCourtResponse {
+  success: boolean
+  court_label: string
+  court_number: number
+  removed_slots: number
+  remaining_courts: string[]
+}
+
 export async function deskAddSlots(
   tournamentId: number,
   payload: { version_id: number; day_date: string; start_time: string; end_time: string; court_numbers: number[] }
@@ -2330,6 +2346,28 @@ export async function deskAddCourt(
   return fetchJson<AddCourtResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts`,
     { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskUpdateCourt(
+  tournamentId: number,
+  courtLabel: string,
+  payload: { version_id: number; new_court_label: string }
+): Promise<UpdateCourtResponse> {
+  return fetchJson<UpdateCourtResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts/${encodeURIComponent(courtLabel)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskDeleteCourt(
+  tournamentId: number,
+  courtLabel: string,
+  payload: { version_id: number; delete_matching_slots?: boolean }
+): Promise<DeleteCourtResponse> {
+  return fetchJson<DeleteCourtResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts/${encodeURIComponent(courtLabel)}`,
+    { method: 'DELETE', body: JSON.stringify(payload) }
   )
 }
 

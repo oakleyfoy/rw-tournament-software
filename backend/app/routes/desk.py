@@ -3287,6 +3287,32 @@ class AddCourtResponse(BaseModel):
     created_slots: int = 0
 
 
+class UpdateCourtRequest(BaseModel):
+    version_id: int
+    new_court_label: str
+
+
+class UpdateCourtResponse(BaseModel):
+    success: bool
+    old_court_label: str
+    new_court_label: str
+    court_number: int
+    updated_slots: int = 0
+
+
+class DeleteCourtRequest(BaseModel):
+    version_id: int
+    delete_matching_slots: bool = False
+
+
+class DeleteCourtResponse(BaseModel):
+    success: bool
+    court_label: str
+    court_number: int
+    removed_slots: int = 0
+    remaining_courts: List[str]
+
+
 @router.post(
     "/desk/tournaments/{tournament_id}/courts",
     response_model=AddCourtResponse,
@@ -3353,6 +3379,202 @@ def add_court(
         court_number=new_court_number,
         courts=court_names,
         created_slots=created_slots,
+    )
+
+
+@router.patch(
+    "/desk/tournaments/{tournament_id}/courts/{court_label}",
+    response_model=UpdateCourtResponse,
+)
+def update_court(
+    tournament_id: int,
+    court_label: str,
+    payload: UpdateCourtRequest,
+    session: Session = Depends(get_session),
+):
+    """Rename a court label. Updates tournament court names and slot labels."""
+    from app.models.court_state import TournamentCourtState
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Court edit only allowed on DRAFT versions")
+
+    old_label = (court_label or "").strip()
+    new_label = (payload.new_court_label or "").strip()
+    if not old_label:
+        raise HTTPException(status_code=400, detail="court_label is required")
+    if not new_label:
+        raise HTTPException(status_code=400, detail="new_court_label is required")
+
+    court_names = list(tournament.court_names or [])
+    if not court_names:
+        raise HTTPException(status_code=400, detail="Tournament has no courts to edit")
+
+    old_idx = next((i for i, c in enumerate(court_names) if (c or "").strip().lower() == old_label.lower()), None)
+    if old_idx is None:
+        raise HTTPException(status_code=404, detail=f"Court '{old_label}' not found")
+
+    dup_idx = next((i for i, c in enumerate(court_names) if (c or "").strip().lower() == new_label.lower()), None)
+    if dup_idx is not None and dup_idx != old_idx:
+        raise HTTPException(status_code=400, detail=f"Court '{new_label}' already exists")
+
+    court_number = old_idx + 1
+    court_names[old_idx] = new_label
+    tournament.court_names = court_names
+    session.add(tournament)
+
+    slots_to_update = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.tournament_id == tournament_id,
+            ScheduleSlot.court_number == court_number,
+        )
+    ).all()
+    for slot in slots_to_update:
+        slot.court_label = new_label
+        session.add(slot)
+
+    states = session.exec(
+        select(TournamentCourtState).where(
+            TournamentCourtState.tournament_id == tournament_id,
+            TournamentCourtState.court_label == old_label,
+        )
+    ).all()
+    for state in states:
+        state.court_label = new_label
+        session.add(state)
+
+    session.commit()
+    return UpdateCourtResponse(
+        success=True,
+        old_court_label=old_label,
+        new_court_label=new_label,
+        court_number=court_number,
+        updated_slots=len(slots_to_update),
+    )
+
+
+@router.delete(
+    "/desk/tournaments/{tournament_id}/courts/{court_label}",
+    response_model=DeleteCourtResponse,
+)
+def delete_court(
+    tournament_id: int,
+    court_label: str,
+    payload: DeleteCourtRequest,
+    session: Session = Depends(get_session),
+):
+    """Delete a court safely.
+
+    Guardrails:
+    - DRAFT only.
+    - Only the newest court (highest number) can be deleted to avoid renumbering issues.
+    - If matching slots exist, caller must opt-in with delete_matching_slots.
+    - Assigned slots cannot be deleted.
+    """
+    from app.models.court_state import TournamentCourtState
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Court delete only allowed on DRAFT versions")
+
+    label = (court_label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="court_label is required")
+
+    court_names = list(tournament.court_names or [])
+    if not court_names:
+        raise HTTPException(status_code=400, detail="Tournament has no courts to delete")
+
+    idx = next((i for i, c in enumerate(court_names) if (c or "").strip().lower() == label.lower()), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"Court '{label}' not found")
+
+    if idx != len(court_names) - 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Only the most recently added court can be deleted. Rename older courts instead.",
+        )
+
+    court_number = idx + 1
+    slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.court_number == court_number,
+        )
+    ).all()
+
+    if slots and not payload.delete_matching_slots:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Court has {len(slots)} slot(s). Enable delete_matching_slots to remove them.",
+        )
+
+    removed_slots = 0
+    if slots:
+        slot_ids = [s.id for s in slots]
+        assignments = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == payload.version_id,
+                MatchAssignment.slot_id.in_(slot_ids),  # type: ignore
+            )
+        ).all()
+        if assignments:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot delete court: {len(assignments)} slot(s) still have assigned matches. "
+                    "Move/unassign matches first."
+                ),
+            )
+
+        locks = session.exec(
+            select(SlotLock).where(
+                SlotLock.schedule_version_id == payload.version_id,
+                SlotLock.slot_id.in_(slot_ids),  # type: ignore
+            )
+        ).all()
+        locks_by_slot: Dict[int, List[SlotLock]] = {}
+        for lk in locks:
+            locks_by_slot.setdefault(lk.slot_id, []).append(lk)
+
+        for s in slots:
+            for lk in locks_by_slot.get(s.id, []):
+                session.delete(lk)
+            session.delete(s)
+            removed_slots += 1
+
+    states = session.exec(
+        select(TournamentCourtState).where(
+            TournamentCourtState.tournament_id == tournament_id,
+            TournamentCourtState.court_label == court_names[idx],
+        )
+    ).all()
+    for state in states:
+        session.delete(state)
+
+    court_names.pop(idx)
+    tournament.court_names = court_names
+    session.add(tournament)
+    session.commit()
+
+    return DeleteCourtResponse(
+        success=True,
+        court_label=label,
+        court_number=court_number,
+        removed_slots=removed_slots,
+        remaining_courts=court_names,
     )
 
 

@@ -2349,6 +2349,80 @@ def test_add_court(client, session):
     assert "3" in t.court_names
 
 
+def test_update_court_renames_label_and_slots(client, session):
+    """Renaming a court updates tournament.court_names and slot labels."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+
+    resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/courts/2",
+        json={
+            "version_id": v.id,
+            "new_court_label": "Stadium",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["court_number"] == 2
+    assert body["new_court_label"] == "Stadium"
+    assert body["updated_slots"] >= 1
+
+    session.refresh(t)
+    assert t.court_names == ["1", "Stadium"]
+
+    c2_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == v.id,
+            ScheduleSlot.court_number == 2,
+        )
+    ).all()
+    assert len(c2_slots) > 0
+    assert all(s.court_label == "Stadium" for s in c2_slots)
+
+
+def test_delete_newest_court_requires_slot_opt_in_then_deletes(client, session):
+    """Deleting newest court with slots requires opt-in; with opt-in it succeeds."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+
+    add_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/courts",
+        json={
+            "version_id": v.id,
+            "court_label": "3",
+            "create_matching_slots": True,
+        },
+    )
+    assert add_resp.status_code == 200
+
+    # First attempt without deleting slots should be rejected.
+    reject = client.request(
+        "DELETE",
+        f"/api/desk/tournaments/{t.id}/courts/3",
+        json={
+            "version_id": v.id,
+            "delete_matching_slots": False,
+        },
+    )
+    assert reject.status_code == 400
+    assert "delete_matching_slots" in reject.json()["detail"]
+
+    ok = client.request(
+        "DELETE",
+        f"/api/desk/tournaments/{t.id}/courts/3",
+        json={
+            "version_id": v.id,
+            "delete_matching_slots": True,
+        },
+    )
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["success"] is True
+    assert body["court_label"] == "3"
+    assert body["removed_slots"] > 0
+
+    session.refresh(t)
+    assert t.court_names == ["1", "2"]
+
 def test_conflict_check_move_day_cap(client, session):
     """Conflict check for MOVE detects day cap exceeded at target slot."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

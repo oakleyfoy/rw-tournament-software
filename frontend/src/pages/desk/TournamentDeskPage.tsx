@@ -18,6 +18,8 @@ import {
   deskAddSlots,
   deskDeleteSlots,
   deskAddCourt,
+  deskUpdateCourt,
+  deskDeleteCourt,
   bulkPauseInProgress,
   bulkDelayAfter,
   bulkResumePaused,
@@ -4510,6 +4512,8 @@ function DeskGridTab({
   const [addSlotOpen, setAddSlotOpen] = useState(false)
   const [deleteSlotOpen, setDeleteSlotOpen] = useState(false)
   const [addCourtOpen, setAddCourtOpen] = useState(false)
+  const [manageCourtOpen, setManageCourtOpen] = useState(false)
+  const [allCourtLabels, setAllCourtLabels] = useState<string[]>([])
   const [gridToast, setGridToast] = useState<string | null>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
@@ -4567,10 +4571,51 @@ function DeskGridTab({
     }
   }, [days, selectedDay])
 
-  const showToast = (msg: string) => {
-    setGridToast(msg)
+  const formatErrMsg = (raw: any, fallback: string) => {
+    const detail = raw?.detail ?? raw?.message
+    if (typeof detail === 'string') return detail
+    if (Array.isArray(detail)) {
+      return detail.map((d: any) => {
+        if (typeof d === 'string') return d
+        if (d?.msg) return String(d.msg)
+        return JSON.stringify(d)
+      }).join('; ')
+    }
+    if (detail && typeof detail === 'object') {
+      if (typeof detail.msg === 'string') return detail.msg
+      return JSON.stringify(detail)
+    }
+    if (raw && typeof raw === 'object') {
+      if (typeof raw.msg === 'string') return raw.msg
+      return JSON.stringify(raw)
+    }
+    if (typeof raw === 'string') return raw
+    return fallback
+  }
+
+  const showToast = (msg: any) => {
+    const text = typeof msg === 'string' ? msg : formatErrMsg(msg, 'Unexpected error')
+    setGridToast(text)
     setTimeout(() => setGridToast(null), 3000)
   }
+
+  const loadAllCourts = useCallback(async () => {
+    try {
+      const t = await getTournament(tid)
+      const names = Array.isArray((t as any)?.court_names)
+        ? ((t as any).court_names as string[])
+        : []
+      setAllCourtLabels(names)
+    } catch {
+      setAllCourtLabels([])
+    }
+  }, [tid])
+
+  useEffect(() => {
+    if (manageCourtOpen) {
+      loadAllCourts()
+    }
+  }, [manageCourtOpen, loadAllCourts])
 
   const handleDragStart = (event: DragStartEvent) => {
     const m = (event.active.data.current as any)?.match as DeskMatchItem | undefined
@@ -4706,11 +4751,54 @@ function DeskGridTab({
       })
       showToast(`Court "${courtLabel}" added`)
       setAddCourtOpen(false)
+      await loadAllCourts()
       onRefresh()
     } catch (err: any) {
-      showToast(err?.detail || err?.message || 'Failed to add court')
+      showToast(err?.detail || err || 'Failed to add court')
     }
   }
+
+  const handleRenameCourt = async (oldLabel: string, newLabel: string) => {
+    try {
+      await deskUpdateCourt(tid, oldLabel, {
+        version_id: data.version_id,
+        new_court_label: newLabel,
+      })
+      showToast(`Renamed "${oldLabel}" to "${newLabel}"`)
+      await loadAllCourts()
+      onRefresh()
+    } catch (err: any) {
+      showToast(err?.detail || err || 'Failed to rename court')
+    }
+  }
+
+  const handleDeleteCourt = async (courtLabel: string, deleteMatchingSlots: boolean) => {
+    try {
+      const resp = await deskDeleteCourt(tid, courtLabel, {
+        version_id: data.version_id,
+        delete_matching_slots: deleteMatchingSlots,
+      })
+      showToast(
+        resp.removed_slots > 0
+          ? `Deleted court "${courtLabel}" and ${resp.removed_slots} slot(s)`
+          : `Deleted court "${courtLabel}"`
+      )
+      await loadAllCourts()
+      onRefresh()
+    } catch (err: any) {
+      showToast(err?.detail || err || 'Failed to delete court')
+    }
+  }
+
+  const slotCountByCourtLabel = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const s of data.slots || []) {
+      const lbl = (s.court_label || '').trim()
+      if (!lbl) continue
+      counts[lbl] = (counts[lbl] || 0) + 1
+    }
+    return counts
+  }, [data.slots])
 
   const dayLabel = (d: string) => {
     try {
@@ -4791,6 +4879,21 @@ function DeskGridTab({
               }}
             >
               + Court
+            </button>
+            <button
+              onClick={() => setManageCourtOpen(true)}
+              style={{
+                padding: '5px 12px',
+                fontSize: 11,
+                fontWeight: 600,
+                border: '1px solid #6a1b9a',
+                borderRadius: 4,
+                backgroundColor: '#f3e5f5',
+                color: '#6a1b9a',
+                cursor: 'pointer',
+              }}
+            >
+              Edit/Delete Court
             </button>
           </div>
         )}
@@ -5104,6 +5207,17 @@ function DeskGridTab({
         <AddCourtModal
           onClose={() => setAddCourtOpen(false)}
           onSubmit={handleAddCourt}
+        />
+      )}
+
+      {/* Manage Courts Modal */}
+      {manageCourtOpen && (
+        <ManageCourtsModal
+          courts={allCourtLabels}
+          slotCountByCourtLabel={slotCountByCourtLabel}
+          onClose={() => setManageCourtOpen(false)}
+          onRename={handleRenameCourt}
+          onDelete={handleDeleteCourt}
         />
       )}
 
@@ -5434,6 +5548,165 @@ function AddCourtModal({
             style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, border: 'none', borderRadius: 4, backgroundColor: '#1a237e', color: '#fff', cursor: 'pointer' }}
           >
             Add Court
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+
+// ── Manage Courts Modal ────────────────────────────────────────────────
+
+function ManageCourtsModal({
+  courts,
+  slotCountByCourtLabel,
+  onClose,
+  onRename,
+  onDelete,
+}: {
+  courts: string[]
+  slotCountByCourtLabel: Record<string, number>
+  onClose: () => void
+  onRename: (oldLabel: string, newLabel: string) => Promise<void> | void
+  onDelete: (courtLabel: string, deleteMatchingSlots: boolean) => Promise<void> | void
+}) {
+  const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({})
+  const [busyLabel, setBusyLabel] = useState<string | null>(null)
+  const [deleteWithSlots, setDeleteWithSlots] = useState(false)
+
+  const sortedCourts = [...courts]
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+        backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 1999,
+      }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        width: 620, maxWidth: '92vw', backgroundColor: '#fff', borderRadius: 10,
+        boxShadow: '0 8px 30px rgba(0,0,0,0.3)', zIndex: 2000, overflow: 'hidden',
+      }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e0e0e0' }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Manage Courts</div>
+          <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+            Rename any court. Delete is limited to the newest court for safety.
+          </div>
+        </div>
+        <div style={{ padding: '12px 20px', maxHeight: '60vh', overflowY: 'auto' }}>
+          {sortedCourts.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#999' }}>No courts found.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f5f5f5' }}>
+                  <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>#</th>
+                  <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Current Label</th>
+                  <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Slots</th>
+                  <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Rename</th>
+                  <th style={{ textAlign: 'right', padding: '8px 6px', borderBottom: '1px solid #ddd' }}>Delete</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedCourts.map((label, idx) => {
+                  const draft = renameDrafts[label] ?? label
+                  const isLast = idx === sortedCourts.length - 1
+                  const slotCount = slotCountByCourtLabel[label] || 0
+                  const rowBusy = busyLabel === label
+                  return (
+                    <tr key={label}>
+                      <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0' }}>{idx + 1}</td>
+                      <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0', fontWeight: 600 }}>
+                        Court {label}
+                      </td>
+                      <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0', color: '#666' }}>
+                        {slotCount}
+                      </td>
+                      <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0' }}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <input
+                            type="text"
+                            value={draft}
+                            onChange={e => setRenameDrafts(prev => ({ ...prev, [label]: e.target.value }))}
+                            style={{
+                              flex: 1, padding: '5px 8px', fontSize: 12,
+                              border: '1px solid #ccc', borderRadius: 4,
+                            }}
+                          />
+                          <button
+                            disabled={rowBusy || !draft.trim() || draft.trim() === label}
+                            onClick={async () => {
+                              setBusyLabel(label)
+                              try {
+                                await onRename(label, draft.trim())
+                              } finally {
+                                setBusyLabel(null)
+                              }
+                            }}
+                            style={{
+                              padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                              border: '1px solid #1565c0', borderRadius: 4,
+                              backgroundColor: '#e3f2fd', color: '#1565c0',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Rename
+                          </button>
+                        </div>
+                      </td>
+                      <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0', textAlign: 'right' }}>
+                        <button
+                          disabled={rowBusy || !isLast}
+                          title={isLast ? 'Delete court' : 'Only newest court can be deleted'}
+                          onClick={async () => {
+                            const suffix = deleteWithSlots
+                              ? ' This will also delete unassigned slots on this court.'
+                              : ''
+                            const ok = window.confirm(`Delete Court "${label}"?${suffix}`)
+                            if (!ok) return
+                            setBusyLabel(label)
+                            try {
+                              await onDelete(label, deleteWithSlots)
+                            } finally {
+                              setBusyLabel(null)
+                            }
+                          }}
+                          style={{
+                            padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                            border: '1px solid #c62828', borderRadius: 4,
+                            backgroundColor: isLast ? '#ffebee' : '#f5f5f5',
+                            color: isLast ? '#c62828' : '#999',
+                            cursor: isLast ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 11, color: '#555' }}>
+            <input
+              type="checkbox"
+              checked={deleteWithSlots}
+              onChange={e => setDeleteWithSlots(e.target.checked)}
+            />
+            When deleting newest court, also remove its matching slots
+          </label>
+        </div>
+        <div style={{
+          padding: '12px 20px', borderTop: '1px solid #e0e0e0',
+          display: 'flex', justifyContent: 'flex-end',
+        }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, border: '1px solid #ccc', borderRadius: 4, backgroundColor: '#fff', cursor: 'pointer' }}
+          >
+            Close
           </button>
         </div>
       </div>
