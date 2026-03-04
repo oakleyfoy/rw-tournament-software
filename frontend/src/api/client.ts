@@ -103,14 +103,14 @@ export interface Phase1Status {
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  // Don't set Content-Type for DELETE requests (no body)
-  const isDelete = options?.method === 'DELETE'
-  const headers: HeadersInit = isDelete
-    ? { ...options?.headers }
-    : {
+  // Include JSON content-type whenever we send a body (including DELETE with body).
+  const hasBody = options?.body != null
+  const headers: HeadersInit = hasBody
+    ? {
         'Content-Type': 'application/json',
         ...options?.headers,
       }
+    : { ...options?.headers }
   
   console.log('fetchJson:', options?.method || 'GET', url, { headers, body: options?.body })
   let response: Response

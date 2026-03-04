@@ -4530,12 +4530,17 @@ function DeskGridTab({
     const courtNumSet = new Set<number>()
     const courtLabelMap = new Map<number, string>()
 
+    // Include configured tournament courts even when they have no slots yet.
+    allCourtLabels.forEach((label, idx) => {
+      const cn = idx + 1
+      courtNumSet.add(cn)
+      courtLabelMap.set(cn, label)
+    })
+
     for (const s of slots) {
       daySet.add(s.day_date)
       courtNumSet.add(s.court_number)
-      if (!courtLabelMap.has(s.court_number)) {
-        courtLabelMap.set(s.court_number, s.court_label)
-      }
+      courtLabelMap.set(s.court_number, s.court_label)
     }
 
     const sortedDays = [...daySet].sort()
@@ -4563,7 +4568,7 @@ function DeskGridTab({
       timeRows: rows,
       matchBySlot: matchMap,
     }
-  }, [data.slots, data.matches, selectedDay])
+  }, [data.slots, data.matches, selectedDay, allCourtLabels])
 
   useEffect(() => {
     if (days.length > 0 && !selectedDay) {
@@ -4610,6 +4615,10 @@ function DeskGridTab({
       setAllCourtLabels([])
     }
   }, [tid])
+
+  useEffect(() => {
+    loadAllCourts()
+  }, [loadAllCourts])
 
   useEffect(() => {
     if (manageCourtOpen) {
