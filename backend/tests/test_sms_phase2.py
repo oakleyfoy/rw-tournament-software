@@ -1,7 +1,7 @@
 """Tests for SMS Phase 2: Send endpoints, log, settings, templates."""
 
 import pytest
-from datetime import datetime, timezone, date, time
+from datetime import datetime, timedelta, timezone, date, time
 from sqlmodel import Session, select
 
 from app.models.sms_log import SmsLog
@@ -791,6 +791,101 @@ def test_sms_log_filter_by_type(client, session, setup_tournament_with_teams):
     assert resp.status_code == 200
     data = resp.json()
     assert all(entry["message_type"] == "team_direct" for entry in data)
+
+
+def test_rollout_metrics_summary(client, session, setup_tournament_with_teams):
+    """Rollout metrics should aggregate statuses, groups, and consent events."""
+    tournament, event, teams = setup_tournament_with_teams
+    from app.models.sms_consent_event import SmsConsentEvent
+
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(hours=200)
+
+    session.add_all(
+        [
+            SmsLog(
+                tournament_id=tournament.id,
+                team_id=teams[0].id,
+                phone_number="+19013593035",
+                message_body="A",
+                message_type="on_deck",
+                status="dry_run",
+                trigger="auto",
+                sent_at=now,
+            ),
+            SmsLog(
+                tournament_id=tournament.id,
+                team_id=teams[0].id,
+                phone_number="+15551112222",
+                message_body="B",
+                message_type="on_deck",
+                status="failed",
+                trigger="auto",
+                error_message="carrier reject",
+                sent_at=now,
+            ),
+            SmsLog(
+                tournament_id=tournament.id,
+                team_id=teams[1].id,
+                phone_number="+15553334444",
+                message_body="C",
+                message_type="match_specific",
+                status="blocked_test_mode",
+                trigger="manual",
+                sent_at=now,
+            ),
+            # Out of window: should be excluded
+            SmsLog(
+                tournament_id=tournament.id,
+                team_id=teams[1].id,
+                phone_number="+15553334444",
+                message_body="old",
+                message_type="on_deck",
+                status="sent",
+                trigger="auto",
+                sent_at=old,
+            ),
+            SmsConsentEvent(
+                tournament_id=tournament.id,
+                player_id=None,
+                phone_number="+15551112222",
+                event_type="opted_out",
+                source="twilio_webhook",
+                dedupe_key="optout-test",
+                occurred_at=now,
+            ),
+            SmsConsentEvent(
+                tournament_id=tournament.id,
+                player_id=None,
+                phone_number="+15551112222",
+                event_type="opted_in",
+                source="twilio_webhook",
+                dedupe_key="optin-test",
+                occurred_at=now,
+            ),
+        ]
+    )
+    session.commit()
+
+    resp = client.get(
+        f"/api/tournaments/{tournament.id}/sms/rollout-metrics",
+        params={"lookback_hours": 168},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["total_logs"] == 3
+    assert data["sent"] == 1
+    assert data["failed"] == 1
+    assert data["blocked_test_mode"] == 1
+    assert data["blocked_consent"] == 0
+    assert data["distinct_phones"] == 3
+    assert data["opt_out_events"] == 1
+    assert data["opt_in_events"] == 1
+    assert len(data["by_message_type"]) == 2
+    assert len(data["recent_failures"]) == 1
+    assert data["recent_failures"][0]["status"] == "failed"
+    assert data["recent_failures"][0]["error_message"] == "carrier reject"
 
 
 # ---------------------------------------------------------------------------

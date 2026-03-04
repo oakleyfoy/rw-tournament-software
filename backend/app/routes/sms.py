@@ -9,7 +9,7 @@ Provides endpoints for:
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from urllib.parse import parse_qsl
 
@@ -254,6 +254,51 @@ class SmsAutomationRunResponse(BaseModel):
     blocked_consent: int
     failed: int
     template_inactive: bool = False
+
+
+class SmsRolloutMetricBucket(BaseModel):
+    """Grouped status counts by message_type + trigger."""
+
+    message_type: str
+    trigger: str
+    total: int
+    sent: int
+    failed: int
+    blocked_test_mode: int
+    blocked_consent: int
+    queued_or_other: int
+
+
+class SmsRolloutFailureItem(BaseModel):
+    """Recent failed/undelivered send record."""
+
+    id: int
+    sent_at: datetime
+    phone_number: str
+    message_type: str
+    trigger: str
+    status: str
+    error_message: Optional[str] = None
+
+
+class SmsRolloutMetricsResponse(BaseModel):
+    """Rollout metrics summary for pilot monitoring."""
+
+    tournament_id: int
+    lookback_hours: int
+    window_start: datetime
+    window_end: datetime
+    total_logs: int
+    sent: int
+    failed: int
+    blocked_test_mode: int
+    blocked_consent: int
+    queued_or_other: int
+    distinct_phones: int
+    opt_out_events: int
+    opt_in_events: int
+    by_message_type: List[SmsRolloutMetricBucket]
+    recent_failures: List[SmsRolloutFailureItem]
 
 
 # ---------------------------------------------------------------------------
@@ -1959,6 +2004,146 @@ def get_sms_log(
 
     logs = session.exec(query).all()
     return logs
+
+
+@router.get("/rollout-metrics", response_model=SmsRolloutMetricsResponse)
+def get_sms_rollout_metrics(
+    tournament_id: int,
+    lookback_hours: int = Query(default=168, ge=1, le=24 * 30),
+    session: Session = Depends(get_session),
+):
+    """
+    Rollout metrics summary for pilot monitoring and guardrails.
+
+    Includes aggregate send outcomes, grouped message_type metrics, and recent failures.
+    """
+    _get_tournament_or_404(session, tournament_id)
+    window_end = datetime.now(timezone.utc)
+    window_start = window_end - timedelta(hours=lookback_hours)
+
+    logs = session.exec(
+        select(SmsLog)
+        .where(
+            SmsLog.tournament_id == tournament_id,
+            SmsLog.sent_at >= window_start,
+        )
+        .order_by(SmsLog.sent_at.desc())
+    ).all()
+
+    sent_statuses = {"queued", "sent", "delivered", "dry_run"}
+    failed_statuses = {"failed", "undelivered"}
+    blocked_test_status = "blocked_test_mode"
+    blocked_consent_status = "blocked_consent"
+
+    total_logs = len(logs)
+    sent = 0
+    failed = 0
+    blocked_test_mode = 0
+    blocked_consent = 0
+    distinct_phones: set[str] = set()
+    grouped: dict[tuple[str, str], dict[str, int | str]] = {}
+    recent_failures: List[SmsRolloutFailureItem] = []
+
+    for row in logs:
+        status = (row.status or "").lower()
+        key = (row.message_type, row.trigger or "manual")
+        bucket = grouped.setdefault(
+            key,
+            {
+                "message_type": row.message_type,
+                "trigger": row.trigger or "manual",
+                "total": 0,
+                "sent": 0,
+                "failed": 0,
+                "blocked_test_mode": 0,
+                "blocked_consent": 0,
+            },
+        )
+        bucket["total"] = int(bucket["total"]) + 1
+        if row.phone_number:
+            distinct_phones.add(row.phone_number)
+
+        if status in sent_statuses:
+            sent += 1
+            bucket["sent"] = int(bucket["sent"]) + 1
+        elif status in failed_statuses:
+            failed += 1
+            bucket["failed"] = int(bucket["failed"]) + 1
+        elif status == blocked_test_status:
+            blocked_test_mode += 1
+            bucket["blocked_test_mode"] = int(bucket["blocked_test_mode"]) + 1
+        elif status == blocked_consent_status:
+            blocked_consent += 1
+            bucket["blocked_consent"] = int(bucket["blocked_consent"]) + 1
+
+        if status in failed_statuses and len(recent_failures) < 20:
+            recent_failures.append(
+                SmsRolloutFailureItem(
+                    id=row.id,  # type: ignore[arg-type]
+                    sent_at=row.sent_at,
+                    phone_number=row.phone_number,
+                    message_type=row.message_type,
+                    trigger=row.trigger,
+                    status=row.status,
+                    error_message=row.error_message,
+                )
+            )
+
+    by_message_type = []
+    for bucket in sorted(
+        grouped.values(),
+        key=lambda b: (str(b["message_type"]), str(b["trigger"])),
+    ):
+        total = int(bucket["total"])
+        b_sent = int(bucket["sent"])
+        b_failed = int(bucket["failed"])
+        b_test = int(bucket["blocked_test_mode"])
+        b_consent = int(bucket["blocked_consent"])
+        by_message_type.append(
+            SmsRolloutMetricBucket(
+                message_type=str(bucket["message_type"]),
+                trigger=str(bucket["trigger"]),
+                total=total,
+                sent=b_sent,
+                failed=b_failed,
+                blocked_test_mode=b_test,
+                blocked_consent=b_consent,
+                queued_or_other=max(0, total - b_sent - b_failed - b_test - b_consent),
+            )
+        )
+
+    opt_out_events = session.exec(
+        select(SmsConsentEvent.id).where(
+            SmsConsentEvent.tournament_id == tournament_id,
+            SmsConsentEvent.occurred_at >= window_start,
+            SmsConsentEvent.event_type == "opted_out",
+        )
+    ).all()
+    opt_in_events = session.exec(
+        select(SmsConsentEvent.id).where(
+            SmsConsentEvent.tournament_id == tournament_id,
+            SmsConsentEvent.occurred_at >= window_start,
+            SmsConsentEvent.event_type == "opted_in",
+        )
+    ).all()
+
+    return SmsRolloutMetricsResponse(
+        tournament_id=tournament_id,
+        lookback_hours=lookback_hours,
+        window_start=window_start,
+        window_end=window_end,
+        total_logs=total_logs,
+        sent=sent,
+        failed=failed,
+        blocked_test_mode=blocked_test_mode,
+        blocked_consent=blocked_consent,
+        queued_or_other=max(0, total_logs - sent - failed - blocked_test_mode - blocked_consent),
+        distinct_phones=len(distinct_phones),
+        opt_out_events=len(opt_out_events),
+        opt_in_events=len(opt_in_events),
+        by_message_type=by_message_type,
+        recent_failures=recent_failures,
+    )
 
 
 # ---------------------------------------------------------------------------

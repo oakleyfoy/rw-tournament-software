@@ -60,13 +60,17 @@ import {
   previewSmsPlayer,
   previewSmsMatch,
   getSmsLog,
+  getSmsRolloutMetrics,
+  runSmsFirstMatchReminders,
   getSmsSettings,
   patchSmsSettings,
   getSmsTemplates,
   putSmsTemplate,
   resetSmsTemplates,
+  SmsAutomationRunResponse,
   SmsLogEntry,
   SmsPreviewResponse,
+  SmsRolloutMetricsResponse,
   SmsSendResponse,
   SmsSettingsResponse,
   SmsTemplateResponse,
@@ -5151,6 +5155,11 @@ function SmsAdminTab({
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
   const [logLimit, setLogLimit] = useState(100)
+  const [rolloutHours, setRolloutHours] = useState(168)
+  const [rolloutMetrics, setRolloutMetrics] = useState<SmsRolloutMetricsResponse | null>(null)
+  const [loadingRollout, setLoadingRollout] = useState(false)
+  const [runningReminder, setRunningReminder] = useState(false)
+  const [lastReminderRun, setLastReminderRun] = useState<SmsAutomationRunResponse | null>(null)
   const [events, setEvents] = useState<Event[]>([])
   const [players, setPlayers] = useState<SmsPlayerLookupItem[]>([])
   const [matches, setMatches] = useState<SmsMatchLookupItem[]>([])
@@ -5187,6 +5196,16 @@ function SmsAdminTab({
     })
     setLogs(rows)
   }, [tournamentId, logLimit, logTypeFilter])
+
+  const loadRolloutMetrics = useCallback(async () => {
+    setLoadingRollout(true)
+    try {
+      const metrics = await getSmsRolloutMetrics(tournamentId, rolloutHours)
+      setRolloutMetrics(metrics)
+    } finally {
+      setLoadingRollout(false)
+    }
+  }, [tournamentId, rolloutHours])
 
   const loadTeams = useCallback(async () => {
     const rows = await getDeskTeams(tournamentId)
@@ -5252,6 +5271,11 @@ function SmsAdminTab({
   }, [loadStatusAndSettings, loadTemplates, loadLogs, loadTeams, loadLookups, loadMatches])
 
   useEffect(() => { loadAll() }, [loadAll])
+  useEffect(() => {
+    loadRolloutMetrics().catch((e: any) => {
+      setError(e?.message || 'Failed to load rollout metrics')
+    })
+  }, [loadRolloutMetrics])
 
   const parseTargetId = (): number | null => {
     const n = parseInt(targetId, 10)
@@ -5558,10 +5582,31 @@ function SmsAdminTab({
       }
       setSendResult(resp)
       await loadLogs()
+      await loadRolloutMetrics()
     } catch (e: any) {
       setError(e?.message || 'Send failed')
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleRunFirstMatchReminder = async (dryRun: boolean) => {
+    setRunningReminder(true)
+    setError(null)
+    try {
+      const result = await runSmsFirstMatchReminders(tournamentId, {
+        dry_run: dryRun,
+        window_minutes: 60,
+      })
+      setLastReminderRun(result)
+      if (!dryRun) {
+        await loadLogs()
+      }
+      await loadRolloutMetrics()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to run first-match reminder scan')
+    } finally {
+      setRunningReminder(false)
     }
   }
 
@@ -5639,6 +5684,124 @@ function SmsAdminTab({
           <div><strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones</div>
           <div><strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}</div>
           <div><strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}</div>
+        </div>
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>Rollout Guardrails</h3>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: '#666' }}>Lookback</span>
+            <select
+              value={rolloutHours}
+              onChange={e => setRolloutHours(Math.max(1, parseInt(e.target.value || '168', 10)))}
+              className="sms-compact-control"
+              style={{ width: 110 }}
+            >
+              <option value={24}>24h</option>
+              <option value={72}>72h</option>
+              <option value={168}>7 days</option>
+              <option value={336}>14 days</option>
+            </select>
+            <button
+              onClick={loadRolloutMetrics}
+              disabled={loadingRollout}
+              style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+            >
+              {loadingRollout ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, fontSize: 12, marginBottom: 10 }}>
+          <div><strong>Sent:</strong> {rolloutMetrics?.sent ?? 0}</div>
+          <div><strong>Failed:</strong> <span style={{ color: '#c62828' }}>{rolloutMetrics?.failed ?? 0}</span></div>
+          <div><strong>Blocked(TEST):</strong> {rolloutMetrics?.blocked_test_mode ?? 0}</div>
+          <div><strong>Blocked(Consent):</strong> {rolloutMetrics?.blocked_consent ?? 0}</div>
+          <div><strong>Opt-outs:</strong> {rolloutMetrics?.opt_out_events ?? 0}</div>
+          <div><strong>Distinct phones:</strong> {rolloutMetrics?.distinct_phones ?? 0}</div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <button
+            onClick={() => handleRunFirstMatchReminder(true)}
+            disabled={runningReminder}
+            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
+          >
+            {runningReminder ? 'Running…' : 'Dry-run first-match 24h scan'}
+          </button>
+          <button
+            onClick={() => handleRunFirstMatchReminder(false)}
+            disabled={runningReminder}
+            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
+          >
+            {runningReminder ? 'Running…' : 'Run first-match 24h send'}
+          </button>
+          <div style={{ fontSize: 11, color: '#666' }}>
+            Uses tournament timezone and a ±30 minute window around now+24h.
+          </div>
+        </div>
+
+        {lastReminderRun && (
+          <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
+            <strong>Last 24h scan:</strong>{' '}
+            considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, sent {lastReminderRun.sent}, deduped {lastReminderRun.deduped}, outside-window {lastReminderRun.outside_window}, failed {lastReminderRun.failed}
+            {lastReminderRun.disabled ? ' (automation disabled)' : ''}
+            {lastReminderRun.template_inactive ? ' (template inactive)' : ''}
+          </div>
+        )}
+
+        <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #eee', borderRadius: 6, marginBottom: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ backgroundColor: '#fafafa' }}>
+                <th style={{ textAlign: 'left', padding: 6 }}>Type</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Trigger</th>
+                <th style={{ textAlign: 'right', padding: 6 }}>Sent</th>
+                <th style={{ textAlign: 'right', padding: 6 }}>Failed</th>
+                <th style={{ textAlign: 'right', padding: 6 }}>Blocked</th>
+                <th style={{ textAlign: 'right', padding: 6 }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(rolloutMetrics?.by_message_type || []).map(row => (
+                <tr key={`${row.message_type}:${row.trigger}`} style={{ borderTop: '1px solid #f0f0f0' }}>
+                  <td style={{ padding: 6 }}>{row.message_type}</td>
+                  <td style={{ padding: 6 }}>{row.trigger}</td>
+                  <td style={{ padding: 6, textAlign: 'right' }}>{row.sent}</td>
+                  <td style={{ padding: 6, textAlign: 'right', color: row.failed > 0 ? '#c62828' : undefined }}>{row.failed}</td>
+                  <td style={{ padding: 6, textAlign: 'right' }}>{row.blocked_test_mode + row.blocked_consent}</td>
+                  <td style={{ padding: 6, textAlign: 'right' }}>{row.total}</td>
+                </tr>
+              ))}
+              {(rolloutMetrics?.by_message_type?.length || 0) === 0 && (
+                <tr>
+                  <td colSpan={6} style={{ padding: 10, color: '#888', fontStyle: 'italic' }}>
+                    No SMS activity in selected window
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {(rolloutMetrics?.recent_failures?.length || 0) > 0 && (
+          <div style={{ marginBottom: 8, padding: 8, border: '1px solid #ffebee', borderRadius: 6, backgroundColor: '#fff8f8' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#c62828', marginBottom: 4 }}>
+              Recent failures
+            </div>
+            <div style={{ maxHeight: 110, overflowY: 'auto', fontSize: 11 }}>
+              {rolloutMetrics?.recent_failures.slice(0, 8).map(f => (
+                <div key={f.id} style={{ padding: '2px 0', borderBottom: '1px dotted #f3d6d6' }}>
+                  {formatLogTime(f.sent_at)} — {f.message_type} — {f.phone_number} — {f.error_message || f.status}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, color: '#666' }}>
+          Pilot guidance: keep TEST mode on until metrics stay stable (low failures, no unexpected blast volume), then enable one automation toggle at a time.
         </div>
       </div>
 

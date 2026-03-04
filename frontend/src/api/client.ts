@@ -2825,6 +2825,65 @@ export interface SmsDivisionLookupItem {
   team_count: number
 }
 
+export interface SmsAutomationRunResponse {
+  tournament_id: number
+  version_id: number | null
+  disabled: boolean
+  no_active_version: boolean
+  dry_run: boolean
+  window_minutes: number
+  timezone: string | null
+  now_utc: string | null
+  considered_teams: number
+  eligible_teams: number
+  outside_window: number
+  sent: number
+  deduped: number
+  blocked_test_mode: number
+  blocked_consent: number
+  failed: number
+  template_inactive: boolean
+}
+
+export interface SmsRolloutMetricBucket {
+  message_type: string
+  trigger: string
+  total: number
+  sent: number
+  failed: number
+  blocked_test_mode: number
+  blocked_consent: number
+  queued_or_other: number
+}
+
+export interface SmsRolloutFailureItem {
+  id: number
+  sent_at: string
+  phone_number: string
+  message_type: string
+  trigger: string
+  status: string
+  error_message: string | null
+}
+
+export interface SmsRolloutMetricsResponse {
+  tournament_id: number
+  lookback_hours: number
+  window_start: string
+  window_end: string
+  total_logs: number
+  sent: number
+  failed: number
+  blocked_test_mode: number
+  blocked_consent: number
+  queued_or_other: number
+  distinct_phones: number
+  opt_out_events: number
+  opt_in_events: number
+  by_message_type: SmsRolloutMetricBucket[]
+  recent_failures: SmsRolloutFailureItem[]
+}
+
 export async function getSmsStatus(tournamentId: number): Promise<SmsStatusResponse> {
   return fetchJson<SmsStatusResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/status`
@@ -3022,6 +3081,32 @@ export async function getSmsLog(
   const qs = params.toString()
   return fetchJson<SmsLogEntry[]>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/log${qs ? `?${qs}` : ''}`
+  )
+}
+
+export async function getSmsRolloutMetrics(
+  tournamentId: number,
+  lookbackHours: number = 168
+): Promise<SmsRolloutMetricsResponse> {
+  const params = new URLSearchParams()
+  params.set('lookback_hours', String(lookbackHours))
+  return fetchJson<SmsRolloutMetricsResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/rollout-metrics?${params.toString()}`
+  )
+}
+
+export async function runSmsFirstMatchReminders(
+  tournamentId: number,
+  opts?: { dry_run?: boolean; window_minutes?: number; now_utc?: string }
+): Promise<SmsAutomationRunResponse> {
+  const params = new URLSearchParams()
+  if (opts?.dry_run != null) params.set('dry_run', String(opts.dry_run))
+  if (opts?.window_minutes != null) params.set('window_minutes', String(opts.window_minutes))
+  if (opts?.now_utc) params.set('now_utc', opts.now_utc)
+  const qs = params.toString()
+  return fetchJson<SmsAutomationRunResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/automation/run-first-match-reminders${qs ? `?${qs}` : ''}`,
+    { method: 'POST' }
   )
 }
 
