@@ -267,6 +267,14 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
     return str(score_json) if score_json else None
 
 
+def _validate_score_text_for_match(score_text: str, match: Match) -> None:
+    from app.services.score_parser import validate_score_for_duration
+
+    ok, message = validate_score_for_duration(score_text, match.duration_minutes or 0)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message or "Invalid score")
+
+
 def _derive_division(match_code: str, match_type: str) -> Optional[str]:
     if match_type == "RR":
         for pool_code, label in _POOL_LABELS.items():
@@ -853,6 +861,7 @@ def finalize_match(
         actual_score = payload.score or "0-0"
         match.score_json = {"display": f"{actual_score} (RET)", "actual": actual_score}
     elif payload.score is not None:
+        _validate_score_text_for_match(payload.score, match)
         match.score_json = {"display": payload.score}
     session.add(match)
     session.commit()
@@ -1075,6 +1084,8 @@ def correct_match(
             status_code=400,
             detail=f"winner_team_id must be team_a ({match.team_a_id}) or team_b ({match.team_b_id})",
         )
+
+    _validate_score_text_for_match(payload.score, match)
 
     winner_changed = match.winner_team_id != payload.winner_team_id
     warnings: List[Dict[str, Any]] = []

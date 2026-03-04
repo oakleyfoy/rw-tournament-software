@@ -338,6 +338,49 @@ def test_finalize_warns_on_downstream_conflict(client, session):
     assert body["warnings"][0]["reason"] == "CONFLICT_EXISTING_TEAM"
 
 
+def test_finalize_rejects_invalid_score_for_match_format(client, session):
+    """Desk finalize rejects scores that don't match the match duration format."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+
+    # This match is 60-min duration => 8-game pro set scoring.
+    resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "5-3", "winner_team_id": draft_m1["team1_id"]},
+    )
+    assert resp.status_code == 400
+    assert "8-game pro set" in resp.json()["detail"]
+
+
+def test_correct_rejects_invalid_score_for_match_format(client, session):
+    """Desk correct endpoint enforces the same score validation rules."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+
+    # Valid initial finalize
+    ok_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "8-4", "winner_team_id": draft_m1["team1_id"]},
+    )
+    assert ok_resp.status_code == 200
+
+    # Invalid correction for 60-min match
+    bad_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/correct",
+        json={"version_id": draft_id, "score": "5-3", "winner_team_id": draft_m1["team1_id"]},
+    )
+    assert bad_resp.status_code == 400
+    assert "8-game pro set" in bad_resp.json()["detail"]
+
+
 def test_snapshot_returns_court_grouping(client, session):
     """Snapshot includes now_playing and up_next per court."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
@@ -1470,6 +1513,28 @@ def test_score_parser_none():
     assert parse_score({"display": ""}) is None
 
 
+def test_score_validation_by_duration_rules():
+    """Score validator enforces PRO_SET_8 / PRO_SET_4 / REGULAR rules."""
+    from app.services.score_parser import validate_score_for_duration
+
+    # 8-game pro set (60 min)
+    assert validate_score_for_duration("8-6", 60)[0] is True
+    assert validate_score_for_duration("9-8", 60)[0] is True
+    assert validate_score_for_duration("6-3, 6-2", 60)[0] is True  # regular also allowed at 60
+    assert validate_score_for_duration("5-3", 60)[0] is False
+
+    # 4-game pro set (35 min)
+    assert validate_score_for_duration("5-4", 35)[0] is True
+    assert validate_score_for_duration("4-1", 35)[0] is True
+    assert validate_score_for_duration("8-6", 35)[0] is False
+
+    # Regular (105 min)
+    assert validate_score_for_duration("6-4, 7-5", 105)[0] is True
+    assert validate_score_for_duration("7-6 4-6 1-0", 105)[0] is True
+    assert validate_score_for_duration("5-3", 105)[0] is False
+    assert validate_score_for_duration("6-4 4-6", 105)[0] is False  # split sets require 3rd set
+
+
 # ── Standings endpoint tests ─────────────────────────────────────────────
 
 def _setup_rr_tournament(session: Session):
@@ -1667,10 +1732,10 @@ def test_standings_sorting_by_set_diff(client, session):
         json={"version_id": draft_id, "score": "4-6 4-6", "winner_team_id": rr_matches[1]["team2_id"]},
     )
 
-    # M3: Bravo beats Charlie 6-5 6-5
+    # M3: Bravo beats Charlie 7-5 7-5
     client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{rr_matches[2]['match_id']}/finalize",
-        json={"version_id": draft_id, "score": "6-5 6-5", "winner_team_id": rr_matches[2]["team1_id"]},
+        json={"version_id": draft_id, "score": "7-5 7-5", "winner_team_id": rr_matches[2]["team1_id"]},
     )
 
     resp = client.get(f"/api/desk/tournaments/{t.id}/standings?version_id={draft_id}")
@@ -1679,9 +1744,9 @@ def test_standings_sorting_by_set_diff(client, session):
 
     # All 3 teams have 1 win, 1 loss — sort by set diff (all 0 from 2 sets each),
     # then game diff
-    # Alpha: won 12-2 (games +10), lost 8-12 (games -4) => total games: 20W, 14L => diff +6
-    # Bravo: lost 2-12 (games -10), won 12-10 (games +2) => total games: 14W, 22L => diff -8
-    # Charlie: won 12-8 (games +4), lost 10-12 (games -2) => total games: 22W, 20L => diff +2
+    # Alpha: won 12-2 (games +10), lost 8-12 (games -4) => total games diff +6
+    # Bravo: lost 2-12 (games -10), won 14-10 (games +4) => total games diff -6
+    # Charlie: won 12-8 (games +4), lost 10-14 (games -4) => total games diff 0
     assert rows[0]["wins"] == 1
     assert rows[1]["wins"] == 1
     assert rows[2]["wins"] == 1
