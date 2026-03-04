@@ -888,6 +888,8 @@ def test_impact_terminal_match_null_targets(client, session):
     imp = body["impacts"][0]
     assert imp["winner_target"] is None
     assert imp["loser_target"] is None
+    assert imp["winner_terminal_label"] == "Champion"
+    assert imp["loser_terminal_label"] == "Runner-up"
 
 
 def test_impact_normal_match_shows_both_targets(client, session):
@@ -906,6 +908,12 @@ def test_impact_normal_match_shows_both_targets(client, session):
     assert m1_imp["winner_target"] is not None
     assert m1_imp["winner_target"]["target_slot"] == "team_a"
     assert m1_imp["winner_target"]["blocked_reason"] is None
+    assert m1_imp["winner_target"]["target_court"] == "Court 1"
+    assert m1_imp["winner_target"]["target_time"] == "11:00 AM"
+    assert m1_imp["winner_target"]["waiting_on_match_number"] is not None
+    assert m1_imp["winner_target"]["waiting_on_role"] == "WINNER"
+    assert m1_imp["winner_target"]["waiting_on_court"] == "Court 2"
+    assert m1_imp["winner_target"]["waiting_on_time"] == "9:00 AM"
 
     # Find R1 M2 impact
     m2_imp = [i for i in body["impacts"] if i["match_code"] == "WOM_E1_WF_R1_M02"][0]

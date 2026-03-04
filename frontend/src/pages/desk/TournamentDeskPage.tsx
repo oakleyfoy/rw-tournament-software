@@ -1458,6 +1458,8 @@ function MatchDrawer({
           matchId={match.match_id}
           matchStatus={effectiveStatus}
           stage={effectiveMatch.stage}
+          matchItem={effectiveMatch}
+          allMatches={allMatches}
           onSwitchToImpact={undefined}
         />
 
@@ -2053,6 +2055,8 @@ function DrawerImpact({
   matchId,
   matchStatus,
   stage,
+  matchItem,
+  allMatches,
   onSwitchToImpact,
 }: {
   tournamentId: number
@@ -2060,10 +2064,13 @@ function DrawerImpact({
   matchId: number
   matchStatus: string
   stage: string
+  matchItem: DeskMatchItem
+  allMatches: DeskMatchItem[]
   onSwitchToImpact: (() => void) | undefined
 }) {
   const [impact, setImpact] = useState<MatchImpactItem | null>(null)
   const [loading, setLoading] = useState(true)
+  const [rrStandings, setRrStandings] = useState<StandingsResponse | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -2075,10 +2082,161 @@ function DrawerImpact({
       .finally(() => setLoading(false))
   }, [tournamentId, versionId, matchId])
 
+  useEffect(() => {
+    if (stage !== 'RR') {
+      setRrStandings(null)
+      return
+    }
+    getDeskStandings(tournamentId, versionId, matchItem.event_id)
+      .then(resp => setRrStandings(resp))
+      .catch(() => setRrStandings(null))
+  }, [tournamentId, versionId, stage, matchItem.event_id])
+
   if (loading) return null
 
   const isFinal = matchStatus === 'FINAL'
-  const hasDownstream = impact?.winner_target || impact?.loser_target
+  const hasDownstream = !!(impact?.winner_target || impact?.loser_target)
+
+  const renderOutcome = (target: ImpactTarget | null, terminalLabel: string | null | undefined) => {
+    if (terminalLabel) {
+      return (
+        <div style={{ fontSize: 12, color: '#2e7d32', fontWeight: 700 }}>
+          {terminalLabel}
+        </div>
+      )
+    }
+    if (!target) {
+      return <div style={{ fontSize: 12, color: '#999' }}>No downstream path.</div>
+    }
+
+    const slotLabel = target.target_slot === 'team_a' ? 'Team 1 slot' : 'Team 2 slot'
+    const blockedText = target.blocked_reason === 'SLOT_LOCKED'
+      ? 'Target slot is locked'
+      : target.blocked_reason === 'SLOT_ALREADY_SET'
+      ? 'Target slot already has a different team'
+      : null
+
+    return (
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#333' }}>
+          Match #{target.target_match_number} ({slotLabel})
+        </div>
+        {(target.target_day_label || target.target_time || target.target_court) && (
+          <div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>
+            {target.target_day_label || 'Unscheduled'}
+            {target.target_time ? ` \u00b7 ${target.target_time}` : ''}
+            {target.target_court ? ` \u00b7 ${target.target_court}` : ''}
+          </div>
+        )}
+        {target.target_opponent_display && (
+          <div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>
+            Opponent side: <strong>{target.target_opponent_display}</strong>
+          </div>
+        )}
+        {target.waiting_on_match_number && (
+          <div style={{ fontSize: 11, color: '#e65100', marginTop: 2 }}>
+            Waiting on {target.waiting_on_role || 'WINNER'} of Match #{target.waiting_on_match_number}
+            {target.waiting_on_day_label ? ` \u2014 ${target.waiting_on_day_label}` : ''}
+            {target.waiting_on_time ? ` \u00b7 ${target.waiting_on_time}` : ''}
+            {target.waiting_on_court ? ` \u00b7 ${target.waiting_on_court}` : ''}
+          </div>
+        )}
+        {isFinal && target.advanced === true && (
+          <div style={{ fontSize: 11, color: '#2e7d32', marginTop: 2 }}>Advanced into slot</div>
+        )}
+        {blockedText && (
+          <div style={{ fontSize: 11, color: '#c62828', marginTop: 2 }}>{blockedText}</div>
+        )}
+      </div>
+    )
+  }
+
+  if (stage === 'RR') {
+    const relevantStandings = (rrStandings?.events || []).find(
+      e =>
+        e.event_id === matchItem.event_id &&
+        (matchItem.division_name ? e.division_name === matchItem.division_name : true)
+    )
+    const rrRows = relevantStandings?.rows || []
+    const rankByTeam = new Map<number, number>()
+    rrRows.forEach(r => rankByTeam.set(r.team_id, r.rank))
+
+    const pendingPoolMatches = allMatches
+      .filter(m =>
+        m.stage === 'RR' &&
+        m.event_id === matchItem.event_id &&
+        m.division_name === matchItem.division_name &&
+        m.status !== 'FINAL' &&
+        m.status !== 'CANCELLED'
+      )
+      .filter(m => !(m.match_id === matchId && isFinal))
+      .sort((a, b) =>
+        (a.day_index - b.day_index) ||
+        (a.sort_time || '').localeCompare(b.sort_time || '') ||
+        (a.court_name || '').localeCompare(b.court_name || '')
+      )
+
+    const placementLabel = (rank?: number | null) => {
+      if (!rank) return 'Unranked'
+      if (rank === 1) return '#1 in pool'
+      if (rank === 2) return '#2 in pool'
+      if (rank === 3) return '#3 in pool'
+      if (rank === 4) return '#4 in pool'
+      return `#${rank} in pool`
+    }
+
+    return (
+      <div style={{
+        marginTop: 12,
+        padding: '10px 14px',
+        backgroundColor: '#f8f9ff',
+        borderRadius: 6,
+        border: '1px solid #e0e4f0',
+      }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#1a237e', marginBottom: 6 }}>
+          Pool Placement Outlook
+        </div>
+
+        {[{
+          teamId: matchItem.team1_id,
+          teamName: matchItem.team1_display,
+        }, {
+          teamId: matchItem.team2_id,
+          teamName: matchItem.team2_display,
+        }].map((t, idx) => {
+          const rank = t.teamId ? rankByTeam.get(t.teamId) : null
+          return (
+            <div key={`${t.teamId ?? idx}`} style={{ marginBottom: 6, fontSize: 12 }}>
+              <span style={{ fontWeight: 700, color: '#333' }}>{t.teamName}:</span>{' '}
+              <span style={{ color: pendingPoolMatches.length === 0 ? '#2e7d32' : '#555', fontWeight: pendingPoolMatches.length === 0 ? 700 : 600 }}>
+                {pendingPoolMatches.length === 0 ? `Final ${placementLabel(rank)}` : `Current ${placementLabel(rank)}`}
+              </span>
+            </div>
+          )
+        })}
+
+        {pendingPoolMatches.length > 0 ? (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#e65100', marginBottom: 4 }}>
+              Waiting on these matches to lock final pool places:
+            </div>
+            {pendingPoolMatches.slice(0, 5).map(pm => (
+              <div key={pm.match_id} style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>
+                Match #{pm.match_number} {pm.team1_display} vs {pm.team2_display}
+                {pm.day_label ? ` \u2014 ${pm.day_label}` : ''}
+                {pm.scheduled_time ? ` \u00b7 ${pm.scheduled_time}` : ''}
+                {pm.court_name ? ` \u00b7 ${pm.court_name}` : ''}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 8, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>
+            Pool ranking is locked.
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (!hasDownstream) {
     return (
@@ -2090,12 +2248,24 @@ function DrawerImpact({
         fontSize: 12,
         color: '#999',
       }}>
-        {stage === 'RR'
-          ? 'Round Robin has no downstream advancement paths.'
+        {impact?.winner_terminal_label || impact?.loser_terminal_label
+          ? 'This match is terminal. Final placing is decided here.'
           : 'No downstream advancement paths.'}
       </div>
     )
   }
+
+  const winnerTerminal = impact?.winner_terminal_label
+  const loserTerminal = impact?.loser_terminal_label
+
+  const winnerTeamName = (() => {
+    if (!matchItem.winner_team_id) return null
+    return matchItem.winner_team_id === matchItem.team1_id ? matchItem.team1_display : matchItem.team2_display
+  })()
+  const loserTeamName = (() => {
+    if (!matchItem.winner_team_id) return null
+    return matchItem.winner_team_id === matchItem.team1_id ? matchItem.team2_display : matchItem.team1_display
+  })()
 
   return (
     <div style={{
@@ -2106,10 +2276,48 @@ function DrawerImpact({
       border: '1px solid #e0e4f0',
     }}>
       <div style={{ fontWeight: 700, fontSize: 13, color: '#1a237e', marginBottom: 6 }}>
-        Downstream Impact
+        Placement / What Happens Next
       </div>
-      <ImpactArrow label="Winner" target={impact!.winner_target} isFinal={isFinal} />
-      <ImpactArrow label="Loser" target={impact!.loser_target} isFinal={isFinal} />
+
+      {isFinal && winnerTeamName && loserTeamName && (winnerTerminal || loserTerminal) && (
+        <div style={{
+          marginBottom: 8,
+          padding: '8px 10px',
+          border: '1px solid #d7ebd9',
+          backgroundColor: '#f1f8f2',
+          borderRadius: 4,
+        }}>
+          {winnerTerminal && (
+            <div style={{ fontSize: 12, color: '#1b5e20', fontWeight: 700 }}>
+              {winnerTeamName}: {winnerTerminal}
+            </div>
+          )}
+          {loserTerminal && (
+            <div style={{ fontSize: 12, color: '#555', marginTop: 2 }}>
+              {loserTeamName}: {loserTerminal}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+        <div style={{ padding: '8px 10px', backgroundColor: '#fff', borderRadius: 4, border: '1px solid #e2e6f3' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+            If {matchItem.team1_display} wins
+          </div>
+          {renderOutcome(impact?.winner_target || null, winnerTerminal)}
+        </div>
+        <div style={{ padding: '8px 10px', backgroundColor: '#fff', borderRadius: 4, border: '1px solid #e2e6f3' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+            If {matchItem.team1_display} loses
+          </div>
+          {renderOutcome(impact?.loser_target || null, loserTerminal)}
+        </div>
+      </div>
+      <div style={{ marginTop: 6, fontSize: 11, color: '#666' }}>
+        The same winner/loser paths apply to {matchItem.team2_display}: if they win, they take the winner path; if they lose, they take the loser path.
+      </div>
+
       {onSwitchToImpact && (
         <button
           onClick={onSwitchToImpact}

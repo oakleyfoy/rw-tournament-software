@@ -4,7 +4,7 @@ Now Playing / Up Next, score entry, auto-advancement, working draft management.
 """
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -196,6 +196,21 @@ class ImpactTarget(BaseModel):
     target_slot: Optional[str] = None  # "team_a" or "team_b"
     target_current_team_display: Optional[str] = None
     target_current_team_id: Optional[int] = None
+    target_opponent_display: Optional[str] = None
+    target_status: Optional[str] = None
+    target_stage: Optional[str] = None
+    target_event_name: Optional[str] = None
+    target_division_name: Optional[str] = None
+    target_day_label: Optional[str] = None
+    target_time: Optional[str] = None
+    target_court: Optional[str] = None
+    waiting_on_match_id: Optional[int] = None
+    waiting_on_match_number: Optional[int] = None
+    waiting_on_role: Optional[str] = None  # WINNER | LOSER
+    waiting_on_status: Optional[str] = None
+    waiting_on_day_label: Optional[str] = None
+    waiting_on_time: Optional[str] = None
+    waiting_on_court: Optional[str] = None
     blocked_reason: Optional[str] = None  # SLOT_ALREADY_SET | TARGET_NOT_FOUND
     advanced: Optional[bool] = None  # set when source match is FINAL
 
@@ -213,6 +228,8 @@ class MatchImpactItem(BaseModel):
     winner_team_id: Optional[int] = None
     winner_target: Optional[ImpactTarget] = None
     loser_target: Optional[ImpactTarget] = None
+    winner_terminal_label: Optional[str] = None
+    loser_terminal_label: Optional[str] = None
 
 
 class ImpactResponse(BaseModel):
@@ -1452,6 +1469,25 @@ def get_impact(
 
     match_by_id = {m.id: m for m in all_matches}
 
+    # Slot + assignment lookup for schedule context
+    assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version_id,
+        )
+    ).all()
+    assignment_by_match_id = {a.match_id: a for a in assignments}
+    slot_ids = list({a.slot_id for a in assignments})
+    slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
+    ).all() if slot_ids else []
+    slot_map = {s.id: s for s in slots}
+
+    event_ids = list({m.event_id for m in all_matches})
+    events = session.exec(
+        select(Event).where(Event.id.in_(event_ids))
+    ).all() if event_ids else []
+    event_map = {e.id: e for e in events}
+
     # Build reverse index: upstream_match_id → list of (downstream_match, slot, role)
     downstream_map: Dict[int, List[dict]] = {}
     for m in all_matches:
@@ -1492,7 +1528,58 @@ def get_impact(
             return t.display_name or t.name or f"Team {tid}"
         return placeholder or "TBD"
 
-    def _build_target(upstream_match, role, entries) -> Optional[ImpactTarget]:
+    def _slot_context(target_match: Match) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Return (day_label, time_label, court_label) for a match assignment."""
+        a = assignment_by_match_id.get(target_match.id)
+        s = slot_map.get(a.slot_id) if a else None
+        if not s:
+            return None, None, None
+
+        weekday = s.day_date.strftime("%A")
+        month_day = s.day_date.strftime("%B %d").replace(" 0", " ")
+        day_label = f"{weekday}, {month_day}"
+
+        st = s.start_time
+        if isinstance(st, str):
+            parts = st.split(":")
+            h, mn = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+            ampm = "AM" if h < 12 else "PM"
+            h12 = h % 12 or 12
+            time_label = f"{h12}:{mn:02d} {ampm}"
+        else:
+            time_label = st.strftime("%I:%M %p").lstrip("0") if st else None
+
+        court_raw = s.court_label or str(s.court_number)
+        court_label = f"Court {court_raw}" if not court_raw.lower().startswith("court") else court_raw
+        return day_label, time_label, court_label
+
+    def _terminal_label(match_obj: Match, role: str) -> Optional[str]:
+        """Infer end-of-path placement label for terminal match outcomes."""
+        if (match_obj.match_type or "").upper() == "RR":
+            return None
+
+        role_upper = (role or "WINNER").upper()
+        source_roles: List[str] = []
+        if match_obj.source_match_a_id:
+            source_roles.append((match_obj.source_a_role or "WINNER").upper())
+        if match_obj.source_match_b_id:
+            source_roles.append((match_obj.source_b_role or "WINNER").upper())
+
+        if len(source_roles) == 2 and source_roles[0] == "WINNER" and source_roles[1] == "WINNER":
+            return "Champion" if role_upper == "WINNER" else "Runner-up"
+        if len(source_roles) == 2 and source_roles[0] == "LOSER" and source_roles[1] == "LOSER":
+            return "3rd Place" if role_upper == "WINNER" else "4th Place"
+
+        mt = (match_obj.match_type or "").upper()
+        if mt == "CONSOLATION":
+            return "Consolation Winner" if role_upper == "WINNER" else "Consolation Finalist"
+        if mt == "PLACEMENT":
+            return "Placement Winner" if role_upper == "WINNER" else "Placement Finalist"
+        if mt in ("MAIN", "WF"):
+            return "Bracket Winner" if role_upper == "WINNER" else "Bracket Finalist"
+        return None
+
+    def _build_target(upstream_match: Match, role: str, entries: List[dict]) -> Optional[ImpactTarget]:
         """Build impact target for a given role (WINNER or LOSER)."""
         matches_for_role = [e for e in entries if e["role"] == role]
         if not matches_for_role:
@@ -1505,9 +1592,24 @@ def get_impact(
         current_team_id = ds.team_a_id if slot == "team_a" else ds.team_b_id
         current_placeholder = ds.placeholder_side_a if slot == "team_a" else ds.placeholder_side_b
         current_display = _team_disp(current_team_id, current_placeholder)
+        other_team_id = ds.team_b_id if slot == "team_a" else ds.team_a_id
+        other_placeholder = ds.placeholder_side_b if slot == "team_a" else ds.placeholder_side_a
+        opponent_display = _team_disp(other_team_id, other_placeholder)
+        target_status = (ds.runtime_status or "SCHEDULED").upper()
+        target_stage = _STAGE_MAP.get(ds.match_type, ds.match_type)
+        target_event = event_map.get(ds.event_id)
+        target_event_name = target_event.name if target_event else "Unknown"
+        target_division_name = _derive_division(ds.match_code or "", ds.match_type or "")
+        target_day_label, target_time, target_court = _slot_context(ds)
 
         blocked = None
         advanced = None
+        waiting_on_match_id: Optional[int] = None
+        waiting_on_role: Optional[str] = None
+        waiting_on_status: Optional[str] = None
+        waiting_on_day_label: Optional[str] = None
+        waiting_on_time: Optional[str] = None
+        waiting_on_court: Optional[str] = None
 
         if upstream_match.runtime_status == "FINAL" and upstream_match.winner_team_id:
             if role == "WINNER":
@@ -1534,12 +1636,42 @@ def get_impact(
             # Pre-finalize: slot already occupied by a different team (could be from prior advancement)
             pass
 
+        # If target opponent slot is unresolved, include "waiting on" match context.
+        if not other_team_id:
+            if slot == "team_a":
+                waiting_on_match_id = ds.source_match_b_id
+                waiting_on_role = (ds.source_b_role or "WINNER").upper() if ds.source_match_b_id else None
+            else:
+                waiting_on_match_id = ds.source_match_a_id
+                waiting_on_role = (ds.source_a_role or "WINNER").upper() if ds.source_match_a_id else None
+
+            if waiting_on_match_id:
+                waiting_match = match_by_id.get(waiting_on_match_id)
+                if waiting_match:
+                    waiting_on_status = (waiting_match.runtime_status or "SCHEDULED").upper()
+                    waiting_on_day_label, waiting_on_time, waiting_on_court = _slot_context(waiting_match)
+
         return ImpactTarget(
             target_match_number=ds.id,
             target_match_id=ds.id,
             target_slot=slot,
             target_current_team_display=current_display,
             target_current_team_id=current_team_id,
+            target_opponent_display=opponent_display,
+            target_status=target_status,
+            target_stage=target_stage,
+            target_event_name=target_event_name,
+            target_division_name=target_division_name,
+            target_day_label=target_day_label,
+            target_time=target_time,
+            target_court=target_court,
+            waiting_on_match_id=waiting_on_match_id,
+            waiting_on_match_number=waiting_on_match_id,
+            waiting_on_role=waiting_on_role,
+            waiting_on_status=waiting_on_status,
+            waiting_on_day_label=waiting_on_day_label,
+            waiting_on_time=waiting_on_time,
+            waiting_on_court=waiting_on_court,
             blocked_reason=blocked,
             advanced=advanced,
         )
@@ -1552,6 +1684,8 @@ def get_impact(
 
         winner_target = _build_target(m, "WINNER", entries)
         loser_target = _build_target(m, "LOSER", entries)
+        winner_terminal_label = _terminal_label(m, "WINNER") if winner_target is None else None
+        loser_terminal_label = _terminal_label(m, "LOSER") if loser_target is None else None
 
         impacts.append(MatchImpactItem(
             match_id=m.id,
@@ -1566,6 +1700,8 @@ def get_impact(
             winner_team_id=m.winner_team_id,
             winner_target=winner_target,
             loser_target=loser_target,
+            winner_terminal_label=winner_terminal_label,
+            loser_terminal_label=loser_terminal_label,
         ))
 
     impacts.sort(key=lambda x: x.match_number)

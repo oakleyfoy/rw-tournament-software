@@ -2141,6 +2141,21 @@ export interface ImpactTarget {
   target_slot: string | null
   target_current_team_display: string | null
   target_current_team_id: number | null
+  target_opponent_display: string | null
+  target_status: string | null
+  target_stage: string | null
+  target_event_name: string | null
+  target_division_name: string | null
+  target_day_label: string | null
+  target_time: string | null
+  target_court: string | null
+  waiting_on_match_id: number | null
+  waiting_on_match_number: number | null
+  waiting_on_role: string | null
+  waiting_on_status: string | null
+  waiting_on_day_label: string | null
+  waiting_on_time: string | null
+  waiting_on_court: string | null
   blocked_reason: string | null
   advanced: boolean | null
 }
@@ -2158,6 +2173,8 @@ export interface MatchImpactItem {
   winner_team_id: number | null
   winner_target: ImpactTarget | null
   loser_target: ImpactTarget | null
+  winner_terminal_label: string | null
+  loser_terminal_label: string | null
 }
 
 export interface ImpactResponse {
