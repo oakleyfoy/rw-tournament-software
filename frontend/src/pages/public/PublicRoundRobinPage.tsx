@@ -243,12 +243,15 @@ function StandingsSection({ standings }: { standings: RRPoolStandings[] }) {
   const hasData = standings.some(s => s.rows.some(r => r.played > 0))
   if (!hasData) return null
 
+  const columnCount = standings.length <= 1 ? 1 : 2
+
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))',
+      gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
       gap: 18,
       marginBottom: 20,
+      width: '100%',
     }}>
       {standings.map(s => (
         <PoolStandingsTable key={s.pool_code} standings={s} />
