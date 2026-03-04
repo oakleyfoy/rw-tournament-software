@@ -53,6 +53,13 @@ class ProjectedTeam:
     seed_position: int
     bucket: str
     status: str  # "confirmed" | "projected" | "pending"
+    wf_wins: int = 0
+    wf_losses: int = 0
+    wf_game_diff: int = 0
+    wf_games_lost: int = 0
+    wf2_game_diff: int = 0
+    wf2_games_lost: int = 0
+    placement_reason: str = ""
 
 
 @dataclass
@@ -265,6 +272,13 @@ def compute_wf_projection(
 
         for tid in pool_team_ids:
             result = team_results.get(tid)
+            wf_wins = 0
+            wf_losses = 0
+            wf_game_diff = 0
+            wf_games_lost = 0
+            wf2_game_diff = 0
+            wf2_games_lost = 0
+            placement_reason = "Waiting on WF results"
             if not result:
                 status = "pending"
                 bucket_str = "—"
@@ -275,9 +289,43 @@ def compute_wf_projection(
             elif not wf_complete:
                 status = "projected"
                 bucket_str = bucket_names.get(result.bucket_rank, "?")
+                wf_wins = result.wf_matches_won
+                wf_losses = max(num_wf_rounds - wf_wins, 0)
+                wf_game_diff = result.wf_game_diff
+                wf_games_lost = result.wf_games_lost
+                wf2_game_diff = result.wf2_game_diff
+                wf2_games_lost = result.wf2_games_lost
+                if num_wf_rounds > 1:
+                    placement_reason = (
+                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
+                        f"total game diff ({wf_game_diff:+d}), WF2 diff ({wf2_game_diff:+d}), "
+                        f"games against ({wf_games_lost})"
+                    )
+                else:
+                    placement_reason = (
+                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
+                        f"game diff ({wf_game_diff:+d}), games against ({wf_games_lost})"
+                    )
             else:
                 status = "confirmed"
                 bucket_str = bucket_names.get(result.bucket_rank, "?")
+                wf_wins = result.wf_matches_won
+                wf_losses = max(num_wf_rounds - wf_wins, 0)
+                wf_game_diff = result.wf_game_diff
+                wf_games_lost = result.wf_games_lost
+                wf2_game_diff = result.wf2_game_diff
+                wf2_games_lost = result.wf2_games_lost
+                if num_wf_rounds > 1:
+                    placement_reason = (
+                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
+                        f"total game diff ({wf_game_diff:+d}), WF2 diff ({wf2_game_diff:+d}), "
+                        f"games against ({wf_games_lost})"
+                    )
+                else:
+                    placement_reason = (
+                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
+                        f"game diff ({wf_game_diff:+d}), games against ({wf_games_lost})"
+                    )
 
             pool_teams.append(ProjectedTeam(
                 team_id=tid,
@@ -285,6 +333,13 @@ def compute_wf_projection(
                 seed_position=seed_pos,
                 bucket=bucket_str,
                 status=status,
+                wf_wins=wf_wins,
+                wf_losses=wf_losses,
+                wf_game_diff=wf_game_diff,
+                wf_games_lost=wf_games_lost,
+                wf2_game_diff=wf2_game_diff,
+                wf2_games_lost=wf2_games_lost,
+                placement_reason=placement_reason,
             ))
             seed_pos += 1
 

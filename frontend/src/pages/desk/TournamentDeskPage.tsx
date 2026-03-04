@@ -2631,31 +2631,30 @@ function PoolProjectionPanel({
 
             {(() => {
               const eventStandings = (standings?.events || []).filter(se => se.event_id === evt.event_id)
-              if (eventStandings.length === 0) return null
+              const rrStandings = eventStandings.filter(se => se.rows.length > 0)
               return (
                 <div style={{ marginTop: 8 }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginBottom: 4 }}>
-                    Pool standings totals
+                    Waterfall placement standings
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
-                    {eventStandings.map(se => {
-                      const totalMatches = Math.floor(se.rows.reduce((sum, row) => sum + row.played, 0) / 2)
-                      const totalSets = se.rows.reduce((sum, row) => sum + row.sets_won, 0)
-                      const totalGames = se.rows.reduce((sum, row) => sum + row.games_won, 0)
+                    {evt.pools.map(pool => {
+                      const placedCount = pool.teams.filter(team => team.status !== 'pending').length
+                      const pendingCount = pool.teams.length - placedCount
                       return (
                         <div
-                          key={`${se.event_id}-${se.division_name || 'all'}`}
+                          key={`${evt.event_id}-${pool.pool_label}-wf-placement`}
                           style={{ border: '1px solid #e0e0e0', borderRadius: 4, padding: 8, backgroundColor: '#fff' }}
                         >
                           <div style={{ fontSize: 10, fontWeight: 700, color: '#1a237e', marginBottom: 6 }}>
-                            {se.division_name || 'Round Robin standings'}
+                            {pool.pool_display}
                           </div>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
                             {[
-                              { label: 'Teams', value: se.rows.length },
-                              { label: 'Completed Matches', value: totalMatches },
-                              { label: 'Sets Logged', value: totalSets },
-                              { label: 'Games Logged', value: totalGames },
+                              { label: 'Teams', value: pool.teams.length },
+                              { label: 'Placed', value: placedCount },
+                              { label: 'Pending', value: pendingCount },
+                              { label: 'WF Finalized', value: `${evt.finalized_wf_matches}/${evt.total_wf_matches}` },
                             ].map(item => (
                               <span
                                 key={item.label}
@@ -2678,41 +2677,126 @@ function PoolProjectionPanel({
                                 <tr>
                                   <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>#</th>
                                   <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Team</th>
-                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>P</th>
-                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>W-L</th>
-                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Set +/-</th>
-                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Game +/-</th>
-                                  <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>How ranked</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Bucket</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>WF W-L</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>WF Game +/-</th>
+                                  <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>How placed</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {se.rows.map(row => (
-                                  <tr key={row.team_id}>
-                                    <td style={{ padding: '3px 4px', fontWeight: 700, color: '#1a237e' }}>{row.rank}</td>
-                                    <td style={{ padding: '3px 4px', fontWeight: 600, color: '#333' }}>{row.team_display}</td>
-                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>{row.played}</td>
+                                {pool.teams.map((team, idx) => (
+                                  <tr key={team.team_id}>
+                                    <td style={{ padding: '3px 4px', fontWeight: 700, color: '#1a237e' }}>
+                                      {idx + 1}
+                                      <span style={{ color: '#90a4ae', marginLeft: 3 }}>S{team.seed_position}</span>
+                                    </td>
+                                    <td style={{ padding: '3px 4px', fontWeight: 600, color: '#333' }}>
+                                      {team.status === 'pending' ? '—' : team.team_display}
+                                    </td>
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>{team.bucket}</td>
                                     <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>
-                                      {row.wins}-{row.losses}
+                                      {team.status === 'pending' ? '—' : `${team.wf_wins}-${team.wf_losses}`}
                                     </td>
-                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: row.set_diff >= 0 ? '#2e7d32' : '#c62828' }}>
-                                      {row.set_diff >= 0 ? '+' : ''}{row.set_diff}
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: team.wf_game_diff >= 0 ? '#2e7d32' : '#c62828' }}>
+                                      {team.status === 'pending' ? '—' : `${team.wf_game_diff >= 0 ? '+' : ''}${team.wf_game_diff}`}
                                     </td>
-                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: row.game_diff >= 0 ? '#2e7d32' : '#c62828' }}>
-                                      {row.game_diff >= 0 ? '+' : ''}{row.game_diff}
-                                    </td>
-                                    <td style={{ padding: '3px 4px', color: '#666' }}>{row.rank_explanation}</td>
+                                    <td style={{ padding: '3px 4px', color: '#666' }}>{team.placement_reason}</td>
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
                           </div>
                           <div style={{ marginTop: 5, fontSize: 9, color: '#78909c' }}>
-                            {se.tiebreak_notes}
+                            Placement order: Bucket, then WF wins, then game diff, then games against.
                           </div>
                         </div>
                       )
                     })}
                   </div>
+
+                  {rrStandings.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginTop: 8, marginBottom: 4 }}>
+                        Round-robin standings totals
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+                        {rrStandings.map(se => {
+                          const totalMatches = Math.floor(se.rows.reduce((sum, row) => sum + row.played, 0) / 2)
+                          const totalSets = se.rows.reduce((sum, row) => sum + row.sets_won, 0)
+                          const totalGames = se.rows.reduce((sum, row) => sum + row.games_won, 0)
+                          return (
+                            <div
+                              key={`${se.event_id}-${se.division_name || 'all'}`}
+                              style={{ border: '1px solid #e0e0e0', borderRadius: 4, padding: 8, backgroundColor: '#fff' }}
+                            >
+                              <div style={{ fontSize: 10, fontWeight: 700, color: '#1a237e', marginBottom: 6 }}>
+                                {se.division_name || 'Round Robin standings'}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                                {[
+                                  { label: 'Teams', value: se.rows.length },
+                                  { label: 'Completed Matches', value: totalMatches },
+                                  { label: 'Sets Logged', value: totalSets },
+                                  { label: 'Games Logged', value: totalGames },
+                                ].map(item => (
+                                  <span
+                                    key={item.label}
+                                    style={{
+                                      fontSize: 9,
+                                      color: '#37474f',
+                                      border: '1px solid #dfe3e6',
+                                      backgroundColor: '#f8fafb',
+                                      borderRadius: 3,
+                                      padding: '1px 6px',
+                                    }}
+                                  >
+                                    <strong>{item.value}</strong> {item.label}
+                                  </span>
+                                ))}
+                              </div>
+                              <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>#</th>
+                                      <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Team</th>
+                                      <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>P</th>
+                                      <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>W-L</th>
+                                      <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Set +/-</th>
+                                      <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Game +/-</th>
+                                      <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>How ranked</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {se.rows.map(row => (
+                                      <tr key={row.team_id}>
+                                        <td style={{ padding: '3px 4px', fontWeight: 700, color: '#1a237e' }}>{row.rank}</td>
+                                        <td style={{ padding: '3px 4px', fontWeight: 600, color: '#333' }}>{row.team_display}</td>
+                                        <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>{row.played}</td>
+                                        <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>
+                                          {row.wins}-{row.losses}
+                                        </td>
+                                        <td style={{ padding: '3px 4px', textAlign: 'center', color: row.set_diff >= 0 ? '#2e7d32' : '#c62828' }}>
+                                          {row.set_diff >= 0 ? '+' : ''}{row.set_diff}
+                                        </td>
+                                        <td style={{ padding: '3px 4px', textAlign: 'center', color: row.game_diff >= 0 ? '#2e7d32' : '#c62828' }}>
+                                          {row.game_diff >= 0 ? '+' : ''}{row.game_diff}
+                                        </td>
+                                        <td style={{ padding: '3px 4px', color: '#666' }}>{row.rank_explanation}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <div style={{ marginTop: 5, fontSize: 9, color: '#78909c' }}>
+                                {se.tiebreak_notes}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
               )
             })()}

@@ -1893,14 +1893,21 @@ def test_pool_projection_all_wf_complete(client, session):
     for pool in proj["pools"]:
         for team in pool["teams"]:
             assert team["status"] == "confirmed"
+            assert "placement_reason" in team
+            assert team["placement_reason"]
+            assert isinstance(team["wf_wins"], int)
+            assert isinstance(team["wf_losses"], int)
+            assert isinstance(team["wf_game_diff"], int)
 
     # Winners (bucket W) should be in first pool, losers (bucket L) in second
     pool_a = proj["pools"][0]
     pool_b = proj["pools"][1]
     for team in pool_a["teams"]:
         assert team["bucket"] == "W"
+        assert team["wf_wins"] == 1
     for team in pool_b["teams"]:
         assert team["bucket"] == "L"
+        assert team["wf_wins"] == 0
 
 
 def test_pool_placement_rejects_incomplete_wf(client, session):

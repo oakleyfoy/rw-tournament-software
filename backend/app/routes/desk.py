@@ -1740,6 +1740,13 @@ class ProjectedTeamItem(BaseModel):
     seed_position: int
     bucket: str
     status: str  # "confirmed" | "projected" | "pending"
+    wf_wins: int = 0
+    wf_losses: int = 0
+    wf_game_diff: int = 0
+    wf_games_lost: int = 0
+    wf2_game_diff: int = 0
+    wf2_games_lost: int = 0
+    placement_reason: str = ""
 
 
 class ProjectedPoolItem(BaseModel):
@@ -1831,6 +1838,13 @@ def get_pool_projection(
                             seed_position=t.seed_position,
                             bucket=t.bucket,
                             status=t.status,
+                            wf_wins=t.wf_wins,
+                            wf_losses=t.wf_losses,
+                            wf_game_diff=t.wf_game_diff,
+                            wf_games_lost=t.wf_games_lost,
+                            wf2_game_diff=t.wf2_game_diff,
+                            wf2_games_lost=t.wf2_games_lost,
+                            placement_reason=t.placement_reason,
                         )
                         for t in p.teams
                     ],

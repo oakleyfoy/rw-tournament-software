@@ -2445,6 +2445,13 @@ export interface ProjectedTeam {
   seed_position: number
   bucket: string
   status: 'confirmed' | 'projected' | 'pending'
+  wf_wins: number
+  wf_losses: number
+  wf_game_diff: number
+  wf_games_lost: number
+  wf2_game_diff: number
+  wf2_games_lost: number
+  placement_reason: string
 }
 
 export interface ProjectedPool {
