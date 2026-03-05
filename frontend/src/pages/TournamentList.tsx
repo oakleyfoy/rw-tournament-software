@@ -321,26 +321,28 @@ function TournamentList() {
                         >
                           {isProcessing === 'delete' ? '...' : 'Delete'}
                         </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12 }}
-                          onClick={(e) => handlePrintPacketDownload(tournament, 'womens', e)}
-                          disabled={!!isProcessing || !!printing[`${tournament.id}-womens`]}
-                          title="Download Women's 32x24 print PDF"
-                        >
-                          {printing[`${tournament.id}-womens`] ? '...' : "PDF Women's"}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12 }}
-                          onClick={(e) => handlePrintPacketDownload(tournament, 'mixed', e)}
-                          disabled={!!isProcessing || !!printing[`${tournament.id}-mixed`]}
-                          title="Download Mixed 32x24 print PDF"
-                        >
-                          {printing[`${tournament.id}-mixed`] ? '...' : 'PDF Mixed'}
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px', flexBasis: '100%' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12, whiteSpace: 'nowrap' }}
+                            onClick={(e) => handlePrintPacketDownload(tournament, 'womens', e)}
+                            disabled={!!isProcessing || !!printing[`${tournament.id}-womens`]}
+                            title="Download Women's 32x24 print PDF"
+                          >
+                            {printing[`${tournament.id}-womens`] ? '...' : "PDF Women's"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12, whiteSpace: 'nowrap' }}
+                            onClick={(e) => handlePrintPacketDownload(tournament, 'mixed', e)}
+                            disabled={!!isProcessing || !!printing[`${tournament.id}-mixed`]}
+                            title="Download Mixed 32x24 print PDF"
+                          >
+                            {printing[`${tournament.id}-mixed`] ? '...' : 'PDF Mixed'}
+                          </button>
+                        </div>
                       </div>
                     </td>
                   </tr>
