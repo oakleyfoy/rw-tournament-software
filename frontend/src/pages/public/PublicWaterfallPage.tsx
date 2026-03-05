@@ -388,6 +388,7 @@ export default function PublicWaterfallPage() {
   const [searchParams] = useSearchParams()
   const versionIdParam = searchParams.get('version_id')
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : undefined
+  const captureMode = searchParams.get('capture_packet') === '1'
 
   const [data, setData] = useState<PublicWaterfallResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -473,8 +474,8 @@ export default function PublicWaterfallPage() {
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
 
   return (
-    <div className="print-root" style={{ backgroundColor: '#f8f9fa', minHeight: '100vh' }}>
-      {versionId && (
+    <div className="print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
+      {versionId && !captureMode && (
         <div className="no-print" style={{
           padding: '8px 20px',
           backgroundColor: '#fff3e0',
@@ -497,6 +498,7 @@ export default function PublicWaterfallPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        ...(captureMode ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link
@@ -544,9 +546,9 @@ export default function PublicWaterfallPage() {
       </div>
 
       {/* Bracket canvas: fixed width, horizontal scroll on mobile */}
-      <div data-bracket-canvas style={{ overflowX: 'auto', padding: '20px 16px' }}>
+      <div data-bracket-canvas style={{ overflowX: 'auto', padding: captureMode ? '10px 8px' : '20px 16px' }}>
         <div data-bracket-inner style={{
-          minWidth: 1500,
+          minWidth: captureMode ? 1200 : 1500,
           maxWidth: 1900,
           margin: '0 auto',
         }}>

@@ -107,9 +107,20 @@ async function captureRouteAsCanvas(job: CaptureJob): Promise<HTMLCanvasElement>
     const doc = iframe.contentDocument
     if (!doc) throw new Error(`No document for ${job.routePath}`)
 
+    const captureStyle = doc.createElement('style')
+    captureStyle.textContent = `
+      .no-print { display: none !important; }
+      html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+      .print-root, .rr-print-root, .bracket-print-root {
+        min-height: auto !important;
+        background: #fff !important;
+      }
+    `
+    doc.head.appendChild(captureStyle)
+
     const root = await waitForRenderableRoot(doc, job.rootSelector)
-    const width = Math.max(root.scrollWidth, root.clientWidth, 1200)
-    const height = Math.max(root.scrollHeight, root.clientHeight, 900)
+    const width = Math.max(root.scrollWidth, root.clientWidth)
+    const height = Math.max(root.scrollHeight, root.clientHeight)
 
     return await html2canvas(root, {
       backgroundColor: '#ffffff',

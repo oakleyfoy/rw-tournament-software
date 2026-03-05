@@ -377,6 +377,7 @@ export default function PublicBracketPage() {
   const [searchParams] = useSearchParams()
   const versionIdParam = searchParams.get('version_id')
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : undefined
+  const captureMode = searchParams.get('capture_packet') === '1'
 
   const [data, setData] = useState<BracketResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -438,8 +439,8 @@ export default function PublicBracketPage() {
   const headerText = `${data.event_name} — ${data.division_label}`.toUpperCase()
 
   return (
-    <div className="bracket-print-root" style={{ backgroundColor: '#f8f9fa', minHeight: '100vh' }}>
-      {versionId && (
+    <div className="bracket-print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
+      {versionId && !captureMode && (
         <div className="no-print" style={{
           padding: '8px 20px',
           backgroundColor: '#fff3e0',
@@ -463,6 +464,7 @@ export default function PublicBracketPage() {
         gap: 16,
         justifyContent: 'space-between',
         alignItems: 'center',
+        ...(captureMode ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link
@@ -516,8 +518,8 @@ export default function PublicBracketPage() {
       </div>
 
       {/* Bracket canvas */}
-      <div data-bracket-canvas style={{ overflowX: 'auto', padding: '20px 24px' }}>
-        <div data-bracket-inner style={{ display: 'inline-block', minWidth: 800 }}>
+      <div data-bracket-canvas style={{ overflowX: 'auto', padding: captureMode ? '10px 14px' : '20px 24px' }}>
+        <div data-bracket-inner style={{ display: 'inline-block', minWidth: captureMode ? 640 : 800 }}>
           <BracketTree matches={data.main_matches} variant="main" />
           <ConsolationSection matches={data.consolation_matches} />
         </div>

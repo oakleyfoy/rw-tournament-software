@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicRoundRobin, RoundRobinResponse, RRMatchBox, RRPool, RRPoolStandings } from '../../api/client'
 
 // ── Print styles ────────────────────────────────────────────────────────
@@ -335,6 +335,45 @@ function StandingsHelpPanel({ tiebreakerNote }: { tiebreakerNote: string }) {
   )
 }
 
+function StandingsHelpRow({ tiebreakerNote }: { tiebreakerNote: string }) {
+  const cardStyle: React.CSSProperties = {
+    border: '1px solid #dde2f0',
+    borderRadius: 6,
+    padding: '10px 12px',
+    backgroundColor: '#fff',
+    flex: '1 1 320px',
+    minWidth: 280,
+  }
+  return (
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#1a237e', marginBottom: 6, textTransform: 'uppercase' }}>
+          Standings Abbreviations
+        </div>
+        <div style={{ fontSize: 11, color: '#455a64', lineHeight: 1.5 }}>
+          <div><strong>W</strong> = Match Wins</div>
+          <div><strong>L</strong> = Match Losses</div>
+          <div><strong>Sets</strong> = Sets Won - Sets Lost</div>
+          <div><strong>Games</strong> = Games Won - Games Lost</div>
+          <div><strong>P</strong> = Matches Played</div>
+        </div>
+      </div>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#1a237e', marginBottom: 6, textTransform: 'uppercase' }}>
+          Tiebreak Order
+        </div>
+        <ol style={{ margin: '0 0 6px 18px', padding: 0, fontSize: 11, color: '#455a64', lineHeight: 1.5 }}>
+          <li>Most match wins (W)</li>
+          <li>Best set differential</li>
+          <li>Best game differential</li>
+          <li>Head-to-head (for exact two-team ties)</li>
+        </ol>
+        <div style={{ fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>{tiebreakerNote}</div>
+      </div>
+    </div>
+  )
+}
+
 
 // ── Main page ───────────────────────────────────────────────────────────
 
@@ -345,6 +384,8 @@ export default function PublicRoundRobinPage() {
   }>()
   const tid = tournamentId ? parseInt(tournamentId, 10) : null
   const eid = eventId ? parseInt(eventId, 10) : null
+  const [searchParams] = useSearchParams()
+  const captureMode = searchParams.get('capture_packet') === '1'
 
   const [data, setData] = useState<RoundRobinResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -412,7 +453,7 @@ export default function PublicRoundRobinPage() {
   }
 
   return (
-    <div className="rr-print-root" style={{ backgroundColor: '#f8f9fa', minHeight: '100vh' }}>
+    <div className="rr-print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
       {/* Nav */}
       <div className="no-print" style={{
         padding: '8px 20px',
@@ -423,6 +464,7 @@ export default function PublicRoundRobinPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        ...(captureMode ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link
@@ -476,7 +518,7 @@ export default function PublicRoundRobinPage() {
       </div>
 
       {/* Standings */}
-      {data.standings && data.standings.length > 0 && (
+      {!captureMode && data.standings && data.standings.length > 0 && (
         <div style={{ padding: '16px 24px 0' }}>
           <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 720px', minWidth: 300 }}>
@@ -488,7 +530,7 @@ export default function PublicRoundRobinPage() {
       )}
 
       {/* Content */}
-      <div data-rr-canvas style={{ padding: '20px 24px' }}>
+      <div data-rr-canvas style={{ padding: captureMode ? '12px 14px' : '20px 24px' }}>
         <div data-rr-inner>
           {poolPairs.map((pair, pi) => (
             <div key={pi} style={{
@@ -504,6 +546,8 @@ export default function PublicRoundRobinPage() {
               ))}
             </div>
           ))}
+
+          {captureMode && <StandingsHelpRow tiebreakerNote={data.tiebreaker_note} />}
 
         </div>
       </div>
