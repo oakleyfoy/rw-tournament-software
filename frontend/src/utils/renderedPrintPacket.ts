@@ -146,8 +146,8 @@ export async function buildRenderedPrintPacketPdf(
   const PAGE_H = 24 * 72
   const MARGIN = 22
   const PANEL_GAP = 14
-  const PAGE_HEADER_H = 18
-  const PANEL_TITLE_H = 14
+  const PAGE_HEADER_H = 0
+  const PANEL_TITLE_H = 0
   const PANELS_PER_PAGE = 2
   const pdf = new jsPDF({
     orientation: 'landscape',
@@ -161,43 +161,30 @@ export async function buildRenderedPrintPacketPdf(
 
     const pageJobs = jobs.slice(start, start + PANELS_PER_PAGE)
 
-    const title = `${category === 'womens' ? "Women's" : 'Mixed'} Draw Packet`
-    pdf.setTextColor(30, 30, 30)
-    pdf.setFontSize(12)
-    pdf.text(title, MARGIN, MARGIN + 11)
-
     const slots = pageJobs.length
     const contentTop = MARGIN + PAGE_HEADER_H
     const contentBottom = PAGE_H - MARGIN
-    const panelH = contentBottom - contentTop
-    const panelW =
+    const panelW = PAGE_W - MARGIN * 2
+    const panelH =
       slots > 1
-        ? (PAGE_W - MARGIN * 2 - PANEL_GAP * (slots - 1)) / slots
-        : PAGE_W - MARGIN * 2
+        ? (contentBottom - contentTop - PANEL_GAP * (slots - 1)) / slots
+        : (contentBottom - contentTop)
 
     for (let i = 0; i < pageJobs.length; i++) {
       const job = pageJobs[i]
-      const panelX = MARGIN + i * (panelW + PANEL_GAP)
-      const panelY = contentTop
-
-      pdf.setDrawColor(170, 170, 170)
-      pdf.setLineWidth(0.8)
-      pdf.rect(panelX, panelY, panelW, panelH)
-
-      pdf.setTextColor(55, 55, 55)
-      pdf.setFontSize(10)
-      pdf.text(job.label, panelX + 6, panelY + 10)
+      const panelX = MARGIN
+      const panelY = contentTop + i * (panelH + PANEL_GAP)
 
       const canvas = await captureRouteAsCanvas(job)
       const imageData = canvas.toDataURL('image/png')
 
-      const availW = panelW - 10
-      const availH = panelH - PANEL_TITLE_H - 8
+      const availW = panelW
+      const availH = panelH - PANEL_TITLE_H
       const ratio = Math.min(availW / canvas.width, availH / canvas.height)
       const drawW = canvas.width * ratio
       const drawH = canvas.height * ratio
       const x = panelX + (panelW - drawW) / 2
-      const y = panelY + PANEL_TITLE_H + (availH - drawH) / 2
+      const y = panelY + (availH - drawH) / 2
 
       pdf.addImage(imageData, 'PNG', x, y, drawW, drawH, undefined, 'FAST')
     }
