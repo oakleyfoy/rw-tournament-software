@@ -1,7 +1,7 @@
 import re
 from datetime import date, datetime, time, timedelta
 from io import BytesIO
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
@@ -181,9 +181,7 @@ def _build_print_packet_pdf(
     slot_map: Dict[int, ScheduleSlot],
     team_map: Dict[int, Team],
 ) -> bytes:
-    from reportlab.lib import colors
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.pdfgen import canvas
 
     def _team_name(team_id: Optional[int], placeholder: Optional[str]) -> str:
         if team_id and team_id in team_map:
@@ -191,97 +189,207 @@ def _build_print_packet_pdf(
             return t.display_name or t.name or f"Team {team_id}"
         return placeholder or "TBD"
 
+    def _draw_header(c: canvas.Canvas, title: str, subtitle: str) -> None:
+        width, height = PRINT_PACKET_PAGE_SIZE
+        c.setFont("Helvetica-Bold", 24)
+        c.drawString(36, height - 42, title)
+        c.setFont("Helvetica", 11)
+        c.drawString(36, height - 58, subtitle)
+        c.line(36, height - 64, width - 36, height - 64)
+
+    def _draw_footer(c: canvas.Canvas) -> None:
+        width, _ = PRINT_PACKET_PAGE_SIZE
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(width / 2, 14, f"-- {c.getPageNumber()} --")
+
+    def _draw_wf_page(c: canvas.Canvas, event: Event, wf_matches: List[Match], category_label: str) -> None:
+        width, height = PRINT_PACKET_PAGE_SIZE
+        generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        _draw_header(
+            c,
+            f"{event.name.upper()} — {category_label.upper()} WATERFALL BRACKET",
+            f"{tournament.name} | Version #{version.version_number} ({version.status.upper()}) | {generated}",
+        )
+
+        rounds: Dict[int, List[Match]] = {}
+        for m in wf_matches:
+            rounds.setdefault(m.round_index or 0, []).append(m)
+        for r in rounds.values():
+            r.sort(key=lambda m: (m.sequence_in_round or 0, m.id))
+        round_keys = sorted(rounds.keys())
+        if not round_keys:
+            c.setFont("Helvetica", 14)
+            c.drawString(40, height - 100, "No waterfall matches.")
+            _draw_footer(c)
+            c.showPage()
+            return
+
+        left = 36
+        right = width - 36
+        top = height - 88
+        bottom = 34
+        col_gap = 24
+        col_count = len(round_keys)
+        usable_w = right - left
+        col_w = (usable_w - col_gap * (col_count - 1)) / col_count if col_count > 0 else usable_w
+        usable_h = top - bottom
+        match_box: Dict[int, Tuple[float, float, float, float]] = {}
+
+        for idx, round_idx in enumerate(round_keys):
+            x = left + idx * (col_w + col_gap)
+            round_matches = rounds.get(round_idx, [])
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(x, top + 10, f"Round {round_idx}")
+
+            rows = max(1, len(round_matches))
+            row_gap = 12
+            box_h = min(86.0, max(54.0, (usable_h - row_gap * (rows + 1)) / rows))
+            gap = (usable_h - box_h * rows) / (rows + 1)
+            if gap < 6:
+                gap = 6
+
+            y_cursor = top - gap - box_h
+            for m in round_matches:
+                y = y_cursor
+                y_cursor -= box_h + gap
+                c.rect(x, y, col_w, box_h, stroke=1, fill=0)
+                c.setFont("Helvetica-Bold", 10)
+                c.drawString(x + 6, y + box_h - 14, _team_name(m.team_a_id, m.placeholder_side_a)[:60])
+                c.drawString(x + 6, y + box_h - 27, _team_name(m.team_b_id, m.placeholder_side_b)[:60])
+
+                a = assignment_by_match.get(m.id)
+                slot = slot_map.get(a.slot_id) if a else None
+                _, _, court = _format_slot_fields(slot)
+                meta = f"Match #{m.id}"
+                if court:
+                    meta += f" - {court}"
+                c.setFont("Helvetica", 9)
+                c.drawString(x + 6, y + 14, meta[:80])
+
+                score = _score_display(m.score_json) if (m.runtime_status or "").upper() == "FINAL" else ""
+                if score:
+                    c.drawRightString(x + col_w - 6, y + 14, score[:32])
+
+                match_box[m.id] = (x, y, col_w, box_h)
+
+        c.setLineWidth(0.6)
+        for m in wf_matches:
+            target = match_box.get(m.id)
+            if not target:
+                continue
+            tx, ty, _, th = target
+            target_mid_y = ty + th / 2
+            for src_id in [m.source_match_a_id, m.source_match_b_id]:
+                if not src_id:
+                    continue
+                src = match_box.get(src_id)
+                if not src:
+                    continue
+                sx, sy, sw, sh = src
+                src_mid_y = sy + sh / 2
+                mid_x = (sx + sw + tx) / 2
+                c.line(sx + sw, src_mid_y, mid_x, src_mid_y)
+                c.line(mid_x, src_mid_y, mid_x, target_mid_y)
+                c.line(mid_x, target_mid_y, tx, target_mid_y)
+
+        _draw_footer(c)
+        c.showPage()
+
+    def _draw_rr_page(c: canvas.Canvas, event: Event, rr_matches: List[Match], category_label: str) -> None:
+        width, height = PRINT_PACKET_PAGE_SIZE
+        generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        _draw_header(
+            c,
+            f"{event.name.upper()} — {category_label.upper()} ROUND ROBIN",
+            f"{tournament.name} | Version #{version.version_number} ({version.status.upper()}) | {generated}",
+        )
+
+        pool_label_map = {
+            "POOLA": "Division I",
+            "POOLB": "Division II",
+            "POOLC": "Division III",
+            "POOLD": "Division IV",
+        }
+
+        pools: Dict[str, List[Match]] = {}
+        for m in rr_matches:
+            p = _pool_from_match_code(m.match_code or "") or "POOL"
+            pools.setdefault(p, []).append(m)
+        for p in pools:
+            pools[p].sort(key=lambda m: (m.round_index or 0, m.sequence_in_round or 0, m.id))
+
+        ordered_pool_keys = sorted(
+            pools.keys(),
+            key=lambda p: {"POOLA": 1, "POOLB": 2, "POOLC": 3, "POOLD": 4}.get(p, 99),
+        )
+        if not ordered_pool_keys:
+            c.setFont("Helvetica", 14)
+            c.drawString(40, height - 100, "No round robin matches.")
+            _draw_footer(c)
+            c.showPage()
+            return
+
+        left = 36
+        right = width - 36
+        top = height - 88
+        bottom = 34
+        cols = 2 if len(ordered_pool_keys) > 1 else 1
+        rows = (len(ordered_pool_keys) + cols - 1) // cols
+        col_gap = 22
+        row_gap = 18
+        card_w = (right - left - col_gap * (cols - 1)) / cols
+        card_h = (top - bottom - row_gap * (rows - 1)) / max(1, rows)
+
+        for idx, pool_code in enumerate(ordered_pool_keys):
+            row = idx // cols
+            col = idx % cols
+            x = left + col * (card_w + col_gap)
+            y_top = top - row * (card_h + row_gap)
+            y_bottom = y_top - card_h
+            c.rect(x, y_bottom, card_w, card_h, stroke=1, fill=0)
+
+            title = f"{category_label.upper()} ROUND ROBIN {pool_label_map.get(pool_code, pool_code).upper()}"
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(x + 6, y_top - 13, title[:84])
+            c.line(x + 4, y_top - 18, x + card_w - 4, y_top - 18)
+
+            line_y = y_top - 30
+            matches = pools.get(pool_code, [])
+            for m in matches:
+                if line_y < y_bottom + 18:
+                    c.setFont("Helvetica-Oblique", 8)
+                    c.drawString(x + 6, y_bottom + 8, "... more matches")
+                    break
+
+                team_line = f"{_team_name(m.team_a_id, m.placeholder_side_a)} vs {_team_name(m.team_b_id, m.placeholder_side_b)}"
+                a = assignment_by_match.get(m.id)
+                slot = slot_map.get(a.slot_id) if a else None
+                _, _, court = _format_slot_fields(slot)
+                meta = f"Match #{m.id}"
+                if court:
+                    meta += f" - {court}"
+                status = (m.runtime_status or "SCHEDULED").upper()
+                score_or_status = _score_display(m.score_json) if status == "FINAL" else status
+
+                c.setFont("Helvetica-Bold", 8.5)
+                c.drawString(x + 6, line_y, team_line[:110])
+                c.setFont("Helvetica", 8)
+                c.drawString(x + 6, line_y - 10, meta[:110])
+                if score_or_status:
+                    c.drawRightString(x + card_w - 6, line_y - 10, score_or_status[:24])
+                line_y -= 22
+
+        _draw_footer(c)
+        c.showPage()
+
     buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=PRINT_PACKET_PAGE_SIZE,
-        leftMargin=28,
-        rightMargin=28,
-        topMargin=24,
-        bottomMargin=20,
-    )
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "PrintPacketTitle",
-        parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
-        fontSize=22,
-        leading=26,
-        textColor=colors.black,
-        spaceAfter=4,
-    )
-    subtitle_style = ParagraphStyle(
-        "PrintPacketSubtitle",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=11,
-        leading=14,
-        textColor=colors.black,
-    )
-    section_style = ParagraphStyle(
-        "PrintPacketSection",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=14,
-        leading=18,
-        textColor=colors.black,
-        spaceBefore=8,
-        spaceAfter=4,
-    )
-    event_style = ParagraphStyle(
-        "PrintPacketEvent",
-        parent=styles["Heading3"],
-        fontName="Helvetica-Bold",
-        fontSize=12,
-        leading=15,
-        textColor=colors.black,
-        spaceBefore=6,
-        spaceAfter=2,
-    )
-    body_style = ParagraphStyle(
-        "PrintPacketBody",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=10,
-        leading=12,
-        textColor=colors.black,
-    )
-
+    c = canvas.Canvas(buffer, pagesize=PRINT_PACKET_PAGE_SIZE)
     category_label = _PRINT_CATEGORY_LABEL.get(category, category.title())
-    generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    story: List = [
-        Paragraph(f"{tournament.name} — {category_label} Draw Packet", title_style),
-        Paragraph(
-            f"Version #{version.version_number} ({version.status.upper()}) &nbsp; | &nbsp; "
-            f"Includes Waterfall and Round Robin matches only (no standings). &nbsp; | &nbsp; "
-            f"Generated: {generated}",
-            subtitle_style,
-        ),
-        Spacer(1, 8),
-    ]
 
-    if not events:
-        story.append(Paragraph(f"No {category_label.lower()} events found.", body_style))
-        doc.build(story)
-        return buffer.getvalue()
+    events_sorted = sorted(events, key=lambda e: (e.name or "").lower())
+    rendered_any = False
 
-    table_header = [
-        "Match #",
-        "Code",
-        "Stage",
-        "Round",
-        "Pool",
-        "Team A",
-        "Team B",
-        "Day",
-        "Time",
-        "Court",
-        "Status",
-        "Score",
-    ]
-    col_widths = [52, 108, 44, 40, 45, 180, 180, 68, 56, 60, 52, 86]
-
-    for event in sorted(events, key=lambda e: (e.name or "").lower()):
+    for event in events_sorted:
         event_matches = matches_by_event.get(event.id, [])
         wf = sorted(
             [m for m in event_matches if (m.match_type or "").upper() == "WF"],
@@ -296,70 +404,26 @@ def _build_print_packet_pdf(
                 m.id,
             ),
         )
-        if not wf and not rr:
-            continue
+        if wf:
+            _draw_wf_page(c, event, wf, category_label)
+            rendered_any = True
+        if rr:
+            _draw_rr_page(c, event, rr, category_label)
+            rendered_any = True
 
-        story.append(Paragraph(event.name, event_style))
+    if not rendered_any:
+        generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        _draw_header(
+            c,
+            f"{tournament.name} — {category_label} Draw Packet",
+            f"Version #{version.version_number} ({version.status.upper()}) | {generated}",
+        )
+        c.setFont("Helvetica", 14)
+        c.drawString(40, PRINT_PACKET_PAGE_SIZE[1] - 100, f"No {category_label.lower()} WF/RR matches found.")
+        _draw_footer(c)
+        c.showPage()
 
-        def _append_match_table(section_name: str, rows: List[Match]) -> None:
-            story.append(Paragraph(section_name, section_style))
-            if not rows:
-                story.append(Paragraph(f"No {section_name.lower()} matches.", body_style))
-                story.append(Spacer(1, 5))
-                return
-
-            data = [table_header]
-            for m in rows:
-                a = assignment_by_match.get(m.id)
-                slot = slot_map.get(a.slot_id) if a else None
-                day, tm, court = _format_slot_fields(slot)
-                status = (m.runtime_status or "SCHEDULED").upper()
-                score = _score_display(m.score_json) if status == "FINAL" else ""
-                data.append(
-                    [
-                        str(m.id),
-                        m.match_code or "",
-                        (m.match_type or "").upper(),
-                        f"R{m.round_index or 0}",
-                        _pool_from_match_code(m.match_code or "") if (m.match_type or "").upper() == "RR" else "",
-                        _team_name(m.team_a_id, m.placeholder_side_a),
-                        _team_name(m.team_b_id, m.placeholder_side_b),
-                        day,
-                        tm,
-                        court,
-                        status,
-                        score,
-                    ]
-                )
-
-            table = Table(data, colWidths=col_widths, repeatRows=1)
-            table.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.white),
-                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-                        ("ALIGN", (0, 0), (4, -1), "CENTER"),
-                        ("ALIGN", (7, 1), (-1, -1), "CENTER"),
-                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                        ("FONTSIZE", (0, 0), (-1, 0), 9),
-                        ("FONTSIZE", (0, 1), (-1, -1), 8.5),
-                        ("GRID", (0, 0), (-1, -1), 0.3, colors.black),
-                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.Color(0.97, 0.97, 0.97)]),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-                        ("TOPPADDING", (0, 0), (-1, -1), 2),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                    ]
-                )
-            )
-            story.append(table)
-            story.append(Spacer(1, 8))
-
-        _append_match_table("Waterfall", wf)
-        _append_match_table("Round Robin", rr)
-
-    doc.build(story)
+    c.save()
     return buffer.getvalue()
 
 
