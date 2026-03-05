@@ -10,6 +10,7 @@ import {
 } from '../api/client'
 import { showToast } from '../utils/toast'
 import { confirmDialog } from '../utils/confirm'
+import { buildRenderedPrintPacketPdf } from '../utils/renderedPrintPacket'
 import './TournamentList.css'
 
 function TournamentList() {
@@ -149,7 +150,14 @@ function TournamentList() {
     const key = `${tournament.id}-${category}`
     try {
       setPrinting(prev => ({ ...prev, [key]: true }))
-      const blob = await downloadTournamentPrintPacket(tournament.id, category)
+      let blob: Blob
+      try {
+        // Preferred path: capture the actual rendered public draw pages and combine.
+        blob = await buildRenderedPrintPacketPdf(tournament.id, category)
+      } catch {
+        // Fallback path: server-generated packet if browser capture fails.
+        blob = await downloadTournamentPrintPacket(tournament.id, category)
+      }
       const filename = `${safeFileName(tournament.name)}_${category}_draw_packet.pdf`
       triggerBrowserDownload(blob, filename)
       showToast(`${category === 'womens' ? "Women's" : 'Mixed'} print packet downloaded`, 'success')
