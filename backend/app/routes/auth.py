@@ -97,6 +97,22 @@ class CreateUserRequest(BaseModel):
         return v
 
 
+class UpdateUserRequest(BaseModel):
+    display_name: Optional[str] = None
+    role: Optional[Literal["admin", "director"]] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def _valid_password(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if len(v) < 8:
+            raise ValueError("password must be at least 8 characters")
+        return v
+
+
 @router.get("/bootstrap-needed", response_model=BootstrapStatusResponse)
 def bootstrap_needed(session: Session = Depends(get_session)):
     return BootstrapStatusResponse(bootstrap_needed=not auth_is_bootstrapped(session))
@@ -186,6 +202,37 @@ def create_user(
         password_hash=pw_hash,
         is_active=payload.is_active,
     )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return AuthUserResponse.model_validate(user)
+
+
+@router.patch("/users/{user_id}", response_model=AuthUserResponse)
+def update_user(
+    user_id: int,
+    payload: UpdateUserRequest,
+    admin: UserAccount = Depends(require_admin_user),
+    session: Session = Depends(get_session),
+):
+    user = session.get(UserAccount, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.is_active is False and user.id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot disable your own account")
+
+    if payload.display_name is not None:
+        user.display_name = payload.display_name
+    if payload.role is not None:
+        user.role = payload.role
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+    if payload.password is not None:
+        salt, pw_hash = build_password_secret(payload.password)
+        user.password_salt = salt
+        user.password_hash = pw_hash
+    user.updated_at = datetime.utcnow()
     session.add(user)
     session.commit()
     session.refresh(user)

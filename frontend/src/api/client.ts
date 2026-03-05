@@ -269,6 +269,13 @@ export interface AuthCreateUserRequest {
   is_active?: boolean
 }
 
+export interface AuthUpdateUserRequest {
+  display_name?: string
+  role?: 'admin' | 'director'
+  is_active?: boolean
+  password?: string
+}
+
 export async function getAuthBootstrapNeeded(): Promise<BootstrapNeededResponse> {
   return fetchJson<BootstrapNeededResponse>(`${API_BASE_URL}/auth/bootstrap-needed`)
 }
@@ -302,6 +309,13 @@ export async function listAuthUsers(): Promise<AuthUser[]> {
 export async function createAuthUser(payload: AuthCreateUserRequest): Promise<AuthUser> {
   return fetchJson<AuthUser>(`${API_BASE_URL}/auth/users`, {
     method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateAuthUser(userId: number, payload: AuthUpdateUserRequest): Promise<AuthUser> {
+  return fetchJson<AuthUser>(`${API_BASE_URL}/auth/users/${userId}`, {
+    method: 'PATCH',
     body: JSON.stringify(payload),
   })
 }

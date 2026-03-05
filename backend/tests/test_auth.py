@@ -78,3 +78,40 @@ def test_admin_can_create_director_but_director_cannot_manage_users(client, sess
     denied = client.get("/api/auth/users", headers=director_headers)
     assert denied.status_code == 403
 
+
+def test_admin_can_disable_user_and_cannot_disable_self(client, session: Session):
+    _reset_auth_tables(session)
+    client.post(
+        "/api/auth/bootstrap-admin",
+        json={"username": "admin", "password": "password123"},
+    )
+    admin_login = client.post("/api/auth/login", json={"username": "admin", "password": "password123"})
+    admin_token = admin_login.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    create_director = client.post(
+        "/api/auth/users",
+        headers=admin_headers,
+        json={"username": "director2", "password": "password123", "role": "director"},
+    )
+    assert create_director.status_code == 201
+    director_id = create_director.json()["id"]
+
+    disable = client.patch(
+        f"/api/auth/users/{director_id}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert disable.status_code == 200
+    assert disable.json()["is_active"] is False
+
+    denied_login = client.post("/api/auth/login", json={"username": "director2", "password": "password123"})
+    assert denied_login.status_code == 401
+
+    self_disable = client.patch(
+        f"/api/auth/users/{admin_login.json()['user']['id']}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert self_disable.status_code == 400
+
