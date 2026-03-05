@@ -1,4 +1,20 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const AUTH_TOKEN_STORAGE_KEY = 'rw_auth_token';
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+}
+
+export function setAuthToken(token: string): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token)
+}
+
+export function clearAuthToken(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+}
 
 export interface Tournament {
   id: number;
@@ -103,14 +119,25 @@ export interface Phase1Status {
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = getAuthToken()
+  const isPublicRoute = url.includes('/public/')
+  const isAuthLogin = url.includes('/auth/login')
+  const isAuthBootstrap = url.includes('/auth/bootstrap-admin') || url.includes('/auth/bootstrap-needed')
+
   // Include JSON content-type whenever we send a body (including DELETE with body).
   const hasBody = options?.body != null
-  const headers: HeadersInit = hasBody
+  let headers: HeadersInit = hasBody
     ? {
         'Content-Type': 'application/json',
         ...options?.headers,
       }
     : { ...options?.headers }
+  if (token && !isPublicRoute && !isAuthLogin && !isAuthBootstrap) {
+    headers = {
+      ...headers,
+      Authorization: `Bearer ${token}`,
+    }
+  }
   
   console.log('fetchJson:', options?.method || 'GET', url, { headers, body: options?.body })
   let response: Response
@@ -159,6 +186,14 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
       }
       errorMessage += ` (${url.replace(/^.*\/api/, '/api')})`;
     }
+    // Handle auth expiry centrally for protected routes.
+    if (response.status === 401 && !isPublicRoute && !isAuthLogin && !isAuthBootstrap) {
+      clearAuthToken()
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/t/')) {
+        window.location.assign('/login')
+      }
+    }
+
     // Log the failed URL for debugging
     console.error(`API call failed: ${response.status} ${response.statusText}`, {
       url,
@@ -198,6 +233,77 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     // If JSON parsing fails, return undefined (for void responses)
     return undefined as T;
   }
+}
+
+export interface AuthUser {
+  id: number
+  username: string
+  display_name?: string | null
+  role: 'admin' | 'director' | string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface BootstrapNeededResponse {
+  bootstrap_needed: boolean
+}
+
+export interface AuthLoginResponse {
+  access_token: string
+  token_type: string
+  user: AuthUser
+}
+
+export interface AuthBootstrapAdminRequest {
+  username: string
+  password: string
+  display_name?: string
+}
+
+export interface AuthCreateUserRequest {
+  username: string
+  password: string
+  display_name?: string
+  role: 'admin' | 'director'
+  is_active?: boolean
+}
+
+export async function getAuthBootstrapNeeded(): Promise<BootstrapNeededResponse> {
+  return fetchJson<BootstrapNeededResponse>(`${API_BASE_URL}/auth/bootstrap-needed`)
+}
+
+export async function bootstrapAdmin(payload: AuthBootstrapAdminRequest): Promise<AuthUser> {
+  return fetchJson<AuthUser>(`${API_BASE_URL}/auth/bootstrap-admin`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function loginWithPassword(username: string, password: string): Promise<AuthLoginResponse> {
+  return fetchJson<AuthLoginResponse>(`${API_BASE_URL}/auth/login`, {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export async function logoutAuth(): Promise<void> {
+  return fetchJson<void>(`${API_BASE_URL}/auth/logout`, { method: 'POST' })
+}
+
+export async function getAuthMe(): Promise<AuthUser> {
+  return fetchJson<AuthUser>(`${API_BASE_URL}/auth/me`)
+}
+
+export async function listAuthUsers(): Promise<AuthUser[]> {
+  return fetchJson<AuthUser[]>(`${API_BASE_URL}/auth/users`)
+}
+
+export async function createAuthUser(payload: AuthCreateUserRequest): Promise<AuthUser> {
+  return fetchJson<AuthUser>(`${API_BASE_URL}/auth/users`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 // Tournament functions
@@ -248,7 +354,11 @@ export async function downloadTournamentPrintPacket(
   category: 'womens' | 'mixed'
 ): Promise<Blob> {
   const url = `${API_BASE_URL}/tournaments/${id}/print-packet/${category}.pdf`
-  const response = await fetch(url, { method: 'GET' })
+  const token = getAuthToken()
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
   if (!response.ok) {
     let message = `Failed to download ${category} print packet`
     try {
@@ -1712,9 +1822,16 @@ export async function deleteMatchLock(
   versionId: number,
   matchId: number
 ): Promise<void> {
+  const token = getAuthToken()
   const res = await fetch(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/locks/match/${matchId}`,
-    { method: 'DELETE', headers: { 'Content-Type': 'application/json' } }
+    {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
   )
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}))
@@ -1739,9 +1856,16 @@ export async function deleteSlotLock(
   versionId: number,
   slotId: number
 ): Promise<void> {
+  const token = getAuthToken()
   const res = await fetch(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/locks/slot/${slotId}`,
-    { method: 'DELETE', headers: { 'Content-Type': 'application/json' } }
+    {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
   )
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}))

@@ -3,10 +3,11 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.auth import require_authenticated_user
 from app.database import engine, init_db
 from app.db_schema_patch import (
     ensure_event_columns,
@@ -18,6 +19,7 @@ from app.db_schema_patch import (
 from app.services.sms_automation import start_first_match_runner_if_enabled
 from app.routes import (
     avoid_edges,
+    auth,
     debug,
     desk,
     draw_builder,
@@ -82,50 +84,55 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(tournaments.router, prefix="/api", tags=["tournaments"])
-app.include_router(tournament_days.router, prefix="/api", tags=["tournament_days"])
-app.include_router(events.router, prefix="/api", tags=["events"])
-app.include_router(phase1_status.router, prefix="/api", tags=["phase1"])
-app.include_router(debug.router, prefix="/api", tags=["debug"])
-app.include_router(draw_builder.router, prefix="/api", tags=["draw-builder"])
-app.include_router(schedule_builder.router, prefix="/api", tags=["schedule-builder"])
-app.include_router(plan_report.router, prefix="/api", tags=["plan-report"])
+_protected_deps = [Depends(require_authenticated_user)]
+
+app.include_router(tournaments.router, prefix="/api", tags=["tournaments"], dependencies=_protected_deps)
+app.include_router(tournament_days.router, prefix="/api", tags=["tournament_days"], dependencies=_protected_deps)
+app.include_router(events.router, prefix="/api", tags=["events"], dependencies=_protected_deps)
+app.include_router(phase1_status.router, prefix="/api", tags=["phase1"], dependencies=_protected_deps)
+app.include_router(debug.router, prefix="/api", tags=["debug"], dependencies=_protected_deps)
+app.include_router(draw_builder.router, prefix="/api", tags=["draw-builder"], dependencies=_protected_deps)
+app.include_router(schedule_builder.router, prefix="/api", tags=["schedule-builder"], dependencies=_protected_deps)
+app.include_router(plan_report.router, prefix="/api", tags=["plan-report"], dependencies=_protected_deps)
 
 # Include time_windows router
-app.include_router(time_windows.router, prefix="/api", tags=["time_windows"])
+app.include_router(time_windows.router, prefix="/api", tags=["time_windows"], dependencies=_protected_deps)
 
 # Include schedule router
-app.include_router(schedule.router, prefix="/api", tags=["schedule"])
+app.include_router(schedule.router, prefix="/api", tags=["schedule"], dependencies=_protected_deps)
 # Phase 4 runtime (match status + scoring; no schedule mutation)
-app.include_router(runtime.router, prefix="/api", tags=["runtime"])
+app.include_router(runtime.router, prefix="/api", tags=["runtime"], dependencies=_protected_deps)
 
 # Include schedule sanity-check router
-app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"])
+app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"], dependencies=_protected_deps)
 
 # Include teams router
-app.include_router(teams.router, prefix="/api", tags=["teams"])
+app.include_router(teams.router, prefix="/api", tags=["teams"], dependencies=_protected_deps)
 
 # Include avoid edges router
-app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"])
+app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"], dependencies=_protected_deps)
 
 # Include WF grouping router
-app.include_router(wf_grouping.router, prefix="/api", tags=["wf-grouping"])
+app.include_router(wf_grouping.router, prefix="/api", tags=["wf-grouping"], dependencies=_protected_deps)
 
 # Include WF conflicts router
-app.include_router(wf_conflicts.router, prefix="/api", tags=["wf-conflicts"])
+app.include_router(wf_conflicts.router, prefix="/api", tags=["wf-conflicts"], dependencies=_protected_deps)
 
 # Public read-only endpoints (no auth)
 app.include_router(public.router, prefix="/api", tags=["public"])
 
 # Desk runtime console (staff-only)
-app.include_router(desk.router, prefix="/api", tags=["desk"])
+app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_protected_deps)
+
+# Auth routes
+app.include_router(auth.router)
 
 # SMS endpoints (no extra prefix — router has its own /api/tournaments/{id}/sms)
-app.include_router(sms.router)
+app.include_router(sms.router, dependencies=_protected_deps)
 
 # Enhanced team import (no extra prefix — router has its own /api/events/{id}/teams/import)
-app.include_router(team_import.router)
-app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"])
+app.include_router(team_import.router, dependencies=_protected_deps)
+app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"], dependencies=_protected_deps)
 
 
 @app.on_event("startup")

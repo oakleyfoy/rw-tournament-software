@@ -38,6 +38,7 @@ def session_fixture():
     """
     # Import all models to ensure they're registered BEFORE create_all
     from app.models.event import Event  # noqa: F401
+    from app.models.auth_session import AuthSession  # noqa: F401
     from app.models.match import Match  # noqa: F401
     from app.models.match_assignment import MatchAssignment  # noqa: F401
     from app.models.policy_run import PolicyRun  # noqa: F401
@@ -51,6 +52,7 @@ def session_fixture():
     from app.models.tournament import Tournament  # noqa: F401
     from app.models.tournament_day import TournamentDay  # noqa: F401
     from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
+    from app.models.user_account import UserAccount  # noqa: F401
 
     # Create all tables on test engine (explicit, don't rely on app startup)
     SQLModel.metadata.create_all(test_engine)

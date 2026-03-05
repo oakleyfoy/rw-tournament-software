@@ -34,6 +34,7 @@ def get_session() -> Generator[Session, None, None]:
 def init_db() -> None:
     """Initialize database - create all tables"""
     # Import all models to ensure they're registered with SQLModel metadata
+    from app.models.auth_session import AuthSession  # noqa: F401
     from app.models.court_state import TournamentCourtState  # noqa: F401
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
@@ -51,5 +52,6 @@ def init_db() -> None:
     from app.models.tournament import Tournament  # noqa: F401
     from app.models.tournament_day import TournamentDay  # noqa: F401
     from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
+    from app.models.user_account import UserAccount  # noqa: F401
 
     SQLModel.metadata.create_all(engine)

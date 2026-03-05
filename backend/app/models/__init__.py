@@ -18,6 +18,8 @@ from app.models.player import Player
 from app.models.team_player import TeamPlayer
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
+from app.models.user_account import UserAccount
+from app.models.auth_session import AuthSession
 
 __all__ = [
     "Tournament",
@@ -41,4 +43,6 @@ __all__ = [
     "Player",
     "TeamPlayer",
     "TournamentSmsSettings",
+    "UserAccount",
+    "AuthSession",
 ]

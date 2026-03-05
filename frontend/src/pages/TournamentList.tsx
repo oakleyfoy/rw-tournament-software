@@ -6,6 +6,8 @@ import {
   duplicateTournament,
   deleteTournament,
   downloadTournamentPrintPacket,
+  logoutAuth,
+  clearAuthToken,
   Tournament,
 } from '../api/client'
 import { showToast } from '../utils/toast'
@@ -127,6 +129,17 @@ function TournamentList() {
     navigate('/settings')
   }
 
+  const handleLogoutClick = async () => {
+    try {
+      await logoutAuth()
+    } catch {
+      // Ignore logout request failures; clear client token anyway.
+    } finally {
+      clearAuthToken()
+      navigate('/login')
+    }
+  }
+
   const triggerBrowserDownload = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -186,6 +199,9 @@ function TournamentList() {
       <div className="page-header">
         <h1>Tournaments</h1>
         <div className="header-actions">
+          <button className="btn btn-secondary" onClick={handleLogoutClick}>
+            Log Out
+          </button>
           <button className="btn btn-secondary" onClick={handleSettingsClick}>
             Settings
           </button>
