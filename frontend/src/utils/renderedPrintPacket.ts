@@ -145,6 +145,10 @@ export async function buildRenderedPrintPacketPdf(
   const PAGE_W = 32 * 72
   const PAGE_H = 24 * 72
   const MARGIN = 22
+  const PANEL_GAP = 14
+  const PAGE_HEADER_H = 18
+  const PANEL_TITLE_H = 14
+  const PANELS_PER_PAGE = 2
   const pdf = new jsPDF({
     orientation: 'landscape',
     unit: 'pt',
@@ -152,21 +156,51 @@ export async function buildRenderedPrintPacketPdf(
     compress: true,
   })
 
-  for (let i = 0; i < jobs.length; i++) {
-    if (i > 0) pdf.addPage([PAGE_W, PAGE_H], 'landscape')
+  for (let start = 0; start < jobs.length; start += PANELS_PER_PAGE) {
+    if (start > 0) pdf.addPage([PAGE_W, PAGE_H], 'landscape')
 
-    const canvas = await captureRouteAsCanvas(jobs[i])
-    const imageData = canvas.toDataURL('image/png')
+    const pageJobs = jobs.slice(start, start + PANELS_PER_PAGE)
 
-    const availW = PAGE_W - MARGIN * 2
-    const availH = PAGE_H - MARGIN * 2
-    const ratio = Math.min(availW / canvas.width, availH / canvas.height)
-    const drawW = canvas.width * ratio
-    const drawH = canvas.height * ratio
-    const x = (PAGE_W - drawW) / 2
-    const y = (PAGE_H - drawH) / 2
+    const title = `${category === 'womens' ? "Women's" : 'Mixed'} Draw Packet`
+    pdf.setTextColor(30, 30, 30)
+    pdf.setFontSize(12)
+    pdf.text(title, MARGIN, MARGIN + 11)
 
-    pdf.addImage(imageData, 'PNG', x, y, drawW, drawH, undefined, 'FAST')
+    const slots = pageJobs.length
+    const contentTop = MARGIN + PAGE_HEADER_H
+    const contentBottom = PAGE_H - MARGIN
+    const panelH = contentBottom - contentTop
+    const panelW =
+      slots > 1
+        ? (PAGE_W - MARGIN * 2 - PANEL_GAP * (slots - 1)) / slots
+        : PAGE_W - MARGIN * 2
+
+    for (let i = 0; i < pageJobs.length; i++) {
+      const job = pageJobs[i]
+      const panelX = MARGIN + i * (panelW + PANEL_GAP)
+      const panelY = contentTop
+
+      pdf.setDrawColor(170, 170, 170)
+      pdf.setLineWidth(0.8)
+      pdf.rect(panelX, panelY, panelW, panelH)
+
+      pdf.setTextColor(55, 55, 55)
+      pdf.setFontSize(10)
+      pdf.text(job.label, panelX + 6, panelY + 10)
+
+      const canvas = await captureRouteAsCanvas(job)
+      const imageData = canvas.toDataURL('image/png')
+
+      const availW = panelW - 10
+      const availH = panelH - PANEL_TITLE_H - 8
+      const ratio = Math.min(availW / canvas.width, availH / canvas.height)
+      const drawW = canvas.width * ratio
+      const drawH = canvas.height * ratio
+      const x = panelX + (panelW - drawW) / 2
+      const y = panelY + PANEL_TITLE_H + (availH - drawH) / 2
+
+      pdf.addImage(imageData, 'PNG', x, y, drawW, drawH, undefined, 'FAST')
+    }
   }
 
   return pdf.output('blob')
