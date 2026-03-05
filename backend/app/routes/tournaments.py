@@ -181,7 +181,28 @@ def _build_print_packet_pdf(
     slot_map: Dict[int, ScheduleSlot],
     team_map: Dict[int, Team],
 ) -> bytes:
+    import math
+
     from reportlab.pdfgen import canvas
+
+    C_BLACK = 0.0
+    C_DARK = 0.2
+    C_MID = 0.45
+    C_LIGHT = 0.75
+    C_BG = 0.95
+
+    pool_label_map = {
+        "POOLA": "Division I",
+        "POOLB": "Division II",
+        "POOLC": "Division III",
+        "POOLD": "Division IV",
+    }
+    dest_label_map = {
+        "BWW": "Division I",
+        "BWL": "Division II",
+        "BLW": "Division III",
+        "BLL": "Division IV",
+    }
 
     def _team_name(team_id: Optional[int], placeholder: Optional[str]) -> str:
         if team_id and team_id in team_map:
@@ -189,127 +210,403 @@ def _build_print_packet_pdf(
             return t.display_name or t.name or f"Team {team_id}"
         return placeholder or "TBD"
 
+    def _status_for(match: Match) -> str:
+        rt = (match.runtime_status or "").upper()
+        if rt in {"FINAL", "IN_PROGRESS"}:
+            return rt
+        return "SCHEDULED" if match.id in assignment_by_match else "UNSCHEDULED"
+
+    def _clip(c: canvas.Canvas, text: str, font: str, size: float, max_w: float) -> str:
+        if not text:
+            return ""
+        raw = str(text)
+        if c.stringWidth(raw, font, size) <= max_w:
+            return raw
+        ell = "..."
+        s = raw
+        while s and c.stringWidth(s + ell, font, size) > max_w:
+            s = s[:-1]
+        return (s + ell) if s else ell
+
+    def _match_top_line(match: Match) -> str:
+        status = _status_for(match)
+        score = _score_display(match.score_json) if status == "FINAL" else ""
+        base = f"Match #{match.id}"
+        if score:
+            return f"{base} - {score}"
+        asgn = assignment_by_match.get(match.id)
+        slot = slot_map.get(asgn.slot_id) if asgn else None
+        if not slot:
+            return base
+        day, tm, court = _format_slot_fields(slot)
+        parts = [base]
+        if court:
+            parts.append(court)
+        if day:
+            parts.append(day)
+        if tm:
+            parts.append(tm)
+        return " - ".join(parts)
+
     def _draw_header(c: canvas.Canvas, title: str, subtitle: str) -> None:
         width, height = PRINT_PACKET_PAGE_SIZE
-        c.setFont("Helvetica-Bold", 24)
-        c.drawString(36, height - 42, title)
-        c.setFont("Helvetica", 11)
-        c.drawString(36, height - 58, subtitle)
-        c.line(36, height - 64, width - 36, height - 64)
+        top = height - 28
+        bar_h = 42
+        c.setFillGray(C_BLACK)
+        c.rect(24, top - bar_h, width - 48, bar_h, stroke=0, fill=1)
+        c.setFillGray(1.0)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(36, top - 17, _clip(c, title.upper(), "Helvetica-Bold", 18, width - 80))
+        c.setFillGray(C_DARK)
+        c.setFont("Helvetica", 10)
+        c.drawString(36, top - bar_h - 14, _clip(c, subtitle, "Helvetica", 10, width - 72))
+        c.setStrokeGray(C_LIGHT)
+        c.setLineWidth(1)
+        c.line(24, top - bar_h - 18, width - 24, top - bar_h - 18)
 
     def _draw_footer(c: canvas.Canvas) -> None:
         width, _ = PRINT_PACKET_PAGE_SIZE
+        c.setFillGray(C_MID)
         c.setFont("Helvetica", 9)
-        c.drawCentredString(width / 2, 14, f"-- {c.getPageNumber()} --")
+        c.drawCentredString(width / 2, 14, f"Page {c.getPageNumber()}")
+
+    def _draw_arrow(c: canvas.Canvas, x1: float, y: float, x2: float) -> None:
+        c.setStrokeGray(C_LIGHT)
+        c.setFillGray(C_LIGHT)
+        c.setLineWidth(1)
+        c.line(x1, y, x2, y)
+        if abs(x2 - x1) < 8:
+            return
+        if x2 > x1:
+            c.line(x2 - 5, y + 3, x2, y)
+            c.line(x2 - 5, y - 3, x2, y)
+        else:
+            c.line(x2 + 5, y + 3, x2, y)
+            c.line(x2 + 5, y - 3, x2, y)
+
+    def _draw_match_card(
+        c: canvas.Canvas,
+        match: Match,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        variant: str,
+    ) -> None:
+        status = _status_for(match)
+        score = _score_display(match.score_json) if status == "FINAL" else ""
+
+        base_fill = C_BG
+        if variant == "winner":
+            base_fill = 0.93
+        elif variant == "loser":
+            base_fill = 0.90
+        elif variant == "center":
+            base_fill = 0.95
+        if status == "FINAL":
+            base_fill = max(0.84, base_fill - 0.06)
+
+        c.setFillGray(base_fill)
+        c.setStrokeGray(C_LIGHT)
+        c.rect(x, y, w, h, stroke=1, fill=1)
+
+        top_line = _match_top_line(match)
+        team_a = _team_name(match.team_a_id, match.placeholder_side_a)
+        team_b = _team_name(match.team_b_id, match.placeholder_side_b)
+
+        team_a_won = status == "FINAL" and match.winner_team_id and match.team_a_id == match.winner_team_id
+        team_b_won = status == "FINAL" and match.winner_team_id and match.team_b_id == match.winner_team_id
+
+        top_y = y + h - 13
+        c.setFillGray(C_DARK)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x + 6, top_y, _clip(c, top_line, "Helvetica-Bold", 9, w - 12))
+
+        t1_y = top_y - 14
+        c.setFont("Helvetica-Bold" if team_a_won else "Helvetica", 10)
+        c.setFillGray(C_BLACK if team_a_won else C_DARK)
+        c.drawString(x + 6, t1_y, _clip(c, team_a, c._fontname, 10, w - 12))
+
+        vs_y = t1_y - 11
+        c.setFont("Helvetica-Oblique", 8)
+        c.setFillGray(C_MID)
+        c.drawCentredString(x + (w / 2), vs_y, "vs")
+
+        t2_y = vs_y - 10
+        c.setFont("Helvetica-Bold" if team_b_won else "Helvetica", 10)
+        c.setFillGray(C_BLACK if team_b_won else C_DARK)
+        c.drawString(x + 6, t2_y, _clip(c, team_b, c._fontname, 10, w - 12))
+
+        if score:
+            c.setFont("Helvetica-Bold", 9)
+            c.setFillGray(C_BLACK)
+            c.drawRightString(x + w - 6, y + 7, _clip(c, score, "Helvetica-Bold", 9, 90))
+        elif status in {"IN_PROGRESS", "SCHEDULED", "UNSCHEDULED"}:
+            c.setFont("Helvetica", 8)
+            c.setFillGray(C_MID)
+            c.drawRightString(x + w - 6, y + 7, status.replace("_", " "))
+
+    def _draw_dest_card(c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str, team_name: Optional[str]) -> None:
+        c.setFillGray(0.97)
+        c.setStrokeGray(C_LIGHT)
+        c.rect(x, y, w, h, stroke=1, fill=1)
+        text_y = y + h - 15
+        if team_name:
+            c.setFont("Helvetica-Bold", 10)
+            c.setFillGray(C_BLACK)
+            c.drawCentredString(x + (w / 2), text_y, _clip(c, team_name, "Helvetica-Bold", 10, w - 10))
+            text_y -= 14
+            c.setStrokeGray(C_LIGHT)
+            c.line(x + 6, text_y + 4, x + w - 6, text_y + 4)
+        c.setFillGray(C_DARK)
+        c.setFont("Helvetica", 8.5)
+        for raw in (label or "").split("\n"):
+            if text_y < y + 8:
+                break
+            c.drawCentredString(x + (w / 2), text_y, _clip(c, raw, "Helvetica", 8.5, w - 10))
+            text_y -= 11
+
+    def _dest_lines(event_name: str, r2_role: str, r2_seq: int, r2_winner_count: int) -> str:
+        if r2_role == "WINNER":
+            win_div = dest_label_map["BWW"]
+            lose_div = dest_label_map["BWL"]
+            letter = chr(ord("A") + r2_seq - 1)
+        else:
+            win_div = dest_label_map["BLW"]
+            lose_div = dest_label_map["BLL"]
+            letter = chr(ord("A") + r2_seq - r2_winner_count - 1)
+        return (
+            f"Winner to {event_name} {win_div} - {letter}\n"
+            f"Loser to {event_name} {lose_div} - {letter}"
+        )
+
+    def _build_wf_rows(event: Event, wf_matches: List[Match]) -> List[Dict[str, Any]]:
+        all_matches = {m.id: m for m in wf_matches}
+        r1_matches = sorted(
+            [m for m in wf_matches if (m.round_index or 0) == 1],
+            key=lambda m: (m.sequence_in_round or 0, m.id),
+        )
+        r2_matches = [m for m in wf_matches if (m.round_index or 0) == 2]
+        if not r1_matches:
+            return []
+
+        r1_to_winner: Dict[int, Match] = {}
+        r1_to_loser: Dict[int, Match] = {}
+        for r2 in r2_matches:
+            is_winner_match = (r2.source_a_role or "").upper() == "WINNER"
+            is_loser_match = (r2.source_a_role or "").upper() == "LOSER"
+            for src_id in [r2.source_match_a_id, r2.source_match_b_id]:
+                if not src_id or src_id not in all_matches:
+                    continue
+                if is_winner_match:
+                    r1_to_winner[src_id] = r2
+                elif is_loser_match:
+                    r1_to_loser[src_id] = r2
+
+        r1_by_id = {m.id: m for m in r1_matches}
+        ordered_r1: List[Match] = []
+        seen: set[int] = set()
+        for r2w in sorted(
+            [r2 for r2 in r2_matches if (r2.source_a_role or "").upper() == "WINNER"],
+            key=lambda m: (m.sequence_in_round or 0, m.id),
+        ):
+            src_ids = [sid for sid in [r2w.source_match_a_id, r2w.source_match_b_id] if sid and sid in r1_by_id]
+            src_ids.sort(key=lambda sid: (r1_by_id[sid].sequence_in_round or 0, sid))
+            for sid in src_ids:
+                if sid not in seen:
+                    ordered_r1.append(r1_by_id[sid])
+                    seen.add(sid)
+        for r1 in r1_matches:
+            if r1.id not in seen:
+                ordered_r1.append(r1)
+
+        r2_winner_count = sum(1 for r2 in r2_matches if (r2.source_a_role or "").upper() == "WINNER")
+        rows: List[Dict[str, Any]] = []
+        for r1 in ordered_r1:
+            winner_match = r1_to_winner.get(r1.id)
+            loser_match = r1_to_loser.get(r1.id)
+            winner_dest = None
+            loser_dest = None
+            if winner_match and winner_match.sequence_in_round:
+                winner_dest = _dest_lines(event.name, "WINNER", winner_match.sequence_in_round, r2_winner_count)
+            if loser_match and loser_match.sequence_in_round:
+                loser_dest = _dest_lines(event.name, "LOSER", loser_match.sequence_in_round, r2_winner_count)
+
+            r2_winner_name = _team_name(winner_match.winner_team_id, None) if winner_match and winner_match.winner_team_id else None
+            r2_loser_name = _team_name(loser_match.winner_team_id, None) if loser_match and loser_match.winner_team_id else None
+
+            rows.append(
+                {
+                    "center": r1,
+                    "winner": winner_match,
+                    "loser": loser_match,
+                    "winner_dest": winner_dest,
+                    "loser_dest": loser_dest,
+                    "r2_winner_name": r2_winner_name,
+                    "r2_loser_name": r2_loser_name,
+                }
+            )
+        return rows
 
     def _draw_wf_page(c: canvas.Canvas, event: Event, wf_matches: List[Match], category_label: str) -> None:
         width, height = PRINT_PACKET_PAGE_SIZE
         generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
         _draw_header(
             c,
-            f"{event.name.upper()} — {category_label.upper()} WATERFALL BRACKET",
+            f"{event.name} - {category_label} Waterfall",
             f"{tournament.name} | Version #{version.version_number} ({version.status.upper()}) | {generated}",
         )
 
-        rounds: Dict[int, List[Match]] = {}
-        for m in wf_matches:
-            rounds.setdefault(m.round_index or 0, []).append(m)
-        for r in rounds.values():
-            r.sort(key=lambda m: (m.sequence_in_round or 0, m.id))
-        round_keys = sorted(rounds.keys())
-        if not round_keys:
+        rows = _build_wf_rows(event, wf_matches)
+        if not rows:
+            c.setFillGray(C_DARK)
             c.setFont("Helvetica", 14)
-            c.drawString(40, height - 100, "No waterfall matches.")
+            c.drawString(44, height - 120, "No waterfall matches.")
             _draw_footer(c)
             c.showPage()
             return
 
-        left = 36
-        right = width - 36
-        top = height - 88
+        pairs: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]]]] = []
+        idx = 0
+        while idx < len(rows):
+            first = rows[idx]
+            second = rows[idx + 1] if idx + 1 < len(rows) else None
+            pairs.append((first, second))
+            idx += 2
+
+        left = 24
+        right = width - 24
+        top = height - 112
         bottom = 34
-        col_gap = 24
-        col_count = len(round_keys)
-        usable_w = right - left
-        col_w = (usable_w - col_gap * (col_count - 1)) / col_count if col_count > 0 else usable_w
-        usable_h = top - bottom
-        match_box: Dict[int, Tuple[float, float, float, float]] = {}
 
-        for idx, round_idx in enumerate(round_keys):
-            x = left + idx * (col_w + col_gap)
-            round_matches = rounds.get(round_idx, [])
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(x, top + 10, f"Round {round_idx}")
+        conn_w = 24.0
+        dest_w = 210.0
+        side_w = 320.0
+        center_w = 540.0
+        bundle_w = (2 * dest_w) + (2 * side_w) + center_w + (4 * conn_w)
+        available_w = right - left
+        if bundle_w > available_w:
+            scale = available_w / bundle_w
+            conn_w *= scale
+            dest_w *= scale
+            side_w *= scale
+            center_w *= scale
+            bundle_w = available_w
+        start_x = left + ((available_w - bundle_w) / 2.0)
+        x_dest_left = start_x
+        x_loser = x_dest_left + dest_w + conn_w
+        x_center = x_loser + side_w + conn_w
+        x_winner = x_center + center_w + conn_w
+        x_dest_right = x_winner + side_w + conn_w
 
-            rows = max(1, len(round_matches))
-            row_gap = 12
-            box_h = min(86.0, max(54.0, (usable_h - row_gap * (rows + 1)) / rows))
-            gap = (usable_h - box_h * rows) / (rows + 1)
-            if gap < 6:
-                gap = 6
+        pair_count = max(1, len(pairs))
+        pair_gap = 20.0
+        available_h = max(120.0, top - bottom)
+        pair_h = (available_h - (pair_gap * (pair_count - 1))) / pair_count
+        if pair_h < 120:
+            pair_h = 120
+            pair_gap = 12
 
-            y_cursor = top - gap - box_h
-            for m in round_matches:
-                y = y_cursor
-                y_cursor -= box_h + gap
-                c.rect(x, y, col_w, box_h, stroke=1, fill=0)
-                c.setFont("Helvetica-Bold", 10)
-                c.drawString(x + 6, y + box_h - 14, _team_name(m.team_a_id, m.placeholder_side_a)[:60])
-                c.drawString(x + 6, y + box_h - 27, _team_name(m.team_b_id, m.placeholder_side_b)[:60])
+        for pi, (row_a, row_b) in enumerate(pairs):
+            y_top = top - (pi * (pair_h + pair_gap))
+            y_bottom = y_top - pair_h
+            if y_bottom < bottom:
+                break
 
-                a = assignment_by_match.get(m.id)
-                slot = slot_map.get(a.slot_id) if a else None
-                _, _, court = _format_slot_fields(slot)
-                meta = f"Match #{m.id}"
-                if court:
-                    meta += f" - {court}"
-                c.setFont("Helvetica", 9)
-                c.drawString(x + 6, y + 14, meta[:80])
+            if row_b:
+                center_gap = 10.0
+                center_h = (pair_h - center_gap) / 2.0
+                c1_y = y_bottom + center_h + center_gap
+                c2_y = y_bottom
+                _draw_match_card(c, row_a["center"], x_center, c1_y, center_w, center_h, "center")
+                _draw_match_card(c, row_b["center"], x_center, c2_y, center_w, center_h, "center")
+                center_mid_ys = [c1_y + center_h / 2.0, c2_y + center_h / 2.0]
+            else:
+                center_h = pair_h
+                c_y = y_bottom
+                _draw_match_card(c, row_a["center"], x_center, c_y, center_w, center_h, "center")
+                center_mid_ys = [c_y + center_h / 2.0]
 
-                score = _score_display(m.score_json) if (m.runtime_status or "").upper() == "FINAL" else ""
-                if score:
-                    c.drawRightString(x + col_w - 6, y + 14, score[:32])
+            loser_match = row_a.get("loser") or (row_b.get("loser") if row_b else None)
+            winner_match = row_a.get("winner") or (row_b.get("winner") if row_b else None)
+            loser_dest = row_a.get("loser_dest") or (row_b.get("loser_dest") if row_b else None)
+            winner_dest = row_a.get("winner_dest") or (row_b.get("winner_dest") if row_b else None)
+            loser_team_name = row_a.get("r2_loser_name") or (row_b.get("r2_loser_name") if row_b else None)
+            winner_team_name = row_a.get("r2_winner_name") or (row_b.get("r2_winner_name") if row_b else None)
 
-                match_box[m.id] = (x, y, col_w, box_h)
+            if loser_match:
+                _draw_match_card(c, loser_match, x_loser, y_bottom, side_w, pair_h, "loser")
+            if winner_match:
+                _draw_match_card(c, winner_match, x_winner, y_bottom, side_w, pair_h, "winner")
 
-        c.setLineWidth(0.6)
-        for m in wf_matches:
-            target = match_box.get(m.id)
-            if not target:
-                continue
-            tx, ty, _, th = target
-            target_mid_y = ty + th / 2
-            for src_id in [m.source_match_a_id, m.source_match_b_id]:
-                if not src_id:
-                    continue
-                src = match_box.get(src_id)
-                if not src:
-                    continue
-                sx, sy, sw, sh = src
-                src_mid_y = sy + sh / 2
-                mid_x = (sx + sw + tx) / 2
-                c.line(sx + sw, src_mid_y, mid_x, src_mid_y)
-                c.line(mid_x, src_mid_y, mid_x, target_mid_y)
-                c.line(mid_x, target_mid_y, tx, target_mid_y)
+            if loser_dest:
+                _draw_dest_card(c, x_dest_left, y_bottom, dest_w, pair_h, loser_dest, loser_team_name)
+            if winner_dest:
+                _draw_dest_card(c, x_dest_right, y_bottom, dest_w, pair_h, winner_dest, winner_team_name)
+
+            left_mid_y = y_bottom + pair_h / 2.0
+            right_mid_y = left_mid_y
+
+            if loser_match:
+                for cy in center_mid_ys:
+                    _draw_arrow(c, x_center, cy, x_loser + side_w)
+                _draw_arrow(c, x_loser, left_mid_y, x_dest_left + dest_w)
+            if winner_match:
+                for cy in center_mid_ys:
+                    _draw_arrow(c, x_center + center_w, cy, x_winner)
+                _draw_arrow(c, x_winner + side_w, right_mid_y, x_dest_right)
 
         _draw_footer(c)
         c.showPage()
+
+    def _draw_rr_match_card(c: canvas.Canvas, match: Match, x: float, y: float, w: float, h: float) -> None:
+        status = _status_for(match)
+        score = _score_display(match.score_json) if status == "FINAL" else None
+        team_a = _team_name(match.team_a_id, match.placeholder_side_a)
+        team_b = _team_name(match.team_b_id, match.placeholder_side_b)
+        asgn = assignment_by_match.get(match.id)
+        slot = slot_map.get(asgn.slot_id) if asgn else None
+        _, tm, court = _format_slot_fields(slot)
+
+        c.setFillGray(1.0)
+        c.setStrokeGray(C_LIGHT)
+        c.rect(x, y, w, h, stroke=1, fill=1)
+
+        c.setFont("Helvetica-Bold", 9.5)
+        c.setFillGray(C_BLACK)
+        c.drawString(x + 6, y + h - 13, _clip(c, team_a, "Helvetica-Bold", 9.5, w - 12))
+
+        meta = f"Match #{match.id}"
+        if court:
+            meta += f" - {court}"
+        c.setFont("Helvetica", 8)
+        c.setFillGray(C_MID)
+        c.drawString(x + 6, y + h - 25, _clip(c, meta, "Helvetica", 8, w - 12))
+
+        state_text = score if score else status.replace("_", " ")
+        c.setFont("Helvetica-Bold", 8.5)
+        c.setFillGray(C_DARK)
+        c.drawCentredString(x + (w / 2), y + h - 38, _clip(c, state_text, "Helvetica-Bold", 8.5, w - 12))
+
+        if tm and not score:
+            c.setFont("Helvetica", 7.5)
+            c.setFillGray(C_MID)
+            c.drawCentredString(x + (w / 2), y + h - 49, _clip(c, tm, "Helvetica", 7.5, w - 12))
+
+        c.setStrokeGray(C_BG)
+        c.line(x + 6, y + 24, x + w - 6, y + 24)
+        c.setFont("Helvetica-Bold", 9.5)
+        c.setFillGray(C_BLACK)
+        c.drawString(x + 6, y + 10, _clip(c, team_b, "Helvetica-Bold", 9.5, w - 12))
 
     def _draw_rr_page(c: canvas.Canvas, event: Event, rr_matches: List[Match], category_label: str) -> None:
         width, height = PRINT_PACKET_PAGE_SIZE
         generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
         _draw_header(
             c,
-            f"{event.name.upper()} — {category_label.upper()} ROUND ROBIN",
+            f"{event.name} - {category_label} Round Robin",
             f"{tournament.name} | Version #{version.version_number} ({version.status.upper()}) | {generated}",
         )
-
-        pool_label_map = {
-            "POOLA": "Division I",
-            "POOLB": "Division II",
-            "POOLC": "Division III",
-            "POOLD": "Division IV",
-        }
 
         pools: Dict[str, List[Match]] = {}
         for m in rr_matches:
@@ -323,61 +620,98 @@ def _build_print_packet_pdf(
             key=lambda p: {"POOLA": 1, "POOLB": 2, "POOLC": 3, "POOLD": 4}.get(p, 99),
         )
         if not ordered_pool_keys:
+            c.setFillGray(C_DARK)
             c.setFont("Helvetica", 14)
-            c.drawString(40, height - 100, "No round robin matches.")
+            c.drawString(44, height - 120, "No round robin matches.")
             _draw_footer(c)
             c.showPage()
             return
 
-        left = 36
-        right = width - 36
-        top = height - 88
+        left = 28
+        right = width - 28
+        top = height - 112
         bottom = 34
         cols = 2 if len(ordered_pool_keys) > 1 else 1
-        rows = (len(ordered_pool_keys) + cols - 1) // cols
-        col_gap = 22
-        row_gap = 18
-        card_w = (right - left - col_gap * (cols - 1)) / cols
-        card_h = (top - bottom - row_gap * (rows - 1)) / max(1, rows)
+        rows = max(1, math.ceil(len(ordered_pool_keys) / cols))
+        col_gap = 18.0
+        row_gap = 18.0
+        card_w = (right - left - (col_gap * (cols - 1))) / cols
+        card_h = (top - bottom - (row_gap * (rows - 1))) / rows
 
         for idx, pool_code in enumerate(ordered_pool_keys):
             row = idx // cols
             col = idx % cols
-            x = left + col * (card_w + col_gap)
-            y_top = top - row * (card_h + row_gap)
+            x = left + (col * (card_w + col_gap))
+            y_top = top - (row * (card_h + row_gap))
             y_bottom = y_top - card_h
-            c.rect(x, y_bottom, card_w, card_h, stroke=1, fill=0)
+            if y_bottom < bottom:
+                continue
+
+            c.setFillGray(C_BG)
+            c.setStrokeGray(C_LIGHT)
+            c.rect(x, y_bottom, card_w, card_h, stroke=1, fill=1)
 
             title = f"{category_label.upper()} ROUND ROBIN {pool_label_map.get(pool_code, pool_code).upper()}"
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(x + 6, y_top - 13, title[:84])
-            c.line(x + 4, y_top - 18, x + card_w - 4, y_top - 18)
+            title_h = 18.0
+            c.setFillGray(C_BLACK)
+            c.rect(x, y_top - title_h, card_w, title_h, stroke=0, fill=1)
+            c.setFillGray(1.0)
+            c.setFont("Helvetica-Bold", 9.5)
+            c.drawString(x + 6, y_top - 12.5, _clip(c, title, "Helvetica-Bold", 9.5, card_w - 12))
 
-            line_y = y_top - 30
             matches = pools.get(pool_code, [])
+            rounds_map: Dict[int, List[Match]] = {}
             for m in matches:
-                if line_y < y_bottom + 18:
-                    c.setFont("Helvetica-Oblique", 8)
-                    c.drawString(x + 6, y_bottom + 8, "... more matches")
+                rounds_map.setdefault(m.round_index or 1, []).append(m)
+            round_keys = sorted(rounds_map.keys())
+
+            content_top = y_top - title_h - 8
+            content_bottom = y_bottom + 8
+            content_h = max(20.0, content_top - content_bottom)
+            if not round_keys:
+                c.setFillGray(C_MID)
+                c.setFont("Helvetica-Oblique", 9)
+                c.drawString(x + 8, content_top - 10, "No matches.")
+                continue
+
+            row_h = content_h / len(round_keys)
+            if row_h < 52:
+                line_y = content_top - 11
+                for m in matches:
+                    if line_y < content_bottom + 8:
+                        c.setFillGray(C_MID)
+                        c.setFont("Helvetica-Oblique", 8)
+                        c.drawString(x + 8, content_bottom + 2, "... more matches")
+                        break
+                    desc = f"R{m.round_index or 1}  {_team_name(m.team_a_id, m.placeholder_side_a)} vs {_team_name(m.team_b_id, m.placeholder_side_b)}"
+                    c.setFillGray(C_DARK)
+                    c.setFont("Helvetica", 8)
+                    c.drawString(x + 8, line_y, _clip(c, desc, "Helvetica", 8, card_w - 16))
+                    line_y -= 10
+                continue
+
+            for rk_index, rk in enumerate(round_keys):
+                matches_in_round = sorted(rounds_map[rk], key=lambda m: (m.sequence_in_round or 0, m.id))
+                ry_top = content_top - (rk_index * row_h)
+                ry_bottom = ry_top - row_h
+                if ry_bottom < content_bottom:
                     break
 
-                team_line = f"{_team_name(m.team_a_id, m.placeholder_side_a)} vs {_team_name(m.team_b_id, m.placeholder_side_b)}"
-                a = assignment_by_match.get(m.id)
-                slot = slot_map.get(a.slot_id) if a else None
-                _, _, court = _format_slot_fields(slot)
-                meta = f"Match #{m.id}"
-                if court:
-                    meta += f" - {court}"
-                status = (m.runtime_status or "SCHEDULED").upper()
-                score_or_status = _score_display(m.score_json) if status == "FINAL" else status
-
+                round_label_w = 76.0
+                c.setFillGray(C_DARK)
                 c.setFont("Helvetica-Bold", 8.5)
-                c.drawString(x + 6, line_y, team_line[:110])
-                c.setFont("Helvetica", 8)
-                c.drawString(x + 6, line_y - 10, meta[:110])
-                if score_or_status:
-                    c.drawRightString(x + card_w - 6, line_y - 10, score_or_status[:24])
-                line_y -= 22
+                c.drawCentredString(x + (round_label_w / 2.0), ry_bottom + (row_h / 2.0) - 3, f"Round {rk}")
+
+                area_x = x + round_label_w + 6
+                area_w = card_w - round_label_w - 12
+                match_count = max(1, len(matches_in_round))
+                gap = 8.0
+                m_w = (area_w - (gap * (match_count - 1))) / match_count
+                m_h = min(86.0, row_h - 8)
+                m_y = ry_bottom + ((row_h - m_h) / 2.0)
+                for mi, m in enumerate(matches_in_round):
+                    mx = area_x + (mi * (m_w + gap))
+                    _draw_rr_match_card(c, m, mx, m_y, m_w, m_h)
 
         _draw_footer(c)
         c.showPage()
