@@ -211,3 +211,61 @@ def test_webhook_requires_signature_when_auth_token_configured(
         },
     )
     assert resp.status_code == 403
+
+
+def test_send_attaches_status_callback_url_when_base_configured(
+    client, session, setup_tournament_team, monkeypatch
+):
+    tournament, _, team = setup_tournament_team
+    monkeypatch.setenv("SMS_STATUS_CALLBACK_BASE_URL", "https://example.test")
+
+    captured: dict[str, str | None] = {"url": None}
+
+    class _FakeTwilio:
+        @property
+        def is_configured(self) -> bool:
+            return True
+
+        def send_sms(self, to: str, body: str, *, status_callback_url: str | None = None):
+            captured["url"] = status_callback_url
+            return {"sid": "SM_CALLBACK_TEST", "status": "queued", "error": None}
+
+    monkeypatch.setattr("app.routes.sms.get_twilio_service", lambda: _FakeTwilio())
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{team.id}",
+        json={"message": "Callback URL test"},
+    )
+    assert resp.status_code == 200
+    assert captured["url"] == (
+        f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback"
+    )
+
+
+def test_send_attaches_status_callback_url_with_api_base(
+    client, session, setup_tournament_team, monkeypatch
+):
+    tournament, _, team = setup_tournament_team
+    monkeypatch.setenv("SMS_STATUS_CALLBACK_BASE_URL", "https://example.test/api")
+
+    captured: dict[str, str | None] = {"url": None}
+
+    class _FakeTwilio:
+        @property
+        def is_configured(self) -> bool:
+            return True
+
+        def send_sms(self, to: str, body: str, *, status_callback_url: str | None = None):
+            captured["url"] = status_callback_url
+            return {"sid": "SM_CALLBACK_TEST_2", "status": "queued", "error": None}
+
+    monkeypatch.setattr("app.routes.sms.get_twilio_service", lambda: _FakeTwilio())
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{team.id}",
+        json={"message": "Callback URL test"},
+    )
+    assert resp.status_code == 200
+    assert captured["url"] == (
+        f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback"
+    )

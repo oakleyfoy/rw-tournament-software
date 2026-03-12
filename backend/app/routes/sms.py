@@ -8,6 +8,7 @@ Provides endpoints for:
 """
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -433,6 +434,33 @@ def _allowlist_set(raw: Optional[str]) -> set[str]:
     if not raw:
         return set()
     return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _status_callback_base_url() -> Optional[str]:
+    """
+    Resolve externally reachable base URL for Twilio callbacks.
+
+    Expected to be set in environment for production deployments.
+    """
+    for env_key in (
+        "SMS_STATUS_CALLBACK_BASE_URL",
+        "PUBLIC_BASE_URL",
+        "APP_BASE_URL",
+        "EXTERNAL_BASE_URL",
+    ):
+        raw = os.getenv(env_key, "").strip()
+        if raw:
+            return raw.rstrip("/")
+    return None
+
+
+def _status_callback_url_for_tournament(tournament_id: int) -> Optional[str]:
+    base = _status_callback_base_url()
+    if not base:
+        return None
+    if base.endswith("/api"):
+        return f"{base}/tournaments/{tournament_id}/sms/webhook/status-callback"
+    return f"{base}/api/tournaments/{tournament_id}/sms/webhook/status-callback"
 
 
 def _normalize_match_key(value: str) -> str:
@@ -1094,6 +1122,12 @@ def _send_to_phone_targets(
     test_allowlist = _allowlist_set(
         getattr(settings, "test_allowlist", None) if settings else None
     )
+    status_callback_url = _status_callback_url_for_tournament(tournament_id)
+    if status_callback_url is None and bool(getattr(twilio, "is_configured", False)):
+        logger.warning(
+            "SMS status callback URL not configured; outbound statuses may remain queued. "
+            "Set SMS_STATUS_CALLBACK_BASE_URL to enable delivery updates."
+        )
 
     results: List[SmsSendResult] = []
     sent_count = 0
@@ -1202,7 +1236,11 @@ def _send_to_phone_targets(
             )
             continue
 
-        send_result = twilio.send_sms(phone, message)
+        send_result = twilio.send_sms(
+            phone,
+            message,
+            status_callback_url=status_callback_url,
+        )
         status = send_result.get("status", "failed")
         if status in ("queued", "sent", "dry_run"):
             sent_count += 1

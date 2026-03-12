@@ -65,5 +65,18 @@ python3 -m pytest
 
 By default, uses SQLite (`sqlite:///./tournament.db`). To use PostgreSQL, set the `DATABASE_URL` environment variable.
 
+### SMS delivery status callbacks
+
+To allow queued SMS logs to update to delivered/undelivered automatically, set:
+
+```bash
+SMS_STATUS_CALLBACK_BASE_URL=https://your-public-app-domain
+```
+
+The backend will append:
+`/api/tournaments/{tournament_id}/sms/webhook/status-callback`
+
+This URL must be publicly reachable by Twilio.
+
 
 

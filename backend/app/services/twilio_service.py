@@ -147,13 +147,20 @@ class TwilioService:
             )
             self.dry_run = True
 
-    def send_sms(self, to: str, body: str) -> dict:
+    def send_sms(
+        self,
+        to: str,
+        body: str,
+        *,
+        status_callback_url: Optional[str] = None,
+    ) -> dict:
         """
         Send a single SMS message.
 
         Args:
             to: Recipient phone number (E.164 format)
             body: Message text (max 1600 chars for Twilio)
+            status_callback_url: Optional Twilio delivery status callback URL
 
         Returns:
             dict with keys: sid, status, error
@@ -178,11 +185,14 @@ class TwilioService:
             }
 
         try:
-            message = self.client.messages.create(
-                body=body,
-                from_=self.from_number,
-                to=to,
-            )
+            payload = {
+                "body": body,
+                "from_": self.from_number,
+                "to": to,
+            }
+            if status_callback_url:
+                payload["status_callback"] = status_callback_url
+            message = self.client.messages.create(**payload)
             logger.info(
                 f"SMS sent to {to}: SID={message.sid}, status={message.status}"
             )
@@ -199,12 +209,18 @@ class TwilioService:
                 "error": str(e),
             }
 
-    def send_bulk(self, recipients: list[dict]) -> dict:
+    def send_bulk(
+        self,
+        recipients: list[dict],
+        *,
+        status_callback_url: Optional[str] = None,
+    ) -> dict:
         """
         Send SMS to multiple recipients.
 
         Args:
             recipients: List of dicts with keys: phone, body, team_id (optional)
+            status_callback_url: Optional Twilio delivery status callback URL
 
         Returns:
             dict with keys: total, sent, failed, results
@@ -218,7 +234,11 @@ class TwilioService:
             body = r.get("body", "")
             team_id = r.get("team_id")
 
-            result = self.send_sms(phone, body)
+            result = self.send_sms(
+                phone,
+                body,
+                status_callback_url=status_callback_url,
+            )
             result["phone"] = phone
             result["team_id"] = team_id
             results.append(result)
