@@ -6158,6 +6158,7 @@ function SmsAdminTab({
   const [logTypeFilter, setLogTypeFilter] = useState('')
   const [logLimit, setLogLimit] = useState(100)
   const [rolloutHours, setRolloutHours] = useState(168)
+  const [firstMatchWindowMinutes, setFirstMatchWindowMinutes] = useState(1440)
   const [rolloutMetrics, setRolloutMetrics] = useState<SmsRolloutMetricsResponse | null>(null)
   const [loadingRollout, setLoadingRollout] = useState(false)
   const [runningReminder, setRunningReminder] = useState(false)
@@ -6598,7 +6599,7 @@ function SmsAdminTab({
     try {
       const result = await runSmsFirstMatchReminders(tournamentId, {
         dry_run: dryRun,
-        window_minutes: 60,
+        window_minutes: firstMatchWindowMinutes,
       })
       setLastReminderRun(result)
       if (!dryRun) {
@@ -6744,6 +6745,21 @@ function SmsAdminTab({
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: '#666' }}>Reminder window</span>
+          <select
+            value={firstMatchWindowMinutes}
+            onChange={e => {
+              const parsed = parseInt(e.target.value || '1440', 10)
+              setFirstMatchWindowMinutes(Number.isFinite(parsed) && parsed > 0 ? parsed : 1440)
+            }}
+            className="sms-compact-control"
+            style={{ width: 150 }}
+          >
+            <option value={60}>±30 min (strict)</option>
+            <option value={240}>±2 hours</option>
+            <option value={720}>±6 hours</option>
+            <option value={1440}>±12 hours (recommended)</option>
+          </select>
           <button
             onClick={() => handleRunFirstMatchReminder(true)}
             disabled={runningReminder}
@@ -6759,13 +6775,13 @@ function SmsAdminTab({
             {runningReminder ? 'Running…' : 'Run first-match 24h send'}
           </button>
           <div style={{ fontSize: 11, color: '#666' }}>
-            Uses tournament timezone and a ±30 minute window around now+24h.
+            Uses tournament timezone and a ±{Math.floor(firstMatchWindowMinutes / 2)} minute window around now+24h.
           </div>
         </div>
 
         {lastReminderRun && (
           <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
-            <strong>Last 24h scan:</strong>{' '}
+            <strong>Last first-match scan:</strong>{' '}
             considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, sent {lastReminderRun.sent}, deduped {lastReminderRun.deduped}, outside-window {lastReminderRun.outside_window}, failed {lastReminderRun.failed}
             {lastReminderRun.disabled ? ' (automation disabled)' : ''}
             {lastReminderRun.template_inactive ? ' (template inactive)' : ''}

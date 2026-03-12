@@ -1382,6 +1382,57 @@ def test_first_match_runner_endpoint_disabled_or_outside_window(
     assert outside_data["sent"] == 0
 
 
+def test_first_match_runner_endpoint_wide_window_includes_day_ahead_matches(
+    client, session, setup_tournament_with_teams
+):
+    """Wider reminder windows should make day-ahead batch sends practical."""
+    tournament, event, teams = setup_tournament_with_teams
+
+    _create_single_match_schedule(
+        session=session,
+        tournament_id=tournament.id,
+        event_id=event.id,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        day_date=date(2026, 3, 15),
+        start_time_local=time(20, 0),
+        end_time_local=time(21, 0),
+    )
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=tournament.id,
+            auto_first_match=True,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    now_utc = datetime(2026, 3, 14, 14, 0, tzinfo=timezone.utc).isoformat()
+
+    strict = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={"now_utc": now_utc, "window_minutes": 60, "dry_run": "true"},
+    )
+    assert strict.status_code == 200
+    strict_data = strict.json()
+    assert strict_data["eligible_teams"] == 0
+    assert strict_data["outside_window"] == 2
+
+    wide = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={"now_utc": now_utc, "window_minutes": 1440, "dry_run": "true"},
+    )
+    assert wide.status_code == 200
+    wide_data = wide.json()
+    assert wide_data["eligible_teams"] == 2
+    assert wide_data["outside_window"] == 0
+
+
 def test_manual_sms_workflow_preview_then_team_then_blast(
     client, session, setup_tournament_with_teams
 ):

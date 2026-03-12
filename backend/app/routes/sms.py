@@ -2691,7 +2691,7 @@ def reset_sms_templates(
 def run_first_match_reminders(
     tournament_id: int,
     now_utc: Optional[str] = Query(default=None),
-    window_minutes: int = Query(default=60, ge=1, le=240),
+    window_minutes: int = Query(default=60, ge=1, le=1440),
     dry_run: bool = Query(default=False),
     session: Session = Depends(get_session),
 ):
