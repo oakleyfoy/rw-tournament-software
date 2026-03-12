@@ -1320,10 +1320,10 @@ def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
     assert len(logs) == 3
 
 
-def test_first_match_runner_endpoint_disabled_or_outside_window(
+def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     client, session, setup_tournament_with_teams
 ):
-    """Runner returns disabled when toggle off, and outside-window stats when on."""
+    """Runner returns disabled when toggle off, and scans all first matches when on."""
     tournament, event, teams = setup_tournament_with_teams
 
     _create_single_match_schedule(
@@ -1351,7 +1351,8 @@ def test_first_match_runner_endpoint_disabled_or_outside_window(
     assert off_data["disabled"] is True
     assert off_data["sent"] == 0
 
-    # Turn on first-match automation, but run outside reminder window
+    # Turn on first-match automation and run far ahead of the match date.
+    # Time-window constraints are disabled, so teams should still be eligible.
     session.add(
         TournamentSmsSettings(
             tournament_id=tournament.id,
@@ -1377,15 +1378,15 @@ def test_first_match_runner_endpoint_disabled_or_outside_window(
     outside_data = outside.json()
     assert outside_data["disabled"] is False
     assert outside_data["considered_teams"] == 2
-    assert outside_data["eligible_teams"] == 0
-    assert outside_data["outside_window"] == 2
+    assert outside_data["eligible_teams"] == 2
+    assert outside_data["outside_window"] == 0
     assert outside_data["sent"] == 0
 
 
-def test_first_match_runner_endpoint_wide_window_includes_day_ahead_matches(
+def test_first_match_runner_endpoint_window_param_is_ignored(
     client, session, setup_tournament_with_teams
 ):
-    """Wider reminder windows should make day-ahead batch sends practical."""
+    """Window parameter should not affect eligibility when time constraints are disabled."""
     tournament, event, teams = setup_tournament_with_teams
 
     _create_single_match_schedule(
@@ -1420,8 +1421,8 @@ def test_first_match_runner_endpoint_wide_window_includes_day_ahead_matches(
     )
     assert strict.status_code == 200
     strict_data = strict.json()
-    assert strict_data["eligible_teams"] == 0
-    assert strict_data["outside_window"] == 2
+    assert strict_data["eligible_teams"] == 2
+    assert strict_data["outside_window"] == 0
 
     wide = client.post(
         f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",

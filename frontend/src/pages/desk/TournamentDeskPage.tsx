@@ -6158,7 +6158,6 @@ function SmsAdminTab({
   const [logTypeFilter, setLogTypeFilter] = useState('')
   const [logLimit, setLogLimit] = useState(100)
   const [rolloutHours, setRolloutHours] = useState(168)
-  const [firstMatchWindowMinutes, setFirstMatchWindowMinutes] = useState(1440)
   const [rolloutMetrics, setRolloutMetrics] = useState<SmsRolloutMetricsResponse | null>(null)
   const [loadingRollout, setLoadingRollout] = useState(false)
   const [runningReminder, setRunningReminder] = useState(false)
@@ -6599,7 +6598,6 @@ function SmsAdminTab({
     try {
       const result = await runSmsFirstMatchReminders(tournamentId, {
         dry_run: dryRun,
-        window_minutes: firstMatchWindowMinutes,
       })
       setLastReminderRun(result)
       if (!dryRun) {
@@ -6745,37 +6743,22 @@ function SmsAdminTab({
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-          <span style={{ fontSize: 12, color: '#666' }}>Reminder window</span>
-          <select
-            value={firstMatchWindowMinutes}
-            onChange={e => {
-              const parsed = parseInt(e.target.value || '1440', 10)
-              setFirstMatchWindowMinutes(Number.isFinite(parsed) && parsed > 0 ? parsed : 1440)
-            }}
-            className="sms-compact-control"
-            style={{ width: 150 }}
-          >
-            <option value={60}>±30 min (strict)</option>
-            <option value={240}>±2 hours</option>
-            <option value={720}>±6 hours</option>
-            <option value={1440}>±12 hours (recommended)</option>
-          </select>
           <button
             onClick={() => handleRunFirstMatchReminder(true)}
             disabled={runningReminder}
             style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
           >
-            {runningReminder ? 'Running…' : 'Dry-run first-match 24h scan'}
+            {runningReminder ? 'Running…' : 'Test first-match text'}
           </button>
           <button
             onClick={() => handleRunFirstMatchReminder(false)}
             disabled={runningReminder}
             style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
           >
-            {runningReminder ? 'Running…' : 'Run first-match 24h send'}
+            {runningReminder ? 'Running…' : 'Send first-match text'}
           </button>
           <div style={{ fontSize: 11, color: '#666' }}>
-            Uses tournament timezone and a ±{Math.floor(firstMatchWindowMinutes / 2)} minute window around now+24h.
+            No time-window constraints — scans all teams with a scheduled first match.
           </div>
         </div>
 

@@ -2691,7 +2691,7 @@ def reset_sms_templates(
 def run_first_match_reminders(
     tournament_id: int,
     now_utc: Optional[str] = Query(default=None),
-    window_minutes: int = Query(default=60, ge=1, le=1440),
+    window_minutes: Optional[int] = Query(default=None),
     dry_run: bool = Query(default=False),
     session: Session = Depends(get_session),
 ):
@@ -2699,7 +2699,7 @@ def run_first_match_reminders(
     Run the 24-hour first-match reminder scan for this tournament.
 
     - `now_utc`: optional ISO datetime override (useful for testing).
-    - `window_minutes`: matching window around now+24h.
+    - `window_minutes`: deprecated (ignored; no time-window constraints).
     - `dry_run`: if true, computes recipients but does not send.
     """
     _get_tournament_or_404(session, tournament_id)
@@ -2721,7 +2721,7 @@ def run_first_match_reminders(
         session=session,
         tournament_id=tournament_id,
         now_utc=now_dt,
-        window_minutes=window_minutes,
+        window_minutes=window_minutes or 0,
         dry_run=dry_run,
     )
     return SmsAutomationRunResponse(**result)

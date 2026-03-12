@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import time as std_time
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -220,7 +220,7 @@ class SmsAutomationEngine:
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """
-        Send first-match reminders roughly 24h before each team's first match.
+        Send first-match reminders for each team's first scheduled match.
 
         Uses the existing first_match template + message_type and shares the same
         dedupe key shape as match-start fallback; whichever path fires first wins.
@@ -237,7 +237,8 @@ class SmsAutomationEngine:
             "blocked_consent": 0,
             "failed": 0,
             "dry_run": dry_run,
-            "window_minutes": max(1, int(window_minutes)),
+            # Time-window gating is intentionally disabled; keep field for API compatibility.
+            "window_minutes": 0,
             "now_utc": (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
         }
         if not self._is_enabled("auto_first_match", default=False):
@@ -257,13 +258,6 @@ class SmsAutomationEngine:
             tournament_tz_name = "UTC"
         stats["timezone"] = tournament_tz_name
 
-        now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        now_local = now.astimezone(tournament_tz)
-        target_local = now_local + timedelta(hours=24)
-        half_window = timedelta(minutes=max(1, int(window_minutes)) / 2.0)
-        window_start = target_local - half_window
-        window_end = target_local + half_window
-
         first_rows = self._first_match_rows_by_team()
         stats["considered_teams"] = len(first_rows)
 
@@ -271,14 +265,6 @@ class SmsAutomationEngine:
             team = row["team"]
             match = row["match"]
             slot = row["slot"]
-            match_local = datetime.combine(
-                slot.day_date,
-                self._coerce_time(slot.start_time),
-                tzinfo=tournament_tz,
-            )
-            if not (window_start <= match_local <= window_end):
-                stats["outside_window"] += 1
-                continue
             stats["eligible_teams"] += 1
 
             dedupe_key = self._dedupe_key(
@@ -649,7 +635,7 @@ def run_first_match_24h_for_tournament(
             "blocked_consent": 0,
             "failed": 0,
             "dry_run": dry_run,
-            "window_minutes": max(1, int(window_minutes)),
+            "window_minutes": 0,
         }
     engine = SmsAutomationEngine(session, tournament, version.id)  # type: ignore[arg-type]
     return engine.run_first_match_24h_reminders(
