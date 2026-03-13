@@ -14,6 +14,30 @@ const REFRESH_INTERVAL_MS = 20_000
 
 const EVENT_COLORS: Record<string, string> = { W: '#9c27b0', M: '#1565c0', MX: '#00796b' }
 
+const TIME_SLOT_TINTS = [
+  '#fff8e1',
+  '#e8f5e9',
+  '#e3f2fd',
+  '#f3e5f5',
+  '#fce4ec',
+  '#e0f7fa',
+  '#f9fbe7',
+  '#efebe9',
+] as const
+
+function hashSlotKey(key: string): number {
+  let h = 0
+  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0
+  return h
+}
+
+function slotTintForMatch(match: DeskMatchItem): string {
+  const t = (match.scheduled_time || '').trim()
+  if (!t) return '#fafafa'
+  const d = (match.day_label || '').trim()
+  return TIME_SLOT_TINTS[hashSlotKey(`${d}|${t}`) % TIME_SLOT_TINTS.length]
+}
+
 function eventAbbrev(name: string): string {
   if (!name) return ''
   const lower = name.toLowerCase()
@@ -85,9 +109,10 @@ function MatchSlot({
   }
 
   const stageColor = STAGE_COLORS[match.stage] || '#757575'
+  const slotBg = slotTintForMatch(match)
 
   return (
-    <div style={{ padding: '3px 12px', backgroundColor: c.bg }}>
+    <div style={{ padding: '3px 12px', backgroundColor: slotBg }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',

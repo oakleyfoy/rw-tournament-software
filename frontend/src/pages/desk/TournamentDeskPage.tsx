@@ -124,6 +124,33 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: 'Cancelled',
 }
 
+const TIME_SLOT_TINTS = [
+  { bg: '#fff8e1', border: '#ffe082' },
+  { bg: '#e8f5e9', border: '#a5d6a7' },
+  { bg: '#e3f2fd', border: '#90caf9' },
+  { bg: '#f3e5f5', border: '#ce93d8' },
+  { bg: '#fce4ec', border: '#f8bbd0' },
+  { bg: '#e0f7fa', border: '#80deea' },
+  { bg: '#f9fbe7', border: '#dce775' },
+  { bg: '#efebe9', border: '#bcaaa4' },
+] as const
+
+function _hashSlotKey(key: string): number {
+  let h = 0
+  for (let i = 0; i < key.length; i += 1) {
+    h = (h * 31 + key.charCodeAt(i)) >>> 0
+  }
+  return h
+}
+
+function getTimeSlotTint(match: DeskMatchItem): { bg: string; border: string } {
+  const time = (match.scheduled_time || '').trim()
+  if (!time) return { bg: '#fafafa', border: '#e8e8e8' }
+  const day = (match.day_label || '').trim()
+  const key = `${day}|${time}`
+  return TIME_SLOT_TINTS[_hashSlotKey(key) % TIME_SLOT_TINTS.length]
+}
+
 function Badge({ label, bg, color }: { label: string; bg: string; color: string }) {
   return (
     <span style={{
@@ -321,6 +348,7 @@ function CourtCard({
   const [noteText, setNoteText] = useState(courtState?.note || '')
   const [showHistory, setShowHistory] = useState(false)
   const isClosed = courtState?.is_closed || false
+  const onDeckTint = onDeck ? getTimeSlotTint(onDeck) : null
 
   useEffect(() => {
     setNoteText(courtState?.note || '')
@@ -530,10 +558,10 @@ function CourtCard({
                 <div
                   onClick={onMatchClick ? () => onMatchClick(onDeck) : undefined}
                   style={{
-                    border: '1px solid #eee',
+                    border: `1px solid ${onDeckTint?.border || '#eee'}`,
                     borderRadius: 4,
                     padding: '3px 8px',
-                    backgroundColor: deckDefault ? '#fce4ec' : '#fafafa',
+                    backgroundColor: deckDefault ? '#fce4ec' : (onDeckTint?.bg || '#fafafa'),
                     fontSize: 10,
                     opacity: 0.85,
                     borderLeft: deckDefault ? '3px solid #c62828' : undefined,
@@ -607,13 +635,14 @@ function CourtCard({
           ) : (
             courtMatches.map(m => {
               const sc = STATUS_COLORS[m.status] || STATUS_COLORS.SCHEDULED
+              const slotTint = getTimeSlotTint(m)
               return (
                 <div key={m.match_id} onClick={() => onMatchClick?.(m)} style={{
-                  border: '1px solid #e8e8e8',
+                  border: `1px solid ${slotTint.border}`,
                   borderRadius: 4,
                   padding: '3px 8px',
                   marginBottom: 3,
-                  backgroundColor: '#fff',
+                  backgroundColor: slotTint.bg,
                   fontSize: 10,
                   cursor: onMatchClick ? 'pointer' : 'default',
                 }}>
@@ -746,14 +775,15 @@ function MiniMatchCard({
   const team1TBD = !match.team1_id && match.source_match_a_id
   const team2TBD = !match.team2_id && match.source_match_b_id
   const hasDefault = match.team1_defaulted || match.team2_defaulted
+  const slotTint = getTimeSlotTint(match)
   return (
     <div
       onClick={onMatchClick ? () => onMatchClick(match) : undefined}
       style={{
-        border: '1px solid #e8e8e8',
+        border: `1px solid ${slotTint.border}`,
         borderRadius: 4,
         padding: '4px 8px',
-        backgroundColor: hasDefault ? '#fce4ec' : '#fafafa',
+        backgroundColor: hasDefault ? '#fce4ec' : slotTint.bg,
         fontSize: 11,
         borderLeft: hasDefault ? '3px solid #c62828' : undefined,
         cursor: onMatchClick ? 'pointer' : undefined,
