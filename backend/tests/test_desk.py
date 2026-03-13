@@ -868,6 +868,68 @@ def test_finalize_does_not_auto_start_next_day_match(client, session):
     assert (m3_obj.runtime_status or "SCHEDULED") == "SCHEDULED"
 
 
+def test_finalize_does_not_auto_start_future_same_day_match(client, session):
+    """Finalizing a match should not auto-start a same-day match whose slot is in the future."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+    m3 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
+
+    a1 = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == draft_id,
+            MatchAssignment.match_id == m1["match_id"],
+        )
+    ).first()
+    a3 = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == draft_id,
+            MatchAssignment.match_id == m3["match_id"],
+        )
+    ).first()
+    assert a1 is not None
+    assert a3 is not None
+
+    slot1 = session.get(ScheduleSlot, a1.slot_id)
+    slot3 = session.get(ScheduleSlot, a3.slot_id)
+    assert slot1 is not None
+    assert slot3 is not None
+
+    # Force both slots into a far-future day to ensure slot start has not arrived.
+    future_day = date(2099, 1, 1)
+    slot1.day_date = future_day
+    slot1.start_time = time(9, 0)
+    slot1.end_time = time(10, 0)
+    slot3.day_date = future_day
+    slot3.start_time = time(11, 0)
+    slot3.end_time = time(12, 0)
+    session.add(slot1)
+    session.add(slot3)
+
+    # Give the downstream match concrete teams so only the time guard prevents auto-start.
+    m3_obj = session.get(Match, m3["match_id"])
+    assert m3_obj is not None
+    m3_obj.team_a_id = teams[0].id
+    m3_obj.team_b_id = teams[1].id
+    session.add(m3_obj)
+    session.commit()
+
+    fin_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "8-4", "winner_team_id": m1["team1_id"]},
+    )
+    assert fin_resp.status_code == 200
+    body = fin_resp.json()
+    assert body["auto_started"] is None
+
+    session.refresh(m3_obj)
+    assert (m3_obj.runtime_status or "SCHEDULED") == "SCHEDULED"
+
+
 # ── Impact endpoint tests ──────────────────────────────────────────────
 
 def test_impact_terminal_match_null_targets(client, session):

@@ -3,8 +3,9 @@ Desk Runtime Console: Staff-only endpoints for live tournament operations.
 Now Playing / Up Next, score entry, auto-advancement, working draft management.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -282,6 +283,37 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
         if "score" in score_json:
             return str(score_json["score"])
     return str(score_json) if score_json else None
+
+
+def _coerce_slot_start_time(value: object) -> Optional[dt_time]:
+    if isinstance(value, dt_time):
+        return value
+    if isinstance(value, str):
+        try:
+            parts = value.split(":")
+            hour = int(parts[0]) if parts else 0
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            return dt_time(hour=hour, minute=minute)
+        except Exception:
+            return None
+    return None
+
+
+def _slot_start_has_arrived(tournament: Tournament, slot: ScheduleSlot) -> bool:
+    """
+    Guard auto-start: only begin matches whose scheduled slot start has arrived.
+    """
+    slot_time = _coerce_slot_start_time(slot.start_time)
+    if slot_time is None:
+        return False
+    tz_name = (tournament.timezone or "UTC").strip() or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    now_local = datetime.now(tz)
+    slot_local = datetime.combine(slot.day_date, slot_time, tzinfo=tz)
+    return slot_local <= now_local
 
 
 def _validate_score_text_for_match(score_text: str, match: Match) -> None:
@@ -921,8 +953,16 @@ def finalize_match(
                 for ca in court_assignments:
                     if slot_order.get(ca.slot_id, -1) <= finalized_order:
                         continue
+                    next_slot = session.get(ScheduleSlot, ca.slot_id)
+                    if not next_slot or not _slot_start_has_arrived(tournament, next_slot):
+                        continue
                     next_match = session.get(Match, ca.match_id)
-                    if next_match and (next_match.runtime_status or "SCHEDULED") == "SCHEDULED":
+                    if (
+                        next_match
+                        and (next_match.runtime_status or "SCHEDULED").upper() == "SCHEDULED"
+                        and next_match.team_a_id is not None
+                        and next_match.team_b_id is not None
+                    ):
                         next_match.runtime_status = "IN_PROGRESS"
                         next_match.started_at = datetime.utcnow()
                         session.add(next_match)
