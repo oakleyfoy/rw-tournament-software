@@ -324,6 +324,12 @@ class SmsAutomationEngine:
             opponent=opponent,
             day_number=self._day_number(slot.day_date) if slot else None,
         )
+        # Remove legacy trailing "(MATCH_CODE)" suffixes from automation texts.
+        if match and match.match_code:
+            suffix = f"({match.match_code})"
+            trimmed = message.rstrip()
+            if trimmed.endswith(suffix):
+                message = trimmed[:-len(suffix)].rstrip()
         return _send_to_teams(
             session=self.session,
             tournament_id=self.tournament.id,  # type: ignore[arg-type]

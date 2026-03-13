@@ -36,8 +36,7 @@ DEFAULT_SMS_TEMPLATES = {
         "on {court}. Good luck!"
     ),
     "post_match_next": (
-        "{team_name}: Your next match is {date} at {time} on {court}. "
-        "({match_code})"
+        "{team_name}: Your next match is {date} at {time} on {court}."
     ),
     "on_deck": (
         "{team_name}: You're ON DECK. Your match on {court} starts after "

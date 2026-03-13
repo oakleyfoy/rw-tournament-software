@@ -546,6 +546,7 @@ def test_sms_automation_finalize_triggers_post_match_next(client, session):
         )
     ).all()
     assert len(post_logs) >= 1
+    assert all(not (row.message_body or "").rstrip().endswith(")") for row in post_logs)
 
 
 def test_sms_automation_move_triggers_court_change(client, session):
