@@ -299,6 +299,8 @@ class SmsAutomationEngine:
         *,
         event_id: int,
         dry_run: bool = False,
+        force_resend: bool = False,
+        resend_run_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send each team's first scheduled Round Robin match details for one event.
@@ -318,6 +320,8 @@ class SmsAutomationEngine:
             "blocked_consent": 0,
             "failed": 0,
             "dry_run": dry_run,
+            "force_resend": force_resend,
+            "resend_run_key": None,
         }
         if not self._is_enabled("auto_first_match", default=False):
             stats["disabled"] = True
@@ -330,6 +334,11 @@ class SmsAutomationEngine:
 
         first_rows = self._first_rr_match_rows_by_team(event_id=event_id)
         stats["considered_teams"] = len(first_rows)
+        effective_resend_key: Optional[str] = None
+        if force_resend:
+            key = (resend_run_key or "").strip()
+            effective_resend_key = key or f"manual-{std_time.time_ns()}"
+            stats["resend_run_key"] = effective_resend_key
 
         for team_id, row in first_rows.items():
             team = row["team"]
@@ -346,6 +355,7 @@ class SmsAutomationEngine:
                 f"e{event_id}",
                 f"t{team_id}",
                 f"m{match.id}",
+                f"rs{effective_resend_key}" if effective_resend_key else None,
             )
             if dry_run:
                 continue
@@ -763,6 +773,56 @@ def run_first_match_24h_for_tournament(
         now_utc=now_utc,
         window_minutes=window_minutes,
         dry_run=dry_run,
+    )
+
+
+def run_rr_first_match_for_event(
+    session: Session,
+    tournament_id: int,
+    *,
+    event_id: int,
+    dry_run: bool = False,
+    force_resend: bool = False,
+    resend_run_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run Round Robin first-match reminders for one event."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        return {
+            "tournament_id": tournament_id,
+            "event_id": event_id,
+            "error": "tournament_not_found",
+        }
+
+    from app.routes.sms import _resolve_match_lookup_version
+
+    version = _resolve_match_lookup_version(session, tournament)
+    if not version:
+        return {
+            "tournament_id": tournament_id,
+            "version_id": None,
+            "event_id": event_id,
+            "disabled": False,
+            "no_active_version": True,
+            "considered_teams": 0,
+            "eligible_teams": 0,
+            "missing_slot": 0,
+            "sent": 0,
+            "deduped": 0,
+            "blocked_test_mode": 0,
+            "blocked_consent": 0,
+            "failed": 0,
+            "dry_run": dry_run,
+            "force_resend": force_resend,
+            "resend_run_key": None,
+        }
+
+    engine = SmsAutomationEngine(session, tournament, version.id)  # type: ignore[arg-type]
+    return engine.run_rr_first_match_reminders_for_event(
+        event_id=event_id,
+        dry_run=dry_run,
+        force_resend=force_resend,
+        resend_run_key=resend_run_key,
     )
 
 

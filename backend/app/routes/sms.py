@@ -32,7 +32,10 @@ from app.models.team import Team
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
-from app.services.sms_automation import run_first_match_24h_for_tournament
+from app.services.sms_automation import (
+    run_first_match_24h_for_tournament,
+    run_rr_first_match_for_event,
+)
 from app.services.twilio_service import (
     format_e164,
     get_team_phone_numbers,
@@ -252,6 +255,28 @@ class SmsAutomationRunResponse(BaseModel):
     considered_teams: int
     eligible_teams: int
     outside_window: int
+    sent: int
+    deduped: int
+    blocked_test_mode: int
+    blocked_consent: int
+    failed: int
+    template_inactive: bool = False
+
+
+class SmsRrAutomationRunResponse(BaseModel):
+    """Summary from running RR first-match reminders for one event."""
+
+    tournament_id: int
+    version_id: Optional[int] = None
+    event_id: int
+    disabled: bool = False
+    no_active_version: bool = False
+    dry_run: bool
+    force_resend: bool = False
+    resend_run_key: Optional[str] = None
+    considered_teams: int
+    eligible_teams: int
+    missing_slot: int
     sent: int
     deduped: int
     blocked_test_mode: int
@@ -2763,3 +2788,38 @@ def run_first_match_reminders(
         dry_run=dry_run,
     )
     return SmsAutomationRunResponse(**result)
+
+
+@router.post(
+    "/automation/run-rr-first-match-reminders",
+    response_model=SmsRrAutomationRunResponse,
+)
+def run_rr_first_match_reminders(
+    tournament_id: int,
+    event_id: int = Query(..., gt=0),
+    dry_run: bool = Query(default=False),
+    force_resend: bool = Query(default=False),
+    session: Session = Depends(get_session),
+):
+    """
+    Run Round Robin first-match reminders for one event.
+
+    - `event_id`: target event inside this tournament.
+    - `dry_run`: if true, computes recipients but does not send.
+    - `force_resend`: if true, bypasses prior dedupe keys for this run.
+    """
+    _get_tournament_or_404(session, tournament_id)
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(
+            404, f"Event {event_id} not found in tournament {tournament_id}"
+        )
+
+    result = run_rr_first_match_for_event(
+        session=session,
+        tournament_id=tournament_id,
+        event_id=event_id,
+        dry_run=dry_run,
+        force_resend=force_resend,
+    )
+    return SmsRrAutomationRunResponse(**result)

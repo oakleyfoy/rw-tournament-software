@@ -1320,6 +1320,123 @@ def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
     assert len(logs) == 3
 
 
+def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
+    client, session, setup_tournament_with_teams
+):
+    """RR force resend endpoint should bypass prior dedupe keys for one event."""
+    tournament, event, teams = setup_tournament_with_teams
+    from app.models.match import Match
+    from app.models.match_assignment import MatchAssignment
+    from app.models.schedule_slot import ScheduleSlot
+    from app.models.schedule_version import ScheduleVersion
+    from app.models.tournament import Tournament
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="final",
+    )
+    session.add(version)
+    session.flush()
+
+    rr_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_E1_RR_01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="P1",
+        placeholder_side_b="P2",
+        runtime_status="SCHEDULED",
+    )
+    session.add(rr_match)
+    session.flush()
+
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 3, 15),
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+        is_active=True,
+    )
+    session.add(slot)
+    session.flush()
+
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=rr_match.id,
+            slot_id=slot.id,
+            assigned_by="TEST",
+        )
+    )
+
+    pointed = session.get(Tournament, tournament.id)
+    pointed.public_schedule_version_id = version.id
+    session.add(pointed)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=tournament.id,
+            auto_first_match=True,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    first = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-rr-first-match-reminders",
+        params={"event_id": event.id, "dry_run": "false"},
+    )
+    assert first.status_code == 200
+    first_data = first.json()
+    assert first_data["sent"] == 3
+    assert first_data["deduped"] == 0
+    assert first_data["force_resend"] is False
+
+    second = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-rr-first-match-reminders",
+        params={"event_id": event.id, "dry_run": "false"},
+    )
+    assert second.status_code == 200
+    second_data = second.json()
+    assert second_data["sent"] == 0
+    assert second_data["deduped"] == 3
+
+    forced = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-rr-first-match-reminders",
+        params={"event_id": event.id, "dry_run": "false", "force_resend": "true"},
+    )
+    assert forced.status_code == 200
+    forced_data = forced.json()
+    assert forced_data["sent"] == 3
+    assert forced_data["deduped"] == 0
+    assert forced_data["force_resend"] is True
+    assert forced_data["resend_run_key"]
+
+    rr_logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == tournament.id,
+            SmsLog.message_type == "rr_first_match",
+            SmsLog.trigger == "auto",
+        )
+    ).all()
+    assert len(rr_logs) == 6
+
+
 def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     client, session, setup_tournament_with_teams
 ):

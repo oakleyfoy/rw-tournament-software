@@ -69,12 +69,14 @@ import {
   getSmsLog,
   getSmsRolloutMetrics,
   runSmsFirstMatchReminders,
+  runSmsRrFirstMatchReminders,
   getSmsSettings,
   patchSmsSettings,
   getSmsTemplates,
   putSmsTemplate,
   resetSmsTemplates,
   SmsAutomationRunResponse,
+  SmsRrAutomationRunResponse,
   SmsLogEntry,
   SmsPreviewResponse,
   SmsRolloutMetricsResponse,
@@ -6192,6 +6194,9 @@ function SmsAdminTab({
   const [loadingRollout, setLoadingRollout] = useState(false)
   const [runningReminder, setRunningReminder] = useState(false)
   const [lastReminderRun, setLastReminderRun] = useState<SmsAutomationRunResponse | null>(null)
+  const [runningRrReminder, setRunningRrReminder] = useState(false)
+  const [lastRrReminderRun, setLastRrReminderRun] = useState<SmsRrAutomationRunResponse | null>(null)
+  const [rrMixedEventId, setRrMixedEventId] = useState('')
   const [events, setEvents] = useState<Event[]>([])
   const [players, setPlayers] = useState<SmsPlayerLookupItem[]>([])
   const [matches, setMatches] = useState<SmsMatchLookupItem[]>([])
@@ -6451,6 +6456,21 @@ function SmsAdminTab({
     return rows
   }, [events])
 
+  const mixedEventOptions = useMemo(() => {
+    return sortedEvents.filter(event => event.category === 'mixed')
+  }, [sortedEvents])
+
+  useEffect(() => {
+    if (mixedEventOptions.length === 0) {
+      setRrMixedEventId('')
+      return
+    }
+    setRrMixedEventId(prev => {
+      if (prev && mixedEventOptions.some(event => String(event.id) === prev)) return prev
+      return String(mixedEventOptions[0].id)
+    })
+  }, [mixedEventOptions])
+
   const divisionEventOptions = useMemo(() => {
     return sortedEvents.map(event => ({
       value: String(event.id),
@@ -6641,6 +6661,32 @@ function SmsAdminTab({
     }
   }
 
+  const handleRunRrFirstMatchReminder = async (dryRun: boolean) => {
+    const eventId = parseInt(rrMixedEventId, 10)
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      setError('Select a Mixed event first')
+      return
+    }
+    setRunningRrReminder(true)
+    setError(null)
+    try {
+      const result = await runSmsRrFirstMatchReminders(tournamentId, {
+        event_id: eventId,
+        dry_run: dryRun,
+        force_resend: true,
+      })
+      setLastRrReminderRun(result)
+      if (!dryRun) {
+        await loadLogs()
+      }
+      await loadRolloutMetrics()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to run RR first-match force resend')
+    } finally {
+      setRunningRrReminder(false)
+    }
+  }
+
   const handleSyncPlayerContacts = async () => {
     setSyncingPlayerContacts(true)
     setError(null)
@@ -6792,12 +6838,59 @@ function SmsAdminTab({
           </div>
         </div>
 
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: '#666' }}>Mixed event</label>
+          <select
+            value={rrMixedEventId}
+            onChange={e => setRrMixedEventId(e.target.value)}
+            disabled={mixedEventOptions.length === 0 || runningRrReminder}
+            className="sms-compact-control"
+            style={{ width: 260 }}
+          >
+            {mixedEventOptions.length === 0 ? (
+              <option value="">No Mixed events found</option>
+            ) : (
+              mixedEventOptions.map(event => (
+                <option key={event.id} value={String(event.id)}>
+                  {formatEventScopeLabel(event)}
+                </option>
+              ))
+            )}
+          </select>
+          <button
+            onClick={() => handleRunRrFirstMatchReminder(true)}
+            disabled={runningRrReminder || mixedEventOptions.length === 0}
+            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
+          >
+            {runningRrReminder ? 'Running…' : 'Test force resend RR first-match'}
+          </button>
+          <button
+            onClick={() => handleRunRrFirstMatchReminder(false)}
+            disabled={runningRrReminder || mixedEventOptions.length === 0}
+            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
+          >
+            {runningRrReminder ? 'Running…' : 'Force resend RR first-match'}
+          </button>
+          <div style={{ fontSize: 11, color: '#666' }}>
+            Mixed only. Force resend bypasses RR dedupe for this run.
+          </div>
+        </div>
+
         {lastReminderRun && (
           <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
             <strong>Last first-match scan:</strong>{' '}
             considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, sent {lastReminderRun.sent}, deduped {lastReminderRun.deduped}, outside-window {lastReminderRun.outside_window}, failed {lastReminderRun.failed}
             {lastReminderRun.disabled ? ' (automation disabled)' : ''}
             {lastReminderRun.template_inactive ? ' (template inactive)' : ''}
+          </div>
+        )}
+
+        {lastRrReminderRun && (
+          <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
+            <strong>Last RR force resend:</strong>{' '}
+            considered {lastRrReminderRun.considered_teams}, eligible {lastRrReminderRun.eligible_teams}, missing-slot {lastRrReminderRun.missing_slot}, sent {lastRrReminderRun.sent}, deduped {lastRrReminderRun.deduped}, failed {lastRrReminderRun.failed}
+            {lastRrReminderRun.disabled ? ' (automation disabled)' : ''}
+            {lastRrReminderRun.template_inactive ? ' (template inactive)' : ''}
           </div>
         )}
 

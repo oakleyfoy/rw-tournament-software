@@ -3130,6 +3130,26 @@ export interface SmsAutomationRunResponse {
   template_inactive: boolean
 }
 
+export interface SmsRrAutomationRunResponse {
+  tournament_id: number
+  version_id: number | null
+  event_id: number
+  disabled: boolean
+  no_active_version: boolean
+  dry_run: boolean
+  force_resend: boolean
+  resend_run_key: string | null
+  considered_teams: number
+  eligible_teams: number
+  missing_slot: number
+  sent: number
+  deduped: number
+  blocked_test_mode: number
+  blocked_consent: number
+  failed: number
+  template_inactive: boolean
+}
+
 export interface SmsRolloutMetricBucket {
   message_type: string
   trigger: string
@@ -3400,6 +3420,21 @@ export async function runSmsFirstMatchReminders(
   const qs = params.toString()
   return fetchJson<SmsAutomationRunResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/automation/run-first-match-reminders${qs ? `?${qs}` : ''}`,
+    { method: 'POST' }
+  )
+}
+
+export async function runSmsRrFirstMatchReminders(
+  tournamentId: number,
+  opts: { event_id: number; dry_run?: boolean; force_resend?: boolean }
+): Promise<SmsRrAutomationRunResponse> {
+  const params = new URLSearchParams()
+  params.set('event_id', String(opts.event_id))
+  if (opts.dry_run != null) params.set('dry_run', String(opts.dry_run))
+  if (opts.force_resend != null) params.set('force_resend', String(opts.force_resend))
+  const qs = params.toString()
+  return fetchJson<SmsRrAutomationRunResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/automation/run-rr-first-match-reminders${qs ? `?${qs}` : ''}`,
     { method: 'POST' }
   )
 }
