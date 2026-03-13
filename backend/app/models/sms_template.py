@@ -18,7 +18,7 @@ class SmsTemplate(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     tournament_id: int = Field(foreign_key="tournament.id", index=True)
-    message_type: str  # first_match|post_match_next|on_deck|up_next|court_change
+    message_type: str  # first_match|rr_first_match|post_match_next|on_deck|up_next|court_change
     template_body: str  # Message with {placeholders}
     is_active: bool = Field(default=True)
     created_at: datetime = Field(
@@ -34,6 +34,9 @@ DEFAULT_SMS_TEMPLATES = {
     "first_match": (
         "{tournament_name}: {team_name}, your first match is {date} at {time} "
         "on {court}. Good luck!"
+    ),
+    "rr_first_match": (
+        "{team_name}: Your first Round Robin match is {date} at {time} on {court}."
     ),
     "post_match_next": (
         "{team_name}: Your next match is {date} at {time} on {court}."

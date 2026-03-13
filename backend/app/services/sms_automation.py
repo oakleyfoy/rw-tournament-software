@@ -294,6 +294,80 @@ class SmsAutomationEngine:
 
         return stats
 
+    def run_rr_first_match_reminders_for_event(
+        self,
+        *,
+        event_id: int,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Send each team's first scheduled Round Robin match details for one event.
+
+        Intended trigger: immediately after pool placement is confirmed.
+        """
+        stats: Dict[str, Any] = {
+            "tournament_id": self.tournament.id,
+            "version_id": self.version_id,
+            "event_id": event_id,
+            "considered_teams": 0,
+            "eligible_teams": 0,
+            "missing_slot": 0,
+            "sent": 0,
+            "deduped": 0,
+            "blocked_test_mode": 0,
+            "blocked_consent": 0,
+            "failed": 0,
+            "dry_run": dry_run,
+        }
+        if not self._is_enabled("auto_first_match", default=False):
+            stats["disabled"] = True
+            return stats
+
+        active, _template = self._template_for("rr_first_match")
+        if not active:
+            stats["template_inactive"] = True
+            return stats
+
+        first_rows = self._first_rr_match_rows_by_team(event_id=event_id)
+        stats["considered_teams"] = len(first_rows)
+
+        for team_id, row in first_rows.items():
+            team = row["team"]
+            match = row["match"]
+            slot = row["slot"]
+            if slot is None:
+                stats["missing_slot"] += 1
+                continue
+            stats["eligible_teams"] += 1
+
+            dedupe_key = self._dedupe_key(
+                "rr_first_match",
+                f"v{self.version_id}",
+                f"e{event_id}",
+                f"t{team_id}",
+                f"m{match.id}",
+            )
+            if dry_run:
+                continue
+
+            resp = self._send_template_to_team(
+                team=team,
+                message_type="rr_first_match",
+                dedupe_key=dedupe_key,
+                match=match,
+                slot=slot,
+                opponent=self._opponent_display(match, team.id),
+            )
+            if resp is None:
+                continue
+            stats["sent"] += int(resp.sent)
+            stats["deduped"] += int(resp.skipped_dedupe)
+            stats["blocked_test_mode"] += int(resp.skipped_test_mode)
+            stats["blocked_consent"] += int(resp.skipped_consent)
+            stats["failed"] += int(resp.failed)
+
+        return stats
+
     # ------------------------------------------------------------------
     # Sending/template helpers
     # ------------------------------------------------------------------
@@ -508,6 +582,47 @@ class SmsAutomationEngine:
             if not slot:
                 continue
             sort_key = self._slot_sort_key(slot)
+            for team_id in (m.team_a_id, m.team_b_id):
+                if not team_id:
+                    continue
+                team = self._team_by_id(team_id)
+                if not team:
+                    continue
+                current = result.get(team_id)
+                if current is None or sort_key < current["sort_key"]:
+                    result[team_id] = {
+                        "team": team,
+                        "match": m,
+                        "slot": slot,
+                        "sort_key": sort_key,
+                    }
+        return result
+
+    def _first_rr_match_rows_by_team(self, *, event_id: int) -> Dict[int, Dict[str, Any]]:
+        """
+        Return first scheduled RR match row per team for one event in this version.
+        """
+        matches = self.session.exec(
+            select(Match).where(
+                Match.schedule_version_id == self.version_id,
+                Match.event_id == event_id,
+                Match.match_type == "RR",
+            )
+        ).all()
+        result: Dict[int, Dict[str, Any]] = {}
+        for m in matches:
+            if m.id is None:
+                continue
+            if (m.runtime_status or "SCHEDULED").upper() == "FINAL":
+                continue
+            if m.team_a_id is None or m.team_b_id is None:
+                continue
+            slot = self._slot_for_match(m.id)
+            if slot is None:
+                # Keep track of team candidate with no slot so caller can report missing_slot.
+                sort_key = (date.max, time.max, m.id or 0)
+            else:
+                sort_key = self._slot_sort_key(slot)
             for team_id in (m.team_a_id, m.team_b_id):
                 if not team_id:
                     continue

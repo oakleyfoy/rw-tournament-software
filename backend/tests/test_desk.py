@@ -2118,6 +2118,108 @@ def test_pool_placement_resolves_seeds(client, session):
         assert m["team2_id"] is not None, f"RR match {m['match_code']} team2_id still null"
 
 
+def test_pool_placement_sends_rr_first_match_sms(client, session):
+    """Confirming pool placement sends each team's first RR match details."""
+    t, v, ev, teams, wf_matches, rr_matches = _setup_wf_pool_tournament(session)
+
+    for idx, team in enumerate(teams, start=1):
+        team.player1_cellphone = f"9015552{idx:03d}"
+        team.player2_cellphone = None
+        team.p1_cell = None
+        team.p2_cell = None
+        session.add(team)
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=t.id,
+            auto_first_match=True,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    wf = sorted([m for m in snap["matches"] if m["stage"] == "WF"], key=lambda m: m["match_id"])
+    rr_first_round = sorted(
+        [
+            m for m in snap["matches"]
+            if m["stage"] == "RR"
+            and (
+                m["match_code"].endswith("_RR_01")
+                or m["match_code"].endswith("_RR_02")
+            )
+        ],
+        key=lambda m: m["match_code"],
+    )
+    assert len(rr_first_round) == 4
+
+    # Give first-round RR matches scheduled slots so message can include day/time/court.
+    for i, rr in enumerate(rr_first_round):
+        slot = ScheduleSlot(
+            tournament_id=t.id,
+            schedule_version_id=draft_id,
+            day_date=date(2026, 6, 6),
+            start_time=time(12 + i, 0),
+            end_time=time(13 + i, 0),
+            court_number=(i % 2) + 1,
+            court_label=str((i % 2) + 1),
+            block_minutes=60,
+        )
+        session.add(slot)
+        session.flush()
+        session.add(
+            MatchAssignment(
+                schedule_version_id=draft_id,
+                match_id=rr["match_id"],
+                slot_id=slot.id,
+            )
+        )
+    session.commit()
+
+    # Finalize all WF matches so pool placement is allowed.
+    for m in wf:
+        client.patch(
+            f"/api/desk/tournaments/{t.id}/matches/{m['match_id']}/finalize",
+            json={"version_id": draft_id, "score": "8-3", "winner_team_id": m["team1_id"]},
+        )
+
+    proj_resp = client.get(f"/api/desk/tournaments/{t.id}/pool-projection?version_id={draft_id}")
+    proj = proj_resp.json()["events"][0]
+    placement_pools = [
+        {"pool_label": pool["pool_label"], "team_ids": [row["team_id"] for row in pool["teams"]]}
+        for pool in proj["pools"]
+    ]
+
+    place = client.post(
+        f"/api/desk/tournaments/{t.id}/pool-placement",
+        json={
+            "version_id": draft_id,
+            "event_id": ev.id,
+            "pools": placement_pools,
+        },
+    )
+    assert place.status_code == 200
+
+    rr_logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == t.id,
+            SmsLog.trigger == "auto",
+            SmsLog.message_type == "rr_first_match",
+        )
+    ).all()
+    # 8 teams, one phone each => 8 sends
+    assert len(rr_logs) == 8
+    assert all("Round Robin" in (row.message_body or "") for row in rr_logs)
+    assert all("Court" in (row.message_body or "") for row in rr_logs)
+
+
 # ── Move / Swap / Add Slot / Add Court tests ─────────────────────────────
 
 def _setup_draft_for_move(session: Session):

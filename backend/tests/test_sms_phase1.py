@@ -338,6 +338,7 @@ def test_default_templates_exist():
     """Verify all expected default templates are defined."""
     expected_types = [
         "first_match",
+        "rr_first_match",
         "post_match_next",
         "on_deck",
         "up_next",

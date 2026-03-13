@@ -2092,6 +2092,20 @@ def confirm_pool_placement(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        automation.run_rr_first_match_reminders_for_event(
+            event_id=payload.event_id,
+            dry_run=False,
+        )
+    except Exception:
+        logger.exception(
+            "SMS automation RR-first-match trigger failed for tournament=%s event=%s version=%s",
+            tournament_id,
+            payload.event_id,
+            payload.version_id,
+        )
+
     return PoolPlacementResponse(
         success=True,
         updated_matches=result["updated_matches"],
