@@ -10,11 +10,16 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models.event import Event
+from app.models.match import Match
+from app.models.sms_log import SmsLog
 from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
+from app.models.team_player import TeamPlayer
 from app.utils.team_injection import TeamInjectionError, inject_teams_v1
 
 router = APIRouter()
@@ -624,6 +629,68 @@ def import_seeded_teams(
     existing_teams = session.exec(
         select(Team).where(Team.event_id == event_id)
     ).all()
+    incoming_seeds = {row["seed"] for row in parsed}
+
+    # Treat seeded import as the authoritative roster for this event:
+    # remove stale teams not present in the incoming seed list when safe.
+    stale_team_ids: List[int] = []
+    for team in existing_teams:
+        if team.seed in incoming_seeds:
+            continue
+        match_ref = session.exec(
+            select(Match.id).where(
+                Match.event_id == event_id,
+                or_(
+                    Match.team_a_id == team.id,
+                    Match.team_b_id == team.id,
+                    Match.winner_team_id == team.id,
+                ),
+            )
+        ).first()
+        player_link_ref = session.exec(
+            select(TeamPlayer.id).where(TeamPlayer.team_id == team.id)
+        ).first()
+        sms_ref = session.exec(
+            select(SmsLog.id).where(SmsLog.team_id == team.id)
+        ).first()
+        if match_ref or player_link_ref or sms_ref:
+            warnings.append(
+                f"Skipped removing stale team seed={team.seed or '—'} "
+                f"('{team.display_name or team.name}') because it has dependent records."
+            )
+            continue
+        stale_team_ids.append(team.id)
+
+    if stale_team_ids:
+        stale_set = set(stale_team_ids)
+        stale_edges = session.exec(
+            select(TeamAvoidEdge).where(
+                TeamAvoidEdge.event_id == event_id,
+                or_(
+                    TeamAvoidEdge.team_id_a.in_(stale_team_ids),  # type: ignore[arg-type]
+                    TeamAvoidEdge.team_id_b.in_(stale_team_ids),  # type: ignore[arg-type]
+                ),
+            )
+        ).all()
+        stale_player_links = session.exec(
+            select(TeamPlayer).where(TeamPlayer.team_id.in_(stale_team_ids))  # type: ignore[arg-type]
+        ).all()
+        for edge in stale_edges:
+            session.delete(edge)
+        for link in stale_player_links:
+            session.delete(link)
+        for team in existing_teams:
+            if team.id in stale_set:
+                session.delete(team)
+        session.flush()
+        warnings.append(
+            f"Removed {len(stale_team_ids)} stale team(s) not present in imported seeds."
+        )
+
+    # Refresh existing-team map after stale cleanup.
+    existing_teams = session.exec(
+        select(Team).where(Team.event_id == event_id)
+    ).all()
     existing_by_seed = {t.seed: t for t in existing_teams if t.seed is not None}
 
     imported_count = 0
@@ -699,8 +766,6 @@ def import_seeded_teams(
     # Create avoid edges for teams in the same group
     avoid_edges_created = 0
     try:
-        from app.models.team_avoid_edge import TeamAvoidEdge
-
         for group_code, team_ids in group_map.items():
             if len(team_ids) < 2:
                 continue
@@ -730,12 +795,16 @@ def import_seeded_teams(
     if avoid_edges_created > 0:
         warnings.append(f"Created {avoid_edges_created} avoid edge(s) from group assignments")
 
-    # Update event team_count to match actual teams
-    total_teams = len(existing_teams) + imported_count
+    # Update event team_count to match actual roster size.
+    total_teams = len(
+        session.exec(select(Team).where(Team.event_id == event_id)).all()
+    )
     if event.team_count != total_teams:
         warnings.append(
             f"Event team_count was {event.team_count}, now {total_teams} teams in DB."
         )
+        event.team_count = total_teams
+        session.add(event)
 
     session.commit()
 
