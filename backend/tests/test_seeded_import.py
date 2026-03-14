@@ -39,6 +39,8 @@ def test_seeded_import_prunes_stale_teams_and_syncs_event_team_count(client, ses
                 name=f"Old Team {seed}",
                 seed=seed,
                 display_name=f"Old {seed}",
+                notes=f"Legacy note {seed}",
+                is_defaulted=True,
             )
         )
     session.commit()
@@ -62,6 +64,8 @@ def test_seeded_import_prunes_stale_teams_and_syncs_event_team_count(client, ses
     ).all()
     assert len(teams_after) == 12
     assert [t.seed for t in teams_after] == list(range(1, 13))
+    assert all(t.notes is None for t in teams_after)
+    assert all(t.is_defaulted is False for t in teams_after)
 
     session.expire_all()
     event_after = session.get(Event, event.id)

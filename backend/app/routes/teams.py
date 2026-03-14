@@ -749,6 +749,10 @@ def import_seeded_teams(
             existing.rating = row["rating"]
             existing.avoid_group = row["avoid_group"]
             existing.display_name = row["display_name"]
+            # Seeded import is authoritative roster data for the event;
+            # clear operational carry-over fields from previous tournaments.
+            existing.notes = None
+            existing.is_defaulted = False
             if row.get("player1_cellphone"):
                 existing.player1_cellphone = row["player1_cellphone"]
             if row.get("player1_email"):
