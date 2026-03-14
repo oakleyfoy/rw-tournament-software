@@ -305,6 +305,66 @@ def test_generate_slots_only_returns_400_for_missing_day_config(
     assert "No active tournament days found" in resp.json()["detail"]
 
 
+def test_generate_slots_only_skips_overlapping_window_duplicates(
+    client: TestClient,
+    session: Session,
+):
+    """Overlapping windows should not raise unique-constraint errors."""
+    tournament = Tournament(
+        name="Overlapping Windows",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 1),
+        use_time_windows=True,
+        court_names=["1"],
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    session.add_all(
+        [
+            TournamentTimeWindow(
+                tournament_id=tournament.id,
+                day_date=date(2026, 6, 1),
+                start_time=time(9, 0),
+                end_time=time(12, 0),
+                courts_available=1,
+                block_minutes=60,
+                is_active=True,
+            ),
+            TournamentTimeWindow(
+                tournament_id=tournament.id,
+                day_date=date(2026, 6, 1),
+                start_time=time(10, 0),
+                end_time=time(13, 0),
+                courts_available=1,
+                block_minutes=60,
+                is_active=True,
+            ),
+        ]
+    )
+    session.commit()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Unique starts should be 09:00, 10:00, 11:00, 12:00 => 4 slots.
+    assert body["slots_generated"] == 4
+    slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
+    ).all()
+    assert len(slots) == 4
+
+
 def test_assign_wf_r1_only(client: TestClient, session: Session, wf_pools_setup):
     """Generate slots + matches, assign scope WF_R1, assert only WF round 1 get slot_id."""
     tid = wf_pools_setup["tournament_id"]

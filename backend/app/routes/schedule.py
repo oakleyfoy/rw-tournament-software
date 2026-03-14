@@ -876,8 +876,17 @@ def generate_slots(
                     match.status = "unscheduled"
                 session.delete(assignment)
             session.delete(slot)
+        # Ensure subsequent duplicate checks see the post-wipe state.
+        session.flush()
 
     slots_created = 0
+    skipped_duplicates = 0
+    existing_slot_keys = {
+        (slot.day_date, slot.start_time, slot.court_number)
+        for slot in session.exec(
+            select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
+        ).all()
+    }
 
     print(f"[DEBUG] Generating slots with source={source}, version_id={version.id}")
 
@@ -946,6 +955,13 @@ def generate_slots(
                     slot_end_hour = slot_end_minutes // 60
                     slot_end_min = slot_end_minutes % 60
                     slot_end_time = time(slot_end_hour, slot_end_min)
+
+                    slot_key = (window.day_date, slot_start_time, court_num)
+                    if slot_key in existing_slot_keys:
+                        skipped_duplicates += 1
+                        current_minutes += window.block_minutes
+                        continue
+                    existing_slot_keys.add(slot_key)
 
                     court_label = court_label_for_index(tournament.court_names, court_num)
                     slot = ScheduleSlot(
@@ -1030,6 +1046,13 @@ def generate_slots(
                     slot_end_min = slot_end_minutes % 60
                     slot_end_time = time(slot_end_hour, slot_end_min)
 
+                    slot_key = (day.date, slot_start_time, court_num)
+                    if slot_key in existing_slot_keys:
+                        skipped_duplicates += 1
+                        current_minutes += block_mins
+                        continue
+                    existing_slot_keys.add(slot_key)
+
                     court_label = court_label_for_index(tournament.court_names, court_num)
                     slot = ScheduleSlot(
                         tournament_id=tournament_id,
@@ -1064,6 +1087,8 @@ def generate_slots(
         session.commit()
 
     print(f"[DEBUG] Total slots created: {slots_created}")
+    if skipped_duplicates:
+        print(f"[DEBUG] Skipped duplicate slots: {skipped_duplicates}")
 
     # Verify slots were created
     created_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
@@ -1074,7 +1099,11 @@ def generate_slots(
             f"[DEBUG] Sample slot: day={sample.day_date}, time={sample.start_time}-{sample.end_time}, court={sample.court_number}"
         )
 
-    return {"schedule_version_id": version.id, "slots_created": slots_created}
+    return {
+        "schedule_version_id": version.id,
+        "slots_created": slots_created,
+        "duplicates_skipped": skipped_duplicates,
+    }
 
 
 @router.get("/tournaments/{tournament_id}/schedule/slots", response_model=List[SlotResponse])
