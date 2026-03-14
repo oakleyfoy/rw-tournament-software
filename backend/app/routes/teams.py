@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
+from app.models.schedule_version import ScheduleVersion
 from app.models.sms_log import SmsLog
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
@@ -632,60 +633,96 @@ def import_seeded_teams(
     incoming_seeds = {row["seed"] for row in parsed}
 
     # Treat seeded import as the authoritative roster for this event:
-    # remove stale teams not present in the incoming seed list when safe.
+    # remove stale teams not present in the incoming seed list.
     stale_team_ids: List[int] = []
     for team in existing_teams:
         if team.seed in incoming_seeds:
-            continue
-        match_ref = session.exec(
-            select(Match.id).where(
-                Match.event_id == event_id,
-                or_(
-                    Match.team_a_id == team.id,
-                    Match.team_b_id == team.id,
-                    Match.winner_team_id == team.id,
-                ),
-            )
-        ).first()
-        player_link_ref = session.exec(
-            select(TeamPlayer.id).where(TeamPlayer.team_id == team.id)
-        ).first()
-        sms_ref = session.exec(
-            select(SmsLog.id).where(SmsLog.team_id == team.id)
-        ).first()
-        if match_ref or player_link_ref or sms_ref:
-            warnings.append(
-                f"Skipped removing stale team seed={team.seed or '—'} "
-                f"('{team.display_name or team.name}') because it has dependent records."
-            )
             continue
         stale_team_ids.append(team.id)
 
     if stale_team_ids:
         stale_set = set(stale_team_ids)
-        stale_edges = session.exec(
-            select(TeamAvoidEdge).where(
-                TeamAvoidEdge.event_id == event_id,
+        blocked_stale_ids: set[int] = set()
+
+        # If stale teams are referenced by matches:
+        # - in finalized versions (or FINAL runtime rows), keep and warn;
+        # - in drafts/non-final rows, clear references so team rows can be removed.
+        stale_matches = session.exec(
+            select(Match, ScheduleVersion.status)
+            .join(ScheduleVersion, ScheduleVersion.id == Match.schedule_version_id)
+            .where(
+                Match.event_id == event_id,
                 or_(
-                    TeamAvoidEdge.team_id_a.in_(stale_team_ids),  # type: ignore[arg-type]
-                    TeamAvoidEdge.team_id_b.in_(stale_team_ids),  # type: ignore[arg-type]
+                    Match.team_a_id.in_(stale_team_ids),  # type: ignore[arg-type]
+                    Match.team_b_id.in_(stale_team_ids),  # type: ignore[arg-type]
+                    Match.winner_team_id.in_(stale_team_ids),  # type: ignore[arg-type]
                 ),
             )
         ).all()
-        stale_player_links = session.exec(
-            select(TeamPlayer).where(TeamPlayer.team_id.in_(stale_team_ids))  # type: ignore[arg-type]
-        ).all()
-        for edge in stale_edges:
-            session.delete(edge)
-        for link in stale_player_links:
-            session.delete(link)
-        for team in existing_teams:
-            if team.id in stale_set:
-                session.delete(team)
-        session.flush()
-        warnings.append(
-            f"Removed {len(stale_team_ids)} stale team(s) not present in imported seeds."
-        )
+        for match, version_status in stale_matches:
+            referenced_ids = {
+                tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id)
+                if tid in stale_set
+            }
+            if not referenced_ids:
+                continue
+            is_final_match = (match.runtime_status or "").upper() == "FINAL"
+            if (version_status or "").lower() == "final" or is_final_match:
+                blocked_stale_ids.update(referenced_ids)
+                continue
+
+            if match.team_a_id in referenced_ids:
+                match.team_a_id = None
+            if match.team_b_id in referenced_ids:
+                match.team_b_id = None
+            if match.winner_team_id in referenced_ids:
+                match.winner_team_id = None
+            session.add(match)
+
+        removable_stale_ids = [tid for tid in stale_team_ids if tid not in blocked_stale_ids]
+        removable_set = set(removable_stale_ids)
+
+        if blocked_stale_ids:
+            blocked_teams = session.exec(
+                select(Team).where(Team.id.in_(list(blocked_stale_ids)))  # type: ignore[arg-type]
+            ).all()
+            for team in blocked_teams:
+                warnings.append(
+                    f"Skipped removing stale team seed={team.seed or '—'} "
+                    f"('{team.display_name or team.name}') because it appears in finalized matches."
+                )
+
+        if removable_stale_ids:
+            stale_sms_logs = session.exec(
+                select(SmsLog).where(SmsLog.team_id.in_(removable_stale_ids))  # type: ignore[arg-type]
+            ).all()
+            for row in stale_sms_logs:
+                row.team_id = None
+                session.add(row)
+
+            stale_edges = session.exec(
+                select(TeamAvoidEdge).where(
+                    TeamAvoidEdge.event_id == event_id,
+                    or_(
+                        TeamAvoidEdge.team_id_a.in_(removable_stale_ids),  # type: ignore[arg-type]
+                        TeamAvoidEdge.team_id_b.in_(removable_stale_ids),  # type: ignore[arg-type]
+                    ),
+                )
+            ).all()
+            stale_player_links = session.exec(
+                select(TeamPlayer).where(TeamPlayer.team_id.in_(removable_stale_ids))  # type: ignore[arg-type]
+            ).all()
+            for edge in stale_edges:
+                session.delete(edge)
+            for link in stale_player_links:
+                session.delete(link)
+            for team in existing_teams:
+                if team.id in removable_set:
+                    session.delete(team)
+            session.flush()
+            warnings.append(
+                f"Removed {len(removable_stale_ids)} stale team(s) not present in imported seeds."
+            )
 
     # Refresh existing-team map after stale cleanup.
     existing_teams = session.exec(
