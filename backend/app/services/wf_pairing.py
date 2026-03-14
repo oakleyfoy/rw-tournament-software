@@ -53,8 +53,16 @@ def bracket_fold_positions(n: int) -> List[int]:
       8-entry  -> [1, 8, 4, 5, ...]   -> (1v8), (4v5), ...
       16-entry -> [1, 16, 8, 9, ...]   -> (1v16), (8v9), ...
     """
+    if n <= 0:
+        return []
+    if n == 1:
+        return [1]
     if n == 2:
         return [1, 2]
+    # Bracket fold is defined for powers of two. For non-powers (e.g., 6 top seeds
+    # in a 12-team WF round), keep deterministic seed order to avoid recursion.
+    if n & (n - 1):
+        return list(range(1, n + 1))
 
     half = bracket_fold_positions(n // 2)
 

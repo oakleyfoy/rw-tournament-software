@@ -56,6 +56,10 @@ class TestBracketFoldPositions:
             positions = bracket_fold_positions(n)
             assert sorted(positions) == list(range(1, n + 1))
 
+    def test_non_power_of_two_falls_back_to_seed_order(self):
+        # Used by 12-team WF flows where top-half size is 6.
+        assert bracket_fold_positions(6) == [1, 2, 3, 4, 5, 6]
+
 
 class TestHalfSplitMatchups:
     """Matchups must be seed i vs seed (i + n/2), ordered by bracket fold."""
@@ -89,6 +93,12 @@ class TestHalfSplitMatchups:
             result = build_wf_r1_pairings(teams, n)
             all_seeds = [s for p in result.pairs for s in p]
             assert sorted(all_seeds) == list(range(1, n + 1))
+
+    def test_12_teams_pairs(self):
+        teams = _make_teams(12)
+        result = build_wf_r1_pairings(teams, 12)
+        expected = [(1, 7), (2, 8), (3, 9), (4, 10), (5, 11), (6, 12)]
+        assert result.pairs == expected
 
 
 class TestNoConflicts:
