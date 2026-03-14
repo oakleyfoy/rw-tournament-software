@@ -3,6 +3,7 @@ Public read-only API endpoints.
 
 No auth required. Used by public-facing bracket/waterfall pages.
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -18,6 +19,7 @@ from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
+from app.services.draw_plan_rules import pool_config
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +341,14 @@ def _r2_dest_lines(event_name: str, r2_role: str, r2_seq: int, r2_winner_count: 
     )
 
 
+def _rr_pool_dest_lines(event_name: str, pool_count: int, teams_per_pool: int) -> str:
+    """Destination label for WF_TO_POOLS dynamic events."""
+    return (
+        f"Advances to {event_name} RR pool seeding\n"
+        f"({pool_count} pools × {teams_per_pool} teams)"
+    )
+
+
 # ── Public draws list ────────────────────────────────────────────────────
 
 @router.get(
@@ -588,16 +598,24 @@ def public_waterfall(
 
         winner_dest = None
         loser_dest = None
-        if winner_match:
-            winner_dest = _r2_dest_lines(
-                event.name, "WINNER", winner_match.sequence_in_round,
-                r2_winner_count,
-            )
-        if loser_match:
-            loser_dest = _r2_dest_lines(
-                event.name, "LOSER", loser_match.sequence_in_round,
-                r2_winner_count,
-            )
+        if div_type == "roundrobin":
+            pools_count, teams_per_pool = pool_config(event.team_count or 0)
+            rr_dest = _rr_pool_dest_lines(event.name, pools_count, teams_per_pool)
+            if winner_match:
+                winner_dest = rr_dest
+            if loser_match:
+                loser_dest = rr_dest
+        else:
+            if winner_match:
+                winner_dest = _r2_dest_lines(
+                    event.name, "WINNER", winner_match.sequence_in_round,
+                    r2_winner_count,
+                )
+            if loser_match:
+                loser_dest = _r2_dest_lines(
+                    event.name, "LOSER", loser_match.sequence_in_round,
+                    r2_winner_count,
+                )
 
         r2_winner_name = None
         r2_loser_name = None
