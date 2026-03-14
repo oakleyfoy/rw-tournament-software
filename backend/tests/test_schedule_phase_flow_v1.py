@@ -276,6 +276,35 @@ def test_generate_slots_only_idempotent(client: TestClient, session: Session, wf
     assert d2["slots_generated"] == d1["slots_generated"]
 
 
+def test_generate_slots_only_returns_400_for_missing_day_config(
+    client: TestClient,
+    session: Session,
+):
+    """Missing day/time configuration should surface as 400 (not generic 500)."""
+    tournament = Tournament(
+        name="Slots Error Surface",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 2),
+        use_time_windows=False,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate"
+    )
+    assert resp.status_code == 400
+    assert "No active tournament days found" in resp.json()["detail"]
+
+
 def test_assign_wf_r1_only(client: TestClient, session: Session, wf_pools_setup):
     """Generate slots + matches, assign scope WF_R1, assert only WF round 1 get slot_id."""
     tid = wf_pools_setup["tournament_id"]

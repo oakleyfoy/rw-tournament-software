@@ -2873,9 +2873,12 @@ def generate_slots_only(
             slots_generated=result.get("slots_created", 0),
             already_generated=False,
         )
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
         session.rollback()
-        raise RuntimeError(f"Slot generation failed: {e}") from e
+        raise HTTPException(status_code=500, detail=f"Slot generation failed: {e}") from e
 
 
 @router.post(
@@ -2909,9 +2912,12 @@ def regenerate_slots(
             slots_generated=result.get("slots_created", 0),
             already_generated=False,
         )
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
         session.rollback()
-        raise RuntimeError(f"Slot regeneration failed: {e}") from e
+        raise HTTPException(status_code=500, detail=f"Slot regeneration failed: {e}") from e
 
 
 class AssignScopeRequest(BaseModel):
