@@ -1335,6 +1335,7 @@ def generate_matches(
                     )
                 ).one()
             )
+            over_generated = existing_before > expected_count
 
             # Check if event needs rebuild due to old placeholder format
             # Sample bracket matches to detect old format placeholders
@@ -1372,8 +1373,10 @@ def generate_matches(
                             )
                             break
 
-            # Event-scoped idempotency: skip if already complete AND placeholders are current
-            if existing_before >= expected_count and not needs_rebuild:
+            # Event-scoped idempotency: skip only when exact inventory already exists and
+            # placeholders are current. If inventory is over-generated (e.g., team_count
+            # changed from 16 to 12), force a rebuild for this event.
+            if existing_before == expected_count and not needs_rebuild:
                 per_event_breakdown[event.id] = {"event_name": event.name, "matches": 0}
                 events_expected.append({
                     "event_id": event.id,
@@ -1386,11 +1389,11 @@ def generate_matches(
                 })
                 continue
             
-            # If needs rebuild, wipe existing matches for this event
-            if needs_rebuild:
+            # If placeholders are stale OR inventory is over-generated, rebuild this event.
+            if needs_rebuild or over_generated:
                 logger.info(
                     f"Event {event.id} ({event.name}): Wiping {existing_before} existing matches "
-                    f"due to old placeholder format"
+                    f"for rebuild (needs_rebuild={needs_rebuild}, over_generated={over_generated})"
                 )
                 # Get match codes before wiping (for existing_codes cleanup)
                 wiped_codes = set(
@@ -1406,14 +1409,20 @@ def generate_matches(
                 existing_before = 0
                 # Remove wiped match codes from existing_codes set
                 existing_codes.difference_update(wiped_codes)
+                if needs_rebuild:
+                    decision = "rebuild_placeholders"
+                    reason = "old placeholder format detected"
+                else:
+                    decision = "rebuild_over_generated"
+                    reason = "existing inventory exceeds expected"
                 events_expected.append({
                     "event_id": event.id,
                     "event_name": event.name,
                     "expected": expected_count,
                     "existing_before": len(wiped_codes),
                     "generated_added": 0,
-                    "decision": "rebuild_placeholders",
-                    "reason": "old placeholder format detected",
+                    "decision": decision,
+                    "reason": reason,
                 })
 
             family = resolve_event_family(spec)

@@ -235,6 +235,73 @@ def test_generate_matches_fills_missing_event_mixed_has_16_womens_missing(sessio
     assert total == 46, f"Total should be 46, got {total}"
 
 
+def test_generate_matches_rebuilds_when_existing_over_expected_after_team_count_drop(
+    session: Session, client: TestClient
+):
+    """If existing inventory exceeds expected (e.g., 16->12 teams), rebuild that event."""
+    t = Tournament(
+        name="Team Count Drop Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 3),
+        court_names=["Court 1"],
+        use_time_windows=True,
+    )
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+
+    version = ScheduleVersion(tournament_id=t.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    womens = Event(
+        tournament_id=t.id,
+        name="Women's",
+        category="womens",
+        team_count=16,
+        draw_plan_json=json.dumps({"template_type": "WF_TO_POOLS_DYNAMIC", "wf_rounds": 2, "guarantee": 4}),
+        draw_status="final",
+        wf_block_minutes=60,
+        standard_block_minutes=120,
+    )
+    session.add(womens)
+    session.commit()
+    session.refresh(womens)
+
+    for i in range(1, 17):
+        session.add(Team(event_id=womens.id, name=f"Women {i}", seed=i, rating=1000.0))
+    session.commit()
+
+    first = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
+    assert first.status_code == 200, first.text
+    assert first.json()["matches_generated"] == 40
+
+    # Simulate roster correction from 16 teams to 12 teams.
+    womens.team_count = 12
+    session.add(womens)
+    for team in session.exec(select(Team).where(Team.event_id == womens.id, Team.seed > 12)).all():
+        session.delete(team)
+    session.commit()
+
+    second = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["matches_generated"] == 30
+    assert any(
+        ev["event_id"] == womens.id and ev.get("decision") == "rebuild_over_generated"
+        for ev in second_body.get("events_expected", [])
+    )
+
+    event_matches = session.exec(
+        select(Match).where(Match.event_id == womens.id, Match.schedule_version_id == version.id)
+    ).all()
+    assert len(event_matches) == 30
+    assert all("POOLD" not in (m.match_code or "") for m in event_matches)
+
+
 def test_generate_matches_only_wipe_existing(client: TestClient, session: Session, wf_pools_setup):
     """With wipe_existing=True, matches are wiped and regenerated."""
     tid = wf_pools_setup["tournament_id"]
