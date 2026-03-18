@@ -458,7 +458,17 @@ def _normalize_allowlist_text(raw: Optional[str]) -> str:
 def _allowlist_set(raw: Optional[str]) -> set[str]:
     if not raw:
         return set()
-    return {p.strip() for p in raw.split(",") if p.strip()}
+    token_source = re.sub(r"[;\n]+", ",", raw)
+    tokens = [t.strip() for t in token_source.split(",") if t.strip()]
+    normalized: set[str] = set()
+    for token in tokens:
+        try:
+            normalized.add(format_e164(token))
+        except ValueError:
+            # Backward compatibility for legacy rows that may already be
+            # persisted in non-E.164 form.
+            normalized.add(token)
+    return normalized
 
 
 def _status_callback_base_url() -> Optional[str]:
@@ -1153,6 +1163,28 @@ def _send_to_phone_targets(
             "SMS status callback URL not configured; outbound statuses may remain queued. "
             "Set SMS_STATUS_CALLBACK_BASE_URL to enable delivery updates."
         )
+
+    # For manual tournament-blast smoke tests, also include test allowlist
+    # phones even if they are not currently attached to tournament teams.
+    # This keeps test mode useful for admin verification.
+    if (
+        test_mode_enabled
+        and trigger == "manual"
+        and message_type == "tournament_blast"
+        and test_allowlist
+    ):
+        existing_phones = {str(t.get("phone", "")).strip() for t in targets}
+        for phone in sorted(test_allowlist):
+            if phone not in existing_phones:
+                targets.append(
+                    {
+                        "phone": phone,
+                        "team_id": None,
+                        "team_name": "Test Allowlist",
+                        "player_id": None,
+                        "player_name": "Test Allowlist",
+                    }
+                )
 
     results: List[SmsSendResult] = []
     sent_count = 0
