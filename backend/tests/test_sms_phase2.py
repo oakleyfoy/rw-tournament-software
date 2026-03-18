@@ -745,6 +745,41 @@ def test_preview_blast(client, session, setup_tournament_with_teams):
     assert len(logs) == 0
 
 
+def test_html_anchor_message_converts_to_clickable_url(client, session, setup_tournament_with_teams):
+    """HTML anchor tags should be converted to SMS-friendly clickable links."""
+    tournament, _, teams = setup_tournament_with_teams
+    team = teams[0]
+    raw_message = (
+        'Pick your clinic time and see all information online at '
+        '<a href="https://wartournaments.com/tournament/2026-las-vegas-nv/">'
+        "Las Vegas Tournament</a>"
+    )
+
+    send_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{team.id}",
+        json={"message": raw_message},
+    )
+    assert send_resp.status_code == 200
+    data = send_resp.json()
+    assert data["sent"] == 2
+
+    logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == tournament.id,
+            SmsLog.message_type == "team_direct",
+        )
+    ).all()
+    assert len(logs) == 2
+    expected_fragment = (
+        "Las Vegas Tournament: "
+        "https://wartournaments.com/tournament/2026-las-vegas-nv/"
+    )
+    for entry in logs:
+        body = entry.message_body or ""
+        assert "<a " not in body.lower()
+        assert expected_fragment in body
+
+
 # ---------------------------------------------------------------------------
 # SMS Log
 # ---------------------------------------------------------------------------

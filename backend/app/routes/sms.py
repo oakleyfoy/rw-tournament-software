@@ -11,6 +11,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from typing import List, Optional
 from urllib.parse import parse_qsl
 
@@ -469,6 +470,45 @@ def _allowlist_set(raw: Optional[str]) -> set[str]:
             # persisted in non-E.164 form.
             normalized.add(token)
     return normalized
+
+
+_HTML_ANCHOR_RE = re.compile(
+    r"(?is)<a\b[^>]*\bhref\s*=\s*(['\"])(.*?)\1[^>]*>(.*?)</a>"
+)
+_HTML_BR_RE = re.compile(r"(?is)<br\s*/?>")
+_HTML_P_CLOSE_RE = re.compile(r"(?is)</p\s*>")
+_HTML_P_OPEN_RE = re.compile(r"(?is)<p\b[^>]*>")
+_HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
+
+
+def _normalize_sms_message(message: str) -> str:
+    """Convert basic HTML content to SMS-friendly plain text."""
+    if not message:
+        return ""
+
+    def _anchor_to_text(match: re.Match[str]) -> str:
+        href = unescape((match.group(2) or "").strip())
+        label_raw = match.group(3) or ""
+        label = unescape(_HTML_TAG_RE.sub("", label_raw)).strip()
+        if not href:
+            return label
+        if not label:
+            return href
+        if label.lower() == href.lower():
+            return href
+        return f"{label}: {href}"
+
+    normalized = _HTML_ANCHOR_RE.sub(_anchor_to_text, message)
+    normalized = _HTML_BR_RE.sub("\n", normalized)
+    normalized = _HTML_P_CLOSE_RE.sub("\n", normalized)
+    normalized = _HTML_P_OPEN_RE.sub("", normalized)
+    normalized = _HTML_TAG_RE.sub("", normalized)
+    normalized = unescape(normalized)
+    normalized = re.sub(r"[ \t]+\n", "\n", normalized)
+    normalized = re.sub(r"\n[ \t]+", "\n", normalized)
+    normalized = re.sub(r"[ \t]{2,}", " ", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
 
 
 def _status_callback_base_url() -> Optional[str]:
@@ -1148,6 +1188,7 @@ def _send_to_phone_targets(
 ) -> SmsSendResponse:
     """Send to explicit phone targets with consent + dedupe protections."""
     twilio = get_twilio_service()
+    normalized_message = _normalize_sms_message(message)
     settings = session.exec(
         select(TournamentSmsSettings).where(
             TournamentSmsSettings.tournament_id == tournament_id
@@ -1234,7 +1275,7 @@ def _send_to_phone_targets(
                     tournament_id=tournament_id,
                     team_id=team_id,
                     phone_number=phone,
-                    message_body=message,
+                    message_body=normalized_message,
                     message_type=message_type,
                     twilio_sid=None,
                     status="blocked_test_mode",
@@ -1270,7 +1311,7 @@ def _send_to_phone_targets(
                     tournament_id=tournament_id,
                     team_id=team_id,
                     phone_number=phone,
-                    message_body=message,
+                    message_body=normalized_message,
                     message_type=message_type,
                     twilio_sid=None,
                     status="blocked_consent",
@@ -1295,7 +1336,7 @@ def _send_to_phone_targets(
 
         send_result = twilio.send_sms(
             phone,
-            message,
+            normalized_message,
             status_callback_url=status_callback_url,
         )
         status = send_result.get("status", "failed")
@@ -1309,7 +1350,7 @@ def _send_to_phone_targets(
                 tournament_id=tournament_id,
                 team_id=team_id,
                 phone_number=phone,
-                message_body=message,
+                message_body=normalized_message,
                 message_type=message_type,
                 twilio_sid=send_result.get("sid"),
                 status=status,
@@ -1467,6 +1508,7 @@ def _preview_for_teams(
     message: str,
 ) -> SmsPreviewResponse:
     player_contacts_only = _player_contacts_only_enabled(session, tournament_id)
+    normalized_message = _normalize_sms_message(message)
     recipients = []
     teams_without = 0
     total_messages = 0
@@ -1487,7 +1529,7 @@ def _preview_for_teams(
                 team_id=team.id,
                 team_name=team.name,
                 phones=phones,
-                message=message,
+                message=normalized_message,
             )
         )
 
