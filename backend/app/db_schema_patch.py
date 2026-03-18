@@ -21,6 +21,7 @@ REQUIRED_EVENT_COLUMNS: List[Tuple[str, str, str]] = [
 REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("use_time_windows", "INTEGER", "BOOLEAN"),
     ("public_schedule_version_id", "INTEGER", "INTEGER"),
+    ("is_archived", "INTEGER", "BOOLEAN"),
 ]
 
 # Columns we must ensure exist in the "team" table.
