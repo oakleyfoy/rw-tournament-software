@@ -1064,6 +1064,55 @@ def test_test_mode_blocks_non_allowlisted_numbers(client, session, setup_tournam
     assert allowed[0]["phone"] == "+19013593035"
 
 
+def test_test_mode_blast_includes_allowlist_number_not_on_any_team(
+    client, session, setup_tournament_with_teams
+):
+    """Manual blast in test mode should still reach explicit test phones."""
+    tournament, _, _ = setup_tournament_with_teams
+
+    set_resp = client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={
+            "test_mode": True,
+            "test_allowlist": "9013593035,9703092022",
+        },
+    )
+    assert set_resp.status_code == 200
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": "Test-mode blast to allowlist"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] == 2
+    sent_phones = {r["phone"] for r in data["results"] if r["status"] != "blocked_test_mode"}
+    assert "+19013593035" in sent_phones
+    assert "+19703092022" in sent_phones
+
+
+def test_test_mode_legacy_allowlist_format_still_matches(client, session, setup_tournament_with_teams):
+    """Legacy allowlist separators/non-E164 values should normalize on read."""
+    tournament, _, _ = setup_tournament_with_teams
+    settings = TournamentSmsSettings(
+        tournament_id=tournament.id,
+        test_mode=True,
+        test_allowlist="9013593035;\n9703092022",
+    )
+    session.add(settings)
+    session.commit()
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": "Legacy allowlist parse check"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    sent_phones = {r["phone"] for r in data["results"] if r["status"] != "blocked_test_mode"}
+    assert "+19013593035" in sent_phones
+    assert "+19703092022" in sent_phones
+
+
 # ---------------------------------------------------------------------------
 # Templates
 # ---------------------------------------------------------------------------
