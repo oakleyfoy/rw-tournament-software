@@ -8,6 +8,9 @@ Use this repository-level script to bootstrap dependencies for cloud/local agent
 scripts/prepare-agent-env.sh
 ```
 
+By default this installs backend Python dependencies from
+`backend/requirements.txt` (including `pytest`) for fast startup.
+
 ## Modes
 
 ```bash
@@ -16,6 +19,9 @@ scripts/prepare-agent-env.sh --backend-only
 
 # Frontend only (Node dependencies)
 scripts/prepare-agent-env.sh --frontend-only
+
+# Full setup (backend + frontend)
+scripts/prepare-agent-env.sh --full
 ```
 
 ## Validation commands
@@ -29,4 +35,4 @@ cd frontend && npm run build
 
 Use this prompt in the environment setup workflow:
 
-> Configure the cloud agent environment for this repository so startup runs `scripts/prepare-agent-env.sh --backend-only` by default, with an option to run full setup for frontend work. Ensure Python 3.12 and Node/npm are available, and verify backend tests run with `python3 -m pytest` from `/workspace/backend`.
+> Configure the cloud agent environment for this repository so startup runs `scripts/prepare-agent-env.sh` (backend-only fast path) by default, with `scripts/prepare-agent-env.sh --full` available for frontend work. Ensure Python 3.12 and Node/npm are available, and verify backend tests run with `python3 -m pytest` from `/workspace/backend`.
