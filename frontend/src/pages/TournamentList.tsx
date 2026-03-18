@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   listTournaments,
   getEvents,
   duplicateTournament,
   deleteTournament,
+  updateTournament,
   downloadTournamentPrintPacket,
   logoutAuth,
   clearAuthToken,
@@ -20,8 +21,9 @@ function TournamentList() {
   const [eventCounts, setEventCounts] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [processing, setProcessing] = useState<Record<number, 'duplicate' | 'delete' | null>>({})
+  const [processing, setProcessing] = useState<Record<number, 'duplicate' | 'delete' | 'archive' | 'restore' | null>>({})
   const [printing, setPrinting] = useState<Record<string, boolean>>({})
+  const [pastExpanded, setPastExpanded] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -34,7 +36,7 @@ function TournamentList() {
       setError(null)
       const data = await listTournaments()
       setTournaments(data)
-      
+
       // Load event counts for each tournament
       const counts: Record<number, number> = {}
       for (const tournament of data) {
@@ -55,17 +57,12 @@ function TournamentList() {
   
   const handleDuplicate = async (tournament: Tournament, e: React.MouseEvent) => {
     e.stopPropagation()
-    e.preventDefault()
-    console.log('Duplicate clicked for tournament:', tournament.id)
     try {
       setProcessing(prev => ({ ...prev, [tournament.id]: 'duplicate' }))
-      console.log('Calling duplicateTournament API...')
       const duplicated = await duplicateTournament(tournament.id)
-      console.log('Duplicate successful:', duplicated)
       showToast(`Tournament "${duplicated.name}" created`, 'success')
       await loadTournaments()
     } catch (err) {
-      console.error('Duplicate error:', err)
       showToast(err instanceof Error ? err.message : 'Failed to duplicate tournament', 'error')
     } finally {
       setProcessing(prev => ({ ...prev, [tournament.id]: null }))
@@ -74,40 +71,57 @@ function TournamentList() {
   
   const handleDelete = async (tournament: Tournament, e: React.MouseEvent) => {
     e.stopPropagation()
-    // Don't prevent default - let the button work normally
-    console.log('Delete clicked for tournament:', tournament.id)
-    
     const eventCount = eventCounts[tournament.id] || 0
-    
-    // Check if already processing
     if (processing[tournament.id]) {
-      console.log('Already processing, ignoring click')
       return
     }
-    
-    console.log('Showing confirmation dialog...')
-    // Show different warning if tournament has events
+
     const message = eventCount > 0
       ? `Are you sure you want to delete "${tournament.name}"?\n\nThis will permanently delete:\n- The tournament\n- ${eventCount} event(s) and all their data\n- All schedule data\n- All related information\n\nThis action cannot be undone!`
       : `Are you sure you want to delete "${tournament.name}"? This action cannot be undone.`
-    
+
     const confirmed = await confirmDialog(message)
-    console.log('Confirmation result:', confirmed)
-    
+
     if (confirmed) {
       try {
         setProcessing(prev => ({ ...prev, [tournament.id]: 'delete' }))
-        console.log('Calling deleteTournament API for tournament:', tournament.id)
         await deleteTournament(tournament.id)
-        console.log('Delete successful')
         showToast('Tournament deleted successfully', 'success')
         await loadTournaments()
       } catch (err) {
-        console.error('Delete error:', err)
         showToast(err instanceof Error ? err.message : 'Failed to delete tournament', 'error')
       } finally {
         setProcessing(prev => ({ ...prev, [tournament.id]: null }))
       }
+    }
+  }
+
+  const handleArchiveToggle = async (
+    tournament: Tournament,
+    toArchived: boolean,
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation()
+    const actionKey: 'archive' | 'restore' = toArchived ? 'archive' : 'restore'
+    try {
+      setProcessing(prev => ({ ...prev, [tournament.id]: actionKey }))
+      const question = toArchived
+        ? `Move "${tournament.name}" to Past Events?`
+        : `Restore "${tournament.name}" to Active Events?`
+      const confirmed = await confirmDialog(question)
+      if (!confirmed) return
+      await updateTournament(tournament.id, { is_archived: toArchived })
+      showToast(
+        toArchived
+          ? `"${tournament.name}" moved to Past Events`
+          : `"${tournament.name}" restored to Active Events`,
+        'success'
+      )
+      await loadTournaments()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update event folder', 'error')
+    } finally {
+      setProcessing(prev => ({ ...prev, [tournament.id]: null }))
     }
   }
 
@@ -181,6 +195,154 @@ function TournamentList() {
     }
   }
 
+  const sortedTournaments = useMemo(() => {
+    return [...tournaments].sort((a, b) => {
+      const aDate = new Date(a.start_date).getTime()
+      const bDate = new Date(b.start_date).getTime()
+      return bDate - aDate
+    })
+  }, [tournaments])
+
+  const activeTournaments = useMemo(
+    () => sortedTournaments.filter(t => !t.is_archived),
+    [sortedTournaments]
+  )
+
+  const archivedTournaments = useMemo(
+    () => sortedTournaments.filter(t => t.is_archived),
+    [sortedTournaments]
+  )
+
+  const renderTournamentTable = (rows: Tournament[], pastSection: boolean) => (
+    <div className="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Location</th>
+            <th>Date Range</th>
+            <th>Timezone</th>
+            <th style={{ width: '460px' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((tournament) => {
+            const eventCount = eventCounts[tournament.id] || 0
+            const isProcessing = processing[tournament.id]
+            return (
+              <tr
+                key={tournament.id}
+                className="clickable"
+                onClick={() => handleRowClick(tournament.id)}
+              >
+                <td>{tournament.name}</td>
+                <td>{tournament.location}</td>
+                <td>{formatDateRange(tournament.start_date, tournament.end_date)}</td>
+                <td>{tournament.timezone}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleRowClick(tournament.id)
+                      }}
+                      disabled={!!isProcessing}
+                      title="Edit tournament"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{
+                        fontSize: '12px',
+                        padding: '6px 12px',
+                        backgroundColor: '#00796b',
+                        borderColor: '#00796b',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigate(`/desk/t/${tournament.id}`)
+                      }}
+                      disabled={!!isProcessing}
+                      title="Open tournament desk"
+                    >
+                      Desk
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                      onClick={(e) => handleDuplicate(tournament, e)}
+                      disabled={!!isProcessing}
+                      title="Duplicate tournament"
+                    >
+                      {isProcessing === 'duplicate' ? '...' : 'Duplicate'}
+                    </button>
+                    <button
+                      type="button"
+                      className={pastSection ? 'btn btn-primary' : 'btn btn-secondary'}
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                      onClick={(e) => handleArchiveToggle(tournament, !pastSection, e)}
+                      disabled={!!isProcessing}
+                      title={pastSection ? 'Restore to active events' : 'Move to past events'}
+                    >
+                      {isProcessing === 'archive' || isProcessing === 'restore'
+                        ? '...'
+                        : pastSection
+                          ? 'Restore'
+                          : 'Move to Past'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      style={{
+                        fontSize: '12px',
+                        padding: '6px 12px',
+                        cursor: !!isProcessing ? 'not-allowed' : 'pointer',
+                        opacity: !!isProcessing ? 0.6 : 1
+                      }}
+                      onClick={(e) => handleDelete(tournament, e)}
+                      disabled={!!isProcessing}
+                      title={eventCount > 0 ? `Delete tournament (will also delete ${eventCount} event${eventCount === 1 ? '' : 's'})` : 'Delete tournament'}
+                    >
+                      {isProcessing === 'delete' ? '...' : 'Delete'}
+                    </button>
+                    <div style={{ display: 'flex', gap: '8px', flexBasis: '100%' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '12px', padding: '6px 12px', whiteSpace: 'nowrap' }}
+                        onClick={(e) => handlePrintPacketDownload(tournament, 'womens', e)}
+                        disabled={!!isProcessing || !!printing[`${tournament.id}-womens`]}
+                        title="Download Women's 32x24 print PDF"
+                      >
+                        {printing[`${tournament.id}-womens`] ? '...' : "PDF Women's"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '12px', padding: '6px 12px', whiteSpace: 'nowrap' }}
+                        onClick={(e) => handlePrintPacketDownload(tournament, 'mixed', e)}
+                        disabled={!!isProcessing || !!printing[`${tournament.id}-mixed`]}
+                        title="Download Mixed 32x24 print PDF"
+                      >
+                        {printing[`${tournament.id}-mixed`] ? '...' : 'PDF Mixed'}
+                      </button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+
   if (loading) {
     return <div className="container"><div className="loading">Loading tournaments...</div></div>
   }
@@ -211,161 +373,44 @@ function TournamentList() {
         </div>
       </div>
 
-      {tournaments.length === 0 ? (
+      {activeTournaments.length === 0 && archivedTournaments.length === 0 ? (
         <div className="card">
           <p>No tournaments found. Create your first tournament to get started.</p>
         </div>
       ) : (
-        <div className="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Location</th>
-                <th>Date Range</th>
-                <th>Timezone</th>
-                <th style={{ width: '420px' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tournaments.map((tournament) => {
-                const eventCount = eventCounts[tournament.id] || 0
-                const canDelete = true  // Always allow deletion (backend will handle cascade)
-                const isProcessing = processing[tournament.id]
-                
-                // Debug logging
-                console.log('Rendering tournament:', tournament.id, tournament.name, { 
-                  eventCount, 
-                  canDelete, 
-                  isProcessing,
-                  buttonDisabled: !canDelete || !!isProcessing
-                })
-                
-                return (
-                  <tr
-                    key={tournament.id}
-                    className="clickable"
-                    onClick={() => handleRowClick(tournament.id)}
-                  >
-                    <td>{tournament.name}</td>
-                    <td>{tournament.location}</td>
-                    <td>{formatDateRange(tournament.start_date, tournament.end_date)}</td>
-                    <td>{tournament.timezone}</td>
-                    <td 
-                      onClick={(e) => {
-                        console.log('Actions cell clicked')
-                        e.stopPropagation()
-                      }}
-                      style={{ position: 'relative', zIndex: 10 }}
-                    >
-                      <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 11, flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12 }}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleRowClick(tournament.id)
-                          }}
-                          disabled={!!isProcessing}
-                          title="Edit tournament"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          style={{
-                            fontSize: '12px',
-                            padding: '6px 12px',
-                            position: 'relative',
-                            zIndex: 12,
-                            backgroundColor: '#00796b',
-                            borderColor: '#00796b',
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            navigate(`/desk/t/${tournament.id}`)
-                          }}
-                          disabled={!!isProcessing}
-                          title="Open tournament desk"
-                        >
-                          Desk
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12 }}
-                          onClick={(e) => {
-                            console.log('Duplicate button clicked!', tournament.id)
-                            e.stopPropagation()
-                            handleDuplicate(tournament, e)
-                          }}
-                          disabled={!!isProcessing}
-                          title="Duplicate tournament"
-                        >
-                          {isProcessing === 'duplicate' ? '...' : 'Duplicate'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger"
-                          style={{ 
-                            fontSize: '12px', 
-                            padding: '6px 12px', 
-                            position: 'relative', 
-                            zIndex: 12,
-                            cursor: (!canDelete || !!isProcessing) ? 'not-allowed' : 'pointer',
-                            opacity: (!canDelete || !!isProcessing) ? 0.6 : 1
-                          }}
-                          onClick={(e) => {
-                            console.log('=== DELETE BUTTON CLICKED ===')
-                            console.log('Tournament ID:', tournament.id)
-                            console.log('Can Delete:', canDelete)
-                            console.log('Is Processing:', isProcessing)
-                            console.log('Event Count:', eventCount)
-                            console.log('Button Disabled:', !canDelete || !!isProcessing)
-                            e.stopPropagation()
-                            if (!canDelete || isProcessing) {
-                              console.log('Button is disabled, ignoring click')
-                              return
-                            }
-                            console.log('Calling handleDelete...')
-                            handleDelete(tournament, e)
-                          }}
-                          disabled={!!isProcessing}
-                          title={eventCount > 0 ? `Delete tournament (will also delete ${eventCount} event${eventCount === 1 ? '' : 's'})` : 'Delete tournament'}
-                        >
-                          {isProcessing === 'delete' ? '...' : 'Delete'}
-                        </button>
-                        <div style={{ display: 'flex', gap: '8px', flexBasis: '100%' }}>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12, whiteSpace: 'nowrap' }}
-                            onClick={(e) => handlePrintPacketDownload(tournament, 'womens', e)}
-                            disabled={!!isProcessing || !!printing[`${tournament.id}-womens`]}
-                            title="Download Women's 32x24 print PDF"
-                          >
-                            {printing[`${tournament.id}-womens`] ? '...' : "PDF Women's"}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            style={{ fontSize: '12px', padding: '6px 12px', position: 'relative', zIndex: 12, whiteSpace: 'nowrap' }}
-                            onClick={(e) => handlePrintPacketDownload(tournament, 'mixed', e)}
-                            disabled={!!isProcessing || !!printing[`${tournament.id}-mixed`]}
-                            title="Download Mixed 32x24 print PDF"
-                          >
-                            {printing[`${tournament.id}-mixed`] ? '...' : 'PDF Mixed'}
-                          </button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <h2 style={{ margin: '0 0 8px', fontSize: 18 }}>Active Events</h2>
+            {activeTournaments.length === 0 ? (
+              <div className="card">
+                <p>No active events. Use “Restore” in Past Events to bring one back.</p>
+              </div>
+            ) : (
+              renderTournamentTable(activeTournaments, false)
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 12 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ fontSize: 13, padding: '6px 12px' }}
+              onClick={() => setPastExpanded(prev => !prev)}
+            >
+              {pastExpanded ? '▾' : '▸'} Past Events Folder ({archivedTournaments.length})
+            </button>
+            {pastExpanded && (
+              <div style={{ marginTop: 10 }}>
+                {archivedTournaments.length === 0 ? (
+                  <div style={{ color: '#666', fontSize: 13 }}>
+                    No past events yet. Use “Move to Past” on any active event.
+                  </div>
+                ) : (
+                  renderTournamentTable(archivedTournaments, true)
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

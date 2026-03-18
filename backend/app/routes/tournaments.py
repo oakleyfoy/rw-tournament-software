@@ -66,6 +66,7 @@ class TournamentUpdate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     notes: Optional[str] = None
+    is_archived: Optional[bool] = None
     use_time_windows: Optional[bool] = None
     court_names: Optional[List[str]] = None
 
@@ -84,6 +85,7 @@ class TournamentResponse(BaseModel):
     start_date: date
     end_date: date
     notes: Optional[str]
+    is_archived: bool
     use_time_windows: bool
     court_names: Optional[List[str]] = None
     public_schedule_version_id: Optional[int] = None

@@ -24,6 +24,7 @@ export interface Tournament {
   start_date: string;
   end_date: string;
   notes?: string;
+  is_archived: boolean;
   use_time_windows: boolean;
   court_names?: string[] | null;
   public_schedule_version_id: number | null;
@@ -47,6 +48,7 @@ export interface TournamentUpdate {
   start_date?: string;
   end_date?: string;
   notes?: string;
+  is_archived?: boolean;
   use_time_windows?: boolean;
   court_names?: string[] | null;
 }

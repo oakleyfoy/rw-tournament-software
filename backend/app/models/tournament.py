@@ -21,6 +21,7 @@ class Tournament(SQLModel, table=True):
     start_date: date
     end_date: date
     notes: Optional[str] = None
+    is_archived: bool = Field(default=False)
     use_time_windows: bool = Field(default=False)
     court_names: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     public_schedule_version_id: Optional[int] = Field(
