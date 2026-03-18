@@ -7,6 +7,11 @@ Recommended (from repository root):
 scripts/prepare-agent-env.sh --frontend-only
 ```
 
+Need both backend + frontend toolchains in one pass?
+```bash
+scripts/prepare-agent-env.sh --full
+```
+
 Manual setup (from `frontend/`):
 1. Install dependencies:
 ```bash

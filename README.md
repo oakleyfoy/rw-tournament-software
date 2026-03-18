@@ -10,10 +10,19 @@ Bootstrap this repository for local or cloud-agent work:
 scripts/prepare-agent-env.sh
 ```
 
+Default bootstrap installs backend Python dependencies from `backend/requirements.txt`
+(including `pytest`) for faster startup.
+
 Backend-only bootstrap:
 
 ```bash
 scripts/prepare-agent-env.sh --backend-only
+```
+
+Full bootstrap (backend + frontend):
+
+```bash
+scripts/prepare-agent-env.sh --full
 ```
 
 Frontend-only bootstrap:
