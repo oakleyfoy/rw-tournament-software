@@ -7,7 +7,10 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.auth import require_authenticated_user
+from app.auth import (
+    require_authenticated_user,
+    require_authenticated_user_except_sms_webhooks,
+)
 from app.database import engine, init_db
 from app.db_schema_patch import (
     ensure_event_columns,
@@ -127,8 +130,11 @@ app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_prot
 # Auth routes
 app.include_router(auth.router)
 
-# SMS endpoints (no extra prefix — router has its own /api/tournaments/{id}/sms)
-app.include_router(sms.router, dependencies=_protected_deps)
+# SMS endpoints (webhooks bypass auth; all other SMS paths still protected)
+app.include_router(
+    sms.router,
+    dependencies=[Depends(require_authenticated_user_except_sms_webhooks)],
+)
 
 # Enhanced team import (no extra prefix — router has its own /api/events/{id}/teams/import)
 app.include_router(team_import.router, dependencies=_protected_deps)

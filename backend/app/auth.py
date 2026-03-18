@@ -151,6 +151,18 @@ def require_authenticated_user(
     return user
 
 
+def require_authenticated_user_except_sms_webhooks(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Optional[UserAccount]:
+    """Require auth for private routes, except Twilio SMS webhook callbacks."""
+    path = request.url.path or ""
+    if "/sms/webhook/" in path:
+        request.state.current_user = None
+        return None
+    return require_authenticated_user(request=request, session=session)
+
+
 def require_admin_user(
     request: Request,
     user: Optional[UserAccount] = Depends(require_authenticated_user),

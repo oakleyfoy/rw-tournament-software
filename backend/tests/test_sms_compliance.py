@@ -269,3 +269,76 @@ def test_send_attaches_status_callback_url_with_api_base(
     assert captured["url"] == (
         f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback"
     )
+
+
+def test_send_attaches_status_callback_url_from_request_when_env_missing(
+    client, session, setup_tournament_team, monkeypatch
+):
+    tournament, _, team = setup_tournament_team
+    monkeypatch.delenv("SMS_STATUS_CALLBACK_BASE_URL", raising=False)
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("APP_BASE_URL", raising=False)
+    monkeypatch.delenv("EXTERNAL_BASE_URL", raising=False)
+
+    captured: dict[str, str | None] = {"url": None}
+
+    class _FakeTwilio:
+        @property
+        def is_configured(self) -> bool:
+            return True
+
+        def send_sms(self, to: str, body: str, *, status_callback_url: str | None = None):
+            captured["url"] = status_callback_url
+            return {"sid": "SM_CALLBACK_FALLBACK", "status": "queued", "error": None}
+
+    monkeypatch.setattr("app.routes.sms.get_twilio_service", lambda: _FakeTwilio())
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{team.id}",
+        json={"message": "Callback URL fallback test"},
+    )
+    assert resp.status_code == 200
+    assert captured["url"] == (
+        f"http://testserver/api/tournaments/{tournament.id}/sms/webhook/status-callback"
+    )
+
+
+def test_webhook_routes_bypass_auth_after_bootstrap(
+    client, session, setup_tournament_team
+):
+    tournament, _, team = setup_tournament_team
+
+    bootstrap = client.post(
+        "/api/auth/bootstrap-admin",
+        json={
+            "username": "admin_sms",
+            "password": "password123",
+            "display_name": "Admin SMS",
+        },
+    )
+    assert bootstrap.status_code == 201
+
+    protected_send = client.post(
+        f"/api/tournaments/{tournament.id}/sms/team/{team.id}",
+        json={"message": "Should require auth"},
+    )
+    assert protected_send.status_code == 401
+
+    inbound = client.post(
+        f"/api/tournaments/{tournament.id}/sms/webhook/inbound",
+        data={
+            "From": "9013593035",
+            "Body": "STOP",
+            "MessageSid": "SM_AUTH_BYPASS_WEBHOOK_1",
+        },
+    )
+    assert inbound.status_code == 200
+
+    status_cb = client.post(
+        f"/api/tournaments/{tournament.id}/sms/webhook/status-callback",
+        data={
+            "MessageSid": "SM_UNKNOWN_FOR_AUTH_BYPASS",
+            "MessageStatus": "sent",
+        },
+    )
+    assert status_cb.status_code == 200

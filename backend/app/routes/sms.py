@@ -556,8 +556,13 @@ def _status_callback_base_url() -> Optional[str]:
     return None
 
 
-def _status_callback_url_for_tournament(tournament_id: int) -> Optional[str]:
+def _status_callback_url_for_tournament(
+    tournament_id: int,
+    request_base_url: Optional[str] = None,
+) -> Optional[str]:
     base = _status_callback_base_url()
+    if not base and request_base_url:
+        base = request_base_url.rstrip("/")
     if not base:
         return None
     if base.endswith("/api"):
@@ -1212,6 +1217,7 @@ def _send_to_phone_targets(
     trigger: str = "manual",
     dedupe_key: Optional[str] = None,
     skipped_no_phone: int = 0,
+    status_callback_base_url: Optional[str] = None,
 ) -> SmsSendResponse:
     """Send to explicit phone targets with consent + dedupe protections."""
     twilio = get_twilio_service()
@@ -1225,7 +1231,10 @@ def _send_to_phone_targets(
     test_allowlist = _allowlist_set(
         getattr(settings, "test_allowlist", None) if settings else None
     )
-    status_callback_url = _status_callback_url_for_tournament(tournament_id)
+    status_callback_url = _status_callback_url_for_tournament(
+        tournament_id,
+        request_base_url=status_callback_base_url,
+    )
     if status_callback_url is None and bool(getattr(twilio, "is_configured", False)):
         logger.warning(
             "SMS status callback URL not configured; outbound statuses may remain queued. "
@@ -1421,6 +1430,7 @@ def _send_to_teams(
     message_type: str,
     trigger: str = "manual",
     dedupe_key: Optional[str] = None,
+    status_callback_base_url: Optional[str] = None,
 ) -> SmsSendResponse:
     """Send to all phone numbers found on a team list."""
     player_contacts_only = _player_contacts_only_enabled(session, tournament_id)
@@ -1447,6 +1457,7 @@ def _send_to_teams(
         trigger=trigger,
         dedupe_key=dedupe_key,
         skipped_no_phone=skipped_no_phone,
+        status_callback_base_url=status_callback_base_url,
     )
 
 
@@ -2065,6 +2076,7 @@ async def handle_status_callback(
 def send_tournament_blast(
     tournament_id: int,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text all teams in the tournament."""
@@ -2081,6 +2093,7 @@ def send_tournament_blast(
         message_type="tournament_blast",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2089,6 +2102,7 @@ def send_event_text(
     tournament_id: int,
     event_id: int,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text all teams in a specific event."""
@@ -2105,6 +2119,7 @@ def send_event_text(
         message_type="event_blast",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2114,6 +2129,7 @@ def send_event_division_text(
     event_id: int,
     division: str,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text teams in a specific event + division (Division I/II/III/IV)."""
@@ -2138,6 +2154,7 @@ def send_event_division_text(
         message_type="event_division_blast",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2146,6 +2163,7 @@ def send_division_text(
     tournament_id: int,
     division: str,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """
@@ -2168,6 +2186,7 @@ def send_division_text(
         message_type="division_blast",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2176,6 +2195,7 @@ def send_player_text(
     tournament_id: int,
     player_id: int,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text a specific player by Player ID."""
@@ -2209,6 +2229,7 @@ def send_player_text(
         trigger="manual",
         dedupe_key=body.dedupe_key,
         skipped_no_phone=0,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2217,6 +2238,7 @@ def send_team_text(
     tournament_id: int,
     team_id: int,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text a specific team."""
@@ -2251,6 +2273,7 @@ def send_team_text(
         message_type="team_direct",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2259,6 +2282,7 @@ def send_match_text(
     tournament_id: int,
     match_id: int,
     body: SmsSendRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text both teams in a specific match."""
@@ -2277,6 +2301,7 @@ def send_match_text(
         message_type="match_specific",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
@@ -2284,6 +2309,7 @@ def send_match_text(
 def send_timeslot_text(
     tournament_id: int,
     body: SmsTimeslotRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Text all teams playing in a specific time slot."""
@@ -2354,6 +2380,7 @@ def send_timeslot_text(
         message_type="time_slot_blast",
         trigger="manual",
         dedupe_key=body.dedupe_key,
+        status_callback_base_url=str(request.base_url),
     )
 
 
