@@ -923,6 +923,38 @@ def test_rollout_metrics_summary(client, session, setup_tournament_with_teams):
     assert data["recent_failures"][0]["error_message"] == "carrier reject"
 
 
+def test_rollout_metrics_normalizes_blank_trigger_in_failures(
+    client, session, setup_tournament_with_teams
+):
+    """Legacy blank trigger values should not break rollout metrics."""
+    tournament, _, teams = setup_tournament_with_teams
+    now = datetime.now(timezone.utc)
+
+    session.add(
+        SmsLog(
+            tournament_id=tournament.id,
+            team_id=teams[0].id,
+            phone_number="+19013593035",
+            message_body="legacy",
+            message_type="team_direct",
+            status="failed",
+            trigger="",
+            error_message="legacy blank trigger",
+            sent_at=now,
+        )
+    )
+    session.commit()
+
+    resp = client.get(
+        f"/api/tournaments/{tournament.id}/sms/rollout-metrics",
+        params={"lookback_hours": 24},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["failed"] >= 1
+    assert data["recent_failures"][0]["trigger"] == "manual"
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------

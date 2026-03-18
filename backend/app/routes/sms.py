@@ -12,11 +12,13 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from html import unescape
+from types import SimpleNamespace
 from typing import List, Optional
 from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -306,7 +308,7 @@ class SmsRolloutFailureItem(BaseModel):
     sent_at: datetime
     phone_number: str
     message_type: str
-    trigger: str
+    trigger: Optional[str] = None
     status: str
     error_message: Optional[str] = None
 
@@ -349,9 +351,34 @@ class SmsPlayerSyncResponse(BaseModel):
 
 def _get_tournament_or_404(
     session: Session, tournament_id: int
-) -> Tournament:
+) -> Tournament | SimpleNamespace:
     """Get tournament or raise 404."""
-    tournament = session.get(Tournament, tournament_id)
+    try:
+        tournament = session.get(Tournament, tournament_id)
+    except Exception as exc:
+        # Compatibility fallback when code expects a newly added column
+        # that may not exist yet on an older deployed DB schema.
+        msg = str(exc).lower()
+        if "no such column" in msg and "tournament.is_archived" in msg:
+            row = session.exec(
+                text(
+                    "SELECT id, public_schedule_version_id "
+                    "FROM tournament WHERE id = :tournament_id"
+                ),
+                {"tournament_id": tournament_id},
+            ).first()
+            if not row:
+                raise HTTPException(404, f"Tournament {tournament_id} not found")
+            logger.warning(
+                "Tournament schema fallback active for tournament %s; "
+                "missing is_archived column",
+                tournament_id,
+            )
+            return SimpleNamespace(
+                id=int(row[0]),
+                public_schedule_version_id=row[1],
+            )
+        raise
     if not tournament:
         raise HTTPException(404, f"Tournament {tournament_id} not found")
     return tournament
@@ -378,7 +405,7 @@ def _get_all_teams_for_tournament(
 
 def _resolve_match_lookup_version(
     session: Session,
-    tournament: Tournament,
+    tournament: Tournament | SimpleNamespace,
 ) -> Optional[ScheduleVersion]:
     """
     Resolve single schedule version for match lookup to avoid cross-version duplicates.
@@ -2577,10 +2604,10 @@ def get_sms_rollout_metrics(
                 SmsRolloutFailureItem(
                     id=row.id,  # type: ignore[arg-type]
                     sent_at=row.sent_at,
-                    phone_number=row.phone_number,
-                    message_type=row.message_type,
-                    trigger=row.trigger,
-                    status=row.status,
+                    phone_number=row.phone_number or "",
+                    message_type=row.message_type or "unknown",
+                    trigger=row.trigger or "manual",
+                    status=row.status or "failed",
                     error_message=row.error_message,
                 )
             )
