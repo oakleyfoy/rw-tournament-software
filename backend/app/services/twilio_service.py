@@ -193,12 +193,19 @@ class TwilioService:
             if status_callback_url:
                 payload["status_callback"] = status_callback_url
             message = self.client.messages.create(**payload)
+            # Twilio commonly returns an initial transport state like "queued"
+            # immediately after acceptance. For app-level delivery tracking,
+            # treat successful API acceptance as "sent" to avoid perpetual
+            # queued statuses in our log/UI.
+            provider_status = str(getattr(message, "status", "") or "").lower()
+            app_status = "sent"
             logger.info(
                 f"SMS sent to {to}: SID={message.sid}, status={message.status}"
             )
             return {
                 "sid": message.sid,
-                "status": message.status,
+                "status": app_status,
+                "provider_status": provider_status,
                 "error": None,
             }
         except Exception as e:
