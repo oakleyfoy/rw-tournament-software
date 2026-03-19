@@ -218,6 +218,8 @@ class SmsAutomationEngine:
         now_utc: Optional[datetime] = None,
         window_minutes: int = 60,
         dry_run: bool = False,
+        force_resend: bool = False,
+        resend_run_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send first-match reminders for each team's first scheduled match.
@@ -237,6 +239,8 @@ class SmsAutomationEngine:
             "blocked_consent": 0,
             "failed": 0,
             "dry_run": dry_run,
+            "force_resend": force_resend,
+            "resend_run_key": None,
             # Time-window gating is intentionally disabled; keep field for API compatibility.
             "window_minutes": 0,
             "now_utc": (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
@@ -260,6 +264,11 @@ class SmsAutomationEngine:
 
         first_rows = self._first_match_rows_by_team()
         stats["considered_teams"] = len(first_rows)
+        effective_resend_key: Optional[str] = None
+        if force_resend:
+            key = (resend_run_key or "").strip()
+            effective_resend_key = key or f"manual-{std_time.time_ns()}"
+            stats["resend_run_key"] = effective_resend_key
 
         for team_id, row in first_rows.items():
             team = row["team"]
@@ -272,6 +281,7 @@ class SmsAutomationEngine:
                 f"v{self.version_id}",
                 f"t{team_id}",
                 f"m{match.id}",
+                f"rs{effective_resend_key}" if effective_resend_key else None,
             )
             if dry_run:
                 continue
@@ -739,6 +749,8 @@ def run_first_match_24h_for_tournament(
     now_utc: Optional[datetime] = None,
     window_minutes: int = 60,
     dry_run: bool = False,
+    force_resend: bool = False,
+    resend_run_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run the 24h first-match reminder scan for a single tournament."""
     tournament = session.get(Tournament, tournament_id)
@@ -773,6 +785,8 @@ def run_first_match_24h_for_tournament(
         now_utc=now_utc,
         window_minutes=window_minutes,
         dry_run=dry_run,
+        force_resend=force_resend,
+        resend_run_key=resend_run_key,
     )
 
 

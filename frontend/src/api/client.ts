@@ -3118,6 +3118,8 @@ export interface SmsAutomationRunResponse {
   disabled: boolean
   no_active_version: boolean
   dry_run: boolean
+  force_resend: boolean
+  resend_run_key: string | null
   window_minutes: number
   timezone: string | null
   now_utc: string | null
@@ -3413,12 +3415,14 @@ export async function getSmsRolloutMetrics(
 
 export async function runSmsFirstMatchReminders(
   tournamentId: number,
-  opts?: { dry_run?: boolean; window_minutes?: number; now_utc?: string }
+  opts?: { dry_run?: boolean; window_minutes?: number; now_utc?: string; force_resend?: boolean; resend_run_key?: string }
 ): Promise<SmsAutomationRunResponse> {
   const params = new URLSearchParams()
   if (opts?.dry_run != null) params.set('dry_run', String(opts.dry_run))
   if (opts?.window_minutes != null) params.set('window_minutes', String(opts.window_minutes))
   if (opts?.now_utc) params.set('now_utc', opts.now_utc)
+  if (opts?.force_resend != null) params.set('force_resend', String(opts.force_resend))
+  if (opts?.resend_run_key) params.set('resend_run_key', opts.resend_run_key)
   const qs = params.toString()
   return fetchJson<SmsAutomationRunResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/automation/run-first-match-reminders${qs ? `?${qs}` : ''}`,

@@ -252,6 +252,8 @@ class SmsAutomationRunResponse(BaseModel):
     disabled: bool = False
     no_active_version: bool = False
     dry_run: bool
+    force_resend: bool = False
+    resend_run_key: Optional[str] = None
     window_minutes: int
     timezone: Optional[str] = None
     now_utc: Optional[str] = None
@@ -2884,6 +2886,8 @@ def run_first_match_reminders(
     now_utc: Optional[str] = Query(default=None),
     window_minutes: Optional[int] = Query(default=None),
     dry_run: bool = Query(default=False),
+    force_resend: bool = Query(default=False),
+    resend_run_key: Optional[str] = Query(default=None),
     session: Session = Depends(get_session),
 ):
     """
@@ -2892,6 +2896,8 @@ def run_first_match_reminders(
     - `now_utc`: optional ISO datetime override (useful for testing).
     - `window_minutes`: deprecated (ignored; no time-window constraints).
     - `dry_run`: if true, computes recipients but does not send.
+    - `force_resend`: if true, bypasses prior dedupe keys for this run.
+    - `resend_run_key`: optional manual resend key; auto-generated when force_resend=true.
     """
     _get_tournament_or_404(session, tournament_id)
 
@@ -2914,6 +2920,8 @@ def run_first_match_reminders(
         now_utc=now_dt,
         window_minutes=window_minutes or 0,
         dry_run=dry_run,
+        force_resend=force_resend,
+        resend_run_key=resend_run_key,
     )
     return SmsAutomationRunResponse(**result)
 

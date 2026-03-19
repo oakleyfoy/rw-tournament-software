@@ -6642,12 +6642,13 @@ function SmsAdminTab({
     }
   }
 
-  const handleRunFirstMatchReminder = async (dryRun: boolean) => {
+  const handleRunFirstMatchReminder = async (dryRun: boolean, forceResend: boolean = false) => {
     setRunningReminder(true)
     setError(null)
     try {
       const result = await runSmsFirstMatchReminders(tournamentId, {
         dry_run: dryRun,
+        force_resend: forceResend,
       })
       setLastReminderRun(result)
       if (!dryRun) {
@@ -6655,7 +6656,7 @@ function SmsAdminTab({
       }
       await loadRolloutMetrics()
     } catch (e: any) {
-      setError(e?.message || 'Failed to run first-match reminder scan')
+      setError(e?.message || (forceResend ? 'Failed to run first-match force resend' : 'Failed to run first-match reminder scan'))
     } finally {
       setRunningReminder(false)
     }
@@ -6832,6 +6833,20 @@ function SmsAdminTab({
             style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
           >
             {runningReminder ? 'Running…' : 'Send first-match text'}
+          </button>
+          <button
+            onClick={() => handleRunFirstMatchReminder(true, true)}
+            disabled={runningReminder}
+            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
+          >
+            {runningReminder ? 'Running…' : 'Test force resend first-match'}
+          </button>
+          <button
+            onClick={() => handleRunFirstMatchReminder(false, true)}
+            disabled={runningReminder}
+            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
+          >
+            {runningReminder ? 'Running…' : 'Force resend first-match'}
           </button>
           <div style={{ fontSize: 11, color: '#666' }}>
             No time-window constraints — scans all teams with a scheduled first match.
