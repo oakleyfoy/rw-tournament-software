@@ -226,11 +226,25 @@ function CourtCard({ slot }: { slot: BoardCourtSlot }) {
 export default function TournamentDeskBoardPage() {
   const { tournamentId } = useParams<{ tournamentId: string }>()
   const tid = Number(tournamentId)
+  const initialKiosk =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('kiosk') === '1'
 
   const [data, setData] = useState<DeskSnapshotResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<string>('')
+  const [kioskMode, setKioskMode] = useState<boolean>(initialKiosk)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const setKiosk = useCallback((enabled: boolean) => {
+    setKioskMode(enabled)
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (enabled) params.set('kiosk', '1')
+    else params.delete('kiosk')
+    const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+    window.history.replaceState(null, '', next)
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
@@ -250,6 +264,29 @@ export default function TournamentDeskBoardPage() {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
   }, [fetchData])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && kioskMode) {
+        setKiosk(false)
+      }
+      if (e.key.toLowerCase() === 'k') {
+        setKiosk(!kioskMode)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [kioskMode, setKiosk])
+
+  useEffect(() => {
+    const el = document.documentElement
+    if (kioskMode && !document.fullscreenElement) {
+      void el.requestFullscreen?.().catch(() => undefined)
+    }
+    if (!kioskMode && document.fullscreenElement) {
+      void document.exitFullscreen?.().catch(() => undefined)
+    }
+  }, [kioskMode])
 
   if (error) {
     return (
@@ -300,47 +337,48 @@ export default function TournamentDeskBoardPage() {
         }
       `}</style>
 
-      {/* Header */}
-      <div style={{
-        backgroundColor: '#1a237e',
-        color: '#fff',
-        padding: '6px 20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 18, fontWeight: 800 }}>{data.tournament_name}</span>
-          <span style={{
-            fontSize: 10,
-            fontWeight: 700,
-            padding: '2px 8px',
-            borderRadius: 3,
-            backgroundColor: 'rgba(255,255,255,0.15)',
-            color: 'rgba(255,255,255,0.6)',
-            textTransform: 'uppercase',
-            letterSpacing: 0.8,
-          }}>
-            Read-only Board
-          </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          {isStaffFallback && !deskDraft && (
-            <span style={{ fontSize: 10, color: '#ffcc80', fontStyle: 'italic' }}>
-              Displaying latest schedule (not published)
+      {!kioskMode && (
+        <div style={{
+          backgroundColor: '#1a237e',
+          color: '#fff',
+          padding: '6px 20px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 18, fontWeight: 800 }}>{data.tournament_name}</span>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: 3,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              color: 'rgba(255,255,255,0.6)',
+              textTransform: 'uppercase',
+              letterSpacing: 0.8,
+            }}>
+              Read-only Board
             </span>
-          )}
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
-            Updated {lastUpdated}
-          </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {isStaffFallback && !deskDraft && (
+              <span style={{ fontSize: 10, color: '#ffcc80', fontStyle: 'italic' }}>
+                Displaying latest schedule (not published)
+              </span>
+            )}
+            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+              Updated {lastUpdated}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Court grid */}
       <div style={{
         flex: 1,
-        padding: 10,
+        padding: kioskMode ? 6 : 10,
         overflow: 'auto',
         minHeight: 0,
       }}>
@@ -367,6 +405,25 @@ export default function TournamentDeskBoardPage() {
           </div>
         )}
       </div>
+      {!kioskMode && (
+        <div style={{ position: 'fixed', right: 10, bottom: 10, zIndex: 10 }}>
+          <button
+            onClick={() => setKiosk(true)}
+            style={{
+              padding: '7px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              borderRadius: 6,
+              border: '1px solid #90caf9',
+              backgroundColor: '#1565c0',
+              color: '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            Kiosk Mode
+          </button>
+        </div>
+      )}
     </div>
   )
 }

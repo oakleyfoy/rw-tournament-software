@@ -7825,7 +7825,7 @@ export default function TournamentDeskPage() {
             Refresh
           </button>
           <button
-            onClick={() => window.open(`/desk/t/${tid}/board`, '_blank')}
+            onClick={() => window.open(`/desk/t/${tid}/board?kiosk=1`, '_blank')}
             style={{
               padding: '6px 14px',
               fontSize: 12,
