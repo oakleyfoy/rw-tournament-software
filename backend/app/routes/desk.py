@@ -3378,6 +3378,20 @@ class FillCourtSlotsResponse(BaseModel):
     created_slots: int = 0
 
 
+class RemapCourtsRequest(BaseModel):
+    version_id: int
+    # Example: {"1": 15, "2": 16}
+    mapping: Dict[str, int]
+
+
+class RemapCourtsResponse(BaseModel):
+    success: bool
+    version_id: int
+    remapped_slots: int
+    remapped_states: int
+    mapping: Dict[str, int]
+
+
 @router.post(
     "/desk/tournaments/{tournament_id}/courts",
     response_model=AddCourtResponse,
@@ -3521,6 +3535,129 @@ def update_court(
         new_court_label=new_label,
         court_number=court_number,
         updated_slots=len(slots_to_update),
+    )
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/courts/remap",
+    response_model=RemapCourtsResponse,
+)
+def remap_courts(
+    tournament_id: int,
+    payload: RemapCourtsRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Remap court numbers for an entire schedule version without changing draw/match assignments.
+
+    This mutates only ScheduleSlot court_number/court_label (+ court state labels),
+    preserving all MatchAssignment rows as-is.
+    """
+    from app.models.court_state import TournamentCourtState
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Court remap only allowed on DRAFT versions")
+
+    if not payload.mapping:
+        raise HTTPException(status_code=400, detail="mapping is required")
+
+    parsed_map: Dict[int, int] = {}
+    for old_raw, new_num in payload.mapping.items():
+        try:
+            old_num = int(str(old_raw).strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid source court key: {old_raw}")
+        if old_num <= 0 or new_num <= 0:
+            raise HTTPException(status_code=400, detail="Court numbers must be >= 1")
+        parsed_map[old_num] = int(new_num)
+
+    target_nums = list(parsed_map.values())
+    if len(set(target_nums)) != len(target_nums):
+        raise HTTPException(status_code=400, detail="Mapping has duplicate target court numbers")
+
+    slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+        )
+    ).all()
+    if not slots:
+        return RemapCourtsResponse(
+            success=True,
+            version_id=payload.version_id,
+            remapped_slots=0,
+            remapped_states=0,
+            mapping={str(k): v for k, v in sorted(parsed_map.items())},
+        )
+
+    # Validate no collisions by (day, time, end, new_court_number)
+    seen: Dict[Tuple[Any, dt_time, dt_time, int], int] = {}
+    for s in slots:
+        new_court = parsed_map.get(s.court_number, s.court_number)
+        key = (s.day_date, s.start_time, s.end_time, new_court)
+        existing_slot_id = seen.get(key)
+        if existing_slot_id is not None and existing_slot_id != s.id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Remap collision at {s.day_date} {s.start_time}-{s.end_time} "
+                    f"court {new_court} (slot IDs {existing_slot_id} and {s.id})"
+                ),
+            )
+        seen[key] = s.id
+
+    remapped_slots = 0
+    for s in slots:
+        new_court = parsed_map.get(s.court_number)
+        if not new_court:
+            continue
+        if s.court_number == new_court and (s.court_label or "").strip() == str(new_court):
+            continue
+        s.court_number = new_court
+        s.court_label = str(new_court)
+        session.add(s)
+        remapped_slots += 1
+
+    # Update tournament court names to include remapped numbers (numeric labels).
+    current_names = list(tournament.court_names or [])
+    max_existing = len(current_names)
+    max_slot_court = max((slot.court_number for slot in slots), default=0)
+    max_target = max(target_nums, default=0)
+    max_num = max(max_existing, max_slot_court, max_target)
+    if max_num > 0:
+        normalized = [str(i + 1) for i in range(max_num)]
+        tournament.court_names = normalized
+        session.add(tournament)
+
+    # Update court-state labels for affected numeric courts
+    remapped_states = 0
+    for old_num, new_num in parsed_map.items():
+        old_label = str(old_num)
+        new_label = str(new_num)
+        states = session.exec(
+            select(TournamentCourtState).where(
+                TournamentCourtState.tournament_id == tournament_id,
+                TournamentCourtState.court_label == old_label,
+            )
+        ).all()
+        for state in states:
+            state.court_label = new_label
+            session.add(state)
+            remapped_states += 1
+
+    session.commit()
+    return RemapCourtsResponse(
+        success=True,
+        version_id=payload.version_id,
+        remapped_slots=remapped_slots,
+        remapped_states=remapped_states,
+        mapping={str(k): v for k, v in sorted(parsed_map.items())},
     )
 
 

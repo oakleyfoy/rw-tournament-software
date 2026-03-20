@@ -2485,6 +2485,14 @@ export interface FillCourtSlotsResponse {
   created_slots: number
 }
 
+export interface RemapCourtsResponse {
+  success: boolean
+  version_id: number
+  remapped_slots: number
+  remapped_states: number
+  mapping: Record<string, number>
+}
+
 export async function deskAddSlots(
   tournamentId: number,
   payload: { version_id: number; day_date: string; start_time: string; end_time: string; court_numbers: number[] }
@@ -2544,6 +2552,16 @@ export async function deskFillCourtSlots(
 ): Promise<FillCourtSlotsResponse> {
   return fetchJson<FillCourtSlotsResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts/${encodeURIComponent(courtLabel)}/slots/fill`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskRemapCourts(
+  tournamentId: number,
+  payload: { version_id: number; mapping: Record<string, number> }
+): Promise<RemapCourtsResponse> {
+  return fetchJson<RemapCourtsResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/courts/remap`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }

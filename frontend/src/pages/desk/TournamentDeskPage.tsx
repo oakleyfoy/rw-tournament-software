@@ -21,6 +21,7 @@ import {
   deskUpdateCourt,
   deskDeleteCourt,
   deskFillCourtSlots,
+  deskRemapCourts,
   bulkPauseInProgress,
   bulkDelayAfter,
   bulkResumePaused,
@@ -4814,6 +4815,20 @@ function DeskGridTab({
     }
   }
 
+  const handleRemapCourts = async (mapping: Record<string, number>) => {
+    try {
+      const resp = await deskRemapCourts(tid, {
+        version_id: data.version_id,
+        mapping,
+      })
+      showToast(`Remapped ${resp.remapped_slots} slot(s) across all events`)
+      await loadAllCourts()
+      onRefresh()
+    } catch (err: any) {
+      showToast(err?.detail || err || 'Failed to remap courts')
+    }
+  }
+
   const handleRenameCourt = async (oldLabel: string, newLabel: string) => {
     try {
       await deskUpdateCourt(tid, oldLabel, {
@@ -5272,6 +5287,7 @@ function DeskGridTab({
           courts={allCourtLabels}
           slotCountByCourtLabel={slotCountByCourtLabel}
           onClose={() => setManageCourtOpen(false)}
+          onRemap={handleRemapCourts}
           onRename={handleRenameCourt}
           onDelete={handleDeleteCourt}
           onFillSlots={handleFillCourtSlots}
@@ -5613,6 +5629,7 @@ function ManageCourtsModal({
   courts,
   slotCountByCourtLabel,
   onClose,
+  onRemap,
   onRename,
   onDelete,
   onFillSlots,
@@ -5620,6 +5637,7 @@ function ManageCourtsModal({
   courts: string[]
   slotCountByCourtLabel: Record<string, number>
   onClose: () => void
+  onRemap: (mapping: Record<string, number>) => Promise<void> | void
   onRename: (oldLabel: string, newLabel: string) => Promise<void> | void
   onDelete: (courtLabel: string, deleteMatchingSlots: boolean) => Promise<void> | void
   onFillSlots: (courtLabel: string) => Promise<void> | void
@@ -5627,6 +5645,7 @@ function ManageCourtsModal({
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({})
   const [busyLabel, setBusyLabel] = useState<string | null>(null)
   const [deleteWithSlots, setDeleteWithSlots] = useState(false)
+  const [remapText, setRemapText] = useState('')
 
   const sortedCourts = [...courts]
 
@@ -5648,6 +5667,54 @@ function ManageCourtsModal({
           </div>
         </div>
         <div style={{ padding: '12px 20px', maxHeight: '60vh', overflowY: 'auto' }}>
+          <div style={{ marginBottom: 12, padding: '10px 12px', border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: '#1a237e' }}>Global Court Number Remap (all events)</div>
+            <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
+              Format: <code>1:15,2:16,3:17</code> (applies to this draft version only; draws/matches unchanged)
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={remapText}
+                onChange={e => setRemapText(e.target.value)}
+                placeholder="e.g. 1:15,2:16,3:17,4:18"
+                style={{ flex: 1, padding: '6px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4 }}
+              />
+              <button
+                disabled={!remapText.trim() || busyLabel === '__remap__'}
+                onClick={async () => {
+                  const txt = remapText.trim()
+                  const mapping: Record<string, number> = {}
+                  for (const piece of txt.split(',').map(s => s.trim()).filter(Boolean)) {
+                    const [oldRaw, newRaw] = piece.split(':').map(s => s.trim())
+                    const oldNum = Number(oldRaw)
+                    const newNum = Number(newRaw)
+                    if (!Number.isInteger(oldNum) || oldNum <= 0 || !Number.isInteger(newNum) || newNum <= 0) {
+                      window.alert(`Invalid mapping item: "${piece}". Use old:new with positive integers.`)
+                      return
+                    }
+                    mapping[String(oldNum)] = newNum
+                  }
+                  if (Object.keys(mapping).length === 0) return
+                  const ok = window.confirm(`Apply global court remap to this draft schedule?\n\n${txt}`)
+                  if (!ok) return
+                  setBusyLabel('__remap__')
+                  try {
+                    await onRemap(mapping)
+                  } finally {
+                    setBusyLabel(null)
+                  }
+                }}
+                style={{
+                  padding: '6px 10px', fontSize: 11, fontWeight: 700,
+                  border: '1px solid #e65100', borderRadius: 4,
+                  backgroundColor: '#fff3e0', color: '#e65100', cursor: 'pointer',
+                }}
+              >
+                {busyLabel === '__remap__' ? 'Applying...' : 'Apply Remap'}
+              </button>
+            </div>
+          </div>
           {sortedCourts.length === 0 ? (
             <div style={{ fontSize: 12, color: '#999' }}>No courts found.</div>
           ) : (

@@ -2623,6 +2623,56 @@ def test_fill_court_slots_creates_missing_open_slots(client, session):
     assert len(c3_slots) == body["created_slots"]
 
 
+def test_remap_courts_updates_slot_numbers_and_labels(client, session):
+    """Global remap updates slot court_number/court_label only (assignments stay attached to same slots)."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+
+    pre_assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)
+    ).all()
+    pre_by_slot = {a.match_id: a.slot_id for a in pre_assignments}
+
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/courts/remap",
+        json={
+            "version_id": v.id,
+            "mapping": {"1": 15, "2": 16},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["remapped_slots"] >= 1
+
+    updated_slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)
+    ).all()
+    assert len(updated_slots) > 0
+    assert all(s.court_number in (15, 16) for s in updated_slots)
+    assert all((s.court_label or "") in ("15", "16") for s in updated_slots)
+
+    post_assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)
+    ).all()
+    post_by_slot = {a.match_id: a.slot_id for a in post_assignments}
+    assert post_by_slot == pre_by_slot
+
+
+def test_remap_courts_rejects_duplicate_targets(client, session):
+    """Remap fails when multiple sources point to the same target number."""
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/courts/remap",
+        json={
+            "version_id": v.id,
+            "mapping": {"1": 15, "2": 15},
+        },
+    )
+    assert resp.status_code == 400
+    assert "duplicate target" in resp.json()["detail"].lower()
+
+
 def test_conflict_check_move_day_cap(client, session):
     """Conflict check for MOVE detects day cap exceeded at target slot."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
