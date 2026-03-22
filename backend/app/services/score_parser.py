@@ -24,6 +24,11 @@ class ParsedScore:
     team_b_games: int
 
 
+def _is_match_tiebreak_set(a: int, b: int) -> bool:
+    """Regular-format 3rd-set match tiebreak should count as a set only, no games."""
+    return (a, b) in ((1, 0), (0, 1))
+
+
 def parse_score(score_json: Optional[Dict[str, Any]]) -> Optional[ParsedScore]:
     """Parse a score_json blob into structured set/game counts.
 
@@ -117,8 +122,9 @@ def _parse_structured_sets(sets_list: list) -> Optional[ParsedScore]:
         a = int(s.get("a", 0))
         b = int(s.get("b", 0))
         sets.append((a, b))
-        a_games += a
-        b_games += b
+        if not _is_match_tiebreak_set(a, b):
+            a_games += a
+            b_games += b
         if a > b:
             a_sets += 1
         elif b > a:
@@ -141,8 +147,9 @@ def _parse_score_string(raw: str) -> Optional[ParsedScore]:
 
     a_sets = sum(1 for a, b in sets if a > b)
     b_sets = sum(1 for a, b in sets if b > a)
-    a_games = sum(a for a, _ in sets)
-    b_games = sum(b for _, b in sets)
+    game_sets = [(a, b) for a, b in sets if not _is_match_tiebreak_set(a, b)]
+    a_games = sum(a for a, _ in game_sets)
+    b_games = sum(b for _, b in game_sets)
 
     return ParsedScore(
         sets=sets,

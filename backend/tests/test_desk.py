@@ -1575,6 +1575,18 @@ def test_score_parser_three_sets():
     assert result.team_b_games == 16  # 3+6+7
 
 
+def test_score_parser_match_tiebreak_set_counts_no_games():
+    """A 1-0 third-set tiebreak counts as a set, not as games."""
+    from app.services.score_parser import parse_score
+
+    result = parse_score({"display": "7-6 4-6 1-0"})
+    assert result is not None
+    assert result.team_a_sets_won == 2
+    assert result.team_b_sets_won == 1
+    assert result.team_a_games == 11  # 7 + 4 (+0 for 1-0 tiebreak set)
+    assert result.team_b_games == 12  # 6 + 6 (+0 for 0-1 tiebreak set)
+
+
 def test_score_parser_none():
     """Parsing None returns None."""
     from app.services.score_parser import parse_score
