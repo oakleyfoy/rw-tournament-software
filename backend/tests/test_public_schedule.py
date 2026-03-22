@@ -447,3 +447,33 @@ def test_public_round_robin_credits_selected_winner_for_winner_first_scores(clie
     assert row_a["losses"] == 1
     assert row_a["sets_won"] == 0
     assert row_a["sets_lost"] == 2
+
+
+def test_public_round_robin_retired_uses_literal_score_orientation(client, session):
+    """Retired RR keeps entered set/game orientation even if winner is opposite side."""
+    t, ev, winner_team = _setup_published_rr_tournament(session)
+
+    match = session.exec(
+        select(Match).where(
+            Match.event_id == ev.id,
+            Match.schedule_version_id == t.public_schedule_version_id,
+            Match.match_code == "WOM_POOLA_RR_M01",
+        )
+    ).one()
+    match.winner_team_id = match.team_a_id
+    match.score_json = {"display": "6-7 (RET)", "actual": "6-7"}
+    session.add(match)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/events/{ev.id}/roundrobin")
+    assert resp.status_code == 200
+    rows = resp.json()["standings"][0]["rows"]
+    row_a = [r for r in rows if r["team_id"] == match.team_a_id][0]
+    row_b = [r for r in rows if r["team_id"] == match.team_b_id][0]
+
+    assert row_a["wins"] == 1
+    assert row_b["losses"] == 1
+    assert row_a["sets_won"] == 0 and row_a["sets_lost"] == 1
+    assert row_b["sets_won"] == 1 and row_b["sets_lost"] == 0
+    assert row_a["games_won"] == 6 and row_a["games_lost"] == 7
+    assert row_b["games_won"] == 7 and row_b["games_lost"] == 6

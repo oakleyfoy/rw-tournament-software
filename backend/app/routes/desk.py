@@ -285,6 +285,16 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
     return str(score_json) if score_json else None
 
 
+def _is_retired_score(score_json: Optional[Dict[str, Any]]) -> bool:
+    if not score_json:
+        return False
+    if isinstance(score_json, dict):
+        return "(RET" in str(score_json.get("display") or "").upper()
+    if isinstance(score_json, str):
+        return "(RET" in score_json.upper()
+    return False
+
+
 def _coerce_slot_start_time(value: object) -> Optional[dt_time]:
     if isinstance(value, dt_time):
         return value
@@ -2290,12 +2300,14 @@ def get_standings(
                 a_games = parsed.team_a_games
                 b_games = parsed.team_b_games
 
+                retired = _is_retired_score(m.score_json)
                 # If score orientation conflicts with selected winner, treat score as winner-first.
                 # This prevents inverted set/game stats when staff enter winner-side scores.
-                if m.winner_team_id == a_id and b_sets_won > a_sets_won:
+                # Retired matches are intentionally left in literal entered orientation.
+                if not retired and m.winner_team_id == a_id and b_sets_won > a_sets_won:
                     a_sets_won, b_sets_won = b_sets_won, a_sets_won
                     a_games, b_games = b_games, a_games
-                elif m.winner_team_id == b_id and a_sets_won > b_sets_won:
+                elif not retired and m.winner_team_id == b_id and a_sets_won > b_sets_won:
                     a_sets_won, b_sets_won = b_sets_won, a_sets_won
                     a_games, b_games = b_games, a_games
 

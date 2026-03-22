@@ -1872,6 +1872,41 @@ def test_standings_score_orientation_follows_selected_winner(client, session):
     assert alpha["sets_lost"] == 2
 
 
+def test_standings_retired_uses_literal_score_orientation(client, session):
+    """Retired RR keeps entered set/game orientation even if winner is opposite side."""
+    t, v, ev, teams, matches = _setup_rr_tournament(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    rr_matches = [m for m in snap["matches"] if m["stage"] == "RR"]
+    m1 = rr_matches[0]  # Alpha vs Bravo
+
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/finalize",
+        json={
+            "version_id": draft_id,
+            "score": "6-7",
+            "winner_team_id": m1["team1_id"],
+            "is_retired": True,
+        },
+    )
+
+    resp = client.get(f"/api/desk/tournaments/{t.id}/standings?version_id={draft_id}")
+    assert resp.status_code == 200
+    rows = resp.json()["events"][0]["rows"]
+    alpha = [r for r in rows if r["team_display"] == "Alpha"][0]
+    bravo = [r for r in rows if r["team_display"] == "Bravo"][0]
+
+    assert alpha["wins"] == 1
+    assert bravo["losses"] == 1
+    assert alpha["sets_won"] == 0 and alpha["sets_lost"] == 1
+    assert bravo["sets_won"] == 1 and bravo["sets_lost"] == 0
+    assert alpha["games_won"] == 6 and alpha["games_lost"] == 7
+    assert bravo["games_won"] == 7 and bravo["games_lost"] == 6
+
+
 def test_standings_ignores_non_rr_match_codes(client, session):
     """Standings should ignore finalized matches that are not true RR pool codes."""
     t, v, ev, teams, matches = _setup_rr_tournament(session)

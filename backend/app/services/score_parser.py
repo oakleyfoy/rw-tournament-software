@@ -12,6 +12,7 @@ Returns None on parse failure (non-fatal).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -43,11 +44,17 @@ def parse_score(score_json: Optional[Dict[str, Any]]) -> Optional[ParsedScore]:
     elif isinstance(score_json, dict):
         if "sets" in score_json and isinstance(score_json["sets"], list):
             return _parse_structured_sets(score_json["sets"])
-        raw = str(score_json.get("display") or score_json.get("score") or "")
+        raw = str(
+            score_json.get("actual")
+            or score_json.get("display")
+            or score_json.get("score")
+            or ""
+        )
     if not raw or not raw.strip():
         return None
 
-    return _parse_score_string(raw.strip())
+    cleaned = re.sub(r"\(\s*RET\s*\)", "", raw, flags=re.IGNORECASE).strip()
+    return _parse_score_string(cleaned)
 
 
 def validate_score_for_duration(score_text: str, duration_minutes: int) -> Tuple[bool, Optional[str]]:
