@@ -13,7 +13,7 @@ Validates:
 from datetime import date, time
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
@@ -373,3 +373,46 @@ def test_public_round_robin_uses_runtime_status_for_score_and_winner(client, ses
     assert winner_row["wins"] == 1
     assert winner_row["played"] == 1
     assert "Match Wins" in body["tiebreaker_note"]
+
+
+def test_public_round_robin_standings_ignore_non_rr_match_codes(client, session):
+    """Public RR standings should ignore finalized WF-coded matches even if typed RR."""
+    t, ev, winner_team = _setup_published_rr_tournament(session)
+
+    other_team = session.exec(
+        select(Team).where(Team.event_id == ev.id, Team.id != winner_team.id)
+    ).first()
+    assert other_team is not None
+
+    bad = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=t.public_schedule_version_id,
+        match_code="WOM_WF_R1_M99",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=99,
+        duration_minutes=60,
+        runtime_status="FINAL",
+        team_a_id=winner_team.id,
+        team_b_id=other_team.id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        winner_team_id=winner_team.id,
+        score_json={"display": "6-0 6-0"},
+    )
+    session.add(bad)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/events/{ev.id}/roundrobin")
+    assert resp.status_code == 200
+    body = resp.json()
+    rows = body["standings"][0]["rows"]
+    winner_row = [r for r in rows if r["team_id"] == winner_team.id][0]
+
+    # Should still reflect only the valid RR match from setup.
+    assert winner_row["wins"] == 1
+    assert winner_row["played"] == 1
+    assert winner_row["sets_won"] == 2
+    assert winner_row["games_won"] == 12

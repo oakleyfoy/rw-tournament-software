@@ -1829,6 +1829,59 @@ def test_standings_sorting_by_set_diff(client, session):
     assert "GameDiff" in rows[0]["rank_explanation"]
 
 
+def test_standings_ignores_non_rr_match_codes(client, session):
+    """Standings should ignore finalized matches that are not true RR pool codes."""
+    t, v, ev, teams, matches = _setup_rr_tournament(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    rr_matches = [m for m in snap["matches"] if m["stage"] == "RR"]
+    assert len(rr_matches) == 3
+
+    # Finalize one real RR match.
+    m1 = rr_matches[0]
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "6-3 6-4", "winner_team_id": m1["team1_id"]},
+    )
+
+    # Inject a bad legacy record: code is WF but match_type is RR.
+    bad = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=draft_id,
+        match_code="WOM_E1_WF_R1_M99",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=99,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        runtime_status="FINAL",
+        winner_team_id=teams[0].id,
+        score_json={"display": "6-0 6-0"},
+    )
+    session.add(bad)
+    session.commit()
+
+    resp = client.get(f"/api/desk/tournaments/{t.id}/standings?version_id={draft_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    rows = body["events"][0]["rows"]
+    alpha = [r for r in rows if r["team_display"] == "Alpha"][0]
+
+    # Should reflect only the real RR result above, not the injected WF-coded row.
+    assert alpha["played"] == 1
+    assert alpha["wins"] == 1
+    assert alpha["sets_won"] == 2
+    assert alpha["games_won"] == 12
+
+
 # ── Pool Projection + Placement tests ────────────────────────────────────
 
 def _setup_wf_pool_tournament(session: Session):

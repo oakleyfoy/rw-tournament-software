@@ -930,6 +930,8 @@ def public_round_robin(
             Match.match_type == "RR",
         )
     ).all()
+    # Defensive filter: only true RR pool matches should drive RR cards/standings.
+    rr_matches = [m for m in rr_matches if "_RR_" in (m.match_code or "").upper()]
 
     if not rr_matches:
         return RoundRobinResponse(

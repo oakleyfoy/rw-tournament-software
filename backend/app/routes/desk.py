@@ -2179,7 +2179,9 @@ def get_standings(
     )
     if event_id is not None:
         q = q.where(Match.event_id == event_id)
-    all_rr = session.exec(q).all()
+    # Defensive filter: standings must only use true RR pool matches.
+    # Some legacy data can have non-RR codes mislabeled with match_type="RR".
+    all_rr = [m for m in session.exec(q).all() if "_RR_" in (m.match_code or "").upper()]
 
     if not all_rr:
         return StandingsResponse(
