@@ -1086,14 +1086,27 @@ def public_round_robin(
 
             parsed = _parse_score(m.score_json)
             if parsed:
-                rows_data[a_id]["sets_won"] += parsed.team_a_sets_won
-                rows_data[a_id]["sets_lost"] += parsed.team_b_sets_won
-                rows_data[b_id]["sets_won"] += parsed.team_b_sets_won
-                rows_data[b_id]["sets_lost"] += parsed.team_a_sets_won
-                rows_data[a_id]["games_won"] += parsed.team_a_games
-                rows_data[a_id]["games_lost"] += parsed.team_b_games
-                rows_data[b_id]["games_won"] += parsed.team_b_games
-                rows_data[b_id]["games_lost"] += parsed.team_a_games
+                a_sets_won = parsed.team_a_sets_won
+                b_sets_won = parsed.team_b_sets_won
+                a_games = parsed.team_a_games
+                b_games = parsed.team_b_games
+
+                # If score orientation conflicts with winner side, interpret as winner-first score entry.
+                if m.winner_team_id == a_id and b_sets_won > a_sets_won:
+                    a_sets_won, b_sets_won = b_sets_won, a_sets_won
+                    a_games, b_games = b_games, a_games
+                elif m.winner_team_id == b_id and a_sets_won > b_sets_won:
+                    a_sets_won, b_sets_won = b_sets_won, a_sets_won
+                    a_games, b_games = b_games, a_games
+
+                rows_data[a_id]["sets_won"] += a_sets_won
+                rows_data[a_id]["sets_lost"] += b_sets_won
+                rows_data[b_id]["sets_won"] += b_sets_won
+                rows_data[b_id]["sets_lost"] += a_sets_won
+                rows_data[a_id]["games_won"] += a_games
+                rows_data[a_id]["games_lost"] += b_games
+                rows_data[b_id]["games_won"] += b_games
+                rows_data[b_id]["games_lost"] += a_games
 
         def _disp(tid: int) -> str:
             t = team_map.get(tid)

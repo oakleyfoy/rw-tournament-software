@@ -2285,14 +2285,28 @@ def get_standings(
             # Parse score for sets/games
             parsed = parse_score(m.score_json)
             if parsed:
-                rows[a_id]["sets_won"] += parsed.team_a_sets_won
-                rows[a_id]["sets_lost"] += parsed.team_b_sets_won
-                rows[b_id]["sets_won"] += parsed.team_b_sets_won
-                rows[b_id]["sets_lost"] += parsed.team_a_sets_won
-                rows[a_id]["games_won"] += parsed.team_a_games
-                rows[a_id]["games_lost"] += parsed.team_b_games
-                rows[b_id]["games_won"] += parsed.team_b_games
-                rows[b_id]["games_lost"] += parsed.team_a_games
+                a_sets_won = parsed.team_a_sets_won
+                b_sets_won = parsed.team_b_sets_won
+                a_games = parsed.team_a_games
+                b_games = parsed.team_b_games
+
+                # If score orientation conflicts with selected winner, treat score as winner-first.
+                # This prevents inverted set/game stats when staff enter winner-side scores.
+                if m.winner_team_id == a_id and b_sets_won > a_sets_won:
+                    a_sets_won, b_sets_won = b_sets_won, a_sets_won
+                    a_games, b_games = b_games, a_games
+                elif m.winner_team_id == b_id and a_sets_won > b_sets_won:
+                    a_sets_won, b_sets_won = b_sets_won, a_sets_won
+                    a_games, b_games = b_games, a_games
+
+                rows[a_id]["sets_won"] += a_sets_won
+                rows[a_id]["sets_lost"] += b_sets_won
+                rows[b_id]["sets_won"] += b_sets_won
+                rows[b_id]["sets_lost"] += a_sets_won
+                rows[a_id]["games_won"] += a_games
+                rows[a_id]["games_lost"] += b_games
+                rows[b_id]["games_won"] += b_games
+                rows[b_id]["games_lost"] += a_games
             elif m.score_json:
                 warnings.append({"match_number": m.id, "reason": "SCORE_PARSE_FAILED"})
 
