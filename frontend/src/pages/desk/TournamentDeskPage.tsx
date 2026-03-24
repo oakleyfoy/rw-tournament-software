@@ -8000,6 +8000,36 @@ export default function TournamentDeskPage() {
   const matchById = new Map<number, DeskMatchItem>(
     (data.matches || []).map((m) => [m.match_id, m])
   )
+  const slotById = new Map<number, SnapshotSlot>(
+    (data.slots || []).map((s) => [s.slot_id, s])
+  )
+
+  ;(data.checkin_matches || []).forEach((cm) => {
+    let key = ''
+    let label = ''
+    if (cm.slot_id != null && slotById.has(cm.slot_id)) {
+      const s = slotById.get(cm.slot_id)!
+      key = `${s.day_date}|${(s.start_time || '').slice(0, 5)}`
+      label = `${s.day_date} ${formatTimeLabel(s.start_time || '00:00')}`
+    } else {
+      key = `checkin|${cm.day_label}|${(cm.sort_time || '').slice(0, 5)}`
+      label = `${cm.day_label} ${cm.scheduled_time || ''}`.trim()
+    }
+    if (!slotSectionMap.has(key)) {
+      slotSectionMap.set(key, {
+        key,
+        label,
+        order: key,
+        matches: [],
+        assignedMatchIds: new Set<number>(),
+        slotIds: new Set<number>(),
+      })
+    }
+    if (cm.slot_id != null) {
+      slotSectionMap.get(key)!.slotIds.add(cm.slot_id)
+    }
+    slotSectionMap.get(key)!.assignedMatchIds.add(cm.match_id)
+  })
 
   slotSectionMap.forEach((section) => {
     if (section.assignedMatchIds.size > 0) {
