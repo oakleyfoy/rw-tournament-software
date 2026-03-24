@@ -7769,24 +7769,46 @@ export default function TournamentDeskPage() {
   const handleTeamQuickCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', state: MatchCheckInSideState) => {
     if (!tid || !data) return
     try {
-      const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in)
-      if (uncheckedPlayers.length > 0) {
-        await Promise.all(
-          uncheckedPlayers.map((p: PlayerCheckInState) =>
-            deskCheckInPlayer(tid, match.match_id, {
-              version_id: data.version_id,
-              side,
-              player_id: p.player_id,
-              checked_in: true,
-            })
+      const anyChecked = state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)
+      if (anyChecked) {
+        const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in)
+        if (checkedPlayers.length > 0) {
+          await Promise.all(
+            checkedPlayers.map((p: PlayerCheckInState) =>
+              deskCheckInPlayer(tid, match.match_id, {
+                version_id: data.version_id,
+                side,
+                player_id: p.player_id,
+                checked_in: false,
+              })
+            )
           )
-        )
+        }
+        await deskCheckInTeam(tid, match.match_id, {
+          version_id: data.version_id,
+          side,
+          checked_in: false,
+        })
+      } else {
+        const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in)
+        if (uncheckedPlayers.length > 0) {
+          await Promise.all(
+            uncheckedPlayers.map((p: PlayerCheckInState) =>
+              deskCheckInPlayer(tid, match.match_id, {
+                version_id: data.version_id,
+                side,
+                player_id: p.player_id,
+                checked_in: true,
+              })
+            )
+          )
+        }
+        await deskCheckInTeam(tid, match.match_id, {
+          version_id: data.version_id,
+          side,
+          checked_in: true,
+        })
       }
-      await deskCheckInTeam(tid, match.match_id, {
-        version_id: data.version_id,
-        side,
-        checked_in: true,
-      })
       await handleRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed team quick check-in')
@@ -7819,6 +7841,31 @@ export default function TournamentDeskPage() {
     else if (division) parts.push(division)
     return parts.join(' ')
   }, [])
+
+  const renderInlinePlayerToggle = useCallback((
+    checked: boolean,
+    onClick?: () => void,
+    align: 'left' | 'right' = 'left'
+  ) => (
+    <button
+      type="button"
+      disabled={!onClick}
+      onClick={onClick}
+      style={{
+        width: 12,
+        height: 12,
+        borderRadius: '50%',
+        border: `1px solid ${checked ? '#2e7d32' : '#90a4ae'}`,
+        backgroundColor: checked ? '#2e7d32' : '#fff',
+        padding: 0,
+        cursor: onClick ? 'pointer' : 'default',
+        flexShrink: 0,
+        marginLeft: align === 'right' ? 6 : 0,
+        marginRight: align === 'left' ? 6 : 0,
+      }}
+      title={checked ? 'Checked in' : 'Not checked in'}
+    />
+  ), [])
 
   const handleAssignReadyMatch = useCallback(async (matchId: number, slotId: number) => {
     if (!tid || !data) return
@@ -8285,43 +8332,46 @@ export default function TournamentDeskPage() {
                                 <div style={{ fontWeight: 700, color: '#263238', marginBottom: 4 }}>
                                   {state.team_display}
                                 </div>
-                                <div style={{ display: 'grid', gap: 3 }}>
-                                  {state.players.length > 0 ? state.players.map((p: PlayerCheckInState) => (
-                                    <label
-                                      key={`${cm.match_id}-${side}-${p.player_id}`}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 6,
-                                        fontSize: 9,
-                                        color: '#455a64',
-                                        cursor: 'pointer',
-                                      }}
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick={() => handlePlayerCheckIn(cm, side, p.player_id, !p.checked_in)}
-                                        style={{
-                                          width: 12,
-                                          height: 12,
-                                          borderRadius: '50%',
-                                          border: `1px solid ${p.checked_in ? '#2e7d32' : '#90a4ae'}`,
-                                          backgroundColor: p.checked_in ? '#2e7d32' : '#fff',
-                                          padding: 0,
-                                          cursor: 'pointer',
-                                          flexShrink: 0,
-                                        }}
-                                        title={p.checked_in ? 'Checked in' : 'Not checked in'}
-                                      />
-                                      <span>{p.player_display}</span>
-                                    </label>
-                                  )) : (
-                                    <span style={{ color: '#9e9e9e', fontSize: 9 }}>No roster linked</span>
-                                  )}
-                                </div>
+                                {(() => {
+                                  const teamParts = state.team_display
+                                    .split('/')
+                                    .map(v => v.trim())
+                                    .filter(Boolean)
+                                  const p1 = state.players[0]
+                                  const p2 = state.players[1]
+                                  const leftName = teamParts[0] || p1?.player_display || 'Player 1'
+                                  const rightName = teamParts[1] || p2?.player_display || 'Player 2'
+                                  return (
+                                    <div style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      gap: 8,
+                                      fontSize: 10,
+                                      color: '#455a64',
+                                      marginBottom: 4,
+                                    }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                                        {renderInlinePlayerToggle(
+                                          !!p1?.checked_in,
+                                          p1 ? () => handlePlayerCheckIn(cm, side, p1.player_id, !p1.checked_in) : undefined,
+                                          'left'
+                                        )}
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
+                                      </div>
+                                      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
+                                        {renderInlinePlayerToggle(
+                                          !!p2?.checked_in,
+                                          p2 ? () => handlePlayerCheckIn(cm, side, p2.player_id, !p2.checked_in) : undefined,
+                                          'right'
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })()}
                                 <button
                                   type="button"
-                                  disabled={state.side_ready}
                                   onClick={() => handleTeamQuickCheckIn(cm, side, state)}
                                   style={{
                                     marginTop: 6,
@@ -8330,12 +8380,14 @@ export default function TournamentDeskPage() {
                                     fontWeight: 700,
                                     borderRadius: 4,
                                     border: '1px solid #607d8b',
-                                    backgroundColor: state.side_ready ? '#eceff1' : '#fff',
-                                    color: state.side_ready ? '#78909c' : '#455a64',
-                                    cursor: state.side_ready ? 'default' : 'pointer',
+                                    backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#eceff1' : '#fff',
+                                    color: '#455a64',
+                                    cursor: 'pointer',
                                   }}
                                 >
-                                  {state.side_ready ? 'Team Checked-In' : 'Team Check-In'}
+                                  {(state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in))
+                                    ? 'Team Uncheck-In'
+                                    : 'Team Check-In'}
                                 </button>
                               </td>
                             )
