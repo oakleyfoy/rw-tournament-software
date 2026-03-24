@@ -7568,6 +7568,9 @@ export default function TournamentDeskPage() {
     setError(null)
     try {
       const resp = await getDeskSnapshot(tid, versionId)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/3aa7eda4-e97a-402c-ac3d-b6b632d2544d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H1',location:'TournamentDeskPage.tsx:loadSnapshot',message:'desk snapshot payload summary',data:{tournamentId:resp.tournament_id,versionId:resp.version_id,managementMode:resp.management_mode,slotOptionsCount:(resp.checkin_slot_options||[]).length,slotRowsKeysCount:Object.keys(resp.checkin_slot_rows||{}).length,slotOptionsPreview:(resp.checkin_slot_options||[]).slice(0,4).map(o=>({slotKey:o.slot_key,label:o.label,slotIds:(o.slot_ids||[]).slice(0,4)}))},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setData(resp)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
@@ -7887,7 +7890,6 @@ export default function TournamentDeskPage() {
   const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
   const [startingAll, setStartingAll] = useState(false)
   const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
-  const [selectedCheckInSlotKey, setSelectedCheckInSlotKey] = useState<string>('')
 
   const startableCourts = useMemo(() => {
     if (!data) return []
@@ -8077,17 +8079,6 @@ export default function TournamentDeskPage() {
   const checkInByMatchId = new Map<number, CheckInMatchItem>(
     (data.checkin_matches || []).map((cm) => [cm.match_id, cm])
   )
-  const firstPopulatedSlotKey =
-    slotSections.find((s) => {
-      if (s.checkinRows.length > 0) return true
-      if (s.matches.length > 0) return true
-      return (data.checkin_matches || []).some(cm => cm.slot_id != null && s.slotIds.has(cm.slot_id))
-    })?.key || ''
-  const availableSlotKeys = slotSections.map(s => s.key)
-  const effectiveSelectedCheckInSlotKey = availableSlotKeys.includes(selectedCheckInSlotKey)
-    ? selectedCheckInSlotKey
-    : (firstPopulatedSlotKey || availableSlotKeys[0] || '')
-  const selectedCheckInSlotSection = slotSections.find(s => s.key === effectiveSelectedCheckInSlotKey) || null
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
@@ -8440,21 +8431,7 @@ export default function TournamentDeskPage() {
             ) : (
               <>
                 <div style={{ marginBottom: 4, fontSize: 12, color: '#546e7a', fontWeight: 600 }}>
-                  Player Check-In / Ready To Play - next time slot view
-                </div>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>Current Slot:</span>
-                    <select
-                      value={effectiveSelectedCheckInSlotKey}
-                      onChange={e => setSelectedCheckInSlotKey(e.target.value)}
-                      style={{ fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #b0bec5', minWidth: 260 }}
-                    >
-                      {slotSections.map((s) => (
-                        <option key={s.key} value={s.key}>{s.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                  Player Check-In / Ready To Play - full event view
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '2.1fr 1fr 0.9fr', gap: 8 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
@@ -8474,46 +8451,47 @@ export default function TournamentDeskPage() {
                         </thead>
                         <tbody>
                           {(() => {
-                            const section = selectedCheckInSlotSection
-                            if (!section) {
-                              return (
-                                <tr style={{ borderTop: '1px solid #f0f3f6' }}>
-                                  <td style={{ padding: '6px 8px', fontSize: 10, color: '#90a4ae', fontStyle: 'italic' }} colSpan={3}>
-                                    No slot selected
+                            const rows: JSX.Element[] = []
+                            slotSections.forEach((section) => {
+                              rows.push(
+                                <tr key={`slot-${section.key}`} style={{ borderTop: '1px solid #dbe4eb', backgroundColor: '#f7fafc' }}>
+                                  <td colSpan={3} style={{ padding: '5px 8px', fontSize: 10, color: '#455a64', fontWeight: 700 }}>
+                                    {section.label}
                                   </td>
                                 </tr>
                               )
-                            }
-                            const checkInMatchesForSection =
-                              section.checkinRows.length > 0
-                                ? section.checkinRows
-                                : (data.checkin_matches || [])
-                                    .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
-                                    .sort((a, b) => a.match_number - b.match_number)
-                            const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
-                              checkInMatchesForSection.length > 0
-                                ? checkInMatchesForSection.map((cm) => ({
-                                    cm,
-                                    baseMatch: matchById.get(cm.match_id) || null,
-                                  }))
-                                : section.matches.map((baseMatch) => ({
-                                    baseMatch,
-                                    cm: checkInByMatchId.get(baseMatch.match_id) || null,
-                                  }))
 
-                            if (rowEntries.length === 0) {
-                              return (
-                                <tr style={{ borderTop: '1px solid #f0f3f6' }}>
-                                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
-                                    (Open slot)
-                                  </td>
-                                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#b0bec5' }}>TBD / TBD</td>
-                                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#b0bec5' }}>TBD / TBD</td>
-                                </tr>
-                              )
-                            }
+                              const checkInMatchesForSection =
+                                section.checkinRows.length > 0
+                                  ? section.checkinRows
+                                  : (data.checkin_matches || [])
+                                      .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
+                                      .sort((a, b) => a.match_number - b.match_number)
+                              const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
+                                checkInMatchesForSection.length > 0
+                                  ? checkInMatchesForSection.map((cm) => ({
+                                      cm,
+                                      baseMatch: matchById.get(cm.match_id) || null,
+                                    }))
+                                  : section.matches.map((baseMatch) => ({
+                                      baseMatch,
+                                      cm: checkInByMatchId.get(baseMatch.match_id) || null,
+                                    }))
 
-                            return rowEntries.map(({ baseMatch, cm }) => {
+                              if (rowEntries.length === 0) {
+                                rows.push(
+                                  <tr key={`slot-empty-${section.key}`} style={{ borderTop: '1px solid #f0f3f6' }}>
+                                    <td style={{ padding: '5px 8px', fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
+                                      (Open slot)
+                                    </td>
+                                    <td style={{ padding: '5px 8px', fontSize: 10, color: '#b0bec5' }}>TBD / TBD</td>
+                                    <td style={{ padding: '5px 8px', fontSize: 10, color: '#b0bec5' }}>TBD / TBD</td>
+                                  </tr>
+                                )
+                                return
+                              }
+
+                              rowEntries.forEach(({ baseMatch, cm }) => {
                               const fallbackMatch: DeskMatchItem = baseMatch || {
                                 match_id: cm?.match_id || -1,
                                 match_number: cm?.match_number || -1,
@@ -8631,7 +8609,7 @@ export default function TournamentDeskPage() {
                                 </td>
                               )
 
-                              return (
+                              rows.push(
                                 <tr key={`${section.key}-${fallbackMatch.match_id}-${cm?.match_id || 'row'}`} style={{ borderTop: '1px solid #f0f3f6' }}>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
                                     {cm ? formatCheckInMatchLabel(cm) : `${fallbackMatch.event_name} ${fallbackMatch.stage}`}
@@ -8640,7 +8618,9 @@ export default function TournamentDeskPage() {
                                   {renderTeamCell('B', sideB)}
                                 </tr>
                               )
+                              })
                             })
+                            return rows
                           })()}
                         </tbody>
                       </table>
