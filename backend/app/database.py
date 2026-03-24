@@ -39,7 +39,9 @@ def init_db() -> None:
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
     from app.models.match_assignment import MatchAssignment  # noqa: F401
+    from app.models.match_checkin import MatchCheckIn  # noqa: F401
     from app.models.match_lock import MatchLock  # noqa: F401
+    from app.models.match_player_checkin import MatchPlayerCheckIn  # noqa: F401
     from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.player import Player  # noqa: F401
     from app.models.slot_lock import SlotLock  # noqa: F401

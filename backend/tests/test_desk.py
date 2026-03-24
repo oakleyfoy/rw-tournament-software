@@ -24,7 +24,9 @@ from app.models.match_lock import MatchLock
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.sms_log import SmsLog
+from app.models.player import Player
 from app.models.team import Team
+from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 
@@ -2439,6 +2441,130 @@ def _setup_draft_for_move(session: Session):
 
     return t, v, ev, teams, [m1, m2], [slot_c1_t1, slot_c2_t1, slot_c1_t2, slot_c2_t2]
 
+
+def _add_two_players_for_team(session: Session, tournament_id: int, team_id: int, prefix: str) -> List[Player]:
+    p1 = Player(tournament_id=tournament_id, full_name=f"{prefix} Player 1")
+    p2 = Player(tournament_id=tournament_id, full_name=f"{prefix} Player 2")
+    session.add_all([p1, p2])
+    session.flush()
+    session.add_all(
+        [
+            TeamPlayer(team_id=team_id, player_id=p1.id, lineup_slot=1),
+            TeamPlayer(team_id=team_id, player_id=p2.id, lineup_slot=2),
+        ]
+    )
+    session.commit()
+    return [p1, p2]
+
+
+def test_management_mode_toggle_defaults_and_persists(client, session):
+    t, v, _ev, _teams, _matches, _slots = _setup_draft_for_move(session)
+
+    mode_resp = client.get(f"/api/desk/tournaments/{t.id}/management-mode", params={"version_id": v.id})
+    assert mode_resp.status_code == 200
+    assert mode_resp.json()["management_mode"] == "court_management"
+
+    set_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert set_resp.status_code == 200
+    assert set_resp.json()["management_mode"] == "checkin_management"
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id}).json()
+    assert snap["management_mode"] == "checkin_management"
+
+
+def test_checkin_queue_inclusion_and_team_ready_flow(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+
+    _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    queue0 = client.get(f"/api/desk/tournaments/{t.id}/checkin/queue", params={"version_id": v.id})
+    assert queue0.status_code == 200
+    body0 = queue0.json()
+    assert len(body0["checkin_matches"]) >= 1
+    assert len(body0["ready_queue"]) == 0
+
+    a_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/team",
+        json={"version_id": v.id, "side": "A", "checked_in": True},
+    )
+    assert a_resp.status_code == 200
+    assert len(a_resp.json()["ready_queue"]) == 0
+
+    b_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/team",
+        json={"version_id": v.id, "side": "B", "checked_in": True},
+    )
+    assert b_resp.status_code == 200
+    ready_ids = {r["match_id"] for r in b_resp.json()["ready_queue"]}
+    assert m1.id in ready_ids
+
+
+def test_checkin_player_rollup_and_assign_ready_match(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    delta_players = _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    # Side A player check-in: not ready until both players are checked in
+    p1a = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[0].id, "checked_in": True},
+    )
+    assert p1a.status_code == 200
+    match_state = [m for m in p1a.json()["checkin_matches"] if m["match_id"] == m1.id][0]
+    assert match_state["side_a"]["side_ready"] is False
+
+    p2a = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[1].id, "checked_in": True},
+    )
+    assert p2a.status_code == 200
+    match_state = [m for m in p2a.json()["checkin_matches"] if m["match_id"] == m1.id][0]
+    assert match_state["side_a"]["side_ready"] is True
+
+    # Complete side B as well to make match ready
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[0].id, "checked_in": True},
+    )
+    p2b = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[1].id, "checked_in": True},
+    )
+    assert p2b.status_code == 200
+    queue_body = p2b.json()
+    ready_ids = {r["match_id"] for r in queue_body["ready_queue"]}
+    assert m1.id in ready_ids
+    assert len(queue_body["available_slots"]) >= 1
+
+    target_slot_id = queue_body["available_slots"][0]["slot_id"]
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": m1.id, "slot_id": target_slot_id},
+    )
+    assert assign.status_code == 200
+    snap = assign.json()
+    moved = [m for m in snap["matches"] if m["match_id"] == m1.id][0]
+    assert moved["assignment_id"] is not None
+    assert moved["court_name"] is not None
 
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""

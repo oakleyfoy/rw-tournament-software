@@ -22,6 +22,7 @@ REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("use_time_windows", "INTEGER", "BOOLEAN"),
     ("public_schedule_version_id", "INTEGER", "INTEGER"),
     ("is_archived", "INTEGER", "BOOLEAN"),
+    ("desk_management_mode", "TEXT", "TEXT"),
 ]
 
 # Columns we must ensure exist in the "team" table.
@@ -168,7 +169,12 @@ def ensure_tournament_columns(engine: Engine) -> None:
                 for name, sqlite_type, _pg_type in REQUIRED_TOURNAMENT_COLUMNS:
                     if name in existing:
                         continue
-                    default = "DEFAULT NULL" if name == "public_schedule_version_id" else "DEFAULT 0"
+                    if name == "public_schedule_version_id":
+                        default = "DEFAULT NULL"
+                    elif name == "desk_management_mode":
+                        default = "DEFAULT 'court_management'"
+                    else:
+                        default = "DEFAULT 0"
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} {default};"))
         else:
             with engine.connect() as conn:
@@ -189,7 +195,12 @@ def ensure_tournament_columns(engine: Engine) -> None:
                 for name, _sqlite_type, pg_type in REQUIRED_TOURNAMENT_COLUMNS:
                     if name in existing:
                         continue
-                    default = "DEFAULT NULL" if name == "public_schedule_version_id" else "DEFAULT FALSE"
+                    if name == "public_schedule_version_id":
+                        default = "DEFAULT NULL"
+                    elif name == "desk_management_mode":
+                        default = "DEFAULT 'court_management'"
+                    else:
+                        default = "DEFAULT FALSE"
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} {default};"))
     except Exception as e:
         import logging

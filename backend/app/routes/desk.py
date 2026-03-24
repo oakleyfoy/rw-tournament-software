@@ -13,14 +13,19 @@ from sqlmodel import Session, select
 from sqlalchemy import func
 
 from app.database import get_session
+from app.models.court_state import TournamentCourtState
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.slot_lock import SlotLock
+from app.models.player import Player
 from app.models.team import Team
+from app.models.team_player import TeamPlayer
 from app.models.match_lock import MatchLock
+from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.tournament import Tournament
 from app.services.advancement_service import apply_advancement_with_details, resolve_all_dependencies
 from app.services.sms_automation import SmsAutomationEngine
@@ -64,6 +69,10 @@ _POOL_LABELS = {
     "POOLC": "Division III",
     "POOLD": "Division IV",
 }
+
+MODE_COURT_MANAGEMENT = "court_management"
+MODE_CHECKIN_MANAGEMENT = "checkin_management"
+ALLOWED_DESK_MODES = {MODE_COURT_MANAGEMENT, MODE_CHECKIN_MANAGEMENT}
 
 
 class DeskMatchItem(BaseModel):
@@ -124,6 +133,61 @@ class SnapshotSlot(BaseModel):
     assigned_match_id: Optional[int] = None
 
 
+class PlayerCheckInState(BaseModel):
+    player_id: int
+    player_display: str
+    checked_in: bool = False
+    checked_in_at: Optional[str] = None
+
+
+class MatchCheckInSideState(BaseModel):
+    side: str  # A | B
+    team_id: Optional[int] = None
+    team_display: str
+    team_checked_in: bool = False
+    team_checked_in_at: Optional[str] = None
+    players: List[PlayerCheckInState] = []
+    players_checked_in: int = 0
+    players_total: int = 0
+    side_ready: bool = False
+    ready_at: Optional[str] = None
+
+
+class CheckInMatchItem(BaseModel):
+    match_id: int
+    match_number: int
+    match_code: str
+    event_name: str
+    day_label: str
+    scheduled_time: Optional[str] = None
+    sort_time: Optional[str] = None
+    slot_id: Optional[int] = None
+    side_a: MatchCheckInSideState
+    side_b: MatchCheckInSideState
+    match_ready: bool = False
+    ready_at: Optional[str] = None
+
+
+class ReadyQueueItem(BaseModel):
+    match_id: int
+    match_number: int
+    match_code: str
+    event_name: str
+    day_label: str
+    scheduled_time: Optional[str] = None
+    ready_at: Optional[str] = None
+    team1_display: str
+    team2_display: str
+
+
+class AvailableCourtSlot(BaseModel):
+    slot_id: int
+    court_name: str
+    day_label: str
+    scheduled_time: Optional[str] = None
+    currently_assigned_match_id: Optional[int] = None
+
+
 class DeskSnapshotResponse(BaseModel):
     tournament_id: int
     tournament_name: str
@@ -136,6 +200,51 @@ class DeskSnapshotResponse(BaseModel):
     on_deck_by_court: Dict[str, DeskMatchItem]
     board_by_court: List[BoardCourtSlot]
     slots: List[SnapshotSlot] = []
+    management_mode: str = MODE_COURT_MANAGEMENT
+    checkin_matches: List[CheckInMatchItem] = []
+    ready_queue: List[ReadyQueueItem] = []
+    available_courts: List[str] = []
+    available_slots: List[AvailableCourtSlot] = []
+
+
+class DeskManagementModeResponse(BaseModel):
+    tournament_id: int
+    version_id: int
+    management_mode: str
+
+
+class DeskManagementModeRequest(BaseModel):
+    version_id: int
+    management_mode: str
+
+
+class TeamCheckInRequest(BaseModel):
+    version_id: int
+    side: str  # A | B
+    checked_in: bool
+
+
+class PlayerCheckInRequest(BaseModel):
+    version_id: int
+    side: str  # A | B
+    player_id: int
+    checked_in: bool
+
+
+class ReadyQueueResponse(BaseModel):
+    tournament_id: int
+    version_id: int
+    management_mode: str
+    checkin_matches: List[CheckInMatchItem]
+    ready_queue: List[ReadyQueueItem]
+    available_courts: List[str]
+    available_slots: List[AvailableCourtSlot]
+
+
+class AssignReadyMatchRequest(BaseModel):
+    version_id: int
+    match_id: int
+    slot_id: int
 
 
 class WorkingDraftResponse(BaseModel):
@@ -285,6 +394,13 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
     return str(score_json) if score_json else None
 
 
+def _normalize_management_mode(value: Optional[str]) -> str:
+    mode = (value or MODE_COURT_MANAGEMENT).strip().lower()
+    if mode not in ALLOWED_DESK_MODES:
+        return MODE_COURT_MANAGEMENT
+    return mode
+
+
 def _is_retired_score(score_json: Optional[Dict[str, Any]]) -> bool:
     if not score_json:
         return False
@@ -324,6 +440,280 @@ def _slot_start_has_arrived(tournament: Tournament, slot: ScheduleSlot) -> bool:
     now_local = datetime.now(tz)
     slot_local = datetime.combine(slot.day_date, slot_time, tzinfo=tz)
     return slot_local <= now_local
+
+
+def _build_checkin_snapshot(
+    session: Session,
+    tournament: Tournament,
+    version: ScheduleVersion,
+    items: List[DeskMatchItem],
+) -> tuple[List[CheckInMatchItem], List[ReadyQueueItem], List[str], List[AvailableCourtSlot]]:
+    all_matches = session.exec(
+        select(Match).where(Match.schedule_version_id == version.id)
+    ).all()
+    if not all_matches:
+        return [], [], [], []
+
+    match_map = {m.id: m for m in all_matches}
+    match_ids = list(match_map.keys())
+    assignments = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version.id,
+            MatchAssignment.match_id.in_(match_ids),  # type: ignore[arg-type]
+        )
+    ).all()
+    assignment_map = {a.match_id: a for a in assignments}
+    assignment_by_slot = {a.slot_id: a for a in assignments}
+
+    slot_ids = list({a.slot_id for a in assignments})
+    slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))  # type: ignore[arg-type]
+    ).all() if slot_ids else []
+    slot_map = {s.id: s for s in slots}
+
+    team_ids: set[int] = set()
+    event_ids: set[int] = set()
+    for m in all_matches:
+        event_ids.add(m.event_id)
+        if m.team_a_id:
+            team_ids.add(m.team_a_id)
+        if m.team_b_id:
+            team_ids.add(m.team_b_id)
+    team_map = {
+        t.id: t for t in session.exec(
+            select(Team).where(Team.id.in_(list(team_ids)))  # type: ignore[arg-type]
+        ).all()
+    } if team_ids else {}
+    event_map = {
+        e.id: e for e in session.exec(
+            select(Event).where(Event.id.in_(list(event_ids)))  # type: ignore[arg-type]
+        ).all()
+    } if event_ids else {}
+
+    candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
+    for m in all_matches:
+        status = (m.runtime_status or "SCHEDULED").upper()
+        if status in ("FINAL", "IN_PROGRESS", "PAUSED"):
+            continue
+        if not m.team_a_id or not m.team_b_id:
+            continue
+        a = assignment_map.get(m.id)
+        if not a:
+            continue
+        s = slot_map.get(a.slot_id)
+        if not s:
+            continue
+        candidates.append((m, a, s))
+
+    if not candidates:
+        return [], [], [], []
+
+    candidates.sort(key=lambda x: (x[2].day_date, x[2].start_time, x[2].court_number, x[0].id))
+    next_day = candidates[0][2].day_date
+    next_time = candidates[0][2].start_time
+    eligible = [c for c in candidates if c[2].day_date == next_day and c[2].start_time == next_time]
+
+    eligible_match_ids = [m.id for (m, _a, _s) in eligible]
+
+    side_team_ids: set[int] = set()
+    for m, _a, _s in eligible:
+        if m.team_a_id:
+            side_team_ids.add(m.team_a_id)
+        if m.team_b_id:
+            side_team_ids.add(m.team_b_id)
+
+    team_player_rows = session.exec(
+        select(TeamPlayer).where(TeamPlayer.team_id.in_(list(side_team_ids)))  # type: ignore[arg-type]
+    ).all() if side_team_ids else []
+    players_by_team: Dict[int, List[int]] = {}
+    player_ids: set[int] = set()
+    for row in team_player_rows:
+        players_by_team.setdefault(row.team_id, []).append(row.player_id)
+        player_ids.add(row.player_id)
+    players = session.exec(
+        select(Player).where(Player.id.in_(list(player_ids)))  # type: ignore[arg-type]
+    ).all() if player_ids else []
+    player_map = {p.id: p for p in players}
+
+    team_checkins = session.exec(
+        select(MatchCheckIn).where(
+            MatchCheckIn.schedule_version_id == version.id,
+            MatchCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
+        )
+    ).all() if eligible_match_ids else []
+    team_checkin_map = {(r.match_id, (r.side or "").upper()): r for r in team_checkins}
+
+    player_checkins = session.exec(
+        select(MatchPlayerCheckIn).where(
+            MatchPlayerCheckIn.schedule_version_id == version.id,
+            MatchPlayerCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
+        )
+    ).all() if eligible_match_ids else []
+    player_checkin_map = {
+        (r.match_id, (r.side or "").upper(), r.player_id): r for r in player_checkins
+    }
+
+    def _to_day_label(d) -> str:
+        weekday = d.strftime("%A")
+        month_day = d.strftime("%B %d").replace(" 0", " ")
+        return f"{weekday}, {month_day}"
+
+    def _to_sched_label(t) -> str:
+        if isinstance(t, str):
+            hhmm = t[:5] if len(t) >= 5 else t
+            parts = hhmm.split(":")
+            h, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+            return f"{(h % 12) or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+        return t.strftime("%I:%M %p").lstrip("0")
+
+    checkin_matches: List[CheckInMatchItem] = []
+
+    for m, a, s in eligible:
+        def build_side(side: str, team_id: Optional[int], fallback: Optional[str]) -> MatchCheckInSideState:
+            side_key = side.upper()
+            team_row = team_checkin_map.get((m.id, side_key))
+            team_checked = bool(team_row and team_row.team_checked_in)
+            team_checked_at = team_row.checked_in_at if team_row else None
+
+            player_states: List[PlayerCheckInState] = []
+            side_players = players_by_team.get(team_id or -1, [])
+            side_player_times: List[datetime] = []
+            for pid in side_players:
+                p = player_map.get(pid)
+                chk = player_checkin_map.get((m.id, side_key, pid))
+                checked = bool(chk and chk.checked_in)
+                checked_at = chk.checked_in_at if chk else None
+                if checked and checked_at:
+                    side_player_times.append(checked_at)
+                player_states.append(
+                    PlayerCheckInState(
+                        player_id=pid,
+                        player_display=(p.display_name or p.full_name) if p else f"Player {pid}",
+                        checked_in=checked,
+                        checked_in_at=checked_at.isoformat() if checked_at else None,
+                    )
+                )
+
+            players_total = len(side_players)
+            players_checked = len([p for p in player_states if p.checked_in])
+            side_ready = team_checked or (players_total > 0 and players_checked == players_total)
+            ready_at_dt: Optional[datetime] = None
+            if team_checked and team_checked_at:
+                ready_at_dt = team_checked_at
+            elif side_ready and side_player_times:
+                ready_at_dt = max(side_player_times)
+
+            return MatchCheckInSideState(
+                side=side_key,
+                team_id=team_id,
+                team_display=_team_display(team_id, fallback, team_map),
+                team_checked_in=team_checked,
+                team_checked_in_at=team_checked_at.isoformat() if team_checked_at else None,
+                players=player_states,
+                players_checked_in=players_checked,
+                players_total=players_total,
+                side_ready=side_ready,
+                ready_at=ready_at_dt.isoformat() if ready_at_dt else None,
+            )
+
+        side_a = build_side("A", m.team_a_id, m.placeholder_side_a)
+        side_b = build_side("B", m.team_b_id, m.placeholder_side_b)
+        ready = side_a.side_ready and side_b.side_ready
+        ready_at_vals = [d for d in [side_a.ready_at, side_b.ready_at] if d]
+        ready_at = max(ready_at_vals) if ready_at_vals else None
+
+        ev = event_map.get(m.event_id)
+        event_name = ev.name if ev else "Unknown"
+        checkin_matches.append(
+            CheckInMatchItem(
+                match_id=m.id,
+                match_number=m.id,
+                match_code=m.match_code or "",
+                event_name=event_name,
+                day_label=_to_day_label(s.day_date),
+                scheduled_time=_to_sched_label(s.start_time),
+                sort_time=s.start_time.strftime("%H:%M"),
+                slot_id=s.id,
+                side_a=side_a,
+                side_b=side_b,
+                match_ready=ready,
+                ready_at=ready_at,
+            )
+        )
+
+    ready_items: List[ReadyQueueItem] = []
+    for cm in checkin_matches:
+        if not cm.match_ready:
+            continue
+        m = match_map.get(cm.match_id)
+        if not m:
+            continue
+        status = (m.runtime_status or "SCHEDULED").upper()
+        if status in ("IN_PROGRESS", "PAUSED", "FINAL"):
+            continue
+        a = assignment_map.get(cm.match_id)
+        if a and (a.assigned_by or "").upper() == "CHECKIN_DESK":
+            continue
+        ready_items.append(
+            ReadyQueueItem(
+                match_id=cm.match_id,
+                match_number=cm.match_number,
+                match_code=cm.match_code,
+                event_name=cm.event_name,
+                day_label=cm.day_label,
+                scheduled_time=cm.scheduled_time,
+                ready_at=cm.ready_at,
+                team1_display=cm.side_a.team_display,
+                team2_display=cm.side_b.team_display,
+            )
+        )
+    ready_items.sort(key=lambda x: (x.ready_at or "9999", x.day_label, x.scheduled_time or "", x.match_id))
+
+    active_courts = {
+        m.court_name for m in items
+        if m.court_name and (m.status in ("IN_PROGRESS", "PAUSED"))
+    }
+    closed_courts = {
+        f"Court {s.court_label}" if not s.court_label.lower().startswith("court") else s.court_label
+        for s in session.exec(
+            select(TournamentCourtState).where(
+                TournamentCourtState.tournament_id == tournament.id,
+                TournamentCourtState.is_closed == True,  # noqa: E712
+            )
+        ).all()
+    }
+
+    configured = list(tournament.court_names or [])
+    all_courts = [f"Court {c}" if not str(c).lower().startswith("court") else str(c) for c in configured]
+    if not all_courts:
+        all_courts = sorted({m.court_name for m in items if m.court_name})
+
+    available_slots: List[AvailableCourtSlot] = []
+    used_court: set[str] = set()
+    for s in sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id)):
+        court_label = s.court_label or str(s.court_number)
+        court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
+        if court_name in used_court:
+            continue
+        if court_name in active_courts or court_name in closed_courts:
+            continue
+        a = assignment_by_slot.get(s.id)
+        target_match = match_map.get(a.match_id) if a else None
+        if target_match and (target_match.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED", "FINAL"):
+            continue
+        available_slots.append(
+            AvailableCourtSlot(
+                slot_id=s.id,
+                court_name=court_name,
+                day_label=_to_day_label(s.day_date),
+                scheduled_time=_to_sched_label(s.start_time),
+                currently_assigned_match_id=a.match_id if a else None,
+            )
+        )
+        used_court.add(court_name)
+
+    available_courts = [s.court_name for s in available_slots]
+    return checkin_matches, ready_items, available_courts, available_slots
 
 
 def _validate_score_text_for_match(score_text: str, match: Match) -> None:
@@ -407,6 +797,7 @@ def _build_match_items(
     session: Session,
     tournament: Tournament,
     version: ScheduleVersion,
+    management_mode: str = MODE_COURT_MANAGEMENT,
 ) -> tuple:
     """Build flat match list and court set. Returns (items, courts_set)."""
     all_matches = session.exec(
@@ -480,7 +871,23 @@ def _build_match_items(
 
             court_label = slot.court_label or str(slot.court_number)
             court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
-            courts_set.add(court_name)
+            # In check-in mode, hide pre-assigned scheduled matches unless explicitly
+            # assigned at runtime through check-in queue flow.
+            status = (m.runtime_status or "SCHEDULED").upper()
+            preassigned_hidden = (
+                management_mode == MODE_CHECKIN_MANAGEMENT
+                and status == "SCHEDULED"
+                and (a is not None and (a.assigned_by or "").upper() != "CHECKIN_DESK")
+            )
+            if preassigned_hidden:
+                day_offset = 0
+                day_label = "Unscheduled"
+                scheduled_time = None
+                sort_time = None
+                court_name = None
+                slot = None
+            else:
+                courts_set.add(court_name)
         else:
             day_offset = 0
             day_label = "Unscheduled"
@@ -658,7 +1065,8 @@ def desk_snapshot(
         raise HTTPException(status_code=404, detail="Tournament not found")
 
     version = _resolve_version(session, tournament, version_id)
-    items, courts_set = _build_match_items(session, tournament, version)
+    management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
+    items, courts_set = _build_match_items(session, tournament, version, management_mode=management_mode)
 
     # Build slots array for the grid view
     all_slots = session.exec(
@@ -749,6 +1157,15 @@ def desk_snapshot(
             on_deck=board_on,
         ))
 
+    checkin_matches: List[CheckInMatchItem] = []
+    ready_queue: List[ReadyQueueItem] = []
+    available_courts: List[str] = []
+    available_slots: List[AvailableCourtSlot] = []
+    if management_mode == MODE_CHECKIN_MANAGEMENT:
+        checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(
+            session, tournament, version, items
+        )
+
     return DeskSnapshotResponse(
         tournament_id=tournament.id,
         tournament_name=tournament.name,
@@ -761,6 +1178,307 @@ def desk_snapshot(
         on_deck_by_court=on_deck,
         board_by_court=board,
         slots=snapshot_slots,
+        management_mode=management_mode,
+        checkin_matches=checkin_matches,
+        ready_queue=ready_queue,
+        available_courts=available_courts,
+        available_slots=available_slots,
+    )
+
+
+@router.get(
+    "/desk/tournaments/{tournament_id}/management-mode",
+    response_model=DeskManagementModeResponse,
+)
+def get_management_mode(
+    tournament_id: int,
+    version_id: int = Query(...),
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    return DeskManagementModeResponse(
+        tournament_id=tournament_id,
+        version_id=version_id,
+        management_mode=_normalize_management_mode(getattr(tournament, "desk_management_mode", None)),
+    )
+
+
+@router.patch(
+    "/desk/tournaments/{tournament_id}/management-mode",
+    response_model=DeskManagementModeResponse,
+)
+def set_management_mode(
+    tournament_id: int,
+    payload: DeskManagementModeRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Mode changes are only allowed on DRAFT versions")
+    mode = _normalize_management_mode(payload.management_mode)
+    if mode not in ALLOWED_DESK_MODES:
+        raise HTTPException(status_code=400, detail="Invalid management_mode")
+    tournament.desk_management_mode = mode
+    session.add(tournament)
+    session.commit()
+    return DeskManagementModeResponse(
+        tournament_id=tournament_id,
+        version_id=payload.version_id,
+        management_mode=mode,
+    )
+
+
+@router.patch(
+    "/desk/tournaments/{tournament_id}/matches/{match_id}/checkin/team",
+    response_model=ReadyQueueResponse,
+)
+def set_team_checkin(
+    tournament_id: int,
+    match_id: int,
+    payload: TeamCheckInRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Check-in updates are only allowed on DRAFT versions")
+    if _normalize_management_mode(tournament.desk_management_mode) != MODE_CHECKIN_MANAGEMENT:
+        raise HTTPException(status_code=400, detail="Check-In updates require checkin_management mode")
+
+    match = session.get(Match, match_id)
+    if not match or match.tournament_id != tournament_id or match.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    side = (payload.side or "").strip().upper()
+    if side not in ("A", "B"):
+        raise HTTPException(status_code=400, detail="side must be A or B")
+
+    team_id = match.team_a_id if side == "A" else match.team_b_id
+    row = session.exec(
+        select(MatchCheckIn).where(
+            MatchCheckIn.schedule_version_id == payload.version_id,
+            MatchCheckIn.match_id == match_id,
+            MatchCheckIn.side == side,
+        )
+    ).first()
+    if row is None:
+        row = MatchCheckIn(
+            tournament_id=tournament_id,
+            schedule_version_id=payload.version_id,
+            match_id=match_id,
+            team_id=team_id,
+            side=side,
+        )
+    row.team_id = team_id
+    row.team_checked_in = bool(payload.checked_in)
+    row.checked_in_at = datetime.utcnow() if payload.checked_in else None
+    row.updated_at = datetime.utcnow()
+    session.add(row)
+    session.commit()
+
+    items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
+    checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    return ReadyQueueResponse(
+        tournament_id=tournament_id,
+        version_id=payload.version_id,
+        management_mode=MODE_CHECKIN_MANAGEMENT,
+        checkin_matches=checkin_matches,
+        ready_queue=ready_queue,
+        available_courts=available_courts,
+        available_slots=available_slots,
+    )
+
+
+@router.patch(
+    "/desk/tournaments/{tournament_id}/matches/{match_id}/checkin/player",
+    response_model=ReadyQueueResponse,
+)
+def set_player_checkin(
+    tournament_id: int,
+    match_id: int,
+    payload: PlayerCheckInRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Check-in updates are only allowed on DRAFT versions")
+    if _normalize_management_mode(tournament.desk_management_mode) != MODE_CHECKIN_MANAGEMENT:
+        raise HTTPException(status_code=400, detail="Check-In updates require checkin_management mode")
+
+    match = session.get(Match, match_id)
+    if not match or match.tournament_id != tournament_id or match.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    side = (payload.side or "").strip().upper()
+    if side not in ("A", "B"):
+        raise HTTPException(status_code=400, detail="side must be A or B")
+    team_id = match.team_a_id if side == "A" else match.team_b_id
+    if not team_id:
+        raise HTTPException(status_code=400, detail="No team assigned for this side")
+    valid_link = session.exec(
+        select(TeamPlayer).where(
+            TeamPlayer.team_id == team_id,
+            TeamPlayer.player_id == payload.player_id,
+        )
+    ).first()
+    if not valid_link:
+        raise HTTPException(status_code=400, detail="Player is not on this team roster")
+
+    row = session.exec(
+        select(MatchPlayerCheckIn).where(
+            MatchPlayerCheckIn.schedule_version_id == payload.version_id,
+            MatchPlayerCheckIn.match_id == match_id,
+            MatchPlayerCheckIn.side == side,
+            MatchPlayerCheckIn.player_id == payload.player_id,
+        )
+    ).first()
+    if row is None:
+        row = MatchPlayerCheckIn(
+            tournament_id=tournament_id,
+            schedule_version_id=payload.version_id,
+            match_id=match_id,
+            team_id=team_id,
+            side=side,
+            player_id=payload.player_id,
+        )
+    row.team_id = team_id
+    row.checked_in = bool(payload.checked_in)
+    row.checked_in_at = datetime.utcnow() if payload.checked_in else None
+    row.updated_at = datetime.utcnow()
+    session.add(row)
+    session.commit()
+
+    items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
+    checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    return ReadyQueueResponse(
+        tournament_id=tournament_id,
+        version_id=payload.version_id,
+        management_mode=MODE_CHECKIN_MANAGEMENT,
+        checkin_matches=checkin_matches,
+        ready_queue=ready_queue,
+        available_courts=available_courts,
+        available_slots=available_slots,
+    )
+
+
+@router.get(
+    "/desk/tournaments/{tournament_id}/checkin/queue",
+    response_model=ReadyQueueResponse,
+)
+def get_checkin_queue(
+    tournament_id: int,
+    version_id: int = Query(...),
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
+    items, _courts = _build_match_items(session, tournament, version, management_mode=mode)
+    checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    return ReadyQueueResponse(
+        tournament_id=tournament_id,
+        version_id=version_id,
+        management_mode=mode,
+        checkin_matches=checkin_matches,
+        ready_queue=ready_queue,
+        available_courts=available_courts,
+        available_slots=available_slots,
+    )
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/checkin/assign",
+    response_model=DeskSnapshotResponse,
+)
+def assign_ready_match_to_slot(
+    tournament_id: int,
+    payload: AssignReadyMatchRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Assignments are only allowed on DRAFT versions")
+    if _normalize_management_mode(getattr(tournament, "desk_management_mode", None)) != MODE_CHECKIN_MANAGEMENT:
+        raise HTTPException(status_code=400, detail="Assignment endpoint requires checkin_management mode")
+
+    match = session.get(Match, payload.match_id)
+    if not match or match.tournament_id != tournament_id or match.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    target_slot = session.get(ScheduleSlot, payload.slot_id)
+    if not target_slot or target_slot.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=404, detail="Target slot not found")
+
+    items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
+    checkin_matches, ready_queue, _available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    ready_ids = {r.match_id for r in ready_queue}
+    if payload.match_id not in ready_ids:
+        raise HTTPException(status_code=400, detail="Match is not ready to play")
+    slot_ids = {s.slot_id for s in available_slots}
+    if payload.slot_id not in slot_ids:
+        raise HTTPException(status_code=400, detail="Slot is not currently available")
+
+    selected_assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == payload.version_id,
+            MatchAssignment.match_id == payload.match_id,
+        )
+    ).first()
+    if not selected_assignment:
+        raise HTTPException(status_code=400, detail="Ready match has no assignment to move")
+
+    target_assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == payload.version_id,
+            MatchAssignment.slot_id == payload.slot_id,
+        )
+    ).first()
+
+    if target_assignment and target_assignment.match_id != payload.match_id:
+        selected_slot_id = selected_assignment.slot_id
+        target_assignment.slot_id = selected_slot_id
+        target_assignment.assigned_by = "CHECKIN_SWAP"
+        target_assignment.assigned_at = datetime.utcnow()
+        target_assignment.locked = True
+        session.add(target_assignment)
+
+    selected_assignment.slot_id = payload.slot_id
+    selected_assignment.assigned_by = "CHECKIN_DESK"
+    selected_assignment.assigned_at = datetime.utcnow()
+    selected_assignment.locked = True
+    session.add(selected_assignment)
+    session.commit()
+
+    return desk_snapshot(
+        tournament_id=tournament_id,
+        version_id=payload.version_id,
+        session=session,
     )
 
 

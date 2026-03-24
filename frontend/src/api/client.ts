@@ -2183,6 +2183,61 @@ export interface SnapshotSlot {
   assigned_match_id: number | null
 }
 
+export interface PlayerCheckInState {
+  player_id: number
+  player_display: string
+  checked_in: boolean
+  checked_in_at: string | null
+}
+
+export interface MatchCheckInSideState {
+  side: 'A' | 'B'
+  team_id: number | null
+  team_display: string
+  team_checked_in: boolean
+  team_checked_in_at: string | null
+  players: PlayerCheckInState[]
+  players_checked_in: number
+  players_total: number
+  side_ready: boolean
+  ready_at: string | null
+}
+
+export interface CheckInMatchItem {
+  match_id: number
+  match_number: number
+  match_code: string
+  event_name: string
+  day_label: string
+  scheduled_time: string | null
+  sort_time: string | null
+  slot_id: number | null
+  side_a: MatchCheckInSideState
+  side_b: MatchCheckInSideState
+  match_ready: boolean
+  ready_at: string | null
+}
+
+export interface ReadyQueueItem {
+  match_id: number
+  match_number: number
+  match_code: string
+  event_name: string
+  day_label: string
+  scheduled_time: string | null
+  ready_at: string | null
+  team1_display: string
+  team2_display: string
+}
+
+export interface AvailableCourtSlot {
+  slot_id: number
+  court_name: string
+  day_label: string
+  scheduled_time: string | null
+  currently_assigned_match_id: number | null
+}
+
 export interface DeskSnapshotResponse {
   tournament_id: number
   tournament_name: string
@@ -2195,6 +2250,27 @@ export interface DeskSnapshotResponse {
   on_deck_by_court: Record<string, DeskMatchItem>
   board_by_court: BoardCourtSlot[]
   slots: SnapshotSlot[]
+  management_mode: 'court_management' | 'checkin_management'
+  checkin_matches: CheckInMatchItem[]
+  ready_queue: ReadyQueueItem[]
+  available_courts: string[]
+  available_slots: AvailableCourtSlot[]
+}
+
+export interface DeskManagementModeResponse {
+  tournament_id: number
+  version_id: number
+  management_mode: 'court_management' | 'checkin_management'
+}
+
+export interface ReadyQueueResponse {
+  tournament_id: number
+  version_id: number
+  management_mode: 'court_management' | 'checkin_management'
+  checkin_matches: CheckInMatchItem[]
+  ready_queue: ReadyQueueItem[]
+  available_courts: string[]
+  available_slots: AvailableCourtSlot[]
 }
 
 export interface WorkingDraftResponse {
@@ -2289,6 +2365,66 @@ export async function deskSetMatchStatus(
   return fetchJson<{ match_id: number; status: string }>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/status`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function getDeskManagementMode(
+  tournamentId: number,
+  versionId: number
+): Promise<DeskManagementModeResponse> {
+  return fetchJson<DeskManagementModeResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/management-mode?version_id=${versionId}`
+  )
+}
+
+export async function setDeskManagementMode(
+  tournamentId: number,
+  payload: { version_id: number; management_mode: 'court_management' | 'checkin_management' }
+): Promise<DeskManagementModeResponse> {
+  return fetchJson<DeskManagementModeResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/management-mode`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskCheckInTeam(
+  tournamentId: number,
+  matchId: number,
+  payload: { version_id: number; side: 'A' | 'B'; checked_in: boolean }
+): Promise<ReadyQueueResponse> {
+  return fetchJson<ReadyQueueResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/team`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskCheckInPlayer(
+  tournamentId: number,
+  matchId: number,
+  payload: { version_id: number; side: 'A' | 'B'; player_id: number; checked_in: boolean }
+): Promise<ReadyQueueResponse> {
+  return fetchJson<ReadyQueueResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/player`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function getDeskCheckInQueue(
+  tournamentId: number,
+  versionId: number
+): Promise<ReadyQueueResponse> {
+  return fetchJson<ReadyQueueResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/checkin/queue?version_id=${versionId}`
+  )
+}
+
+export async function assignReadyMatchToSlot(
+  tournamentId: number,
+  payload: { version_id: number; match_id: number; slot_id: number }
+): Promise<DeskSnapshotResponse> {
+  return fetchJson<DeskSnapshotResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/checkin/assign`,
+    { method: 'POST', body: JSON.stringify(payload) }
   )
 }
 

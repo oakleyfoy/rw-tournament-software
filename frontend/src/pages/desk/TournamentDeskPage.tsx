@@ -22,6 +22,10 @@ import {
   deskDeleteCourt,
   deskFillCourtSlots,
   deskRemapCourts,
+  deskCheckInPlayer,
+  deskCheckInTeam,
+  setDeskManagementMode,
+  assignReadyMatchToSlot,
   bulkPauseInProgress,
   bulkDelayAfter,
   bulkResumePaused,
@@ -38,6 +42,10 @@ import {
   ImpactTarget,
   ConflictItem,
   CourtStateItem,
+  CheckInMatchItem,
+  AvailableCourtSlot,
+  MatchCheckInSideState,
+  PlayerCheckInState,
   FinalizeResponse,
   PoolProjectionResponse,
   EventProjection,
@@ -7700,11 +7708,71 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh])
 
+  const managementMode = (data?.management_mode || 'court_management') as 'court_management' | 'checkin_management'
+  const isCheckInManagement = managementMode === 'checkin_management'
+
+  const handleSetManagementMode = useCallback(async (mode: 'court_management' | 'checkin_management') => {
+    if (!tid || !data) return
+    try {
+      await setDeskManagementMode(tid, {
+        version_id: data.version_id,
+        management_mode: mode,
+      })
+      await handleRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to change management mode')
+    }
+  }, [tid, data, handleRefresh])
+
+  const handleTeamCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', checked: boolean) => {
+    if (!tid || !data) return
+    try {
+      await deskCheckInTeam(tid, match.match_id, {
+        version_id: data.version_id,
+        side,
+        checked_in: checked,
+      })
+      await handleRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed team check-in update')
+    }
+  }, [tid, data, handleRefresh])
+
+  const handlePlayerCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', playerId: number, checked: boolean) => {
+    if (!tid || !data) return
+    try {
+      await deskCheckInPlayer(tid, match.match_id, {
+        version_id: data.version_id,
+        side,
+        player_id: playerId,
+        checked_in: checked,
+      })
+      await handleRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed player check-in update')
+    }
+  }, [tid, data, handleRefresh])
+
+  const handleAssignReadyMatch = useCallback(async (matchId: number, slotId: number) => {
+    if (!tid || !data) return
+    try {
+      const snap = await assignReadyMatchToSlot(tid, {
+        version_id: data.version_id,
+        match_id: matchId,
+        slot_id: slotId,
+      })
+      setData(snap)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to assign ready match')
+    }
+  }, [tid, data])
+
   const isDraft = data?.version_status === 'draft'
 
   const [startAllOpen, setStartAllOpen] = useState(false)
   const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
   const [startingAll, setStartingAll] = useState(false)
+  const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
 
   const startableCourts = useMemo(() => {
     if (!data) return []
@@ -7891,11 +7959,190 @@ export default function TournamentDeskPage() {
         {activeTab === 'courts' && (
           <>
             <div style={{ marginBottom: 24 }}>
+              <div style={{
+                border: '1px solid #e0e0e0',
+                borderRadius: 6,
+                padding: '10px 12px',
+                backgroundColor: '#fff',
+                marginBottom: 12,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#1a237e' }}>Desk Management Mode:</span>
+                  <button
+                    onClick={() => handleSetManagementMode('court_management')}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 4,
+                      border: '1px solid #1a237e',
+                      backgroundColor: managementMode === 'court_management' ? '#1a237e' : '#fff',
+                      color: managementMode === 'court_management' ? '#fff' : '#1a237e',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Court Management
+                  </button>
+                  <button
+                    onClick={() => handleSetManagementMode('checkin_management')}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 4,
+                      border: '1px solid #2e7d32',
+                      backgroundColor: managementMode === 'checkin_management' ? '#2e7d32' : '#fff',
+                      color: managementMode === 'checkin_management' ? '#fff' : '#2e7d32',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Check-In Management
+                  </button>
+                </div>
+                {managementMode === 'checkin_management' && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: '#546e7a' }}>
+                    Check-in flow active: next-slot matches only -&gt; ready queue -&gt; assign to available court.
+                  </div>
+                )}
+              </div>
+
+              {isCheckInManagement && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                  <div style={{ border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff', padding: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1a237e', marginBottom: 8 }}>
+                      Player / Team Check-In (Next Time Slot)
+                    </div>
+                    {data.checkin_matches.length === 0 ? (
+                      <div style={{ fontSize: 11, color: '#888' }}>No check-in eligible matches right now.</div>
+                    ) : (
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        {data.checkin_matches.map((cm) => {
+                          const sides: Array<{ key: 'A' | 'B'; label: string; state: MatchCheckInSideState }> = [
+                            { key: 'A', label: 'Side A', state: cm.side_a },
+                            { key: 'B', label: 'Side B', state: cm.side_b },
+                          ]
+                          return (
+                            <div key={cm.match_id} style={{ border: '1px solid #eef1f4', borderRadius: 4, padding: 8 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#37474f', marginBottom: 6 }}>
+                                #{cm.match_number} {cm.side_a.team_display} vs {cm.side_b.team_display} ({cm.scheduled_time || 'TBD'})
+                              </div>
+                              <div style={{ display: 'grid', gap: 6 }}>
+                                {sides.map(({ key, label, state }) => (
+                                  <div key={`${cm.match_id}-${key}`} style={{ border: '1px dashed #ddd', borderRadius: 4, padding: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                                      <span style={{ fontSize: 10, fontWeight: 700, color: '#607d8b' }}>{label}: {state.team_display}</span>
+                                      <button
+                                        onClick={() => handleTeamCheckIn(cm, key, !state.team_checked_in)}
+                                        style={{
+                                          padding: '2px 8px',
+                                          fontSize: 10,
+                                          fontWeight: 700,
+                                          border: '1px solid #455a64',
+                                          borderRadius: 3,
+                                          backgroundColor: state.team_checked_in ? '#455a64' : '#fff',
+                                          color: state.team_checked_in ? '#fff' : '#455a64',
+                                          cursor: 'pointer',
+                                        }}
+                                      >
+                                        Team {state.team_checked_in ? 'Checked In' : 'Check In'}
+                                      </button>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                      {state.players.map((p: PlayerCheckInState) => (
+                                        <button
+                                          key={`${cm.match_id}-${key}-${p.player_id}`}
+                                          onClick={() => handlePlayerCheckIn(cm, key, p.player_id, !p.checked_in)}
+                                          style={{
+                                            padding: '2px 6px',
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            borderRadius: 3,
+                                            border: '1px solid #90a4ae',
+                                            backgroundColor: p.checked_in ? '#e8f5e9' : '#fff',
+                                            color: p.checked_in ? '#2e7d32' : '#546e7a',
+                                            cursor: 'pointer',
+                                          }}
+                                        >
+                                          {p.player_display}
+                                        </button>
+                                      ))}
+                                      {state.players.length === 0 && (
+                                        <span style={{ fontSize: 10, color: '#999' }}>No player roster linked.</span>
+                                      )}
+                                    </div>
+                                    <div style={{ marginTop: 4, fontSize: 10, color: state.side_ready ? '#2e7d32' : '#999' }}>
+                                      {state.side_ready
+                                        ? `Ready (${state.players_checked_in}/${state.players_total} players)`
+                                        : `Not ready (${state.players_checked_in}/${state.players_total} players)`}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff', padding: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1a237e', marginBottom: 8 }}>
+                      Ready To Play Queue
+                    </div>
+                    {data.ready_queue.length === 0 ? (
+                      <div style={{ fontSize: 11, color: '#888' }}>No ready matches yet.</div>
+                    ) : (
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        {data.ready_queue.map((rq) => {
+                          const selectedSlot = readySlotChoice[rq.match_id] || (data.available_slots[0]?.slot_id ?? 0)
+                          return (
+                            <div key={rq.match_id} style={{ border: '1px solid #eef1f4', borderRadius: 4, padding: 8 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#37474f', marginBottom: 6 }}>
+                                #{rq.match_number} {rq.team1_display} vs {rq.team2_display}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <select
+                                  value={selectedSlot || ''}
+                                  onChange={e => setReadySlotChoice(prev => ({ ...prev, [rq.match_id]: parseInt(e.target.value, 10) }))}
+                                  style={{ fontSize: 11, padding: '4px 6px', borderRadius: 4, border: '1px solid #ccc' }}
+                                >
+                                  {data.available_slots.map((s: AvailableCourtSlot) => (
+                                    <option key={s.slot_id} value={s.slot_id}>
+                                      {s.court_name} ({s.day_label} {s.scheduled_time || ''})
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  disabled={!selectedSlot}
+                                  onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
+                                  style={{
+                                    padding: '4px 10px',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    borderRadius: 4,
+                                    border: 'none',
+                                    backgroundColor: '#2e7d32',
+                                    color: '#fff',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Assign Court
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, position: 'relative' }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: '#333', margin: 0 }}>
                   Courts
                 </h2>
-                {isDraft && startableCourts.length > 0 && (
+                {isDraft && startableCourts.length > 0 && !isCheckInManagement && (
                   <button
                     onClick={handleStartAllOpen}
                     style={{

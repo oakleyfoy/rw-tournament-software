@@ -23,6 +23,7 @@ class Tournament(SQLModel, table=True):
     notes: Optional[str] = None
     is_archived: bool = Field(default=False)
     use_time_windows: bool = Field(default=False)
+    desk_management_mode: str = Field(default="court_management")
     court_names: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     public_schedule_version_id: Optional[int] = Field(
         default=None,
