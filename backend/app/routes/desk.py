@@ -166,6 +166,7 @@ class CheckInMatchItem(BaseModel):
     side_b: MatchCheckInSideState
     match_ready: bool = False
     ready_at: Optional[str] = None
+    checkin_enabled: bool = False
 
 
 class ReadyQueueItem(BaseModel):
@@ -188,6 +189,14 @@ class AvailableCourtSlot(BaseModel):
     currently_assigned_match_id: Optional[int] = None
 
 
+class CheckInSlotOption(BaseModel):
+    slot_key: str
+    label: str
+    day_label: str
+    scheduled_time: Optional[str] = None
+    slot_ids: List[int] = []
+
+
 class DeskSnapshotResponse(BaseModel):
     tournament_id: int
     tournament_name: str
@@ -205,6 +214,8 @@ class DeskSnapshotResponse(BaseModel):
     ready_queue: List[ReadyQueueItem] = []
     available_courts: List[str] = []
     available_slots: List[AvailableCourtSlot] = []
+    checkin_slot_options: List[CheckInSlotOption] = []
+    checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -239,6 +250,8 @@ class ReadyQueueResponse(BaseModel):
     ready_queue: List[ReadyQueueItem]
     available_courts: List[str]
     available_slots: List[AvailableCourtSlot]
+    checkin_slot_options: List[CheckInSlotOption] = []
+    checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
 
 
 class AssignReadyMatchRequest(BaseModel):
@@ -447,12 +460,19 @@ def _build_checkin_snapshot(
     tournament: Tournament,
     version: ScheduleVersion,
     items: List[DeskMatchItem],
-) -> tuple[List[CheckInMatchItem], List[ReadyQueueItem], List[str], List[AvailableCourtSlot]]:
+) -> tuple[
+    List[CheckInMatchItem],
+    List[ReadyQueueItem],
+    List[str],
+    List[AvailableCourtSlot],
+    List[CheckInSlotOption],
+    Dict[str, List[CheckInMatchItem]],
+]:
     all_matches = session.exec(
         select(Match).where(Match.schedule_version_id == version.id)
     ).all()
     if not all_matches:
-        return [], [], [], []
+        return [], [], [], [], [], {}
 
     match_map = {m.id: m for m in all_matches}
     match_ids = list(match_map.keys())
@@ -465,10 +485,9 @@ def _build_checkin_snapshot(
     assignment_map = {a.match_id: a for a in assignments}
     assignment_by_slot = {a.slot_id: a for a in assignments}
 
-    slot_ids = list({a.slot_id for a in assignments})
     slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))  # type: ignore[arg-type]
-    ).all() if slot_ids else []
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
+    ).all()
     slot_map = {s.id: s for s in slots}
 
     team_ids: set[int] = set()
@@ -493,7 +512,7 @@ def _build_checkin_snapshot(
     candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
     for m in all_matches:
         status = (m.runtime_status or "SCHEDULED").upper()
-        if status in ("FINAL", "IN_PROGRESS", "PAUSED"):
+        if status == "FINAL":
             continue
         a = assignment_map.get(m.id)
         if not a:
@@ -504,7 +523,7 @@ def _build_checkin_snapshot(
         candidates.append((m, a, s))
 
     if not candidates:
-        return [], [], [], []
+        return [], [], [], [], [], {}
 
     candidates.sort(key=lambda x: (x[2].day_date, x[2].start_time, x[2].court_number, x[0].id))
     # Include all scheduled slots so staff can optionally check teams in early for later slots.
@@ -566,6 +585,7 @@ def _build_checkin_snapshot(
     checkin_matches: List[CheckInMatchItem] = []
 
     for m, a, s in eligible:
+        match_status = (m.runtime_status or "SCHEDULED").upper()
         def build_side(side: str, team_id: Optional[int], fallback: Optional[str]) -> MatchCheckInSideState:
             side_key = side.upper()
             team_row = team_checkin_map.get((m.id, side_key))
@@ -635,6 +655,11 @@ def _build_checkin_snapshot(
                 side_b=side_b,
                 match_ready=ready,
                 ready_at=ready_at,
+                checkin_enabled=bool(
+                    m.team_a_id
+                    and m.team_b_id
+                    and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
+                ),
             )
         )
 
@@ -685,6 +710,34 @@ def _build_checkin_snapshot(
     if not all_courts:
         all_courts = sorted({m.court_name for m in items if m.court_name})
 
+    checkin_match_map = {cm.match_id: cm for cm in checkin_matches}
+    slot_options_by_key: Dict[str, CheckInSlotOption] = {}
+    slot_match_ids_by_key: Dict[str, List[int]] = {}
+    for s in sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id)):
+        key = f"{s.day_date.isoformat()}|{s.start_time.strftime('%H:%M')}"
+        if key not in slot_options_by_key:
+            day_label = _to_day_label(s.day_date)
+            scheduled_time = _to_sched_label(s.start_time)
+            slot_options_by_key[key] = CheckInSlotOption(
+                slot_key=key,
+                day_label=day_label,
+                scheduled_time=scheduled_time,
+                label=f"{s.day_date.isoformat()} {scheduled_time}",
+                slot_ids=[],
+            )
+            slot_match_ids_by_key[key] = []
+        slot_options_by_key[key].slot_ids.append(s.id)
+        slot_assignment = assignment_by_slot.get(s.id)
+        if slot_assignment and slot_assignment.match_id not in slot_match_ids_by_key[key]:
+            slot_match_ids_by_key[key].append(slot_assignment.match_id)
+
+    checkin_slot_options = list(slot_options_by_key.values())
+    checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
+    for option in checkin_slot_options:
+        rows = [checkin_match_map[mid] for mid in slot_match_ids_by_key.get(option.slot_key, []) if mid in checkin_match_map]
+        rows.sort(key=lambda x: (x.match_number, x.match_id))
+        checkin_slot_rows[option.slot_key] = rows
+
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
     for s in sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id)):
@@ -710,7 +763,14 @@ def _build_checkin_snapshot(
         used_court.add(court_name)
 
     available_courts = [s.court_name for s in available_slots]
-    return checkin_matches, ready_items, available_courts, available_slots
+    return (
+        checkin_matches,
+        ready_items,
+        available_courts,
+        available_slots,
+        checkin_slot_options,
+        checkin_slot_rows,
+    )
 
 
 def _validate_score_text_for_match(score_text: str, match: Match) -> None:
@@ -1155,8 +1215,17 @@ def desk_snapshot(
     ready_queue: List[ReadyQueueItem] = []
     available_courts: List[str] = []
     available_slots: List[AvailableCourtSlot] = []
+    checkin_slot_options: List[CheckInSlotOption] = []
+    checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
     if management_mode == MODE_CHECKIN_MANAGEMENT:
-        checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(
+        (
+            checkin_matches,
+            ready_queue,
+            available_courts,
+            available_slots,
+            checkin_slot_options,
+            checkin_slot_rows,
+        ) = _build_checkin_snapshot(
             session, tournament, version, items
         )
 
@@ -1177,6 +1246,8 @@ def desk_snapshot(
         ready_queue=ready_queue,
         available_courts=available_courts,
         available_slots=available_slots,
+        checkin_slot_options=checkin_slot_options,
+        checkin_slot_rows=checkin_slot_rows,
     )
 
 
@@ -1284,7 +1355,14 @@ def set_team_checkin(
     session.commit()
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
-    checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    (
+        checkin_matches,
+        ready_queue,
+        available_courts,
+        available_slots,
+        checkin_slot_options,
+        checkin_slot_rows,
+    ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
         version_id=payload.version_id,
@@ -1293,6 +1371,8 @@ def set_team_checkin(
         ready_queue=ready_queue,
         available_courts=available_courts,
         available_slots=available_slots,
+        checkin_slot_options=checkin_slot_options,
+        checkin_slot_rows=checkin_slot_rows,
     )
 
 
@@ -1360,7 +1440,14 @@ def set_player_checkin(
     session.commit()
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
-    checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    (
+        checkin_matches,
+        ready_queue,
+        available_courts,
+        available_slots,
+        checkin_slot_options,
+        checkin_slot_rows,
+    ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
         version_id=payload.version_id,
@@ -1369,6 +1456,8 @@ def set_player_checkin(
         ready_queue=ready_queue,
         available_courts=available_courts,
         available_slots=available_slots,
+        checkin_slot_options=checkin_slot_options,
+        checkin_slot_rows=checkin_slot_rows,
     )
 
 
@@ -1390,7 +1479,14 @@ def get_checkin_queue(
 
     mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
     items, _courts = _build_match_items(session, tournament, version, management_mode=mode)
-    checkin_matches, ready_queue, available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    (
+        checkin_matches,
+        ready_queue,
+        available_courts,
+        available_slots,
+        checkin_slot_options,
+        checkin_slot_rows,
+    ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
         version_id=version_id,
@@ -1399,6 +1495,8 @@ def get_checkin_queue(
         ready_queue=ready_queue,
         available_courts=available_courts,
         available_slots=available_slots,
+        checkin_slot_options=checkin_slot_options,
+        checkin_slot_rows=checkin_slot_rows,
     )
 
 
@@ -1430,7 +1528,7 @@ def assign_ready_match_to_slot(
         raise HTTPException(status_code=404, detail="Target slot not found")
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
-    checkin_matches, ready_queue, _available_courts, available_slots = _build_checkin_snapshot(session, tournament, version, items)
+    checkin_matches, ready_queue, _available_courts, available_slots, _slot_options, _slot_rows = _build_checkin_snapshot(session, tournament, version, items)
     ready_ids = {r.match_id for r in ready_queue}
     if payload.match_id not in ready_ids:
         raise HTTPException(status_code=400, detail="Match is not ready to play")

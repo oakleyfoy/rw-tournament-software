@@ -2216,6 +2216,7 @@ export interface CheckInMatchItem {
   side_b: MatchCheckInSideState
   match_ready: boolean
   ready_at: string | null
+  checkin_enabled: boolean
 }
 
 export interface ReadyQueueItem {
@@ -2238,6 +2239,14 @@ export interface AvailableCourtSlot {
   currently_assigned_match_id: number | null
 }
 
+export interface CheckInSlotOption {
+  slot_key: string
+  label: string
+  day_label: string
+  scheduled_time: string | null
+  slot_ids: number[]
+}
+
 export interface DeskSnapshotResponse {
   tournament_id: number
   tournament_name: string
@@ -2255,6 +2264,8 @@ export interface DeskSnapshotResponse {
   ready_queue: ReadyQueueItem[]
   available_courts: string[]
   available_slots: AvailableCourtSlot[]
+  checkin_slot_options: CheckInSlotOption[]
+  checkin_slot_rows: Record<string, CheckInMatchItem[]>
 }
 
 export interface DeskManagementModeResponse {
@@ -2271,6 +2282,8 @@ export interface ReadyQueueResponse {
   ready_queue: ReadyQueueItem[]
   available_courts: string[]
   available_slots: AvailableCourtSlot[]
+  checkin_slot_options: CheckInSlotOption[]
+  checkin_slot_rows: Record<string, CheckInMatchItem[]>
 }
 
 export interface WorkingDraftResponse {

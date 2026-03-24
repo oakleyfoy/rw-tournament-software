@@ -2510,6 +2510,39 @@ def test_checkin_queue_inclusion_and_team_ready_flow(client, session):
     assert m1.id in ready_ids
 
 
+def test_snapshot_checkin_slot_contract_includes_options_and_rows(client, session):
+    t, v, _ev, _teams, matches, _slots = _setup_draft_for_move(session)
+    m2 = matches[1]
+    m2.team_b_id = None
+    session.add(m2)
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    body = snap.json()
+
+    options = body["checkin_slot_options"]
+    labels = {o["label"] for o in options}
+    assert "2026-07-01 9:00 AM" in labels
+    assert "2026-07-01 10:30 AM" in labels
+
+    nine_key = next(o["slot_key"] for o in options if o["label"] == "2026-07-01 9:00 AM")
+    ten_thirty_key = next(o["slot_key"] for o in options if o["label"] == "2026-07-01 10:30 AM")
+
+    nine_rows = body["checkin_slot_rows"][nine_key]
+    assert len(nine_rows) == 2
+    m2_row = next(r for r in nine_rows if r["match_id"] == m2.id)
+    assert m2_row["checkin_enabled"] is False
+
+    assert body["checkin_slot_rows"][ten_thirty_key] == []
+
+
 def test_checkin_player_rollup_and_assign_ready_match(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     m1 = matches[0]
