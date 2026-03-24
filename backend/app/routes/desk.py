@@ -877,12 +877,9 @@ def _build_match_items(
                 and (a is not None and (a.assigned_by or "").upper() != "CHECKIN_DESK")
             )
             if preassigned_hidden:
-                day_offset = 0
-                day_label = "Unscheduled"
-                scheduled_time = None
-                sort_time = None
+                # Keep time/slot context for check-in tables, but hide court board placement
+                # until explicitly assigned through CHECKIN_DESK flow.
                 court_name = None
-                slot = None
             else:
                 courts_set.add(court_name)
         else:
