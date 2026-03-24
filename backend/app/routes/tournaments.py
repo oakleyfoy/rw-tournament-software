@@ -12,11 +12,14 @@ from app.models.court_state import TournamentCourtState
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
+from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.player import Player
 from app.models.policy_run import PolicyRun
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.sms_log import SmsLog
 from app.models.slot_lock import SlotLock
 from app.models.sms_template import SmsTemplate
 from app.models.team import Team
@@ -102,6 +105,16 @@ class TournamentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TournamentStartOverResponse(BaseModel):
+    tournament_id: int
+    matches_reset: int
+    match_checkins_cleared: int
+    player_checkins_cleared: int
+    match_locks_cleared: int
+    slot_locks_cleared: int
+    sms_logs_cleared: int
 
 
 def _resolve_print_version(session: Session, tournament: Tournament) -> Optional[ScheduleVersion]:
@@ -1472,3 +1485,74 @@ def delete_tournament(tournament_id: int, session: Session = Depends(get_session
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete tournament: {str(e)}")
+
+
+@router.post("/tournaments/{tournament_id}/start-over", response_model=TournamentStartOverResponse)
+def start_over_tournament(tournament_id: int, session: Session = Depends(get_session)):
+    """
+    Clear runtime results/state so staff can restart tournament play without
+    deleting setup, teams, draws, slots, or assignments.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    versions = session.exec(
+        select(ScheduleVersion.id).where(ScheduleVersion.tournament_id == tournament_id)
+    ).all()
+    version_ids = [vid for vid in versions]
+
+    matches = session.exec(
+        select(Match).where(Match.tournament_id == tournament_id)
+    ).all()
+    for m in matches:
+        m.runtime_status = "SCHEDULED"
+        m.score_json = None
+        m.winner_team_id = None
+        m.started_at = None
+        m.completed_at = None
+        session.add(m)
+
+    match_checkins = session.exec(
+        select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)
+    ).all()
+    for row in match_checkins:
+        session.delete(row)
+
+    player_checkins = session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
+    ).all()
+    for row in player_checkins:
+        session.delete(row)
+
+    match_locks: List[MatchLock] = []
+    slot_locks: List[SlotLock] = []
+    if version_ids:
+        match_locks = session.exec(
+            select(MatchLock).where(MatchLock.schedule_version_id.in_(version_ids))  # type: ignore[arg-type]
+        ).all()
+        slot_locks = session.exec(
+            select(SlotLock).where(SlotLock.schedule_version_id.in_(version_ids))  # type: ignore[arg-type]
+        ).all()
+        for row in match_locks:
+            session.delete(row)
+        for row in slot_locks:
+            session.delete(row)
+
+    sms_logs = session.exec(
+        select(SmsLog).where(SmsLog.tournament_id == tournament_id)
+    ).all()
+    for row in sms_logs:
+        session.delete(row)
+
+    session.commit()
+
+    return TournamentStartOverResponse(
+        tournament_id=tournament_id,
+        matches_reset=len(matches),
+        match_checkins_cleared=len(match_checkins),
+        player_checkins_cleared=len(player_checkins),
+        match_locks_cleared=len(match_locks),
+        slot_locks_cleared=len(slot_locks),
+        sms_logs_cleared=len(sms_logs),
+    )

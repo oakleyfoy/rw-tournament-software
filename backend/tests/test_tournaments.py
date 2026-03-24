@@ -7,9 +7,14 @@ from app.models.court_state import TournamentCourtState
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
+from app.models.match_lock import MatchLock
+from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.slot_lock import SlotLock
+from app.models.sms_log import SmsLog
 from app.models.sms_template import SmsTemplate
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
@@ -554,3 +559,125 @@ def test_print_packet_invalid_category(client: TestClient):
     tid = create.json()["id"]
     resp = client.get(f"/api/tournaments/{tid}/print-packet/coed.pdf")
     assert resp.status_code == 400
+
+
+def test_start_over_tournament_clears_runtime_and_checkins(client: TestClient, session: Session):
+    tournament = Tournament(
+        name="Restart Me",
+        location="Austin",
+        timezone="America/Chicago",
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 2),
+    )
+    session.add(tournament)
+    session.flush()
+
+    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed A", team_count=2)
+    session.add(event)
+    session.flush()
+
+    team_a = Team(event_id=event.id, name="Alpha", seed=1, display_name="Alpha")
+    team_b = Team(event_id=event.id, name="Bravo", seed=2, display_name="Bravo")
+    session.add_all([team_a, team_b])
+    session.flush()
+
+    player = Player(tournament_id=tournament.id, full_name="Alpha Player")
+    session.add(player)
+    session.flush()
+    session.add(TeamPlayer(team_id=team_a.id, player_id=player.id, lineup_slot=1))
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 5, 1),
+        start_time=time(8, 0),
+        end_time=time(9, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add(slot)
+    session.flush()
+
+    match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_2",
+        runtime_status="FINAL",
+        score_json={"display": "21-15, 21-18"},
+        winner_team_id=team_a.id,
+    )
+    session.add(match)
+    session.flush()
+
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=match.id, slot_id=slot.id))
+    session.add(
+        MatchCheckIn(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=team_a.id,
+            side="A",
+            team_checked_in=True,
+        )
+    )
+    session.add(
+        MatchPlayerCheckIn(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=team_a.id,
+            player_id=player.id,
+            side="A",
+            checked_in=True,
+        )
+    )
+    session.add(MatchLock(schedule_version_id=version.id, match_id=match.id, slot_id=slot.id))
+    session.add(SlotLock(schedule_version_id=version.id, slot_id=slot.id))
+    session.add(
+        SmsLog(
+            tournament_id=tournament.id,
+            team_id=team_a.id,
+            phone_number="+15125550123",
+            message_body="Test",
+            message_type="manual",
+            status="sent",
+            trigger="manual",
+        )
+    )
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{tournament.id}/start-over")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["matches_reset"] == 1
+    assert body["match_checkins_cleared"] == 1
+    assert body["player_checkins_cleared"] == 1
+    assert body["match_locks_cleared"] == 1
+    assert body["slot_locks_cleared"] == 1
+    assert body["sms_logs_cleared"] == 1
+
+    session.refresh(match)
+    assert match.runtime_status == "SCHEDULED"
+    assert match.score_json is None
+    assert match.winner_team_id is None
+    assert match.started_at is None
+    assert match.completed_at is None
+
+    assert session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament.id)).all() == []
+    assert session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)).all() == []
+    assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []

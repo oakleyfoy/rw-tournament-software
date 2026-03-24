@@ -53,6 +53,16 @@ export interface TournamentUpdate {
   court_names?: string[] | null;
 }
 
+export interface TournamentStartOverResponse {
+  tournament_id: number
+  matches_reset: number
+  match_checkins_cleared: number
+  player_checkins_cleared: number
+  match_locks_cleared: number
+  slot_locks_cleared: number
+  sms_logs_cleared: number
+}
+
 export interface TournamentDay {
   id: number;
   tournament_id: number;
@@ -141,6 +151,11 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     }
   }
   
+  // #region agent log
+  if (url.includes('/desk/') || url.includes('/auth/login') || url.includes('/auth/bootstrap')) {
+    fetch('http://127.0.0.1:7242/ingest/3aa7eda4-e97a-402c-ac3d-b6b632d2544d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H10',location:'client.ts:fetchJson:request',message:'frontend request dispatch',data:{method:options?.method||'GET',url,apiBase:API_BASE_URL,pageHref:typeof window!=='undefined'?window.location.href:null},timestamp:Date.now()})}).catch(()=>{});
+  }
+  // #endregion
   console.log('fetchJson:', options?.method || 'GET', url, { headers, body: options?.body })
   let response: Response
   try {
@@ -148,6 +163,11 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
       ...options,
       headers,
     });
+    // #region agent log
+    if (url.includes('/desk/') || url.includes('/auth/login') || url.includes('/auth/bootstrap')) {
+      fetch('http://127.0.0.1:7242/ingest/3aa7eda4-e97a-402c-ac3d-b6b632d2544d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H10',location:'client.ts:fetchJson:response',message:'frontend response received',data:{method:options?.method||'GET',url,status:response.status,statusText:response.statusText,responseUrl:response.url},timestamp:Date.now()})}).catch(()=>{});
+    }
+    // #endregion
     console.log('fetchJson response:', response.status, response.statusText, response.url)
   } catch (networkError) {
     console.error('Network error (failed to fetch):', networkError)
@@ -363,6 +383,13 @@ export async function deleteTournament(id: number): Promise<void> {
   return fetchJson<void>(url, {
     method: 'DELETE',
   });
+}
+
+export async function startOverTournament(id: number): Promise<TournamentStartOverResponse> {
+  return fetchJson<TournamentStartOverResponse>(`${API_BASE_URL}/tournaments/${id}/start-over`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
 }
 
 export async function downloadTournamentPrintPacket(

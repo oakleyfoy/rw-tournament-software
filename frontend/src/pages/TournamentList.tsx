@@ -5,6 +5,7 @@ import {
   getEvents,
   duplicateTournament,
   deleteTournament,
+  startOverTournament,
   updateTournament,
   downloadTournamentPrintPacket,
   logoutAuth,
@@ -21,7 +22,7 @@ function TournamentList() {
   const [eventCounts, setEventCounts] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [processing, setProcessing] = useState<Record<number, 'duplicate' | 'delete' | 'archive' | 'restore' | null>>({})
+  const [processing, setProcessing] = useState<Record<number, 'duplicate' | 'delete' | 'archive' | 'restore' | 'start_over' | null>>({})
   const [printing, setPrinting] = useState<Record<string, boolean>>({})
   const [pastExpanded, setPastExpanded] = useState(false)
   const navigate = useNavigate()
@@ -120,6 +121,28 @@ function TournamentList() {
       await loadTournaments()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to update event folder', 'error')
+    } finally {
+      setProcessing(prev => ({ ...prev, [tournament.id]: null }))
+    }
+  }
+
+  const handleStartOver = async (tournament: Tournament, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (processing[tournament.id]) return
+    const confirmed = await confirmDialog(
+      `Clear results and restart "${tournament.name}"?\n\nThis will:\n- Reset all matches to SCHEDULED\n- Clear scores, winners, started/completed times\n- Clear match/team/player check-ins\n- Clear desk locks and SMS logs\n\nSetup, teams, draws, and schedules are kept.`
+    )
+    if (!confirmed) return
+    try {
+      setProcessing(prev => ({ ...prev, [tournament.id]: 'start_over' }))
+      const result = await startOverTournament(tournament.id)
+      showToast(
+        `Tournament reset: ${result.matches_reset} match${result.matches_reset === 1 ? '' : 'es'} returned to SCHEDULED`,
+        'success'
+      )
+      await loadTournaments()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to restart tournament', 'error')
     } finally {
       setProcessing(prev => ({ ...prev, [tournament.id]: null }))
     }
@@ -296,6 +319,24 @@ function TournamentList() {
                           ? 'Restore'
                           : 'Move to Past'}
                     </button>
+                    {!pastSection && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{
+                          fontSize: '12px',
+                          padding: '6px 12px',
+                          backgroundColor: '#f57c00',
+                          borderColor: '#f57c00',
+                          color: '#fff',
+                        }}
+                        onClick={(e) => handleStartOver(tournament, e)}
+                        disabled={!!isProcessing}
+                        title="Clear results and restart this tournament"
+                      >
+                        {isProcessing === 'start_over' ? '...' : 'Start Over'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn-danger"
