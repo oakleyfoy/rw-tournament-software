@@ -8457,13 +8457,18 @@ export default function TournamentDeskPage() {
                             const checkInMatchesForSection = (data.checkin_matches || [])
                               .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
                               .sort((a, b) => a.match_number - b.match_number)
-                            const baseMatches = section.matches.length > 0
-                              ? section.matches
-                              : checkInMatchesForSection
-                                  .map(cm => matchById.get(cm.match_id))
-                                  .filter((m): m is DeskMatchItem => !!m)
+                            const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
+                              checkInMatchesForSection.length > 0
+                                ? checkInMatchesForSection.map((cm) => ({
+                                    cm,
+                                    baseMatch: matchById.get(cm.match_id) || null,
+                                  }))
+                                : section.matches.map((baseMatch) => ({
+                                    baseMatch,
+                                    cm: checkInByMatchId.get(baseMatch.match_id) || null,
+                                  }))
 
-                            if (baseMatches.length === 0) {
+                            if (rowEntries.length === 0) {
                               return (
                                 <tr style={{ borderTop: '1px solid #f0f3f6' }}>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
@@ -8475,12 +8480,47 @@ export default function TournamentDeskPage() {
                               )
                             }
 
-                            return baseMatches.map((baseMatch) => {
-                              const cm = checkInByMatchId.get(baseMatch.match_id)
+                            return rowEntries.map(({ baseMatch, cm }) => {
+                              const fallbackMatch: DeskMatchItem = baseMatch || {
+                                match_id: cm?.match_id || -1,
+                                match_number: cm?.match_number || -1,
+                                match_code: cm?.match_code || '',
+                                stage: 'WF',
+                                event_id: 0,
+                                event_name: cm?.event_name || 'Match',
+                                division_name: null,
+                                day_index: 0,
+                                day_label: cm?.day_label || '',
+                                scheduled_time: cm?.scheduled_time || null,
+                                sort_time: cm?.sort_time || null,
+                                court_name: null,
+                                status: 'SCHEDULED',
+                                team1_id: cm?.side_a.team_id || null,
+                                team1_display: cm?.side_a.team_display || 'TBD',
+                                team2_id: cm?.side_b.team_id || null,
+                                team2_display: cm?.side_b.team_display || 'TBD',
+                                score_display: null,
+                                source_match_a_id: null,
+                                source_match_b_id: null,
+                                created_at: null,
+                                started_at: null,
+                                completed_at: null,
+                                winner_display: null,
+                                winner_team_id: null,
+                                duration_minutes: 0,
+                                team1_defaulted: false,
+                                team2_defaulted: false,
+                                team1_notes: null,
+                                team2_notes: null,
+                                slot_id: cm?.slot_id || null,
+                                assignment_id: null,
+                                court_number: null,
+                                day_date: null,
+                              }
                               const disabledState = {
                                 side: 'A' as const,
-                                team_id: baseMatch.team1_id,
-                                team_display: baseMatch.team1_display,
+                                team_id: fallbackMatch.team1_id,
+                                team_display: fallbackMatch.team1_display,
                                 team_checked_in: false,
                                 team_checked_in_at: null,
                                 players: [],
@@ -8493,8 +8533,8 @@ export default function TournamentDeskPage() {
                               const sideB = cm?.side_b ?? {
                                 ...disabledState,
                                 side: 'B' as const,
-                                team_id: baseMatch.team2_id,
-                                team_display: baseMatch.team2_display,
+                                team_id: fallbackMatch.team2_id,
+                                team_display: fallbackMatch.team2_display,
                               }
                               const checkinEnabled = !!cm
 
@@ -8559,9 +8599,9 @@ export default function TournamentDeskPage() {
                               )
 
                               return (
-                                <tr key={`${section.key}-${baseMatch.match_id}`} style={{ borderTop: '1px solid #f0f3f6' }}>
+                                <tr key={`${section.key}-${fallbackMatch.match_id}-${cm?.match_id || 'row'}`} style={{ borderTop: '1px solid #f0f3f6' }}>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
-                                    {cm ? formatCheckInMatchLabel(cm) : `${baseMatch.event_name} ${baseMatch.stage}`}
+                                    {cm ? formatCheckInMatchLabel(cm) : `${fallbackMatch.event_name} ${fallbackMatch.stage}`}
                                   </td>
                                   {renderTeamCell('A', sideA)}
                                   {renderTeamCell('B', sideB)}
