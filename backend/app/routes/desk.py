@@ -770,8 +770,8 @@ def _build_checkin_snapshot(
         if court_name in active_courts or court_name in closed_courts:
             continue
         a = assignment_by_slot.get(s.id)
-        target_match = match_map.get(a.match_id) if a else None
-        if target_match and (target_match.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED", "FINAL"):
+        # In check-in assignment mode, only unoccupied courts are assignable.
+        if a is not None:
             continue
         available_slots.append(
             AvailableCourtSlot(
@@ -779,7 +779,7 @@ def _build_checkin_snapshot(
                 court_name=court_name,
                 day_label=_to_day_label(s.day_date),
                 scheduled_time=_to_sched_label(s.start_time),
-                currently_assigned_match_id=a.match_id if a else None,
+                currently_assigned_match_id=None,
             )
         )
         used_court.add(court_name)
@@ -1687,6 +1687,12 @@ def assign_ready_match_to_slot(
     selected_assignment.assigned_at = datetime.utcnow()
     selected_assignment.locked = True
     session.add(selected_assignment)
+    # Assigning from Ready To Play means the match is starting immediately on court.
+    match.runtime_status = "IN_PROGRESS"
+    if not match.started_at:
+        match.started_at = datetime.utcnow()
+    match.completed_at = None
+    session.add(match)
     session.commit()
 
     return desk_snapshot(

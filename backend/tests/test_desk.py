@@ -2611,6 +2611,7 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     ready_ids = {r["match_id"] for r in queue_body["ready_queue"]}
     assert m1.id in ready_ids
     assert len(queue_body["available_slots"]) >= 1
+    assert all(s["currently_assigned_match_id"] is None for s in queue_body["available_slots"])
 
     target_slot_id = queue_body["available_slots"][0]["slot_id"]
     assign = client.post(
@@ -2622,6 +2623,7 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     moved = [m for m in snap["matches"] if m["match_id"] == m1.id][0]
     assert moved["assignment_id"] is not None
     assert moved["court_name"] is not None
+    assert moved["status"] == "IN_PROGRESS"
 
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
