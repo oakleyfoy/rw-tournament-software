@@ -509,9 +509,8 @@ def _build_checkin_snapshot(
         return [], [], [], []
 
     candidates.sort(key=lambda x: (x[2].day_date, x[2].start_time, x[2].court_number, x[0].id))
-    next_day = candidates[0][2].day_date
-    next_time = candidates[0][2].start_time
-    eligible = [c for c in candidates if c[2].day_date == next_day and c[2].start_time == next_time]
+    # Include all scheduled slots so staff can optionally check teams in early for later slots.
+    eligible = candidates
 
     eligible_match_ids = [m.id for (m, _a, _s) in eligible]
 
