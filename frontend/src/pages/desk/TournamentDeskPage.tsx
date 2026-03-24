@@ -8009,7 +8009,6 @@ export default function TournamentDeskPage() {
     ? selectedCheckInSlotKey
     : (availableSlotKeys[0] || '')
   const selectedCheckInSlotSection = slotSections.find(s => s.key === effectiveSelectedCheckInSlotKey) || null
-  const currentCheckInSlotLabel = selectedCheckInSlotSection?.label || ''
   const checkInByMatchId = new Map<number, CheckInMatchItem>(
     (data.checkin_matches || []).map((cm) => [cm.match_id, cm])
   )
