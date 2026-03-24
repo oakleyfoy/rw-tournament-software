@@ -7837,13 +7837,21 @@ export default function TournamentDeskPage() {
           ? 'Div III'
           : code.includes('BLL') || code.includes('POOLD')
             ? 'Div IV'
-            : ''
+            : code.includes('POOLE')
+              ? 'Div V'
+              : ''
 
     const parts = [match.event_name]
     if (phase) parts.push(phase)
-    else if (division) parts.push(division)
+    if (division) parts.push(division)
     return parts.join(' ')
   }, [])
+
+  const getBallIssuedKey = useCallback((matchId: number, side: 'A' | 'B') => `${matchId}:${side}`, [])
+  const toggleBallIssued = useCallback((matchId: number, side: 'A' | 'B') => {
+    const key = getBallIssuedKey(matchId, side)
+    setBallIssuedBySide(prev => ({ ...prev, [key]: !prev[key] }))
+  }, [getBallIssuedKey])
 
   const renderInlinePlayerToggle = useCallback((
     checked: boolean,
@@ -7890,6 +7898,8 @@ export default function TournamentDeskPage() {
   const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
   const [startingAll, setStartingAll] = useState(false)
   const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
+  const [selectedCheckInSlotKey, setSelectedCheckInSlotKey] = useState<string>('all')
+  const [ballIssuedBySide, setBallIssuedBySide] = useState<Record<string, boolean>>({})
 
   const startableCourts = useMemo(() => {
     if (!data) return []
@@ -7908,6 +7918,29 @@ export default function TournamentDeskPage() {
     setStartAllExcluded(new Set())
     setStartAllOpen(true)
   }, [])
+
+  useEffect(() => {
+    if (!tid) return
+    try {
+      const raw = window.localStorage.getItem(`desk-ball-issued-${tid}`)
+      if (raw) {
+        setBallIssuedBySide(JSON.parse(raw) as Record<string, boolean>)
+      } else {
+        setBallIssuedBySide({})
+      }
+    } catch {
+      setBallIssuedBySide({})
+    }
+  }, [tid])
+
+  useEffect(() => {
+    if (!tid) return
+    try {
+      window.localStorage.setItem(`desk-ball-issued-${tid}`, JSON.stringify(ballIssuedBySide))
+    } catch {
+      // ignore local storage failures
+    }
+  }, [tid, ballIssuedBySide])
 
   const handleStartAllConfirm = useCallback(async () => {
     if (!tid || !data) return
@@ -8075,6 +8108,13 @@ export default function TournamentDeskPage() {
 
   const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
   slotSections.forEach(s => s.matches.sort((a, b) => (a.match_number - b.match_number)))
+  const availableCheckInSlotKeys = slotSections.map(s => s.key)
+  const effectiveSelectedCheckInSlotKey = selectedCheckInSlotKey === 'all'
+    ? 'all'
+    : (availableCheckInSlotKeys.includes(selectedCheckInSlotKey) ? selectedCheckInSlotKey : 'all')
+  const filteredSlotSections = effectiveSelectedCheckInSlotKey === 'all'
+    ? slotSections
+    : slotSections.filter(s => s.key === effectiveSelectedCheckInSlotKey)
 
   const checkInByMatchId = new Map<number, CheckInMatchItem>(
     (data.checkin_matches || []).map((cm) => [cm.match_id, cm])
@@ -8433,12 +8473,27 @@ export default function TournamentDeskPage() {
                 <div style={{ marginBottom: 4, fontSize: 12, color: '#546e7a', fontWeight: 600 }}>
                   Player Check-In / Ready To Play - full event view
                 </div>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>Filter Slot:</span>
+                    <select
+                      value={effectiveSelectedCheckInSlotKey}
+                      onChange={e => setSelectedCheckInSlotKey(e.target.value)}
+                      style={{ fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #b0bec5', minWidth: 260 }}
+                    >
+                      <option value="all">All Time Slots</option>
+                      {slotSections.map((s) => (
+                        <option key={s.key} value={s.key}>{s.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '2.1fr 1fr 0.9fr', gap: 8 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
                     <div style={{ padding: '6px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12, fontWeight: 700, color: '#1a237e' }}>
                       Player Check-In
                     </div>
-                    {slotSections.length === 0 ? (
+                    {filteredSlotSections.length === 0 ? (
                       <div style={{ padding: 12, fontSize: 11, color: '#888' }}>No check-in eligible matches right now.</div>
                     ) : (
                       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
@@ -8452,7 +8507,7 @@ export default function TournamentDeskPage() {
                         <tbody>
                           {(() => {
                             const rows: JSX.Element[] = []
-                            slotSections.forEach((section) => {
+                            filteredSlotSections.forEach((section) => {
                               rows.push(
                                 <tr key={`slot-${section.key}`} style={{ borderTop: '1px solid #dbe4eb', backgroundColor: '#f7fafc' }}>
                                   <td colSpan={3} style={{ padding: '5px 8px', fontSize: 10, color: '#455a64', fontWeight: 700 }}>
@@ -8585,27 +8640,49 @@ export default function TournamentDeskPage() {
                                       </div>
                                     )
                                   })()}
-                                  <button
-                                    type="button"
-                                    disabled={!checkinEnabled}
-                                    onClick={() => checkinEnabled && handleTeamQuickCheckIn(cm!, side, state)}
-                                    style={{
-                                      marginTop: 2,
-                                      padding: '2px 7px',
-                                      fontSize: 9,
-                                      fontWeight: 700,
-                                      borderRadius: 4,
-                                      border: '1px solid #607d8b',
-                                      backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#e8f5e9' : '#fff',
-                                      color: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#2e7d32' : '#455a64',
-                                      cursor: checkinEnabled ? 'pointer' : 'default',
-                                      opacity: checkinEnabled ? 1 : 0.5,
-                                    }}
-                                  >
-                                    {(state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in))
-                                      ? 'Team Uncheck-In'
-                                      : 'Team Check-In'}
-                                  </button>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                    <button
+                                      type="button"
+                                      disabled={!state.team_id}
+                                      onClick={() => cm && state.team_id && toggleBallIssued(cm.match_id, side)}
+                                      title="Mark tennis ball issued"
+                                      style={{
+                                        width: 22,
+                                        height: 22,
+                                        borderRadius: 999,
+                                        border: '1px solid #607d8b',
+                                        backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#e8f5e9' : '#fff',
+                                        color: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#2e7d32' : '#607d8b',
+                                        cursor: state.team_id ? 'pointer' : 'default',
+                                        opacity: state.team_id ? 1 : 0.45,
+                                        lineHeight: 1,
+                                        fontSize: 12,
+                                        padding: 0,
+                                      }}
+                                    >
+                                      🎾
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={!checkinEnabled}
+                                      onClick={() => checkinEnabled && handleTeamQuickCheckIn(cm!, side, state)}
+                                      style={{
+                                        padding: '2px 7px',
+                                        fontSize: 9,
+                                        fontWeight: 700,
+                                        borderRadius: 4,
+                                        border: '1px solid #607d8b',
+                                        backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#e8f5e9' : '#fff',
+                                        color: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#2e7d32' : '#455a64',
+                                        cursor: checkinEnabled ? 'pointer' : 'default',
+                                        opacity: checkinEnabled ? 1 : 0.5,
+                                      }}
+                                    >
+                                      {(state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in))
+                                        ? 'Team Uncheck-In'
+                                        : 'Team Check-In'}
+                                    </button>
+                                  </div>
                                 </td>
                               )
 
