@@ -7751,20 +7751,6 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh, activeTab])
 
-  const handleTeamCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', checked: boolean) => {
-    if (!tid || !data) return
-    try {
-      await deskCheckInTeam(tid, match.match_id, {
-        version_id: data.version_id,
-        side,
-        checked_in: checked,
-      })
-      await handleRefresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed team check-in update')
-    }
-  }, [tid, data, handleRefresh])
-
   const handlePlayerCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', playerId: number, checked: boolean) => {
     if (!tid || !data) return
     try {
@@ -7779,6 +7765,60 @@ export default function TournamentDeskPage() {
       setError(e instanceof Error ? e.message : 'Failed player check-in update')
     }
   }, [tid, data, handleRefresh])
+
+  const handleTeamQuickCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', state: MatchCheckInSideState) => {
+    if (!tid || !data) return
+    try {
+      const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in)
+      if (uncheckedPlayers.length > 0) {
+        await Promise.all(
+          uncheckedPlayers.map((p: PlayerCheckInState) =>
+            deskCheckInPlayer(tid, match.match_id, {
+              version_id: data.version_id,
+              side,
+              player_id: p.player_id,
+              checked_in: true,
+            })
+          )
+        )
+      }
+      await deskCheckInTeam(tid, match.match_id, {
+        version_id: data.version_id,
+        side,
+        checked_in: true,
+      })
+      await handleRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed team quick check-in')
+    }
+  }, [tid, data, handleRefresh])
+
+  const formatCheckInMatchLabel = useCallback((match: CheckInMatchItem) => {
+    const code = (match.match_code || '').toUpperCase()
+    const phase = code.includes('_WF_')
+      ? 'WF'
+      : code.includes('_RR_')
+        ? 'RR'
+        : code.includes('_MAIN_')
+          ? 'Main'
+          : code.includes('_CONSOLATION_')
+            ? 'Consolation'
+            : ''
+    const division = code.includes('BWW') || code.includes('POOLA')
+      ? 'Div I'
+      : code.includes('BWL') || code.includes('POOLB')
+        ? 'Div II'
+        : code.includes('BLW') || code.includes('POOLC')
+          ? 'Div III'
+          : code.includes('BLL') || code.includes('POOLD')
+            ? 'Div IV'
+            : ''
+
+    const parts = [match.event_name]
+    if (phase) parts.push(phase)
+    else if (division) parts.push(division)
+    return parts.join(' ')
+  }, [])
 
   const handleAssignReadyMatch = useCallback(async (matchId: number, slotId: number) => {
     if (!tid || !data) return
@@ -8231,73 +8271,85 @@ export default function TournamentDeskPage() {
                       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                         <thead>
                           <tr style={{ backgroundColor: '#f8fafc' }}>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '16%' }}>Time Slot</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '19%' }}>Match</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '15%' }}>Side</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '20%' }}>Team</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '30%' }}>Players</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '20%' }}>Date</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '20%' }}>Match</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '30%' }}>Team 1</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '30%' }}>Team 2</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {data.checkin_matches.flatMap((cm) => {
+                          {data.checkin_matches.map((cm) => {
                             const slotLabel = `${cm.day_label} ${cm.scheduled_time || ''}`.trim()
-                            const sides: Array<{ key: 'A' | 'B'; label: string; state: MatchCheckInSideState }> = [
-                              { key: 'A', label: 'Side A', state: cm.side_a },
-                              { key: 'B', label: 'Side B', state: cm.side_b },
-                            ]
-                            return sides.map(({ key, label, state }) => (
-                              <tr key={`${cm.match_id}-${key}`} style={{ borderTop: '1px solid #f0f3f6' }}>
+                            const renderTeamCell = (side: 'A' | 'B', state: MatchCheckInSideState) => (
+                              <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
+                                <div style={{ fontWeight: 700, color: '#263238', marginBottom: 4 }}>
+                                  {state.team_display}
+                                </div>
+                                <div style={{ display: 'grid', gap: 3 }}>
+                                  {state.players.length > 0 ? state.players.map((p: PlayerCheckInState) => (
+                                    <label
+                                      key={`${cm.match_id}-${side}-${p.player_id}`}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        fontSize: 9,
+                                        color: '#455a64',
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePlayerCheckIn(cm, side, p.player_id, !p.checked_in)}
+                                        style={{
+                                          width: 12,
+                                          height: 12,
+                                          borderRadius: '50%',
+                                          border: `1px solid ${p.checked_in ? '#2e7d32' : '#90a4ae'}`,
+                                          backgroundColor: p.checked_in ? '#2e7d32' : '#fff',
+                                          padding: 0,
+                                          cursor: 'pointer',
+                                          flexShrink: 0,
+                                        }}
+                                        title={p.checked_in ? 'Checked in' : 'Not checked in'}
+                                      />
+                                      <span>{p.player_display}</span>
+                                    </label>
+                                  )) : (
+                                    <span style={{ color: '#9e9e9e', fontSize: 9 }}>No roster linked</span>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={state.side_ready}
+                                  onClick={() => handleTeamQuickCheckIn(cm, side, state)}
+                                  style={{
+                                    marginTop: 6,
+                                    padding: '3px 8px',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    borderRadius: 4,
+                                    border: '1px solid #607d8b',
+                                    backgroundColor: state.side_ready ? '#eceff1' : '#fff',
+                                    color: state.side_ready ? '#78909c' : '#455a64',
+                                    cursor: state.side_ready ? 'default' : 'pointer',
+                                  }}
+                                >
+                                  {state.side_ready ? 'Team Checked-In' : 'Team Check-In'}
+                                </button>
+                              </td>
+                            )
+
+                            return (
+                              <tr key={cm.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
                                 <td style={{ padding: '6px 8px', fontSize: 10, color: '#546e7a', verticalAlign: 'top' }}>{slotLabel}</td>
                                 <td style={{ padding: '6px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
-                                  #{cm.match_number} {cm.match_code || ''}
+                                  {formatCheckInMatchLabel(cm)}
                                 </td>
-                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
-                                  <button
-                                    onClick={() => handleTeamCheckIn(cm, key, !state.team_checked_in)}
-                                    style={{
-                                      padding: '2px 6px',
-                                      fontSize: 10,
-                                      fontWeight: 700,
-                                      borderRadius: 3,
-                                      border: '1px solid #78909c',
-                                      backgroundColor: state.team_checked_in ? '#455a64' : '#fff',
-                                      color: state.team_checked_in ? '#fff' : '#455a64',
-                                      cursor: 'pointer',
-                                    }}
-                                  >
-                                    {label}
-                                  </button>
-                                </td>
-                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
-                                  <div style={{ fontWeight: 600, color: '#263238' }}>{state.team_display}</div>
-                                  <div style={{ color: state.side_ready ? '#2e7d32' : '#90a4ae', fontSize: 9 }}>
-                                    {state.side_ready ? 'Ready' : 'Not Ready'} ({state.players_checked_in}/{state.players_total})
-                                  </div>
-                                </td>
-                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
-                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                    {state.players.length > 0 ? state.players.map((p: PlayerCheckInState) => (
-                                      <button
-                                        key={`${cm.match_id}-${key}-${p.player_id}`}
-                                        onClick={() => handlePlayerCheckIn(cm, key, p.player_id, !p.checked_in)}
-                                        style={{
-                                          padding: '1px 5px',
-                                          fontSize: 9,
-                                          fontWeight: 600,
-                                          borderRadius: 3,
-                                          border: '1px solid #b0bec5',
-                                          backgroundColor: p.checked_in ? '#e8f5e9' : '#fff',
-                                          color: p.checked_in ? '#2e7d32' : '#455a64',
-                                          cursor: 'pointer',
-                                        }}
-                                      >
-                                        {p.player_display}
-                                      </button>
-                                    )) : <span style={{ color: '#9e9e9e', fontSize: 9 }}>No roster linked</span>}
-                                  </div>
-                                </td>
+                                {renderTeamCell('A', cm.side_a)}
+                                {renderTeamCell('B', cm.side_b)}
                               </tr>
-                            ))
+                            )
                           })}
                         </tbody>
                       </table>
