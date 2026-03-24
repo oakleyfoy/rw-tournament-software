@@ -7957,7 +7957,7 @@ export default function TournamentDeskPage() {
 
   const slotSectionMap = new Map<
     string,
-    { key: string; label: string; order: string; matches: DeskMatchItem[]; assignedMatchIds: Set<number> }
+    { key: string; label: string; order: string; matches: DeskMatchItem[]; assignedMatchIds: Set<number>; slotIds: Set<number> }
   >()
 
   const formatTimeLabel = (t: string): string => {
@@ -7986,8 +7986,10 @@ export default function TournamentDeskPage() {
           order: key,
           matches: [],
           assignedMatchIds: new Set<number>(),
+          slotIds: new Set<number>(),
         })
       }
+      slotSectionMap.get(key)!.slotIds.add(s.slot_id ?? s.id ?? 0)
       if (s.assigned_match_id != null) {
         slotSectionMap.get(key)!.assignedMatchIds.add(s.assigned_match_id)
       }
@@ -8011,14 +8013,19 @@ export default function TournamentDeskPage() {
   const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
   slotSections.forEach(s => s.matches.sort((a, b) => (a.match_number - b.match_number)))
 
-  const availableSlotKeys = slotSections.map(s => s.key)
-  const effectiveSelectedCheckInSlotKey = availableSlotKeys.includes(selectedCheckInSlotKey)
-    ? selectedCheckInSlotKey
-    : (availableSlotKeys[0] || '')
-  const selectedCheckInSlotSection = slotSections.find(s => s.key === effectiveSelectedCheckInSlotKey) || null
   const checkInByMatchId = new Map<number, CheckInMatchItem>(
     (data.checkin_matches || []).map((cm) => [cm.match_id, cm])
   )
+  const firstPopulatedSlotKey =
+    slotSections.find((s) => {
+      if (s.matches.length > 0) return true
+      return (data.checkin_matches || []).some(cm => cm.slot_id != null && s.slotIds.has(cm.slot_id))
+    })?.key || ''
+  const availableSlotKeys = slotSections.map(s => s.key)
+  const effectiveSelectedCheckInSlotKey = availableSlotKeys.includes(selectedCheckInSlotKey)
+    ? selectedCheckInSlotKey
+    : (firstPopulatedSlotKey || availableSlotKeys[0] || '')
+  const selectedCheckInSlotSection = slotSections.find(s => s.key === effectiveSelectedCheckInSlotKey) || null
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
@@ -8415,7 +8422,16 @@ export default function TournamentDeskPage() {
                                 </tr>
                               )
                             }
-                            if (section.matches.length === 0) {
+                            const checkInMatchesForSection = (data.checkin_matches || [])
+                              .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
+                              .sort((a, b) => a.match_number - b.match_number)
+                            const baseMatches = section.matches.length > 0
+                              ? section.matches
+                              : checkInMatchesForSection
+                                  .map(cm => matchById.get(cm.match_id))
+                                  .filter((m): m is DeskMatchItem => !!m)
+
+                            if (baseMatches.length === 0) {
                               return (
                                 <tr style={{ borderTop: '1px solid #f0f3f6' }}>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
@@ -8427,7 +8443,7 @@ export default function TournamentDeskPage() {
                               )
                             }
 
-                            return section.matches.map((baseMatch) => {
+                            return baseMatches.map((baseMatch) => {
                               const cm = checkInByMatchId.get(baseMatch.match_id)
                               const disabledState = {
                                 side: 'A' as const,
