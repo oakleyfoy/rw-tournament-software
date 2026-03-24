@@ -7555,7 +7555,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
   const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
@@ -7710,6 +7710,28 @@ export default function TournamentDeskPage() {
 
   const managementMode = (data?.management_mode || 'court_management') as 'court_management' | 'checkin_management'
   const isCheckInManagement = managementMode === 'checkin_management'
+  const visibleTabs = useMemo(
+    () => ([
+      'courts',
+      ...(isCheckInManagement ? (['checkin'] as const) : []),
+      'schedule',
+      'draws',
+      'impact',
+      'pools',
+      'bulk',
+      'grid',
+      'weather',
+      'teams',
+      'sms',
+    ] as const),
+    [isCheckInManagement]
+  )
+
+  useEffect(() => {
+    if (!isCheckInManagement && activeTab === 'checkin') {
+      setActiveTab('courts')
+    }
+  }, [isCheckInManagement, activeTab])
 
   const handleSetManagementMode = useCallback(async (mode: 'court_management' | 'checkin_management') => {
     if (!tid || !data) return
@@ -7719,10 +7741,15 @@ export default function TournamentDeskPage() {
         management_mode: mode,
       })
       await handleRefresh()
+      if (mode === 'checkin_management') {
+        setActiveTab('checkin')
+      } else if (activeTab === 'checkin') {
+        setActiveTab('courts')
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to change management mode')
     }
-  }, [tid, data, handleRefresh])
+  }, [tid, data, handleRefresh, activeTab])
 
   const handleTeamCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', checked: boolean) => {
     if (!tid || !data) return
@@ -7932,7 +7959,7 @@ export default function TournamentDeskPage() {
         paddingLeft: 24,
         paddingRight: 24,
       }}>
-        {(['courts', 'schedule', 'draws', 'impact', 'pools', 'bulk', 'grid', 'weather', 'teams', 'sms'] as const).map(tab => (
+        {visibleTabs.map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -7949,7 +7976,7 @@ export default function TournamentDeskPage() {
               marginBottom: -2,
             }}
           >
-            {tab === 'sms' ? 'SMS' : tab}
+            {tab === 'sms' ? 'SMS' : tab === 'checkin' ? 'Check-In' : tab}
           </button>
         ))}
       </div>
@@ -7959,189 +7986,29 @@ export default function TournamentDeskPage() {
         {activeTab === 'courts' && (
           <>
             <div style={{ marginBottom: 24 }}>
-              <div style={{
-                border: '1px solid #e0e0e0',
-                borderRadius: 6,
-                padding: '10px 12px',
-                backgroundColor: '#fff',
-                marginBottom: 12,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#1a237e' }}>Desk Management Mode:</span>
-                  <button
-                    onClick={() => handleSetManagementMode('court_management')}
-                    style={{
-                      padding: '4px 10px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      borderRadius: 4,
-                      border: '1px solid #1a237e',
-                      backgroundColor: managementMode === 'court_management' ? '#1a237e' : '#fff',
-                      color: managementMode === 'court_management' ? '#fff' : '#1a237e',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Court Management
-                  </button>
-                  <button
-                    onClick={() => handleSetManagementMode('checkin_management')}
-                    style={{
-                      padding: '4px 10px',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      borderRadius: 4,
-                      border: '1px solid #2e7d32',
-                      backgroundColor: managementMode === 'checkin_management' ? '#2e7d32' : '#fff',
-                      color: managementMode === 'checkin_management' ? '#fff' : '#2e7d32',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Check-In Management
-                  </button>
-                </div>
-                {managementMode === 'checkin_management' && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: '#546e7a' }}>
-                    Check-in flow active: next-slot matches only -&gt; ready queue -&gt; assign to available court.
-                  </div>
-                )}
-              </div>
-
-              {isCheckInManagement && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                  <div style={{ border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff', padding: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1a237e', marginBottom: 8 }}>
-                      Player / Team Check-In (Next Time Slot)
-                    </div>
-                    {data.checkin_matches.length === 0 ? (
-                      <div style={{ fontSize: 11, color: '#888' }}>No check-in eligible matches right now.</div>
-                    ) : (
-                      <div style={{ display: 'grid', gap: 8 }}>
-                        {data.checkin_matches.map((cm) => {
-                          const sides: Array<{ key: 'A' | 'B'; label: string; state: MatchCheckInSideState }> = [
-                            { key: 'A', label: 'Side A', state: cm.side_a },
-                            { key: 'B', label: 'Side B', state: cm.side_b },
-                          ]
-                          return (
-                            <div key={cm.match_id} style={{ border: '1px solid #eef1f4', borderRadius: 4, padding: 8 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#37474f', marginBottom: 6 }}>
-                                #{cm.match_number} {cm.side_a.team_display} vs {cm.side_b.team_display} ({cm.scheduled_time || 'TBD'})
-                              </div>
-                              <div style={{ display: 'grid', gap: 6 }}>
-                                {sides.map(({ key, label, state }) => (
-                                  <div key={`${cm.match_id}-${key}`} style={{ border: '1px dashed #ddd', borderRadius: 4, padding: 6 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                                      <span style={{ fontSize: 10, fontWeight: 700, color: '#607d8b' }}>{label}: {state.team_display}</span>
-                                      <button
-                                        onClick={() => handleTeamCheckIn(cm, key, !state.team_checked_in)}
-                                        style={{
-                                          padding: '2px 8px',
-                                          fontSize: 10,
-                                          fontWeight: 700,
-                                          border: '1px solid #455a64',
-                                          borderRadius: 3,
-                                          backgroundColor: state.team_checked_in ? '#455a64' : '#fff',
-                                          color: state.team_checked_in ? '#fff' : '#455a64',
-                                          cursor: 'pointer',
-                                        }}
-                                      >
-                                        Team {state.team_checked_in ? 'Checked In' : 'Check In'}
-                                      </button>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                      {state.players.map((p: PlayerCheckInState) => (
-                                        <button
-                                          key={`${cm.match_id}-${key}-${p.player_id}`}
-                                          onClick={() => handlePlayerCheckIn(cm, key, p.player_id, !p.checked_in)}
-                                          style={{
-                                            padding: '2px 6px',
-                                            fontSize: 10,
-                                            fontWeight: 600,
-                                            borderRadius: 3,
-                                            border: '1px solid #90a4ae',
-                                            backgroundColor: p.checked_in ? '#e8f5e9' : '#fff',
-                                            color: p.checked_in ? '#2e7d32' : '#546e7a',
-                                            cursor: 'pointer',
-                                          }}
-                                        >
-                                          {p.player_display}
-                                        </button>
-                                      ))}
-                                      {state.players.length === 0 && (
-                                        <span style={{ fontSize: 10, color: '#999' }}>No player roster linked.</span>
-                                      )}
-                                    </div>
-                                    <div style={{ marginTop: 4, fontSize: 10, color: state.side_ready ? '#2e7d32' : '#999' }}>
-                                      {state.side_ready
-                                        ? `Ready (${state.players_checked_in}/${state.players_total} players)`
-                                        : `Not ready (${state.players_checked_in}/${state.players_total} players)`}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff', padding: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1a237e', marginBottom: 8 }}>
-                      Ready To Play Queue
-                    </div>
-                    {data.ready_queue.length === 0 ? (
-                      <div style={{ fontSize: 11, color: '#888' }}>No ready matches yet.</div>
-                    ) : (
-                      <div style={{ display: 'grid', gap: 8 }}>
-                        {data.ready_queue.map((rq) => {
-                          const selectedSlot = readySlotChoice[rq.match_id] || (data.available_slots[0]?.slot_id ?? 0)
-                          return (
-                            <div key={rq.match_id} style={{ border: '1px solid #eef1f4', borderRadius: 4, padding: 8 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#37474f', marginBottom: 6 }}>
-                                #{rq.match_number} {rq.team1_display} vs {rq.team2_display}
-                              </div>
-                              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                                <select
-                                  value={selectedSlot || ''}
-                                  onChange={e => setReadySlotChoice(prev => ({ ...prev, [rq.match_id]: parseInt(e.target.value, 10) }))}
-                                  style={{ fontSize: 11, padding: '4px 6px', borderRadius: 4, border: '1px solid #ccc' }}
-                                >
-                                  {data.available_slots.map((s: AvailableCourtSlot) => (
-                                    <option key={s.slot_id} value={s.slot_id}>
-                                      {s.court_name} ({s.day_label} {s.scheduled_time || ''})
-                                    </option>
-                                  ))}
-                                </select>
-                                <button
-                                  disabled={!selectedSlot}
-                                  onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
-                                  style={{
-                                    padding: '4px 10px',
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    borderRadius: 4,
-                                    border: 'none',
-                                    backgroundColor: '#2e7d32',
-                                    color: '#fff',
-                                    cursor: 'pointer',
-                                  }}
-                                >
-                                  Assign Court
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, position: 'relative' }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: '#333', margin: 0 }}>
                   Courts
                 </h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#455a64' }}>Actions:</span>
+                  <select
+                    value={managementMode}
+                    onChange={e => handleSetManagementMode(e.target.value as 'court_management' | 'checkin_management')}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: 12,
+                      borderRadius: 4,
+                      border: '1px solid #90a4ae',
+                      backgroundColor: '#fff',
+                      color: '#263238',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="court_management">Court Management</option>
+                    <option value="checkin_management">Check-In Management</option>
+                  </select>
+                </div>
                 {isDraft && startableCourts.length > 0 && !isCheckInManagement && (
                   <button
                     onClick={handleStartAllOpen}
@@ -8339,6 +8206,169 @@ export default function TournamentDeskPage() {
               )}
             </div>
           </>
+        )}
+
+        {/* Check-In Tab */}
+        {activeTab === 'checkin' && (
+          <div>
+            {!isCheckInManagement ? (
+              <div style={{ color: '#888', fontSize: 13, fontStyle: 'italic' }}>
+                Enable Check-In Management from Actions in the Courts tab.
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 10, fontSize: 12, color: '#546e7a', fontWeight: 600 }}>
+                  Player Check-In / Ready To Play - next time slot view
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
+                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12, fontWeight: 700, color: '#1a237e' }}>
+                      Player Check-In (all teams in next slot)
+                    </div>
+                    {data.checkin_matches.length === 0 ? (
+                      <div style={{ padding: 12, fontSize: 11, color: '#888' }}>No check-in eligible matches right now.</div>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f8fafc' }}>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '16%' }}>Time Slot</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '19%' }}>Match</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '15%' }}>Side</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '20%' }}>Team</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '30%' }}>Players</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.checkin_matches.flatMap((cm) => {
+                            const slotLabel = `${cm.day_label} ${cm.scheduled_time || ''}`.trim()
+                            const sides: Array<{ key: 'A' | 'B'; label: string; state: MatchCheckInSideState }> = [
+                              { key: 'A', label: 'Side A', state: cm.side_a },
+                              { key: 'B', label: 'Side B', state: cm.side_b },
+                            ]
+                            return sides.map(({ key, label, state }) => (
+                              <tr key={`${cm.match_id}-${key}`} style={{ borderTop: '1px solid #f0f3f6' }}>
+                                <td style={{ padding: '6px 8px', fontSize: 10, color: '#546e7a', verticalAlign: 'top' }}>{slotLabel}</td>
+                                <td style={{ padding: '6px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
+                                  #{cm.match_number} {cm.match_code || ''}
+                                </td>
+                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
+                                  <button
+                                    onClick={() => handleTeamCheckIn(cm, key, !state.team_checked_in)}
+                                    style={{
+                                      padding: '2px 6px',
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      borderRadius: 3,
+                                      border: '1px solid #78909c',
+                                      backgroundColor: state.team_checked_in ? '#455a64' : '#fff',
+                                      color: state.team_checked_in ? '#fff' : '#455a64',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    {label}
+                                  </button>
+                                </td>
+                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
+                                  <div style={{ fontWeight: 600, color: '#263238' }}>{state.team_display}</div>
+                                  <div style={{ color: state.side_ready ? '#2e7d32' : '#90a4ae', fontSize: 9 }}>
+                                    {state.side_ready ? 'Ready' : 'Not Ready'} ({state.players_checked_in}/{state.players_total})
+                                  </div>
+                                </td>
+                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
+                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {state.players.length > 0 ? state.players.map((p: PlayerCheckInState) => (
+                                      <button
+                                        key={`${cm.match_id}-${key}-${p.player_id}`}
+                                        onClick={() => handlePlayerCheckIn(cm, key, p.player_id, !p.checked_in)}
+                                        style={{
+                                          padding: '1px 5px',
+                                          fontSize: 9,
+                                          fontWeight: 600,
+                                          borderRadius: 3,
+                                          border: '1px solid #b0bec5',
+                                          backgroundColor: p.checked_in ? '#e8f5e9' : '#fff',
+                                          color: p.checked_in ? '#2e7d32' : '#455a64',
+                                          cursor: 'pointer',
+                                        }}
+                                      >
+                                        {p.player_display}
+                                      </button>
+                                    )) : <span style={{ color: '#9e9e9e', fontSize: 9 }}>No roster linked</span>}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
+                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12, fontWeight: 700, color: '#1a237e' }}>
+                      Ready To Play
+                    </div>
+                    {data.ready_queue.length === 0 ? (
+                      <div style={{ padding: 12, fontSize: 11, color: '#888' }}>No ready matches yet.</div>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f8fafc' }}>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b' }}>Match</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b' }}>Assign</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.ready_queue.map((rq) => {
+                            const selectedSlot = readySlotChoice[rq.match_id] || (data.available_slots[0]?.slot_id ?? 0)
+                            return (
+                              <tr key={rq.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
+                                <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
+                                  <div style={{ fontWeight: 700, color: '#263238' }}>#{rq.match_number}</div>
+                                  <div style={{ color: '#455a64' }}>{rq.team1_display} vs {rq.team2_display}</div>
+                                  <div style={{ color: '#90a4ae', fontSize: 9 }}>{rq.day_label} {rq.scheduled_time || ''}</div>
+                                </td>
+                                <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                                  <select
+                                    value={selectedSlot || ''}
+                                    onChange={e => setReadySlotChoice(prev => ({ ...prev, [rq.match_id]: parseInt(e.target.value, 10) }))}
+                                    style={{ width: '100%', fontSize: 10, padding: '3px 5px', borderRadius: 4, border: '1px solid #ccc', marginBottom: 4 }}
+                                  >
+                                    {data.available_slots.map((s: AvailableCourtSlot) => (
+                                      <option key={s.slot_id} value={s.slot_id}>
+                                        {s.court_name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    disabled={!selectedSlot}
+                                    onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
+                                    style={{
+                                      width: '100%',
+                                      padding: '4px 8px',
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      borderRadius: 4,
+                                      border: 'none',
+                                      backgroundColor: '#2e7d32',
+                                      color: '#fff',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    Assign Court
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         {/* Schedule Tab */}
