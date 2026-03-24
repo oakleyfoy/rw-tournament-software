@@ -7989,7 +7989,9 @@ export default function TournamentDeskPage() {
           slotIds: new Set<number>(),
         })
       }
-      slotSectionMap.get(key)!.slotIds.add(s.slot_id ?? s.id ?? 0)
+      if (s.slot_id != null) {
+        slotSectionMap.get(key)!.slotIds.add(s.slot_id)
+      }
       if (s.assigned_match_id != null) {
         slotSectionMap.get(key)!.assignedMatchIds.add(s.assigned_match_id)
       }
