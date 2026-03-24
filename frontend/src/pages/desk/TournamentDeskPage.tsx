@@ -7955,7 +7955,10 @@ export default function TournamentDeskPage() {
 
   if (!data) return null
 
-  const slotSectionMap = new Map<string, { key: string; label: string; order: string; matches: DeskMatchItem[] }>()
+  const slotSectionMap = new Map<
+    string,
+    { key: string; label: string; order: string; matches: DeskMatchItem[]; assignedMatchIds: Set<number> }
+  >()
 
   const formatTimeLabel = (t: string): string => {
     const hhmm = (t || '').slice(0, 5)
@@ -7982,24 +7985,28 @@ export default function TournamentDeskPage() {
           label: `${s.day_date} ${formatTimeLabel(s.start_time || '00:00')}`,
           order: key,
           matches: [],
+          assignedMatchIds: new Set<number>(),
         })
+      }
+      if (s.assigned_match_id != null) {
+        slotSectionMap.get(key)!.assignedMatchIds.add(s.assigned_match_id)
       }
     })
 
-  ;(data.matches || [])
-    .filter(m => !!m.day_date && !!m.sort_time && m.status !== 'FINAL')
-    .forEach((m) => {
-      const key = `${m.day_date}|${(m.sort_time || '').slice(0, 5)}`
-      if (!slotSectionMap.has(key)) {
-        slotSectionMap.set(key, {
-          key,
-          label: `${m.day_date} ${m.scheduled_time || ''}`.trim(),
-          order: key,
-          matches: [],
-        })
-      }
-      slotSectionMap.get(key)!.matches.push(m)
-    })
+  const matchById = new Map<number, DeskMatchItem>(
+    (data.matches || []).map((m) => [m.match_id, m])
+  )
+
+  slotSectionMap.forEach((section) => {
+    if (section.assignedMatchIds.size > 0) {
+      section.matches = Array.from(section.assignedMatchIds)
+        .map((id) => matchById.get(id))
+        .filter((m): m is DeskMatchItem => !!m && m.status !== 'FINAL')
+      section.matches.sort((a, b) => a.match_number - b.match_number)
+      return
+    }
+    section.matches = []
+  })
 
   const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
   slotSections.forEach(s => s.matches.sort((a, b) => (a.match_number - b.match_number)))
