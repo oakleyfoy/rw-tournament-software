@@ -495,8 +495,6 @@ def _build_checkin_snapshot(
         status = (m.runtime_status or "SCHEDULED").upper()
         if status in ("FINAL", "IN_PROGRESS", "PAUSED"):
             continue
-        if not m.team_a_id or not m.team_b_id:
-            continue
         a = assignment_map.get(m.id)
         if not a:
             continue

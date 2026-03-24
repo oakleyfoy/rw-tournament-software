@@ -8536,7 +8536,7 @@ export default function TournamentDeskPage() {
                                 team_id: fallbackMatch.team2_id,
                                 team_display: fallbackMatch.team2_display,
                               }
-                              const checkinEnabled = !!cm
+                              const checkinEnabled = !!cm && !!sideA.team_id && !!sideB.team_id
 
                               const renderTeamCell = (side: 'A' | 'B', state: MatchCheckInSideState) => (
                                 <td style={{ padding: '5px 8px', fontSize: 10, verticalAlign: 'top' }}>
