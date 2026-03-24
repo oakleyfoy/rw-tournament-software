@@ -3,6 +3,7 @@ Desk Runtime Console: Staff-only endpoints for live tournament operations.
 Now Playing / Up Next, score entry, auto-advancement, working draft management.
 """
 import logging
+import json
 from datetime import datetime, time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -42,6 +43,23 @@ from app.services.reschedule_engine import (
 )
 
 logger = logging.getLogger(__name__)
+_DEBUG_LOG_PATH = r"c:\RW Tournament Software\.cursor\debug.log"
+
+
+def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
+    try:
+        payload = {
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.utcnow().timestamp() * 1000),
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
 
 router = APIRouter()
 
@@ -468,18 +486,25 @@ def _build_checkin_snapshot(
     List[CheckInSlotOption],
     Dict[str, List[CheckInMatchItem]],
 ]:
+    # region agent log
+    _agent_debug_log(
+        "H4",
+        "desk.py:_build_checkin_snapshot:entry",
+        "check-in snapshot build entry",
+        {
+            "tournamentId": tournament.id,
+            "versionId": version.id,
+            "incomingItemsCount": len(items),
+        },
+    )
+    # endregion
     all_matches = session.exec(
         select(Match).where(Match.schedule_version_id == version.id)
     ).all()
-    if not all_matches:
-        return [], [], [], [], [], {}
-
     match_map = {m.id: m for m in all_matches}
-    match_ids = list(match_map.keys())
     assignments = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == version.id,
-            MatchAssignment.match_id.in_(match_ids),  # type: ignore[arg-type]
         )
     ).all()
     assignment_map = {a.match_id: a for a in assignments}
@@ -521,9 +546,6 @@ def _build_checkin_snapshot(
         if not s:
             continue
         candidates.append((m, a, s))
-
-    if not candidates:
-        return [], [], [], [], [], {}
 
     candidates.sort(key=lambda x: (x[2].day_date, x[2].start_time, x[2].court_number, x[0].id))
     # Include all scheduled slots so staff can optionally check teams in early for later slots.
@@ -763,6 +785,28 @@ def _build_checkin_snapshot(
         used_court.add(court_name)
 
     available_courts = [s.court_name for s in available_slots]
+    # region agent log
+    _agent_debug_log(
+        "H5",
+        "desk.py:_build_checkin_snapshot:return",
+        "check-in snapshot build return summary",
+        {
+            "checkinMatchesCount": len(checkin_matches),
+            "readyQueueCount": len(ready_items),
+            "slotOptionsCount": len(checkin_slot_options),
+            "slotRowsKeysCount": len(checkin_slot_rows.keys()),
+            "slotOptionsPreview": [
+                {
+                    "slotKey": opt.slot_key,
+                    "label": opt.label,
+                    "slotIdsCount": len(opt.slot_ids or []),
+                    "rowsCount": len(checkin_slot_rows.get(opt.slot_key, [])),
+                }
+                for opt in checkin_slot_options[:6]
+            ],
+        },
+    )
+    # endregion
     return (
         checkin_matches,
         ready_items,
@@ -1114,6 +1158,17 @@ def desk_snapshot(
     session: Session = Depends(get_session),
 ):
     """Staff-only snapshot: all matches + now_playing + up_next per court."""
+    # region agent log
+    _agent_debug_log(
+        "H6",
+        "desk.py:desk_snapshot:entry",
+        "desk snapshot endpoint entry",
+        {
+            "tournamentId": tournament_id,
+            "versionId": version_id,
+        },
+    )
+    # endregion
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -1229,6 +1284,23 @@ def desk_snapshot(
             session, tournament, version, items
         )
 
+    # region agent log
+    _agent_debug_log(
+        "H6",
+        "desk.py:desk_snapshot:return",
+        "desk snapshot endpoint return summary",
+        {
+            "tournamentId": tournament.id,
+            "versionId": version.id,
+            "managementMode": management_mode,
+            "matchesCount": len(items),
+            "snapshotSlotsCount": len(snapshot_slots),
+            "checkinMatchesCount": len(checkin_matches),
+            "checkinSlotOptionsCount": len(checkin_slot_options),
+            "checkinSlotRowsKeysCount": len(checkin_slot_rows.keys()),
+        },
+    )
+    # endregion
     return DeskSnapshotResponse(
         tournament_id=tournament.id,
         tournament_name=tournament.name,
@@ -1282,6 +1354,18 @@ def set_management_mode(
     payload: DeskManagementModeRequest,
     session: Session = Depends(get_session),
 ):
+    # region agent log
+    _agent_debug_log(
+        "H7",
+        "desk.py:set_management_mode:entry",
+        "set management mode request",
+        {
+            "tournamentId": tournament_id,
+            "versionId": payload.version_id,
+            "requestedMode": payload.management_mode,
+        },
+    )
+    # endregion
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -1296,6 +1380,18 @@ def set_management_mode(
     tournament.desk_management_mode = mode
     session.add(tournament)
     session.commit()
+    # region agent log
+    _agent_debug_log(
+        "H7",
+        "desk.py:set_management_mode:return",
+        "set management mode success",
+        {
+            "tournamentId": tournament_id,
+            "versionId": payload.version_id,
+            "mode": mode,
+        },
+    )
+    # endregion
     return DeskManagementModeResponse(
         tournament_id=tournament_id,
         version_id=payload.version_id,
@@ -1470,6 +1566,17 @@ def get_checkin_queue(
     version_id: int = Query(...),
     session: Session = Depends(get_session),
 ):
+    # region agent log
+    _agent_debug_log(
+        "H8",
+        "desk.py:get_checkin_queue:entry",
+        "get check-in queue request",
+        {
+            "tournamentId": tournament_id,
+            "versionId": version_id,
+        },
+    )
+    # endregion
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -1487,6 +1594,21 @@ def get_checkin_queue(
         checkin_slot_options,
         checkin_slot_rows,
     ) = _build_checkin_snapshot(session, tournament, version, items)
+    # region agent log
+    _agent_debug_log(
+        "H8",
+        "desk.py:get_checkin_queue:return",
+        "get check-in queue response",
+        {
+            "tournamentId": tournament_id,
+            "versionId": version_id,
+            "managementMode": mode,
+            "checkinMatchesCount": len(checkin_matches),
+            "slotOptionsCount": len(checkin_slot_options),
+            "slotRowsKeysCount": len(checkin_slot_rows.keys()),
+        },
+    )
+    # endregion
     return ReadyQueueResponse(
         tournament_id=tournament_id,
         version_id=version_id,

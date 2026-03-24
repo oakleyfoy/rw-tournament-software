@@ -2543,6 +2543,30 @@ def test_snapshot_checkin_slot_contract_includes_options_and_rows(client, sessio
     assert body["checkin_slot_rows"][ten_thirty_key] == []
 
 
+def test_snapshot_checkin_slot_options_present_even_without_candidates(client, session):
+    t, v, _ev, _teams, matches, _slots = _setup_draft_for_move(session)
+    for m in matches:
+        m.runtime_status = "FINAL"
+        session.add(m)
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    body = snap.json()
+
+    labels = {o["label"] for o in body["checkin_slot_options"]}
+    assert "2026-07-01 9:00 AM" in labels
+    assert "2026-07-01 10:30 AM" in labels
+    assert len(body["checkin_matches"]) == 0
+    assert all(len(rows) == 0 for rows in body["checkin_slot_rows"].values())
+
+
 def test_checkin_player_rollup_and_assign_ready_match(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     m1 = matches[0]
