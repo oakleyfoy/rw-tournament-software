@@ -7887,6 +7887,7 @@ export default function TournamentDeskPage() {
   const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
   const [startingAll, setStartingAll] = useState(false)
   const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
+  const [selectedCheckInSlotKey, setSelectedCheckInSlotKey] = useState<string>('')
 
   const startableCourts = useMemo(() => {
     if (!data) return []
@@ -8003,8 +8004,12 @@ export default function TournamentDeskPage() {
   const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
   slotSections.forEach(s => s.matches.sort((a, b) => (a.match_number - b.match_number)))
 
-  const currentCheckInSlotLabel = slotSections[0]?.label || ''
-  const nextCheckInSlotLabel = slotSections[1]?.label || ''
+  const availableSlotKeys = slotSections.map(s => s.key)
+  const effectiveSelectedCheckInSlotKey = availableSlotKeys.includes(selectedCheckInSlotKey)
+    ? selectedCheckInSlotKey
+    : (availableSlotKeys[0] || '')
+  const selectedCheckInSlotSection = slotSections.find(s => s.key === effectiveSelectedCheckInSlotKey) || null
+  const currentCheckInSlotLabel = selectedCheckInSlotSection?.label || ''
   const checkInByMatchId = new Map<number, CheckInMatchItem>(
     (data.checkin_matches || []).map((cm) => [cm.match_id, cm])
   )
@@ -8362,12 +8367,18 @@ export default function TournamentDeskPage() {
                 <div style={{ marginBottom: 4, fontSize: 12, color: '#546e7a', fontWeight: 600 }}>
                   Player Check-In / Ready To Play - next time slot view
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                  <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#334155' }}>
-                    Current Slot: {currentCheckInSlotLabel || 'TBD'}
-                  </div>
-                  <div style={{ padding: '6px 8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#475569' }}>
-                    Next Slot: {nextCheckInSlotLabel || 'TBD'}
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>Current Slot:</span>
+                    <select
+                      value={effectiveSelectedCheckInSlotKey}
+                      onChange={e => setSelectedCheckInSlotKey(e.target.value)}
+                      style={{ fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #b0bec5', minWidth: 260 }}
+                    >
+                      {slotSections.map((s) => (
+                        <option key={s.key} value={s.key}>{s.label}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '2.1fr 1fr 0.9fr', gap: 8 }}>
@@ -8387,20 +8398,30 @@ export default function TournamentDeskPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {slotSections.flatMap((section) => {
+                          {(() => {
+                            const section = selectedCheckInSlotSection
+                            if (!section) {
+                              return (
+                                <tr style={{ borderTop: '1px solid #f0f3f6' }}>
+                                  <td style={{ padding: '6px 8px', fontSize: 10, color: '#90a4ae', fontStyle: 'italic' }} colSpan={3}>
+                                    No slot selected
+                                  </td>
+                                </tr>
+                              )
+                            }
                             if (section.matches.length === 0) {
-                              return [
-                                <tr key={`${section.key}-empty`} style={{ borderTop: '1px solid #f0f3f6' }}>
+                              return (
+                                <tr style={{ borderTop: '1px solid #f0f3f6' }}>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#78909c', fontStyle: 'italic' }}>
                                     (Open slot)
                                   </td>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#b0bec5' }}>TBD / TBD</td>
                                   <td style={{ padding: '5px 8px', fontSize: 10, color: '#b0bec5' }}>TBD / TBD</td>
-                                </tr>,
-                              ]
+                                </tr>
+                              )
                             }
 
-                            return section.matches.map((baseMatch, idx) => {
+                            return section.matches.map((baseMatch) => {
                               const cm = checkInByMatchId.get(baseMatch.match_id)
                               const disabledState = {
                                 side: 'A' as const,
@@ -8424,81 +8445,76 @@ export default function TournamentDeskPage() {
                               const checkinEnabled = !!cm
 
                               const renderTeamCell = (side: 'A' | 'B', state: MatchCheckInSideState) => (
-                              <td style={{ padding: '5px 8px', fontSize: 10, verticalAlign: 'top' }}>
-                                {(() => {
-                                  const teamParts = state.team_display
-                                    .split('/')
-                                    .map(v => v.trim())
-                                    .filter(Boolean)
-                                  const p1 = state.players[0]
-                                  const p2 = state.players[1]
-                                  const leftName = teamParts[0] || p1?.player_display || 'Player 1'
-                                  const rightName = teamParts[1] || p2?.player_display || 'Player 2'
-                                  return (
-                                    <div style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 4,
-                                      fontSize: 10,
-                                      color: '#455a64',
-                                      marginBottom: 3,
-                                    }}>
-                                      {renderInlinePlayerToggle(
-                                        !!(state.team_checked_in || p1?.checked_in),
-                                        (checkinEnabled && p1) ? () => handlePlayerCheckIn(cm!, side, p1.player_id, !(state.team_checked_in || p1.checked_in)) : undefined,
-                                        'left'
-                                      )}
-                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
-                                      <span style={{ color: '#90a4ae', margin: '0 2px' }}>/</span>
-                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
-                                      {renderInlinePlayerToggle(
-                                        !!(state.team_checked_in || p2?.checked_in),
-                                        (checkinEnabled && p2) ? () => handlePlayerCheckIn(cm!, side, p2.player_id, !(state.team_checked_in || p2.checked_in)) : undefined,
-                                        'right'
-                                      )}
-                                    </div>
-                                  )
-                                })()}
-                                <button
-                                  type="button"
-                                  disabled={!checkinEnabled}
-                                  onClick={() => checkinEnabled && handleTeamQuickCheckIn(cm!, side, state)}
-                                  style={{
-                                    marginTop: 2,
-                                    padding: '2px 7px',
-                                    fontSize: 9,
-                                    fontWeight: 700,
-                                    borderRadius: 4,
-                                    border: '1px solid #607d8b',
-                                    backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#e8f5e9' : '#fff',
-                                    color: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#2e7d32' : '#455a64',
-                                    cursor: checkinEnabled ? 'pointer' : 'default',
-                                    opacity: checkinEnabled ? 1 : 0.5,
-                                  }}
-                                >
-                                  {(state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in))
-                                    ? 'Team Uncheck-In'
-                                    : 'Team Check-In'}
-                                </button>
-                              </td>
-                            )
+                                <td style={{ padding: '5px 8px', fontSize: 10, verticalAlign: 'top' }}>
+                                  {(() => {
+                                    const teamParts = state.team_display
+                                      .split('/')
+                                      .map(v => v.trim())
+                                      .filter(Boolean)
+                                    const p1 = state.players[0]
+                                    const p2 = state.players[1]
+                                    const leftName = teamParts[0] || p1?.player_display || 'Player 1'
+                                    const rightName = teamParts[1] || p2?.player_display || 'Player 2'
+                                    return (
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                        fontSize: 10,
+                                        color: '#455a64',
+                                        marginBottom: 3,
+                                      }}>
+                                        {renderInlinePlayerToggle(
+                                          !!(state.team_checked_in || p1?.checked_in),
+                                          (checkinEnabled && p1) ? () => handlePlayerCheckIn(cm!, side, p1.player_id, !(state.team_checked_in || p1.checked_in)) : undefined,
+                                          'left'
+                                        )}
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
+                                        <span style={{ color: '#90a4ae', margin: '0 2px' }}>/</span>
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
+                                        {renderInlinePlayerToggle(
+                                          !!(state.team_checked_in || p2?.checked_in),
+                                          (checkinEnabled && p2) ? () => handlePlayerCheckIn(cm!, side, p2.player_id, !(state.team_checked_in || p2.checked_in)) : undefined,
+                                          'right'
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
+                                  <button
+                                    type="button"
+                                    disabled={!checkinEnabled}
+                                    onClick={() => checkinEnabled && handleTeamQuickCheckIn(cm!, side, state)}
+                                    style={{
+                                      marginTop: 2,
+                                      padding: '2px 7px',
+                                      fontSize: 9,
+                                      fontWeight: 700,
+                                      borderRadius: 4,
+                                      border: '1px solid #607d8b',
+                                      backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#e8f5e9' : '#fff',
+                                      color: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#2e7d32' : '#455a64',
+                                      cursor: checkinEnabled ? 'pointer' : 'default',
+                                      opacity: checkinEnabled ? 1 : 0.5,
+                                    }}
+                                  >
+                                    {(state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in))
+                                      ? 'Team Uncheck-In'
+                                      : 'Team Check-In'}
+                                  </button>
+                                </td>
+                              )
 
                               return (
-                              <tr key={`${section.key}-${baseMatch.match_id}`} style={{ borderTop: '1px solid #f0f3f6' }}>
-                                <td style={{ padding: '5px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
-                                  {idx === 0 && (
-                                    <div style={{ fontSize: 9, color: '#607d8b', fontWeight: 700, marginBottom: 2 }}>
-                                      {section.label}
-                                    </div>
-                                  )}
-                                  {cm ? formatCheckInMatchLabel(cm) : `${baseMatch.event_name} ${baseMatch.stage}`}
-                                </td>
-                                {renderTeamCell('A', sideA)}
-                                {renderTeamCell('B', sideB)}
-                              </tr>
-                            )
+                                <tr key={`${section.key}-${baseMatch.match_id}`} style={{ borderTop: '1px solid #f0f3f6' }}>
+                                  <td style={{ padding: '5px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
+                                    {cm ? formatCheckInMatchLabel(cm) : `${baseMatch.event_name} ${baseMatch.stage}`}
+                                  </td>
+                                  {renderTeamCell('A', sideA)}
+                                  {renderTeamCell('B', sideB)}
+                                </tr>
+                              )
                             })
-                          })}
+                          })()}
                         </tbody>
                       </table>
                     )}
@@ -8570,7 +8586,7 @@ export default function TournamentDeskPage() {
                     <div style={{ padding: '6px 8px', borderBottom: '1px solid #eef2f5', fontSize: 11, fontWeight: 700, color: '#1a237e' }}>
                       Courts (Compact)
                     </div>
-                    <div style={{ padding: 6, display: 'grid', gap: 6 }}>
+                    <div style={{ padding: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                       {data.courts.map((court) => {
                         const now = data.now_playing_by_court[court]
                         const next = data.up_next_by_court[court]
