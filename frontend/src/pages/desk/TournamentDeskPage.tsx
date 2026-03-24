@@ -7954,6 +7954,28 @@ export default function TournamentDeskPage() {
 
   if (!data) return null
 
+  const checkInSlotLabels = Array.from(
+    new Set(
+      (data.checkin_matches || [])
+        .map(cm => `${cm.day_label} ${cm.scheduled_time || ''}`.trim())
+        .filter(Boolean)
+    )
+  )
+  const currentCheckInSlotLabel = checkInSlotLabels[0] || ''
+  const allScheduleSlotLabels = Array.from(
+    new Set(
+      (data.matches || [])
+        .filter(m => m.scheduled_time && m.day_label && m.status !== 'FINAL')
+        .sort((a, b) => (a.day_index - b.day_index) || (a.sort_time || '').localeCompare(b.sort_time || ''))
+        .map(m => `${m.day_label} ${m.scheduled_time || ''}`.trim())
+    )
+  )
+  const currentSlotIdx = currentCheckInSlotLabel ? allScheduleSlotLabels.indexOf(currentCheckInSlotLabel) : -1
+  const nextCheckInSlotLabel =
+    currentSlotIdx >= 0 && currentSlotIdx + 1 < allScheduleSlotLabels.length
+      ? allScheduleSlotLabels[currentSlotIdx + 1]
+      : (allScheduleSlotLabels[1] || '')
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
       {/* Header */}
@@ -8304,12 +8326,20 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 10, fontSize: 12, color: '#546e7a', fontWeight: 600 }}>
+                <div style={{ marginBottom: 6, fontSize: 12, color: '#546e7a', fontWeight: 600 }}>
                   Player Check-In / Ready To Play - next time slot view
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                  <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#334155' }}>
+                    Current Slot: {currentCheckInSlotLabel || 'TBD'}
+                  </div>
+                  <div style={{ padding: '6px 8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 11, fontWeight: 700, color: '#475569' }}>
+                    Next Slot: {nextCheckInSlotLabel || 'TBD'}
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
-                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12, fontWeight: 700, color: '#1a237e' }}>
+                    <div style={{ padding: '6px 10px', borderBottom: '1px solid #eef2f5', fontSize: 12, fontWeight: 700, color: '#1a237e' }}>
                       Player Check-In (all teams in next slot)
                     </div>
                     {data.checkin_matches.length === 0 ? (
@@ -8318,20 +8348,15 @@ export default function TournamentDeskPage() {
                       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                         <thead>
                           <tr style={{ backgroundColor: '#f8fafc' }}>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '20%' }}>Date</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '20%' }}>Match</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '30%' }}>Team 1</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '30%' }}>Team 2</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '24%' }}>Match</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '38%' }}>Team 1</th>
+                            <th style={{ padding: '5px 8px', textAlign: 'left', fontSize: 10, color: '#607d8b', width: '38%' }}>Team 2</th>
                           </tr>
                         </thead>
                         <tbody>
                           {data.checkin_matches.map((cm) => {
-                            const slotLabel = `${cm.day_label} ${cm.scheduled_time || ''}`.trim()
                             const renderTeamCell = (side: 'A' | 'B', state: MatchCheckInSideState) => (
-                              <td style={{ padding: '6px 8px', fontSize: 10, verticalAlign: 'top' }}>
-                                <div style={{ fontWeight: 700, color: '#263238', marginBottom: 4 }}>
-                                  {state.team_display}
-                                </div>
+                              <td style={{ padding: '5px 8px', fontSize: 10, verticalAlign: 'top' }}>
                                 {(() => {
                                   const teamParts = state.team_display
                                     .split('/')
@@ -8345,28 +8370,24 @@ export default function TournamentDeskPage() {
                                     <div style={{
                                       display: 'flex',
                                       alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      gap: 8,
+                                      gap: 4,
                                       fontSize: 10,
                                       color: '#455a64',
-                                      marginBottom: 4,
+                                      marginBottom: 3,
                                     }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                                        {renderInlinePlayerToggle(
-                                          !!p1?.checked_in,
-                                          p1 ? () => handlePlayerCheckIn(cm, side, p1.player_id, !p1.checked_in) : undefined,
-                                          'left'
-                                        )}
-                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
-                                      </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
-                                        {renderInlinePlayerToggle(
-                                          !!p2?.checked_in,
-                                          p2 ? () => handlePlayerCheckIn(cm, side, p2.player_id, !p2.checked_in) : undefined,
-                                          'right'
-                                        )}
-                                      </div>
+                                      {renderInlinePlayerToggle(
+                                        !!(state.team_checked_in || p1?.checked_in),
+                                        p1 ? () => handlePlayerCheckIn(cm, side, p1.player_id, !(state.team_checked_in || p1.checked_in)) : undefined,
+                                        'left'
+                                      )}
+                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
+                                      <span style={{ color: '#90a4ae', margin: '0 2px' }}>/</span>
+                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
+                                      {renderInlinePlayerToggle(
+                                        !!(state.team_checked_in || p2?.checked_in),
+                                        p2 ? () => handlePlayerCheckIn(cm, side, p2.player_id, !(state.team_checked_in || p2.checked_in)) : undefined,
+                                        'right'
+                                      )}
                                     </div>
                                   )
                                 })()}
@@ -8374,14 +8395,14 @@ export default function TournamentDeskPage() {
                                   type="button"
                                   onClick={() => handleTeamQuickCheckIn(cm, side, state)}
                                   style={{
-                                    marginTop: 6,
-                                    padding: '3px 8px',
+                                    marginTop: 2,
+                                    padding: '2px 7px',
                                     fontSize: 9,
                                     fontWeight: 700,
                                     borderRadius: 4,
                                     border: '1px solid #607d8b',
-                                    backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#eceff1' : '#fff',
-                                    color: '#455a64',
+                                    backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#e8f5e9' : '#fff',
+                                    color: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#2e7d32' : '#455a64',
                                     cursor: 'pointer',
                                   }}
                                 >
@@ -8394,8 +8415,7 @@ export default function TournamentDeskPage() {
 
                             return (
                               <tr key={cm.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
-                                <td style={{ padding: '6px 8px', fontSize: 10, color: '#546e7a', verticalAlign: 'top' }}>{slotLabel}</td>
-                                <td style={{ padding: '6px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
+                                <td style={{ padding: '5px 8px', fontSize: 10, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
                                   {formatCheckInMatchLabel(cm)}
                                 </td>
                                 {renderTeamCell('A', cm.side_a)}
