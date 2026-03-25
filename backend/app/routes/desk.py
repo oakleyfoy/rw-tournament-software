@@ -770,16 +770,16 @@ def _build_checkin_snapshot(
         if court_name in active_courts or court_name in closed_courts:
             continue
         a = assignment_by_slot.get(s.id)
-        # In check-in assignment mode, only unoccupied courts are assignable.
-        if a is not None:
-            continue
+        # A court is considered unavailable only when it is actively in use
+        # (handled by active_courts above) or manually closed.
+        # Pre-assigned future matches should not block immediate assignment.
         available_slots.append(
             AvailableCourtSlot(
                 slot_id=s.id,
                 court_name=court_name,
                 day_label=_to_day_label(s.day_date),
                 scheduled_time=_to_sched_label(s.start_time),
-                currently_assigned_match_id=None,
+                currently_assigned_match_id=a.match_id if a else None,
             )
         )
         used_court.add(court_name)

@@ -8522,16 +8522,23 @@ export default function TournamentDeskPage() {
                                   : (data.checkin_matches || [])
                                       .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
                                       .sort((a, b) => a.match_number - b.match_number)
+                              const actionableCheckInMatchesForSection = checkInMatchesForSection
+                                .filter(cm => !cm.match_ready)
                               const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
-                                checkInMatchesForSection.length > 0
-                                  ? checkInMatchesForSection.map((cm) => ({
+                                actionableCheckInMatchesForSection.length > 0
+                                  ? actionableCheckInMatchesForSection.map((cm) => ({
                                       cm,
                                       baseMatch: matchById.get(cm.match_id) || null,
                                     }))
-                                  : section.matches.map((baseMatch) => ({
-                                      baseMatch,
-                                      cm: checkInByMatchId.get(baseMatch.match_id) || null,
-                                    }))
+                                  : section.matches
+                                      .filter((baseMatch) => {
+                                        const cm = checkInByMatchId.get(baseMatch.match_id)
+                                        return !cm || !cm.match_ready
+                                      })
+                                      .map((baseMatch) => ({
+                                        baseMatch,
+                                        cm: checkInByMatchId.get(baseMatch.match_id) || null,
+                                      }))
 
                               if (rowEntries.length === 0) {
                                 rows.push(

@@ -2611,7 +2611,6 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     ready_ids = {r["match_id"] for r in queue_body["ready_queue"]}
     assert m1.id in ready_ids
     assert len(queue_body["available_slots"]) >= 1
-    assert all(s["currently_assigned_match_id"] is None for s in queue_body["available_slots"])
 
     target_slot_id = queue_body["available_slots"][0]["slot_id"]
     assign = client.post(
