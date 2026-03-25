@@ -21,6 +21,7 @@ from app.models.sms_log import SmsLog
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
+from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.utils.team_injection import TeamInjectionError, inject_teams_v1
 
 router = APIRouter()
@@ -90,6 +91,25 @@ class TeamResponse(BaseModel):
 # ============================================================================
 # Team CRUD Endpoints
 # ============================================================================
+
+
+def _sync_player_contacts_if_enabled(session: Session, tournament_id: int) -> None:
+    """Keep Player/TeamPlayer contacts in sync after team edits."""
+    settings = session.exec(
+        select(TournamentSmsSettings).where(
+            TournamentSmsSettings.tournament_id == tournament_id
+        )
+    ).first()
+    if not settings or not bool(getattr(settings, "player_contacts_only", False)):
+        return
+    from app.routes.sms import _sync_players_and_team_links_from_team_slots
+
+    stats = _sync_players_and_team_links_from_team_slots(
+        session=session,
+        tournament_id=tournament_id,
+    )
+    if any(stats.values()):
+        session.commit()
 
 
 @router.get("/events/{event_id}/teams", response_model=List[TeamResponse])
@@ -165,6 +185,7 @@ def create_team(event_id: int, request: TeamCreateRequest, session: Session = De
         session.add(team)
         session.commit()
         session.refresh(team)
+        _sync_player_contacts_if_enabled(session, event.tournament_id)
         return team
     except Exception as e:
         session.rollback()
@@ -194,6 +215,9 @@ def update_team(event_id: int, team_id: int, request: TeamUpdateRequest, session
     # Verify team belongs to event
     if team.event_id != event_id:
         raise HTTPException(status_code=400, detail="Team does not belong to this event")
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
 
     if request.name is not None:
         team.name = request.name
@@ -222,6 +246,7 @@ def update_team(event_id: int, team_id: int, request: TeamUpdateRequest, session
         session.add(team)
         session.commit()
         session.refresh(team)
+        _sync_player_contacts_if_enabled(session, event.tournament_id)
         return team
     except Exception as e:
         session.rollback()
@@ -250,10 +275,14 @@ def delete_team(event_id: int, team_id: int, session: Session = Depends(get_sess
     # Verify team belongs to event
     if team.event_id != event_id:
         raise HTTPException(status_code=400, detail="Team does not belong to this event")
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
 
     # Delete team
     session.delete(team)
     session.commit()
+    _sync_player_contacts_if_enabled(session, event.tournament_id)
 
     return None
 

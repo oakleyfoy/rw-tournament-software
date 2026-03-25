@@ -1404,7 +1404,9 @@ def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
     assert dry_data["dry_run"] is True
     assert dry_data["considered_teams"] == 2
     assert dry_data["eligible_teams"] == 2
-    assert dry_data["sent"] == 0
+    # Dry-run now projects realistic send outcomes (no Twilio send side effects).
+    assert dry_data["sent"] == 3
+    assert dry_data["blocked_test_mode"] == 0
 
     send = client.post(
         f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",

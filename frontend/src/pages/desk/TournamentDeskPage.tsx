@@ -6235,7 +6235,6 @@ function SmsAdminTab({
   const [divisionChoices, setDivisionChoices] = useState<SmsDivisionLookupItem[]>([])
   const [loadingDivisionChoices, setLoadingDivisionChoices] = useState(false)
   const [message, setMessage] = useState('')
-  const [dedupeKey, setDedupeKey] = useState('')
   const [confirmText, setConfirmText] = useState('')
   const [preview, setPreview] = useState<SmsPreviewResponse | null>(null)
   const [sendResult, setSendResult] = useState<SmsSendResponse | null>(null)
@@ -6259,7 +6258,10 @@ function SmsAdminTab({
   const [templates, setTemplates] = useState<SmsTemplateResponse[]>([])
   const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
   const [savingTemplateType, setSavingTemplateType] = useState<string | null>(null)
+  const [applyingTemplateMode, setApplyingTemplateMode] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [showCourtTemplates, setShowCourtTemplates] = useState(true)
+  const [showCheckinTemplates, setShowCheckinTemplates] = useState(true)
 
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
@@ -6539,20 +6541,21 @@ function SmsAdminTab({
     return rows
   }, [events])
 
-  const mixedEventOptions = useMemo(() => {
-    return sortedEvents.filter(event => event.category === 'mixed')
+  const rrEventOptions = useMemo(() => {
+    return sortedEvents
   }, [sortedEvents])
 
   useEffect(() => {
-    if (mixedEventOptions.length === 0) {
+    if (rrEventOptions.length === 0) {
       setRrMixedEventId('')
       return
     }
     setRrMixedEventId(prev => {
-      if (prev && mixedEventOptions.some(event => String(event.id) === prev)) return prev
-      return String(mixedEventOptions[0].id)
+      if (prev === 'ALL') return prev
+      if (prev && rrEventOptions.some(event => String(event.id) === prev)) return prev
+      return 'ALL'
     })
-  }, [mixedEventOptions])
+  }, [rrEventOptions])
 
   const divisionEventOptions = useMemo(() => {
     return sortedEvents.map(event => ({
@@ -6693,10 +6696,7 @@ function SmsAdminTab({
     setSending(true)
     setError(null)
     try {
-      const payload = {
-        message,
-        dedupe_key: dedupeKey.trim() || undefined,
-      }
+      const payload = { message }
       let resp: SmsSendResponse
       if (scope === 'blast') {
         resp = await sendSmsBlast(tournamentId, payload)
@@ -6746,18 +6746,54 @@ function SmsAdminTab({
   }
 
   const handleRunRrFirstMatchReminder = async (dryRun: boolean) => {
-    const eventId = parseInt(rrMixedEventId, 10)
-    if (!Number.isFinite(eventId) || eventId <= 0) {
-      setError('Select a Mixed event first')
+    const isAllEvents = rrMixedEventId === 'ALL'
+    const selectedEventIds = isAllEvents
+      ? rrEventOptions.map(event => event.id)
+      : [parseInt(rrMixedEventId, 10)]
+    if (selectedEventIds.length === 0 || selectedEventIds.some(id => !Number.isFinite(id) || id <= 0)) {
+      setError('Choose an event first')
       return
     }
     setRunningRrReminder(true)
     setError(null)
     try {
-      const result = await runSmsRrFirstMatchReminders(tournamentId, {
-        event_id: eventId,
+      const perEventResults = await Promise.all(
+        selectedEventIds.map(eventId => runSmsRrFirstMatchReminders(tournamentId, {
+          event_id: eventId,
+          dry_run: dryRun,
+          template_mode: smsTemplateMode,
+        }))
+      )
+      const result = perEventResults.reduce<SmsRrAutomationRunResponse>((acc, item) => ({
+        ...acc,
+        considered_teams: acc.considered_teams + (item.considered_teams || 0),
+        eligible_teams: acc.eligible_teams + (item.eligible_teams || 0),
+        missing_slot: acc.missing_slot + (item.missing_slot || 0),
+        sent: acc.sent + (item.sent || 0),
+        deduped: acc.deduped + (item.deduped || 0),
+        blocked_test_mode: acc.blocked_test_mode + (item.blocked_test_mode || 0),
+        blocked_consent: acc.blocked_consent + (item.blocked_consent || 0),
+        failed: acc.failed + (item.failed || 0),
+        no_active_version: acc.no_active_version && item.no_active_version,
+        template_inactive: acc.template_inactive || item.template_inactive,
+      }), {
+        tournament_id: tournamentId,
+        version_id: perEventResults.find(r => r.version_id != null)?.version_id ?? null,
+        event_id: isAllEvents ? 0 : selectedEventIds[0],
+        disabled: false,
+        no_active_version: perEventResults.length > 0,
         dry_run: dryRun,
-        template_mode: smsTemplateMode,
+        force_resend: false,
+        resend_run_key: null,
+        considered_teams: 0,
+        eligible_teams: 0,
+        missing_slot: 0,
+        sent: 0,
+        deduped: 0,
+        blocked_test_mode: 0,
+        blocked_consent: 0,
+        failed: 0,
+        template_inactive: false,
       })
       setLastRrReminderRun(result)
       if (!dryRun) {
@@ -6870,6 +6906,37 @@ function SmsAdminTab({
     }
   }
 
+  const handleTemplateModeChange = async (
+    nextMode: 'court_management' | 'checkin_management'
+  ) => {
+    setSmsTemplateMode(nextMode)
+    const rows = [...templates]
+    if (rows.length === 0) return
+    setApplyingTemplateMode(true)
+    setError(null)
+    const nextTemplates = rows.map(row => {
+      const isCheckin = row.message_type.startsWith('checkin_')
+      const shouldBeActive = nextMode === 'checkin_management' ? isCheckin : !isCheckin
+      return { ...row, is_active: shouldBeActive }
+    })
+    setTemplates(nextTemplates)
+    try {
+      await Promise.all(
+        nextTemplates.map(row =>
+          putSmsTemplate(tournamentId, row.message_type, {
+            template_body: templateBodies[row.message_type] ?? row.template_body,
+            is_active: row.is_active,
+          })
+        )
+      )
+      await loadTemplates()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to apply template mode defaults')
+    } finally {
+      setApplyingTemplateMode(false)
+    }
+  }
+
   if (loading) return <div style={{ padding: 20, color: '#888' }}>Loading SMS admin…</div>
 
   const compactControlStyle: React.CSSProperties = {
@@ -6891,7 +6958,6 @@ function SmsAdminTab({
   }
   const checkinTemplateRows = templates.filter(row => row.message_type.startsWith('checkin_'))
   const courtTemplateRows = templates.filter(row => !row.message_type.startsWith('checkin_'))
-  const orderedTemplateRows = [...courtTemplateRows, ...checkinTemplateRows]
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -6926,20 +6992,15 @@ function SmsAdminTab({
             <strong>Contact mode:</strong> {settingsDraft?.player_contacts_only ? 'Player records only' : 'Legacy team fields'}
           </div>
         </div>
-      </div>
-
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
-        <div style={{ marginBottom: 8 }}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>First-Match SMS</h3>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, marginTop: 10 }}>
           <span style={{ color: '#666' }}>Template mode</span>
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <input
               type="radio"
               name="sms-template-mode"
               checked={smsTemplateMode === 'court_management'}
-              onChange={() => setSmsTemplateMode('court_management')}
+              onChange={() => { void handleTemplateModeChange('court_management') }}
+              disabled={applyingTemplateMode}
             />
             Court Management
           </label>
@@ -6948,15 +7009,151 @@ function SmsAdminTab({
               type="radio"
               name="sms-template-mode"
               checked={smsTemplateMode === 'checkin_management'}
-              onChange={() => setSmsTemplateMode('checkin_management')}
+              onChange={() => { void handleTemplateModeChange('checkin_management') }}
+              disabled={applyingTemplateMode}
             />
             Check-In Management
           </label>
+          {applyingTemplateMode && (
+            <span style={{ color: '#666' }}>Applying template defaults…</span>
+          )}
         </div>
-
-        <div style={{ fontSize: 11, color: '#666', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
           Selected template set: <strong>{smsTemplateMode === 'checkin_management' ? 'Check-In Management' : 'Court Management'}</strong>.
           {' '}Send anytime. TEST mode + allowlist is the active safety check.
+        </div>
+        {settingsDraft?.test_mode && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100', maxWidth: 820 }}>
+            TEST mode is ON. Sends are restricted to allowlisted numbers:
+            <div style={{ marginTop: 4, color: '#6d4c41' }}>
+              {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, backgroundColor: '#fff', maxWidth: 980 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => setShowTemplates(v => !v)}
+              style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+            >
+              {showTemplates ? 'Hide templates' : 'Show templates'}
+            </button>
+            {showTemplates && (
+              <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                Reset to defaults
+              </button>
+            )}
+          </div>
+        </div>
+        {showTemplates ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
+            <div style={{ border: '1px solid #e8eaf6', borderRadius: 8, padding: 10, backgroundColor: '#f8f9ff' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Court Management Templates</div>
+                <button onClick={() => setShowCourtTemplates(v => !v)} style={{ padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
+                  {showCourtTemplates ? 'Collapse' : 'Expand'}
+                </button>
+              </div>
+              {showCourtTemplates ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {courtTemplateRows.map(row => (
+                    <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10, backgroundColor: '#fff' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{templateLabels[row.message_type] || row.message_type}</div>
+                        <label style={{ fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={row.is_active}
+                            onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
+                          />{' '}
+                          Active
+                        </label>
+                      </div>
+                      <textarea
+                        rows={3}
+                        value={templateBodies[row.message_type] ?? row.template_body}
+                        onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+                      />
+                      <div style={{ marginTop: 6 }}>
+                        <button
+                          onClick={() => saveTemplate(row)}
+                          disabled={savingTemplateType === row.message_type}
+                          style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
+                  Court templates are collapsed.
+                </div>
+              )}
+            </div>
+            <div style={{ border: '1px solid #e8eaf6', borderRadius: 8, padding: 10, backgroundColor: '#f8f9ff' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Check-In Management Templates</div>
+                <button onClick={() => setShowCheckinTemplates(v => !v)} style={{ padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
+                  {showCheckinTemplates ? 'Collapse' : 'Expand'}
+                </button>
+              </div>
+              {showCheckinTemplates ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {checkinTemplateRows.map(row => (
+                    <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10, backgroundColor: '#fff' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{templateLabels[row.message_type] || row.message_type}</div>
+                        <label style={{ fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={row.is_active}
+                            onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
+                          />{' '}
+                          Active
+                        </label>
+                      </div>
+                      <textarea
+                        rows={3}
+                        value={templateBodies[row.message_type] ?? row.template_body}
+                        onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+                      />
+                      <div style={{ marginTop: 6 }}>
+                        <button
+                          onClick={() => saveTemplate(row)}
+                          disabled={savingTemplateType === row.message_type}
+                          style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
+                  Check-In templates are collapsed.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
+            Templates are hidden. Click "Show templates" to edit message templates.
+          </div>
+        )}
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <div style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>First-Match SMS</h3>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 520px))', gap: 12, justifyContent: 'start' }}>
@@ -6986,7 +7183,7 @@ function SmsAdminTab({
                   </>
                 ) : (
                   <>
-                    Last run: considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, blocked {(lastReminderRun.blocked_test_mode || 0) + (lastReminderRun.blocked_consent || 0)}, failed {lastReminderRun.failed}
+                    Last run: considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, blocked {(lastReminderRun.blocked_test_mode || 0) + (lastReminderRun.blocked_consent || 0)}, sent {lastReminderRun.sent}, failed {lastReminderRun.failed}
                   </>
                 )}
                 {lastReminderRun.template_inactive ? ' (template inactive)' : ''}
@@ -6998,36 +7195,39 @@ function SmsAdminTab({
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>RR First Match</div>
             <div style={{ display: 'grid', gap: 8 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <label style={{ fontSize: 12, color: '#666' }}>Mixed event</label>
+                <label style={{ fontSize: 12, color: '#666' }}>Choose event</label>
                 <select
                   value={rrMixedEventId}
                   onChange={e => setRrMixedEventId(e.target.value)}
-                  disabled={mixedEventOptions.length === 0 || runningRrReminder}
+                  disabled={rrEventOptions.length === 0 || runningRrReminder}
                   className="sms-compact-control"
                   style={{ width: 240 }}
                 >
-                  {mixedEventOptions.length === 0 ? (
-                    <option value="">No Mixed events found</option>
+                  {rrEventOptions.length === 0 ? (
+                    <option value="">No events found</option>
                   ) : (
-                    mixedEventOptions.map(event => (
-                      <option key={event.id} value={String(event.id)}>
-                        {formatEventScopeLabel(event)}
-                      </option>
-                    ))
+                    <>
+                      <option value="ALL">ALL Events</option>
+                      {rrEventOptions.map(event => (
+                        <option key={event.id} value={String(event.id)}>
+                          {formatEventScopeLabel(event)}
+                        </option>
+                      ))}
+                    </>
                   )}
                 </select>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   onClick={() => handleRunRrFirstMatchReminder(true)}
-                  disabled={runningRrReminder || mixedEventOptions.length === 0}
+                  disabled={runningRrReminder || rrEventOptions.length === 0}
                   style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
                 >
                   {runningRrReminder ? 'Running…' : 'Test RR first-match text'}
                 </button>
                 <button
                   onClick={() => handleRunRrFirstMatchReminder(false)}
-                  disabled={runningRrReminder || mixedEventOptions.length === 0}
+                  disabled={runningRrReminder || rrEventOptions.length === 0}
                   style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
                 >
                   {runningRrReminder ? 'Running…' : 'Send RR first-match text'}
@@ -7035,7 +7235,15 @@ function SmsAdminTab({
               </div>
               {lastRrReminderRun && (
                 <div style={{ fontSize: 12, color: '#555' }}>
-                  Last run: considered {lastRrReminderRun.considered_teams}, eligible {lastRrReminderRun.eligible_teams}, missing-slot {lastRrReminderRun.missing_slot}, sent {lastRrReminderRun.sent}, failed {lastRrReminderRun.failed}
+                  {lastRrReminderRun.dry_run ? (
+                    <>
+                      Last run: Considered {lastRrReminderRun.considered_teams}, Eligible {lastRrReminderRun.eligible_teams}, Will be blocked {(lastRrReminderRun.blocked_test_mode || 0) + (lastRrReminderRun.blocked_consent || 0) + (lastRrReminderRun.deduped || 0)}, Will be sent {lastRrReminderRun.sent}
+                    </>
+                  ) : (
+                    <>
+                      Last run: considered {lastRrReminderRun.considered_teams}, eligible {lastRrReminderRun.eligible_teams}, blocked {(lastRrReminderRun.blocked_test_mode || 0) + (lastRrReminderRun.blocked_consent || 0)}, sent {lastRrReminderRun.sent}, failed {lastRrReminderRun.failed}
+                    </>
+                  )}
                   {lastRrReminderRun.template_inactive ? ' (template inactive)' : ''}
                 </div>
               )}
@@ -7045,17 +7253,9 @@ function SmsAdminTab({
 
       </div>
 
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', maxWidth: 980 }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Manual Send / Preview</h3>
-        {settingsDraft?.test_mode && (
-          <div style={{ marginBottom: 8, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100' }}>
-            TEST mode is ON. Sends are restricted to allowlisted numbers:
-            <div style={{ marginTop: 4, color: '#6d4c41' }}>
-              {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
-            </div>
-          </div>
-        )}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1.2fr) minmax(220px, 1fr) minmax(220px, 1fr)', gap: 8, marginBottom: 8, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 260px) minmax(360px, 1fr)', gap: 8, marginBottom: 8, alignItems: 'start' }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
           <label style={{ fontSize: 12, color: '#666' }}>
             {scope === 'team'
@@ -7070,8 +7270,6 @@ function SmsAdminTab({
                     ? 'Division'
                     : 'Target'}
           </label>
-          <label style={{ fontSize: 12, color: '#666' }}>Dedupe Key (optional)</label>
-
           <select
             value={scope}
             onChange={e => setScope(e.target.value as SmsScope)}
@@ -7255,14 +7453,6 @@ function SmsAdminTab({
             />
           )}
 
-          <input
-            type="text"
-            value={dedupeKey}
-            onChange={e => setDedupeKey(e.target.value)}
-            placeholder="e.g. smoke-2026-03-03-01"
-            className="sms-compact-control"
-            style={compactControlStyle}
-          />
         </div>
 
         {requiresBroadConfirm && (
@@ -7446,10 +7636,10 @@ function SmsAdminTab({
                   disabled={syncingPlayerContacts}
                   style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
                 >
-                  {syncingPlayerContacts ? 'Syncing…' : 'Sync Player Contacts Now'}
+                  {syncingPlayerContacts ? 'Rebuilding…' : 'Rebuild Player Links'}
                 </button>
                 <span style={{ fontSize: 11, color: '#666' }}>
-                  Use this after team edits/imports to refresh Player links immediately.
+                  Team create/update/delete now auto-syncs links. Use rebuild after large imports or if data ever looks out of sync.
                 </span>
               </div>
               {playerSyncSummary && (
@@ -7462,63 +7652,6 @@ function SmsAdminTab({
               {savingSettings ? 'Saving…' : 'Save Settings'}
             </button>
           </>
-        )}
-      </div>
-
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => setShowTemplates(v => !v)}
-              style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-            >
-              {showTemplates ? 'Hide templates' : 'Show templates'}
-            </button>
-            {showTemplates && (
-              <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
-                Reset to defaults
-              </button>
-            )}
-          </div>
-        </div>
-        {showTemplates ? (
-          <div style={{ display: 'grid', gap: 10 }}>
-            {orderedTemplateRows.map(row => (
-              <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{templateLabels[row.message_type] || row.message_type}</div>
-                  <label style={{ fontSize: 12 }}>
-                    <input
-                      type="checkbox"
-                      checked={row.is_active}
-                      onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
-                    />{' '}
-                    Active
-                  </label>
-                </div>
-                <textarea
-                  rows={3}
-                  value={templateBodies[row.message_type] ?? row.template_body}
-                  onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
-                />
-                <div style={{ marginTop: 6 }}>
-                  <button
-                    onClick={() => saveTemplate(row)}
-                    disabled={savingTemplateType === row.message_type}
-                    style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                  >
-                    {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
-            Templates are hidden. Click "Show templates" to edit message templates.
-          </div>
         )}
       </div>
 

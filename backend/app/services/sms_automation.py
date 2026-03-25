@@ -432,11 +432,9 @@ class SmsAutomationEngine:
         stats["considered_teams"] = len(first_rows)
         # Manual first-match runs are intentionally repeatable; each live run
         # gets a unique dedupe suffix so users can re-send whenever needed.
-        effective_resend_key: Optional[str] = None
-        if not dry_run:
-            key = (resend_run_key or "").strip()
-            effective_resend_key = key or f"manual-{std_time.time_ns()}"
-            stats["resend_run_key"] = effective_resend_key
+        key = (resend_run_key or "").strip()
+        effective_resend_key: Optional[str] = key or f"manual-{std_time.time_ns()}"
+        stats["resend_run_key"] = effective_resend_key
 
         for team_id, row in first_rows.items():
             team = row["team"]
@@ -452,6 +450,15 @@ class SmsAutomationEngine:
                 f"rs{effective_resend_key}" if effective_resend_key else None,
             )
             if dry_run:
+                projection = self._project_team_send_outcomes(
+                    team=team,
+                    message_type=message_type,
+                    dedupe_key=dedupe_key,
+                )
+                stats["sent"] += int(projection["sent"])
+                stats["deduped"] += int(projection["deduped"])
+                stats["blocked_test_mode"] += int(projection["blocked_test_mode"])
+                stats["blocked_consent"] += int(projection["blocked_consent"])
                 continue
 
             resp = self._send_template_to_team(
@@ -517,11 +524,9 @@ class SmsAutomationEngine:
         stats["considered_teams"] = len(first_rows)
         # Manual RR first-match runs are intentionally repeatable; each live run
         # gets a unique dedupe suffix so users can re-send whenever needed.
-        effective_resend_key: Optional[str] = None
-        if not dry_run:
-            key = (resend_run_key or "").strip()
-            effective_resend_key = key or f"manual-{std_time.time_ns()}"
-            stats["resend_run_key"] = effective_resend_key
+        key = (resend_run_key or "").strip()
+        effective_resend_key: Optional[str] = key or f"manual-{std_time.time_ns()}"
+        stats["resend_run_key"] = effective_resend_key
 
         for team_id, row in first_rows.items():
             team = row["team"]
@@ -541,6 +546,15 @@ class SmsAutomationEngine:
                 f"rs{effective_resend_key}" if effective_resend_key else None,
             )
             if dry_run:
+                projection = self._project_team_send_outcomes(
+                    team=team,
+                    message_type=message_type,
+                    dedupe_key=dedupe_key,
+                )
+                stats["sent"] += int(projection["sent"])
+                stats["deduped"] += int(projection["deduped"])
+                stats["blocked_test_mode"] += int(projection["blocked_test_mode"])
+                stats["blocked_consent"] += int(projection["blocked_consent"])
                 continue
 
             resp = self._send_template_to_team(
@@ -640,6 +654,82 @@ class SmsAutomationEngine:
     def _is_checkin_management(self) -> bool:
         mode = str(getattr(self.tournament, "desk_management_mode", "") or "")
         return mode.strip().lower() == "checkin_management"
+
+    def _project_team_send_outcomes(
+        self,
+        *,
+        team: Team,
+        message_type: str,
+        dedupe_key: str,
+    ) -> Dict[str, int]:
+        """Estimate send outcomes for dry-run without logging or sending."""
+        from app.models.sms_log import SmsLog
+        from app.routes.sms import (
+            _allowlist_set,
+            _is_phone_send_allowed,
+            _player_contacts_only_enabled,
+            _team_sms_targets,
+        )
+
+        if self._settings is None:
+            self._settings = self.session.exec(
+                select(TournamentSmsSettings).where(
+                    TournamentSmsSettings.tournament_id == self.tournament.id
+                )
+            ).first()
+
+        player_contacts_only = _player_contacts_only_enabled(
+            self.session, self.tournament.id  # type: ignore[arg-type]
+        )
+        targets = _team_sms_targets(
+            session=self.session,
+            tournament_id=self.tournament.id,  # type: ignore[arg-type]
+            team=team,
+            player_contacts_only=player_contacts_only,
+        )
+        test_mode_enabled = bool(
+            self._settings and getattr(self._settings, "test_mode", False)
+        )
+        allowlist = _allowlist_set(
+            getattr(self._settings, "test_allowlist", None)
+            if self._settings
+            else None
+        )
+
+        projected = {
+            "sent": 0,
+            "deduped": 0,
+            "blocked_test_mode": 0,
+            "blocked_consent": 0,
+        }
+        for target in targets:
+            phone = str(target.get("phone") or "").strip()
+            if not phone:
+                continue
+            existing = self.session.exec(
+                select(SmsLog.id).where(
+                    SmsLog.tournament_id == self.tournament.id,
+                    SmsLog.phone_number == phone,
+                    SmsLog.message_type == message_type,
+                    SmsLog.dedupe_key == dedupe_key,
+                )
+            ).first()
+            if existing:
+                projected["deduped"] += 1
+                continue
+            if test_mode_enabled and phone not in allowlist:
+                projected["blocked_test_mode"] += 1
+                continue
+            is_allowed, _consent = _is_phone_send_allowed(
+                session=self.session,
+                tournament_id=self.tournament.id,  # type: ignore[arg-type]
+                phone_e164=phone,
+            )
+            if not is_allowed:
+                projected["blocked_consent"] += 1
+                continue
+            projected["sent"] += 1
+        return projected
 
     # ------------------------------------------------------------------
     # Match/slot/team helpers
