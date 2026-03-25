@@ -32,11 +32,10 @@ class SmsTemplate(SQLModel, table=True):
 # Default templates - used when no custom template exists
 DEFAULT_SMS_TEMPLATES = {
     "first_match": (
-        "{tournament_name}: {team_name}, your first match is {date} at {time} "
-        "on {court}. Good luck!"
+        "{team_name}: Your first match is {date} at {time} on {court}."
     ),
     "rr_first_match": (
-        "{team_name}: Your first Round Robin match is {date} at {time} on {court}."
+        "{team_name}: Your first match is {date} at {time} on {court}."
     ),
     "post_match_next": (
         "{team_name}: Your next match is {date} at {time} on {court}."
@@ -53,7 +52,7 @@ DEFAULT_SMS_TEMPLATES = {
     ),
     "checkin_first_match": (
         "{team_name}: Your first match is {date} at {time}. "
-        "Please check in at the desk before your match."
+        "Please arrive at least 30 mins early and check in at the desk."
     ),
     "checkin_slot_checkin": (
         "{team_name}: All matches in the prior time slot have started. "

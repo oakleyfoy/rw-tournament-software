@@ -6272,6 +6272,9 @@ function SmsAdminTab({
   const [lastReminderRun, setLastReminderRun] = useState<SmsAutomationRunResponse | null>(null)
   const [runningRrReminder, setRunningRrReminder] = useState(false)
   const [lastRrReminderRun, setLastRrReminderRun] = useState<SmsRrAutomationRunResponse | null>(null)
+  const [showAdvancedRolloutActions, setShowAdvancedRolloutActions] = useState(false)
+  const [quickTestPhone, setQuickTestPhone] = useState('')
+  const [savingQuickTestPhone, setSavingQuickTestPhone] = useState(false)
   const [rrMixedEventId, setRrMixedEventId] = useState('')
   const [events, setEvents] = useState<Event[]>([])
   const [players, setPlayers] = useState<SmsPlayerLookupItem[]>([])
@@ -6781,6 +6784,35 @@ function SmsAdminTab({
     }
   }
 
+  const handleAddQuickTestPhone = async () => {
+    const phone = quickTestPhone.trim()
+    if (!phone) {
+      setError('Enter your phone number first')
+      return
+    }
+    setSavingQuickTestPhone(true)
+    setError(null)
+    try {
+      const existing = settingsDraft?.test_allowlist || ''
+      const tokens = `${existing},${phone}`
+        .replace(/[;\n]+/g, ',')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean)
+      const deduped = Array.from(new Set(tokens))
+      const updated = await patchSmsSettings(tournamentId, {
+        test_mode: true,
+        test_allowlist: deduped.join(','),
+      })
+      setSettingsDraft(updated)
+      setQuickTestPhone('')
+    } catch (e: any) {
+      setError(e?.message || 'Failed to add test phone')
+    } finally {
+      setSavingQuickTestPhone(false)
+    }
+  }
+
   const saveSettings = async () => {
     if (!settingsDraft) return
     setSavingSettings(true)
@@ -6930,23 +6962,34 @@ function SmsAdminTab({
             {runningReminder ? 'Running…' : 'Send first-match text'}
           </button>
           <button
-            onClick={() => handleRunFirstMatchReminder(true, true)}
-            disabled={runningReminder}
+            onClick={() => setShowAdvancedRolloutActions(v => !v)}
             style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
           >
-            {runningReminder ? 'Running…' : 'Test force resend first-match'}
-          </button>
-          <button
-            onClick={() => handleRunFirstMatchReminder(false, true)}
-            disabled={runningReminder}
-            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
-          >
-            {runningReminder ? 'Running…' : 'Force resend first-match'}
+            {showAdvancedRolloutActions ? 'Hide advanced' : 'Show advanced'}
           </button>
           <div style={{ fontSize: 11, color: '#666' }}>
             No time-window constraints — scans all teams with a scheduled first match.
           </div>
         </div>
+
+        {showAdvancedRolloutActions && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+            <button
+              onClick={() => handleRunFirstMatchReminder(true, true)}
+              disabled={runningReminder}
+              style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
+            >
+              {runningReminder ? 'Running…' : 'Test force resend first-match'}
+            </button>
+            <button
+              onClick={() => handleRunFirstMatchReminder(false, true)}
+              disabled={runningReminder}
+              style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
+            >
+              {runningReminder ? 'Running…' : 'Force resend first-match'}
+            </button>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
           <label style={{ fontSize: 12, color: '#666' }}>Mixed event</label>
@@ -7414,6 +7457,22 @@ function SmsAdminTab({
               <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
                 When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
               </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                value={quickTestPhone}
+                onChange={e => setQuickTestPhone(e.target.value)}
+                placeholder="Add my phone number to test (ex: +19015551234)"
+                style={{ flex: '1 1 320px', minWidth: 260, padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+              />
+              <button
+                onClick={handleAddQuickTestPhone}
+                disabled={savingQuickTestPhone}
+                style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer' }}
+              >
+                {savingQuickTestPhone ? 'Adding…' : 'Add My Number'}
+              </button>
+            </div>
               <input
                 type="text"
                 value={settingsDraft.test_allowlist ?? ''}
