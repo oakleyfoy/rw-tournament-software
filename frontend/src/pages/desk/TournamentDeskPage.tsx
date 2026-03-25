@@ -43,6 +43,7 @@ import {
   ConflictItem,
   CourtStateItem,
   CheckInMatchItem,
+  ReadyQueueItem,
   AvailableCourtSlot,
   MatchCheckInSideState,
   PlayerCheckInState,
@@ -7847,6 +7848,24 @@ export default function TournamentDeskPage() {
     return parts.join(' ')
   }, [])
 
+  const formatReadyQueueLabel = useCallback((rq: ReadyQueueItem) => {
+    const code = (rq.match_code || '').toUpperCase()
+    const isWf = code.includes('_WF_')
+    const division = code.includes('BWW') || code.includes('POOLA')
+      ? 'Div I'
+      : code.includes('BWL') || code.includes('POOLB')
+        ? 'Div II'
+        : code.includes('BLW') || code.includes('POOLC')
+          ? 'Div III'
+          : code.includes('BLL') || code.includes('POOLD')
+            ? 'Div IV'
+            : code.includes('POOLE')
+              ? 'Div V'
+              : ''
+    if (isWf) return `${rq.event_name} WF`
+    return division ? `${rq.event_name} ${division}` : rq.event_name
+  }, [])
+
   const getBallIssuedKey = useCallback((matchId: number, side: 'A' | 'B') => `${matchId}:${side}`, [])
   const toggleBallIssued = useCallback((matchId: number, side: 'A' | 'B') => {
     const key = getBallIssuedKey(matchId, side)
@@ -8488,7 +8507,7 @@ export default function TournamentDeskPage() {
                     </select>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '2.1fr 1fr 0.9fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr 1.3fr', gap: 8 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
                     <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
                       Player Check-In
@@ -8742,7 +8761,7 @@ export default function TournamentDeskPage() {
                             return (
                               <tr key={rq.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
                                 <td style={{ padding: '6px 8px', fontSize: 12, verticalAlign: 'top' }}>
-                                  <div style={{ fontWeight: 700, color: '#263238' }}>#{rq.match_number}</div>
+                                  <div style={{ fontWeight: 700, color: '#263238' }}>{formatReadyQueueLabel(rq)}</div>
                                   <div style={{ color: '#455a64' }}>{rq.team1_display} vs {rq.team2_display}</div>
                                   <div style={{ color: '#90a4ae', fontSize: 11 }}>{rq.day_label} {rq.scheduled_time || ''}</div>
                                 </td>
@@ -8791,16 +8810,31 @@ export default function TournamentDeskPage() {
                     <div style={{ padding: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                       {data.courts.map((court) => {
                         const now = data.now_playing_by_court[court]
-                        const next = data.up_next_by_court[court]
                         return (
                           <div key={court} style={{ border: '1px solid #eef2f5', borderRadius: 4, padding: '6px 7px', fontSize: 11 }}>
                             <div style={{ fontWeight: 700, color: '#263238', marginBottom: 2 }}>{court}</div>
                             <div style={{ color: '#607d8b' }}>
-                              {now ? `Now: #${now.match_number}` : 'Now: Open'}
+                              {now ? `Playing: ${now.team1_display} vs ${now.team2_display}` : 'Playing: Open'}
                             </div>
-                            <div style={{ color: '#78909c' }}>
-                              {next ? `Next: #${next.match_number}` : 'Next: —'}
-                            </div>
+                            {now && (
+                              <button
+                                type="button"
+                                onClick={() => setDrawerMatch(now)}
+                                style={{
+                                  marginTop: 6,
+                                  padding: '3px 7px',
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  borderRadius: 4,
+                                  border: 'none',
+                                  backgroundColor: '#1565c0',
+                                  color: '#fff',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Score
+                              </button>
+                            )}
                           </div>
                         )
                       })}
