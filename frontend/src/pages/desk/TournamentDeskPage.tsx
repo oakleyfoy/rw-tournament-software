@@ -6272,7 +6272,6 @@ function SmsAdminTab({
   const [lastReminderRun, setLastReminderRun] = useState<SmsAutomationRunResponse | null>(null)
   const [runningRrReminder, setRunningRrReminder] = useState(false)
   const [lastRrReminderRun, setLastRrReminderRun] = useState<SmsRrAutomationRunResponse | null>(null)
-  const [showAdvancedRolloutActions, setShowAdvancedRolloutActions] = useState(false)
   const [quickTestPhone, setQuickTestPhone] = useState('')
   const [savingQuickTestPhone, setSavingQuickTestPhone] = useState(false)
   const [rrMixedEventId, setRrMixedEventId] = useState('')
@@ -6721,13 +6720,12 @@ function SmsAdminTab({
     }
   }
 
-  const handleRunFirstMatchReminder = async (dryRun: boolean, forceResend: boolean = false) => {
+  const handleRunFirstMatchReminder = async (dryRun: boolean) => {
     setRunningReminder(true)
     setError(null)
     try {
       const result = await runSmsFirstMatchReminders(tournamentId, {
         dry_run: dryRun,
-        force_resend: forceResend,
       })
       setLastReminderRun(result)
       if (!dryRun) {
@@ -6735,7 +6733,7 @@ function SmsAdminTab({
       }
       await loadRolloutMetrics()
     } catch (e: any) {
-      setError(e?.message || (forceResend ? 'Failed to run first-match force resend' : 'Failed to run first-match reminder scan'))
+      setError(e?.message || 'Failed to run first-match reminder scan')
     } finally {
       setRunningReminder(false)
     }
@@ -6753,7 +6751,6 @@ function SmsAdminTab({
       const result = await runSmsRrFirstMatchReminders(tournamentId, {
         event_id: eventId,
         dry_run: dryRun,
-        force_resend: true,
       })
       setLastRrReminderRun(result)
       if (!dryRun) {
@@ -6913,7 +6910,7 @@ function SmsAdminTab({
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>Rollout Guardrails</h3>
+          <h3 style={{ margin: 0, fontSize: 15 }}>First-Match SMS</h3>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: '#666' }}>Lookback</span>
             <select
@@ -6961,35 +6958,10 @@ function SmsAdminTab({
           >
             {runningReminder ? 'Running…' : 'Send first-match text'}
           </button>
-          <button
-            onClick={() => setShowAdvancedRolloutActions(v => !v)}
-            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
-          >
-            {showAdvancedRolloutActions ? 'Hide advanced' : 'Show advanced'}
-          </button>
           <div style={{ fontSize: 11, color: '#666' }}>
-            No time-window constraints — scans all teams with a scheduled first match.
+            Send anytime. Use TEST mode + allowlist to safely test your number.
           </div>
         </div>
-
-        {showAdvancedRolloutActions && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-            <button
-              onClick={() => handleRunFirstMatchReminder(true, true)}
-              disabled={runningReminder}
-              style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
-            >
-              {runningReminder ? 'Running…' : 'Test force resend first-match'}
-            </button>
-            <button
-              onClick={() => handleRunFirstMatchReminder(false, true)}
-              disabled={runningReminder}
-              style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
-            >
-              {runningReminder ? 'Running…' : 'Force resend first-match'}
-            </button>
-          </div>
-        )}
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
           <label style={{ fontSize: 12, color: '#666' }}>Mixed event</label>
@@ -7015,17 +6987,17 @@ function SmsAdminTab({
             disabled={runningRrReminder || mixedEventOptions.length === 0}
             style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
           >
-            {runningRrReminder ? 'Running…' : 'Test force resend RR first-match'}
+            {runningRrReminder ? 'Running…' : 'Test RR first-match text'}
           </button>
           <button
             onClick={() => handleRunRrFirstMatchReminder(false)}
             disabled={runningRrReminder || mixedEventOptions.length === 0}
             style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
           >
-            {runningRrReminder ? 'Running…' : 'Force resend RR first-match'}
+            {runningRrReminder ? 'Running…' : 'Send RR first-match text'}
           </button>
           <div style={{ fontSize: 11, color: '#666' }}>
-            Mixed only. Force resend bypasses RR dedupe for this run.
+            Mixed only.
           </div>
         </div>
 
@@ -7040,7 +7012,7 @@ function SmsAdminTab({
 
         {lastRrReminderRun && (
           <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
-            <strong>Last RR force resend:</strong>{' '}
+            <strong>Last RR first-match run:</strong>{' '}
             considered {lastRrReminderRun.considered_teams}, eligible {lastRrReminderRun.eligible_teams}, missing-slot {lastRrReminderRun.missing_slot}, sent {lastRrReminderRun.sent}, deduped {lastRrReminderRun.deduped}, failed {lastRrReminderRun.failed}
             {lastRrReminderRun.disabled ? ' (automation disabled)' : ''}
             {lastRrReminderRun.template_inactive ? ' (template inactive)' : ''}
@@ -7096,9 +7068,6 @@ function SmsAdminTab({
           </div>
         )}
 
-        <div style={{ fontSize: 11, color: '#666' }}>
-          Pilot guidance: keep TEST mode on until metrics stay stable (low failures, no unexpected blast volume), then enable one automation toggle at a time.
-        </div>
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>

@@ -59,12 +59,10 @@ class SmsAutomationEngine:
             return
 
         if self._is_checkin_management():
-            self._trigger_checkin_first_match(match)
             self._trigger_checkin_slot_checkin(match)
             return
 
         self._trigger_up_next(match)
-        self._trigger_first_match(match)
         self._trigger_on_deck(match)
 
     def handle_match_finalized(self, match: Match) -> None:
@@ -424,8 +422,10 @@ class SmsAutomationEngine:
 
         first_rows = self._first_match_rows_by_team()
         stats["considered_teams"] = len(first_rows)
+        # Manual first-match runs are intentionally repeatable; each live run
+        # gets a unique dedupe suffix so users can re-send whenever needed.
         effective_resend_key: Optional[str] = None
-        if force_resend:
+        if not dry_run:
             key = (resend_run_key or "").strip()
             effective_resend_key = key or f"manual-{std_time.time_ns()}"
             stats["resend_run_key"] = effective_resend_key
@@ -504,8 +504,10 @@ class SmsAutomationEngine:
 
         first_rows = self._first_rr_match_rows_by_team(event_id=event_id)
         stats["considered_teams"] = len(first_rows)
+        # Manual RR first-match runs are intentionally repeatable; each live run
+        # gets a unique dedupe suffix so users can re-send whenever needed.
         effective_resend_key: Optional[str] = None
-        if force_resend:
+        if not dry_run:
             key = (resend_run_key or "").strip()
             effective_resend_key = key or f"manual-{std_time.time_ns()}"
             stats["resend_run_key"] = effective_resend_key
@@ -1074,26 +1076,8 @@ def start_first_match_runner_if_enabled() -> None:
 
     Disabled by default; set SMS_FIRST_MATCH_RUNNER_INTERVAL_SECONDS > 0 to enable.
     """
-    global _runner_started
-    interval = _runner_interval_seconds()
-    if interval <= 0:
-        return
-    with _runner_lock:
-        if _runner_started:
-            return
-        thread = threading.Thread(
-            target=_runner_loop,
-            args=(interval,),
-            name="sms-first-match-runner",
-            daemon=True,
-        )
-        thread.start()
-        _runner_started = True
-    logger.info(
-        "Started first-match reminder runner (interval=%ss, window=%sm)",
-        interval,
-        _runner_window_minutes(),
-    )
+    # Disabled while first-match messaging is manual-only.
+    logger.info("First-match reminder runner disabled (manual-only mode)")
 
 
 def _runner_loop(interval_seconds: int) -> None:

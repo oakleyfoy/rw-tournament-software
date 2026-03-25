@@ -1423,8 +1423,8 @@ def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
     )
     assert again.status_code == 200
     again_data = again.json()
-    assert again_data["sent"] == 0
-    assert again_data["deduped"] == 3
+    assert again_data["sent"] == 3
+    assert again_data["deduped"] == 0
 
     logs = session.exec(
         select(SmsLog).where(
@@ -1433,7 +1433,7 @@ def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
             SmsLog.trigger == "auto",
         )
     ).all()
-    assert len(logs) == 3
+    assert len(logs) == 6
 
 
 def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
@@ -1529,8 +1529,8 @@ def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
     )
     assert second.status_code == 200
     second_data = second.json()
-    assert second_data["sent"] == 0
-    assert second_data["deduped"] == 3
+    assert second_data["sent"] == 3
+    assert second_data["deduped"] == 0
 
     forced = client.post(
         f"/api/tournaments/{tournament.id}/sms/automation/run-rr-first-match-reminders",
@@ -1550,7 +1550,7 @@ def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
             SmsLog.trigger == "auto",
         )
     ).all()
-    assert len(rr_logs) == 6
+    assert len(rr_logs) == 9
 
 
 def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
@@ -1613,7 +1613,7 @@ def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     assert outside_data["considered_teams"] == 2
     assert outside_data["eligible_teams"] == 2
     assert outside_data["outside_window"] == 0
-    assert outside_data["sent"] == 0
+    assert outside_data["sent"] == 3
 
 
 def test_first_match_runner_endpoint_window_param_is_ignored(
