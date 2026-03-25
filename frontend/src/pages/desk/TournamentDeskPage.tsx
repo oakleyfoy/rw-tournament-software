@@ -6272,6 +6272,7 @@ function SmsAdminTab({
   const [lastReminderRun, setLastReminderRun] = useState<SmsAutomationRunResponse | null>(null)
   const [runningRrReminder, setRunningRrReminder] = useState(false)
   const [lastRrReminderRun, setLastRrReminderRun] = useState<SmsRrAutomationRunResponse | null>(null)
+  const [smsTemplateMode, setSmsTemplateMode] = useState<'court_management' | 'checkin_management'>('court_management')
   const [quickTestPhone, setQuickTestPhone] = useState('')
   const [savingQuickTestPhone, setSavingQuickTestPhone] = useState(false)
   const [rrMixedEventId, setRrMixedEventId] = useState('')
@@ -6391,6 +6392,19 @@ function SmsAdminTab({
       setError(e?.message || 'Failed to load rollout metrics')
     })
   }, [loadRolloutMetrics])
+
+  useEffect(() => {
+    const key = `desk:sms-template-mode:${tournamentId}`
+    const raw = localStorage.getItem(key)
+    if (raw === 'court_management' || raw === 'checkin_management') {
+      setSmsTemplateMode(raw)
+    }
+  }, [tournamentId])
+
+  useEffect(() => {
+    const key = `desk:sms-template-mode:${tournamentId}`
+    localStorage.setItem(key, smsTemplateMode)
+  }, [tournamentId, smsTemplateMode])
 
   const parseTargetId = (): number | null => {
     const n = parseInt(targetId, 10)
@@ -6726,6 +6740,7 @@ function SmsAdminTab({
     try {
       const result = await runSmsFirstMatchReminders(tournamentId, {
         dry_run: dryRun,
+        template_mode: smsTemplateMode,
       })
       setLastReminderRun(result)
       if (!dryRun) {
@@ -6751,6 +6766,7 @@ function SmsAdminTab({
       const result = await runSmsRrFirstMatchReminders(tournamentId, {
         event_id: eventId,
         dry_run: dryRun,
+        template_mode: smsTemplateMode,
       })
       setLastRrReminderRun(result)
       if (!dryRun) {
@@ -6877,6 +6893,7 @@ function SmsAdminTab({
     up_next: 'Court: Up next',
     court_change: 'Court: Court change',
     checkin_first_match: 'Check-In: First match check-in',
+    checkin_rr_first_match: 'Check-In: Round Robin first match',
     checkin_slot_checkin: 'Check-In: Prior slot started (check-in now)',
     checkin_post_match_next: 'Check-In: Post-match next (no court)',
     checkin_court_assigned: 'Check-In: Court assigned (go to your court)',
@@ -6909,165 +6926,142 @@ function SmsAdminTab({
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>First-Match SMS</h3>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: '#666' }}>Lookback</span>
-            <select
-              value={rolloutHours}
-              onChange={e => setRolloutHours(Math.max(1, parseInt(e.target.value || '168', 10)))}
-              className="sms-compact-control"
-              style={{ width: 110 }}
-            >
-              <option value={24}>24h</option>
-              <option value={72}>72h</option>
-              <option value={168}>7 days</option>
-              <option value={336}>14 days</option>
-            </select>
-            <button
-              onClick={loadRolloutMetrics}
-              disabled={loadingRollout}
-              style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-            >
-              {loadingRollout ? 'Refreshing…' : 'Refresh'}
-            </button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12 }}>
+              <span style={{ color: '#666' }}>Template mode</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="radio"
+                  name="sms-template-mode"
+                  checked={smsTemplateMode === 'court_management'}
+                  onChange={() => setSmsTemplateMode('court_management')}
+                />
+                Court Management
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="radio"
+                  name="sms-template-mode"
+                  checked={smsTemplateMode === 'checkin_management'}
+                  onChange={() => setSmsTemplateMode('checkin_management')}
+                />
+                Check-In Management
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: '#666' }}>Lookback</span>
+              <select
+                value={rolloutHours}
+                onChange={e => setRolloutHours(Math.max(1, parseInt(e.target.value || '168', 10)))}
+                className="sms-compact-control"
+                style={{ width: 100 }}
+              >
+                <option value={24}>24h</option>
+                <option value={72}>72h</option>
+                <option value={168}>7 days</option>
+                <option value={336}>14 days</option>
+              </select>
+              <button
+                onClick={loadRolloutMetrics}
+                disabled={loadingRollout}
+                style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+              >
+                {loadingRollout ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, fontSize: 12, marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: '#666', marginBottom: 10 }}>
+          Selected template set: <strong>{smsTemplateMode === 'checkin_management' ? 'Check-In Management' : 'Court Management'}</strong>.
+          {' '}Send anytime. TEST mode + allowlist is the active safety check.
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 520px))', gap: 12, justifyContent: 'start' }}>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>First Match</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <button
+                onClick={() => handleRunFirstMatchReminder(true)}
+                disabled={runningReminder}
+                style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
+              >
+                {runningReminder ? 'Running…' : 'Test first-match text'}
+              </button>
+              <button
+                onClick={() => handleRunFirstMatchReminder(false)}
+                disabled={runningReminder}
+                style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
+              >
+                {runningReminder ? 'Running…' : 'Send first-match text'}
+              </button>
+            </div>
+            {lastReminderRun && (
+              <div style={{ fontSize: 12, color: '#555' }}>
+                Last run: considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, sent {lastReminderRun.sent}, failed {lastReminderRun.failed}
+                {lastReminderRun.template_inactive ? ' (template inactive)' : ''}
+              </div>
+            )}
+          </div>
+
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>RR First Match</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 12, color: '#666' }}>Mixed event</label>
+                <select
+                  value={rrMixedEventId}
+                  onChange={e => setRrMixedEventId(e.target.value)}
+                  disabled={mixedEventOptions.length === 0 || runningRrReminder}
+                  className="sms-compact-control"
+                  style={{ width: 240 }}
+                >
+                  {mixedEventOptions.length === 0 ? (
+                    <option value="">No Mixed events found</option>
+                  ) : (
+                    mixedEventOptions.map(event => (
+                      <option key={event.id} value={String(event.id)}>
+                        {formatEventScopeLabel(event)}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => handleRunRrFirstMatchReminder(true)}
+                  disabled={runningRrReminder || mixedEventOptions.length === 0}
+                  style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  {runningRrReminder ? 'Running…' : 'Test RR first-match text'}
+                </button>
+                <button
+                  onClick={() => handleRunRrFirstMatchReminder(false)}
+                  disabled={runningRrReminder || mixedEventOptions.length === 0}
+                  style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  {runningRrReminder ? 'Running…' : 'Send RR first-match text'}
+                </button>
+              </div>
+              {lastRrReminderRun && (
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  Last run: considered {lastRrReminderRun.considered_teams}, eligible {lastRrReminderRun.eligible_teams}, missing-slot {lastRrReminderRun.missing_slot}, sent {lastRrReminderRun.sent}, failed {lastRrReminderRun.failed}
+                  {lastRrReminderRun.template_inactive ? ' (template inactive)' : ''}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, fontSize: 12, marginTop: 10 }}>
           <div><strong>Sent:</strong> {rolloutMetrics?.sent ?? 0}</div>
           <div><strong>Failed:</strong> <span style={{ color: '#c62828' }}>{rolloutMetrics?.failed ?? 0}</span></div>
           <div><strong>Blocked(TEST):</strong> {rolloutMetrics?.blocked_test_mode ?? 0}</div>
           <div><strong>Blocked(Consent):</strong> {rolloutMetrics?.blocked_consent ?? 0}</div>
-          <div><strong>Opt-outs:</strong> {rolloutMetrics?.opt_out_events ?? 0}</div>
           <div><strong>Distinct phones:</strong> {rolloutMetrics?.distinct_phones ?? 0}</div>
         </div>
-
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-          <button
-            onClick={() => handleRunFirstMatchReminder(true)}
-            disabled={runningReminder}
-            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
-          >
-            {runningReminder ? 'Running…' : 'Test first-match text'}
-          </button>
-          <button
-            onClick={() => handleRunFirstMatchReminder(false)}
-            disabled={runningReminder}
-            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
-          >
-            {runningReminder ? 'Running…' : 'Send first-match text'}
-          </button>
-          <div style={{ fontSize: 11, color: '#666' }}>
-            Send anytime. Use TEST mode + allowlist to safely test your number.
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-          <label style={{ fontSize: 12, color: '#666' }}>Mixed event</label>
-          <select
-            value={rrMixedEventId}
-            onChange={e => setRrMixedEventId(e.target.value)}
-            disabled={mixedEventOptions.length === 0 || runningRrReminder}
-            className="sms-compact-control"
-            style={{ width: 260 }}
-          >
-            {mixedEventOptions.length === 0 ? (
-              <option value="">No Mixed events found</option>
-            ) : (
-              mixedEventOptions.map(event => (
-                <option key={event.id} value={String(event.id)}>
-                  {formatEventScopeLabel(event)}
-                </option>
-              ))
-            )}
-          </select>
-          <button
-            onClick={() => handleRunRrFirstMatchReminder(true)}
-            disabled={runningRrReminder || mixedEventOptions.length === 0}
-            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
-          >
-            {runningRrReminder ? 'Running…' : 'Test RR first-match text'}
-          </button>
-          <button
-            onClick={() => handleRunRrFirstMatchReminder(false)}
-            disabled={runningRrReminder || mixedEventOptions.length === 0}
-            style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#b71c1c', color: '#fff', border: 'none', borderRadius: 4 }}
-          >
-            {runningRrReminder ? 'Running…' : 'Send RR first-match text'}
-          </button>
-          <div style={{ fontSize: 11, color: '#666' }}>
-            Mixed only.
-          </div>
-        </div>
-
-        {lastReminderRun && (
-          <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
-            <strong>Last first-match scan:</strong>{' '}
-            considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, sent {lastReminderRun.sent}, deduped {lastReminderRun.deduped}, outside-window {lastReminderRun.outside_window}, failed {lastReminderRun.failed}
-            {lastReminderRun.disabled ? ' (automation disabled)' : ''}
-            {lastReminderRun.template_inactive ? ' (template inactive)' : ''}
-          </div>
-        )}
-
-        {lastRrReminderRun && (
-          <div style={{ marginBottom: 10, padding: 8, border: '1px solid #e0e0e0', borderRadius: 6, fontSize: 12, backgroundColor: '#fafafa' }}>
-            <strong>Last RR first-match run:</strong>{' '}
-            considered {lastRrReminderRun.considered_teams}, eligible {lastRrReminderRun.eligible_teams}, missing-slot {lastRrReminderRun.missing_slot}, sent {lastRrReminderRun.sent}, deduped {lastRrReminderRun.deduped}, failed {lastRrReminderRun.failed}
-            {lastRrReminderRun.disabled ? ' (automation disabled)' : ''}
-            {lastRrReminderRun.template_inactive ? ' (template inactive)' : ''}
-          </div>
-        )}
-
-        <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid #eee', borderRadius: 6, marginBottom: 8 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead>
-              <tr style={{ backgroundColor: '#fafafa' }}>
-                <th style={{ textAlign: 'left', padding: 6 }}>Type</th>
-                <th style={{ textAlign: 'left', padding: 6 }}>Trigger</th>
-                <th style={{ textAlign: 'right', padding: 6 }}>Sent</th>
-                <th style={{ textAlign: 'right', padding: 6 }}>Failed</th>
-                <th style={{ textAlign: 'right', padding: 6 }}>Blocked</th>
-                <th style={{ textAlign: 'right', padding: 6 }}>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(rolloutMetrics?.by_message_type || []).map(row => (
-                <tr key={`${row.message_type}:${row.trigger}`} style={{ borderTop: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: 6 }}>{row.message_type}</td>
-                  <td style={{ padding: 6 }}>{row.trigger}</td>
-                  <td style={{ padding: 6, textAlign: 'right' }}>{row.sent}</td>
-                  <td style={{ padding: 6, textAlign: 'right', color: row.failed > 0 ? '#c62828' : undefined }}>{row.failed}</td>
-                  <td style={{ padding: 6, textAlign: 'right' }}>{row.blocked_test_mode + row.blocked_consent}</td>
-                  <td style={{ padding: 6, textAlign: 'right' }}>{row.total}</td>
-                </tr>
-              ))}
-              {(rolloutMetrics?.by_message_type?.length || 0) === 0 && (
-                <tr>
-                  <td colSpan={6} style={{ padding: 10, color: '#888', fontStyle: 'italic' }}>
-                    No SMS activity in selected window
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {(rolloutMetrics?.recent_failures?.length || 0) > 0 && (
-          <div style={{ marginBottom: 8, padding: 8, border: '1px solid #ffebee', borderRadius: 6, backgroundColor: '#fff8f8' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#c62828', marginBottom: 4 }}>
-              Recent failures
-            </div>
-            <div style={{ maxHeight: 110, overflowY: 'auto', fontSize: 11 }}>
-              {rolloutMetrics?.recent_failures.slice(0, 8).map(f => (
-                <div key={f.id} style={{ padding: '2px 0', borderBottom: '1px dotted #f3d6d6' }}>
-                  {formatLogTime(f.sent_at)} — {f.message_type} — {f.phone_number} — {f.error_message || f.status}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>

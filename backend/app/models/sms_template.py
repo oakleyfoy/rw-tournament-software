@@ -54,6 +54,10 @@ DEFAULT_SMS_TEMPLATES = {
         "{team_name}: Your first match is {date} at {time}. "
         "Please arrive at least 30 mins early and check in at the desk."
     ),
+    "checkin_rr_first_match": (
+        "{team_name}: Your first match is {date} at {time}. "
+        "Please arrive at least 30 mins early and check in at the desk."
+    ),
     "checkin_slot_checkin": (
         "{team_name}: All matches in the prior time slot have started. "
         "Please come check in at the desk for your next match."

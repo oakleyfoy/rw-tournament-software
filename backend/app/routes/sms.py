@@ -2912,6 +2912,7 @@ def run_first_match_reminders(
     dry_run: bool = Query(default=False),
     force_resend: bool = Query(default=False),
     resend_run_key: Optional[str] = Query(default=None),
+    template_mode: str = Query(default="court_management"),
     session: Session = Depends(get_session),
 ):
     """
@@ -2946,6 +2947,7 @@ def run_first_match_reminders(
         dry_run=dry_run,
         force_resend=force_resend,
         resend_run_key=resend_run_key,
+        template_mode=template_mode,
     )
     return SmsAutomationRunResponse(**result)
 
@@ -2959,6 +2961,7 @@ def run_rr_first_match_reminders(
     event_id: int = Query(..., gt=0),
     dry_run: bool = Query(default=False),
     force_resend: bool = Query(default=False),
+    template_mode: str = Query(default="court_management"),
     session: Session = Depends(get_session),
 ):
     """
@@ -2981,5 +2984,6 @@ def run_rr_first_match_reminders(
         event_id=event_id,
         dry_run=dry_run,
         force_resend=force_resend,
+        template_mode=template_mode,
     )
     return SmsRrAutomationRunResponse(**result)

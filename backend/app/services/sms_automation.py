@@ -27,6 +27,11 @@ _runner_lock = threading.Lock()
 _runner_started = False
 
 
+def _normalize_sms_template_mode(raw: Optional[str]) -> str:
+    mode = (raw or "").strip().lower()
+    return "checkin_management" if mode == "checkin_management" else "court_management"
+
+
 class SmsAutomationEngine:
     """Automation helper used by desk/runtime routes."""
 
@@ -378,6 +383,7 @@ class SmsAutomationEngine:
         dry_run: bool = False,
         force_resend: bool = False,
         resend_run_key: Optional[str] = None,
+        template_mode: str = "court_management",
     ) -> Dict[str, Any]:
         """
         Send first-match reminders for each team's first scheduled match.
@@ -403,7 +409,13 @@ class SmsAutomationEngine:
             "window_minutes": 0,
             "now_utc": (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
         }
-        active, _template = self._template_for("first_match")
+        normalized_mode = _normalize_sms_template_mode(template_mode)
+        message_type = (
+            "checkin_first_match"
+            if normalized_mode == "checkin_management"
+            else "first_match"
+        )
+        active, _template = self._template_for(message_type)
         if not active:
             stats["template_inactive"] = True
             return stats
@@ -433,7 +445,7 @@ class SmsAutomationEngine:
             stats["eligible_teams"] += 1
 
             dedupe_key = self._dedupe_key(
-                "first_match",
+                message_type,
                 f"v{self.version_id}",
                 f"t{team_id}",
                 f"m{match.id}",
@@ -444,7 +456,7 @@ class SmsAutomationEngine:
 
             resp = self._send_template_to_team(
                 team=team,
-                message_type="first_match",
+                message_type=message_type,
                 dedupe_key=dedupe_key,
                 match=match,
                 slot=slot,
@@ -467,6 +479,7 @@ class SmsAutomationEngine:
         dry_run: bool = False,
         force_resend: bool = False,
         resend_run_key: Optional[str] = None,
+        template_mode: str = "court_management",
     ) -> Dict[str, Any]:
         """
         Send each team's first scheduled Round Robin match details for one event.
@@ -489,7 +502,13 @@ class SmsAutomationEngine:
             "force_resend": force_resend,
             "resend_run_key": None,
         }
-        active, _template = self._template_for("rr_first_match")
+        normalized_mode = _normalize_sms_template_mode(template_mode)
+        message_type = (
+            "checkin_rr_first_match"
+            if normalized_mode == "checkin_management"
+            else "rr_first_match"
+        )
+        active, _template = self._template_for(message_type)
         if not active:
             stats["template_inactive"] = True
             return stats
@@ -514,7 +533,7 @@ class SmsAutomationEngine:
             stats["eligible_teams"] += 1
 
             dedupe_key = self._dedupe_key(
-                "rr_first_match",
+                message_type,
                 f"v{self.version_id}",
                 f"e{event_id}",
                 f"t{team_id}",
@@ -526,7 +545,7 @@ class SmsAutomationEngine:
 
             resp = self._send_template_to_team(
                 team=team,
-                message_type="rr_first_match",
+                message_type=message_type,
                 dedupe_key=dedupe_key,
                 match=match,
                 slot=slot,
@@ -909,6 +928,7 @@ def run_first_match_24h_for_tournament(
     dry_run: bool = False,
     force_resend: bool = False,
     resend_run_key: Optional[str] = None,
+    template_mode: str = "court_management",
 ) -> Dict[str, Any]:
     """Run the 24h first-match reminder scan for a single tournament."""
     tournament = session.get(Tournament, tournament_id)
@@ -945,6 +965,7 @@ def run_first_match_24h_for_tournament(
         dry_run=dry_run,
         force_resend=force_resend,
         resend_run_key=resend_run_key,
+        template_mode=template_mode,
     )
 
 
@@ -956,6 +977,7 @@ def run_rr_first_match_for_event(
     dry_run: bool = False,
     force_resend: bool = False,
     resend_run_key: Optional[str] = None,
+    template_mode: str = "court_management",
 ) -> Dict[str, Any]:
     """Run Round Robin first-match reminders for one event."""
     tournament = session.get(Tournament, tournament_id)
@@ -995,6 +1017,7 @@ def run_rr_first_match_for_event(
         dry_run=dry_run,
         force_resend=force_resend,
         resend_run_key=resend_run_key,
+        template_mode=template_mode,
     )
 
 

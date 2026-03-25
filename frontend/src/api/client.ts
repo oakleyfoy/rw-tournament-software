@@ -3613,7 +3613,14 @@ export async function getSmsRolloutMetrics(
 
 export async function runSmsFirstMatchReminders(
   tournamentId: number,
-  opts?: { dry_run?: boolean; window_minutes?: number; now_utc?: string; force_resend?: boolean; resend_run_key?: string }
+  opts?: {
+    dry_run?: boolean
+    window_minutes?: number
+    now_utc?: string
+    force_resend?: boolean
+    resend_run_key?: string
+    template_mode?: 'court_management' | 'checkin_management'
+  }
 ): Promise<SmsAutomationRunResponse> {
   const params = new URLSearchParams()
   if (opts?.dry_run != null) params.set('dry_run', String(opts.dry_run))
@@ -3621,6 +3628,7 @@ export async function runSmsFirstMatchReminders(
   if (opts?.now_utc) params.set('now_utc', opts.now_utc)
   if (opts?.force_resend != null) params.set('force_resend', String(opts.force_resend))
   if (opts?.resend_run_key) params.set('resend_run_key', opts.resend_run_key)
+  if (opts?.template_mode) params.set('template_mode', opts.template_mode)
   const qs = params.toString()
   return fetchJson<SmsAutomationRunResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/automation/run-first-match-reminders${qs ? `?${qs}` : ''}`,
@@ -3630,12 +3638,18 @@ export async function runSmsFirstMatchReminders(
 
 export async function runSmsRrFirstMatchReminders(
   tournamentId: number,
-  opts: { event_id: number; dry_run?: boolean; force_resend?: boolean }
+  opts: {
+    event_id: number
+    dry_run?: boolean
+    force_resend?: boolean
+    template_mode?: 'court_management' | 'checkin_management'
+  }
 ): Promise<SmsRrAutomationRunResponse> {
   const params = new URLSearchParams()
   params.set('event_id', String(opts.event_id))
   if (opts.dry_run != null) params.set('dry_run', String(opts.dry_run))
   if (opts.force_resend != null) params.set('force_resend', String(opts.force_resend))
+  if (opts.template_mode) params.set('template_mode', opts.template_mode)
   const qs = params.toString()
   return fetchJson<SmsRrAutomationRunResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/automation/run-rr-first-match-reminders${qs ? `?${qs}` : ''}`,
