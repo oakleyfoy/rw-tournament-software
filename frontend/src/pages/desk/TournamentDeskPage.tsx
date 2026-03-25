@@ -89,7 +89,6 @@ import {
   SmsRrAutomationRunResponse,
   SmsLogEntry,
   SmsPreviewResponse,
-  SmsRolloutMetricsResponse,
   SmsSendResponse,
   SmsSettingsResponse,
   SmsTemplateResponse,
@@ -6265,9 +6264,7 @@ function SmsAdminTab({
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
   const [logLimit, setLogLimit] = useState(100)
-  const [rolloutHours, setRolloutHours] = useState(168)
-  const [rolloutMetrics, setRolloutMetrics] = useState<SmsRolloutMetricsResponse | null>(null)
-  const [loadingRollout, setLoadingRollout] = useState(false)
+  const [rolloutHours] = useState(168)
   const [runningReminder, setRunningReminder] = useState(false)
   const [lastReminderRun, setLastReminderRun] = useState<SmsAutomationRunResponse | null>(null)
   const [runningRrReminder, setRunningRrReminder] = useState(false)
@@ -6314,13 +6311,7 @@ function SmsAdminTab({
   }, [tournamentId, logLimit, logTypeFilter])
 
   const loadRolloutMetrics = useCallback(async () => {
-    setLoadingRollout(true)
-    try {
-      const metrics = await getSmsRolloutMetrics(tournamentId, rolloutHours)
-      setRolloutMetrics(metrics)
-    } finally {
-      setLoadingRollout(false)
-    }
+    await getSmsRolloutMetrics(tournamentId, rolloutHours)
   }, [tournamentId, rolloutHours])
 
   const loadTeams = useCallback(async () => {
@@ -6915,63 +6906,52 @@ function SmsAdminTab({
           <h3 style={{ margin: 0, fontSize: 15 }}>SMS Status</h3>
           <button onClick={loadStatusAndSettings} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>Refresh</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, fontSize: 13 }}>
-          <div><strong>Twilio:</strong> {status?.twilio_configured ? 'Configured' : 'Not Configured'}</div>
-          <div><strong>From #:</strong> {status?.from_number || '—'}</div>
-          <div><strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones</div>
-          <div><strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}</div>
-          <div><strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}</div>
-          <div><strong>Contact mode:</strong> {settingsDraft?.player_contacts_only ? 'Player records only' : 'Legacy team fields'}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 260px))', gap: 8, justifyContent: 'start', fontSize: 13 }}>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
+            <strong>Twilio:</strong> {status?.twilio_configured ? 'Configured' : 'Not Configured'}
+          </div>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
+            <strong>From #:</strong> {status?.from_number || '—'}
+          </div>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
+            <strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones
+          </div>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
+            <strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}
+          </div>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
+            <strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}
+          </div>
+          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
+            <strong>Contact mode:</strong> {settingsDraft?.player_contacts_only ? 'Player records only' : 'Legacy team fields'}
+          </div>
         </div>
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>First-Match SMS</h3>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12 }}>
-              <span style={{ color: '#666' }}>Template mode</span>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input
-                  type="radio"
-                  name="sms-template-mode"
-                  checked={smsTemplateMode === 'court_management'}
-                  onChange={() => setSmsTemplateMode('court_management')}
-                />
-                Court Management
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input
-                  type="radio"
-                  name="sms-template-mode"
-                  checked={smsTemplateMode === 'checkin_management'}
-                  onChange={() => setSmsTemplateMode('checkin_management')}
-                />
-                Check-In Management
-              </label>
-            </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: '#666' }}>Lookback</span>
-              <select
-                value={rolloutHours}
-                onChange={e => setRolloutHours(Math.max(1, parseInt(e.target.value || '168', 10)))}
-                className="sms-compact-control"
-                style={{ width: 100 }}
-              >
-                <option value={24}>24h</option>
-                <option value={72}>72h</option>
-                <option value={168}>7 days</option>
-                <option value={336}>14 days</option>
-              </select>
-              <button
-                onClick={loadRolloutMetrics}
-                disabled={loadingRollout}
-                style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-              >
-                {loadingRollout ? 'Refreshing…' : 'Refresh'}
-              </button>
-            </div>
-          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
+          <span style={{ color: '#666' }}>Template mode</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              type="radio"
+              name="sms-template-mode"
+              checked={smsTemplateMode === 'court_management'}
+              onChange={() => setSmsTemplateMode('court_management')}
+            />
+            Court Management
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              type="radio"
+              name="sms-template-mode"
+              checked={smsTemplateMode === 'checkin_management'}
+              onChange={() => setSmsTemplateMode('checkin_management')}
+            />
+            Check-In Management
+          </label>
         </div>
 
         <div style={{ fontSize: 11, color: '#666', marginBottom: 10 }}>
@@ -7000,7 +6980,15 @@ function SmsAdminTab({
             </div>
             {lastReminderRun && (
               <div style={{ fontSize: 12, color: '#555' }}>
-                Last run: considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, sent {lastReminderRun.sent}, failed {lastReminderRun.failed}
+                {lastReminderRun.dry_run ? (
+                  <>
+                    Last run: Considered {lastReminderRun.considered_teams}, Eligible {lastReminderRun.eligible_teams}, Will be blocked {(lastReminderRun.blocked_test_mode || 0) + (lastReminderRun.blocked_consent || 0) + (lastReminderRun.deduped || 0)}, Will be sent {lastReminderRun.sent}
+                  </>
+                ) : (
+                  <>
+                    Last run: considered {lastReminderRun.considered_teams}, eligible {lastReminderRun.eligible_teams}, blocked {(lastReminderRun.blocked_test_mode || 0) + (lastReminderRun.blocked_consent || 0)}, failed {lastReminderRun.failed}
+                  </>
+                )}
                 {lastReminderRun.template_inactive ? ' (template inactive)' : ''}
               </div>
             )}
@@ -7055,13 +7043,6 @@ function SmsAdminTab({
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, fontSize: 12, marginTop: 10 }}>
-          <div><strong>Sent:</strong> {rolloutMetrics?.sent ?? 0}</div>
-          <div><strong>Failed:</strong> <span style={{ color: '#c62828' }}>{rolloutMetrics?.failed ?? 0}</span></div>
-          <div><strong>Blocked(TEST):</strong> {rolloutMetrics?.blocked_test_mode ?? 0}</div>
-          <div><strong>Blocked(Consent):</strong> {rolloutMetrics?.blocked_consent ?? 0}</div>
-          <div><strong>Distinct phones:</strong> {rolloutMetrics?.distinct_phones ?? 0}</div>
-        </div>
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
