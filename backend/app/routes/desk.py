@@ -1695,6 +1695,24 @@ def assign_ready_match_to_slot(
     session.add(match)
     session.commit()
 
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        automation.handle_match_status_change(
+            match=match,
+            previous_status="SCHEDULED",
+            new_status="IN_PROGRESS",
+        )
+        automation.handle_checkin_court_assigned(
+            match=match,
+            slot_id=payload.slot_id,
+        )
+    except Exception:
+        logger.exception(
+            "SMS automation check-in assign trigger failed for tournament=%s match=%s",
+            tournament_id,
+            payload.match_id,
+        )
+
     return desk_snapshot(
         tournament_id=tournament_id,
         version_id=payload.version_id,

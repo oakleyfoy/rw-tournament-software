@@ -6792,6 +6792,10 @@ function SmsAdminTab({
         auto_on_deck: settingsDraft.auto_on_deck,
         auto_up_next: settingsDraft.auto_up_next,
         auto_court_change: settingsDraft.auto_court_change,
+        auto_checkin_first_match: settingsDraft.auto_checkin_first_match,
+        auto_checkin_slot_checkin: settingsDraft.auto_checkin_slot_checkin,
+        auto_checkin_post_match_next: settingsDraft.auto_checkin_post_match_next,
+        auto_checkin_court_assigned: settingsDraft.auto_checkin_court_assigned,
         test_mode: settingsDraft.test_mode,
         test_allowlist: settingsDraft.test_allowlist,
         player_contacts_only: settingsDraft.player_contacts_only,
@@ -6836,6 +6840,21 @@ function SmsAdminTab({
     boxSizing: 'border-box',
     width: '100%',
   }
+  const templateLabels: Record<string, string> = {
+    first_match: 'Court: First match',
+    rr_first_match: 'Court: Round Robin first match',
+    post_match_next: 'Court: Post-match next',
+    on_deck: 'Court: On deck',
+    up_next: 'Court: Up next',
+    court_change: 'Court: Court change',
+    checkin_first_match: 'Check-In: First match check-in',
+    checkin_slot_checkin: 'Check-In: Prior slot started (check-in now)',
+    checkin_post_match_next: 'Check-In: Post-match next (no court)',
+    checkin_court_assigned: 'Check-In: Court assigned (go to your court)',
+  }
+  const checkinTemplateRows = templates.filter(row => row.message_type.startsWith('checkin_'))
+  const courtTemplateRows = templates.filter(row => !row.message_type.startsWith('checkin_'))
+  const orderedTemplateRows = [...courtTemplateRows, ...checkinTemplateRows]
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -7342,23 +7361,46 @@ function SmsAdminTab({
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Automation Toggles</h3>
         {settingsDraft && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6, marginBottom: 10, fontSize: 13 }}>
-              {([
-                ['auto_first_match', 'First match alert'],
-                ['auto_post_match_next', 'Post-match next'],
-                ['auto_on_deck', 'On deck'],
-                ['auto_up_next', 'Up next'],
-                ['auto_court_change', 'Court change'],
-              ] as const).map(([key, label]) => (
-                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settingsDraft[key])}
-                    onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, [key]: e.target.checked }) : prev)}
-                  />
-                  {label}
-                </label>
-              ))}
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Court Management SMS Options</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6, fontSize: 13 }}>
+                {([
+                  ['auto_first_match', 'First match alert'],
+                  ['auto_post_match_next', 'Post-match next'],
+                  ['auto_on_deck', 'On deck'],
+                  ['auto_up_next', 'Up next'],
+                  ['auto_court_change', 'Court change'],
+                ] as const).map(([key, label]) => (
+                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settingsDraft[key])}
+                      onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, [key]: e.target.checked }) : prev)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Check-In Management SMS Options</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6, fontSize: 13 }}>
+                {([
+                  ['auto_checkin_first_match', 'First match check-in'],
+                  ['auto_checkin_slot_checkin', 'Prior slot started: check-in now'],
+                  ['auto_checkin_post_match_next', 'Post-match next (no court)'],
+                  ['auto_checkin_court_assigned', 'Court assigned: go to your court'],
+                ] as const).map(([key, label]) => (
+                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settingsDraft[key])}
+                      onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, [key]: e.target.checked }) : prev)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
             <div style={{ marginBottom: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
@@ -7439,10 +7481,10 @@ function SmsAdminTab({
         </div>
         {showTemplates ? (
           <div style={{ display: 'grid', gap: 10 }}>
-            {templates.map(row => (
+            {orderedTemplateRows.map(row => (
               <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{row.message_type}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{templateLabels[row.message_type] || row.message_type}</div>
                   <label style={{ fontSize: 12 }}>
                     <input
                       type="checkbox"

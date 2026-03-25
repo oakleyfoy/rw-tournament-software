@@ -20,6 +20,11 @@ class TournamentSmsSettings(SQLModel, table=True):
     auto_on_deck: bool = Field(default=False)
     auto_up_next: bool = Field(default=False)
     auto_court_change: bool = Field(default=True)  # Court changes default ON
+    # Check-in management auto-text toggles
+    auto_checkin_first_match: bool = Field(default=False)
+    auto_checkin_slot_checkin: bool = Field(default=False)
+    auto_checkin_post_match_next: bool = Field(default=False)
+    auto_checkin_court_assigned: bool = Field(default=False)
 
     # Safety mode for live testing:
     # if enabled, sends are restricted to numbers in test_allowlist.

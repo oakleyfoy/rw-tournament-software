@@ -3250,6 +3250,10 @@ export interface SmsSettingsResponse {
   auto_on_deck: boolean
   auto_up_next: boolean
   auto_court_change: boolean
+  auto_checkin_first_match: boolean
+  auto_checkin_slot_checkin: boolean
+  auto_checkin_post_match_next: boolean
+  auto_checkin_court_assigned: boolean
   test_mode: boolean
   test_allowlist: string | null
   player_contacts_only: boolean
@@ -3655,6 +3659,10 @@ export async function patchSmsSettings(
     'auto_on_deck' |
     'auto_up_next' |
     'auto_court_change' |
+    'auto_checkin_first_match' |
+    'auto_checkin_slot_checkin' |
+    'auto_checkin_post_match_next' |
+    'auto_checkin_court_assigned' |
     'test_mode' |
     'test_allowlist' |
     'player_contacts_only'

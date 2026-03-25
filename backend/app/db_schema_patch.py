@@ -51,6 +51,10 @@ REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
     ("test_mode", "INTEGER", "BOOLEAN"),
     ("test_allowlist", "TEXT", "TEXT"),
     ("player_contacts_only", "INTEGER", "BOOLEAN"),
+    ("auto_checkin_first_match", "INTEGER", "BOOLEAN"),
+    ("auto_checkin_slot_checkin", "INTEGER", "BOOLEAN"),
+    ("auto_checkin_post_match_next", "INTEGER", "BOOLEAN"),
+    ("auto_checkin_court_assigned", "INTEGER", "BOOLEAN"),
 ]
 
 
@@ -341,7 +345,19 @@ def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
                 for name, sqlite_type, _pg_type in REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS:
                     if name in existing:
                         continue
-                    default = " DEFAULT 0" if name in {"test_mode", "player_contacts_only"} else ""
+                    default = (
+                        " DEFAULT 0"
+                        if name
+                        in {
+                            "test_mode",
+                            "player_contacts_only",
+                            "auto_checkin_first_match",
+                            "auto_checkin_slot_checkin",
+                            "auto_checkin_post_match_next",
+                            "auto_checkin_court_assigned",
+                        }
+                        else ""
+                    )
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type}{default};"))
         else:
             with engine.connect() as conn:
@@ -364,7 +380,19 @@ def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
                 for name, _sqlite_type, pg_type in REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS:
                     if name in existing:
                         continue
-                    default = " DEFAULT FALSE" if name in {"test_mode", "player_contacts_only"} else ""
+                    default = (
+                        " DEFAULT FALSE"
+                        if name
+                        in {
+                            "test_mode",
+                            "player_contacts_only",
+                            "auto_checkin_first_match",
+                            "auto_checkin_slot_checkin",
+                            "auto_checkin_post_match_next",
+                            "auto_checkin_court_assigned",
+                        }
+                        else ""
+                    )
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type}{default};"))
     except Exception as e:
         import logging

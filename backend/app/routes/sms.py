@@ -131,6 +131,10 @@ class SmsSettingsResponse(BaseModel):
     auto_on_deck: bool
     auto_up_next: bool
     auto_court_change: bool
+    auto_checkin_first_match: bool
+    auto_checkin_slot_checkin: bool
+    auto_checkin_post_match_next: bool
+    auto_checkin_court_assigned: bool
     test_mode: bool
     test_allowlist: Optional[str] = None
     player_contacts_only: bool
@@ -144,6 +148,10 @@ class SmsSettingsUpdate(BaseModel):
     auto_on_deck: Optional[bool] = None
     auto_up_next: Optional[bool] = None
     auto_court_change: Optional[bool] = None
+    auto_checkin_first_match: Optional[bool] = None
+    auto_checkin_slot_checkin: Optional[bool] = None
+    auto_checkin_post_match_next: Optional[bool] = None
+    auto_checkin_court_assigned: Optional[bool] = None
     test_mode: Optional[bool] = None
     test_allowlist: Optional[str] = None
     player_contacts_only: Optional[bool] = None
@@ -812,6 +820,10 @@ def _settings_to_response(
             auto_on_deck=False,
             auto_up_next=False,
             auto_court_change=True,
+            auto_checkin_first_match=False,
+            auto_checkin_slot_checkin=False,
+            auto_checkin_post_match_next=False,
+            auto_checkin_court_assigned=False,
             test_mode=False,
             test_allowlist=None,
             player_contacts_only=False,
@@ -823,6 +835,18 @@ def _settings_to_response(
         auto_on_deck=settings.auto_on_deck,
         auto_up_next=settings.auto_up_next,
         auto_court_change=settings.auto_court_change,
+        auto_checkin_first_match=bool(
+            getattr(settings, "auto_checkin_first_match", False)
+        ),
+        auto_checkin_slot_checkin=bool(
+            getattr(settings, "auto_checkin_slot_checkin", False)
+        ),
+        auto_checkin_post_match_next=bool(
+            getattr(settings, "auto_checkin_post_match_next", False)
+        ),
+        auto_checkin_court_assigned=bool(
+            getattr(settings, "auto_checkin_court_assigned", False)
+        ),
         test_mode=bool(getattr(settings, "test_mode", False)),
         test_allowlist=getattr(settings, "test_allowlist", None),
         player_contacts_only=bool(getattr(settings, "player_contacts_only", False)),

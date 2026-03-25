@@ -50,7 +50,7 @@ class SmsAutomationEngine:
         previous_status: str,
         new_status: str,
     ) -> None:
-        """Run auto_first_match / auto_up_next / auto_on_deck on status change."""
+        """Run status-change automations for active desk management mode."""
         prev = (previous_status or "").upper()
         curr = (new_status or "").upper()
         if curr != "IN_PROGRESS":
@@ -58,15 +58,31 @@ class SmsAutomationEngine:
         if prev == "IN_PROGRESS":
             return
 
+        if self._is_checkin_management():
+            self._trigger_checkin_first_match(match)
+            self._trigger_checkin_slot_checkin(match)
+            return
+
         self._trigger_up_next(match)
         self._trigger_first_match(match)
         self._trigger_on_deck(match)
 
     def handle_match_finalized(self, match: Match) -> None:
-        """Run auto_post_match_next for teams in a finalized match."""
+        """Run post-final automations for active desk management mode."""
         if (match.runtime_status or "").upper() != "FINAL":
             return
-        if not self._is_enabled("auto_post_match_next", default=False):
+        is_checkin_mode = self._is_checkin_management()
+        toggle_name = (
+            "auto_checkin_post_match_next"
+            if is_checkin_mode
+            else "auto_post_match_next"
+        )
+        message_type = (
+            "checkin_post_match_next"
+            if is_checkin_mode
+            else "post_match_next"
+        )
+        if not self._is_enabled(toggle_name, default=False):
             return
 
         current_slot = self._slot_for_match(match.id)
@@ -80,14 +96,14 @@ class SmsAutomationEngine:
                 continue
             next_match, next_slot = next_pair
             dedupe_key = self._dedupe_key(
-                "post_match_next",
+                message_type,
                 f"v{self.version_id}",
                 f"t{team.id}",
                 f"m{next_match.id}",
             )
             self._send_template_to_team(
                 team=team,
-                message_type="post_match_next",
+                message_type=message_type,
                 dedupe_key=dedupe_key,
                 match=next_match,
                 slot=next_slot,
@@ -101,6 +117,8 @@ class SmsAutomationEngine:
         new_slot_id: Optional[int],
     ) -> None:
         """Run auto_court_change when a match's slot changes."""
+        if self._is_checkin_management():
+            return
         if not self._is_enabled("auto_court_change", default=True):
             return
         if not previous_slot_id or not new_slot_id:
@@ -132,6 +150,38 @@ class SmsAutomationEngine:
                 dedupe_key=dedupe_key,
                 match=match,
                 slot=new_slot,
+                opponent=self._opponent_display(match, team.id),
+            )
+
+    def handle_checkin_court_assigned(
+        self,
+        match: Match,
+        slot_id: Optional[int],
+    ) -> None:
+        """Run check-in court-assigned automation when desk assigns a court."""
+        if not self._is_checkin_management():
+            return
+        if not self._is_enabled("auto_checkin_court_assigned", default=False):
+            return
+        if not slot_id:
+            return
+        slot = self._slot_by_id(slot_id)
+        if not slot:
+            return
+        for team in self._teams_for_match(match):
+            dedupe_key = self._dedupe_key(
+                "checkin_court_assigned",
+                f"v{self.version_id}",
+                f"m{match.id}",
+                f"s{slot_id}",
+                f"t{team.id}",
+            )
+            self._send_template_to_team(
+                team=team,
+                message_type="checkin_court_assigned",
+                dedupe_key=dedupe_key,
+                match=match,
+                slot=slot,
                 opponent=self._opponent_display(match, team.id),
             )
 
@@ -211,6 +261,116 @@ class SmsAutomationEngine:
                 slot=slot,
                 opponent=self._opponent_display(match, team.id),
             )
+
+    def _trigger_checkin_first_match(self, match: Match) -> None:
+        if not self._is_enabled("auto_checkin_first_match", default=False):
+            return
+        slot = self._slot_for_match(match.id)
+        for team in self._teams_for_match(match):
+            team_id = team.id
+            if not team_id:
+                continue
+            if not self._is_team_first_match(team_id=team_id, match_id=match.id):
+                continue
+            dedupe_key = self._dedupe_key(
+                "checkin_first_match",
+                f"v{self.version_id}",
+                f"t{team_id}",
+                f"m{match.id}",
+            )
+            self._send_template_to_team(
+                team=team,
+                message_type="checkin_first_match",
+                dedupe_key=dedupe_key,
+                match=match,
+                slot=slot,
+                opponent=self._opponent_display(match, team.id),
+            )
+
+    def _trigger_checkin_slot_checkin(self, current_match: Match) -> None:
+        if not self._is_enabled("auto_checkin_slot_checkin", default=False):
+            return
+        current_slot = self._slot_for_match(current_match.id)
+        if not current_slot:
+            return
+        # Only send once the final match in the current time slot starts.
+        if not self._is_last_started_match_in_timeslot(current_match, current_slot):
+            return
+        current_key = self._slot_sort_key(current_slot)
+        matches = self.session.exec(
+            select(Match).where(Match.schedule_version_id == self.version_id)
+        ).all()
+        next_slot_key: Optional[tuple[date, time, int]] = None
+        rows: list[tuple[Match, ScheduleSlot]] = []
+        for match in matches:
+            if match.id is None:
+                continue
+            if (match.runtime_status or "SCHEDULED").upper() in {"FINAL", "IN_PROGRESS"}:
+                continue
+            slot = self._slot_for_match(match.id)
+            if not slot:
+                continue
+            key = self._slot_sort_key(slot)
+            if key <= current_key:
+                continue
+            if next_slot_key is None or key < next_slot_key:
+                next_slot_key = key
+                rows = [(match, slot)]
+            elif key == next_slot_key:
+                rows.append((match, slot))
+        if not rows:
+            return
+        for match, slot in rows:
+            for team in self._teams_for_match(match):
+                team_id = team.id
+                if not team_id:
+                    continue
+                dedupe_key = self._dedupe_key(
+                    "checkin_slot_checkin",
+                    f"v{self.version_id}",
+                    f"t{team_id}",
+                    slot.day_date.isoformat(),
+                    str(self._coerce_time(slot.start_time)),
+                )
+                self._send_template_to_team(
+                    team=team,
+                    message_type="checkin_slot_checkin",
+                    dedupe_key=dedupe_key,
+                    match=match,
+                    slot=slot,
+                    opponent=self._opponent_display(match, team.id),
+                )
+
+    def _is_last_started_match_in_timeslot(
+        self,
+        current_match: Match,
+        current_slot: ScheduleSlot,
+    ) -> bool:
+        """
+        Return True only when all assigned matches in this day/time slot
+        are already started or finished.
+        """
+        current_time = self._coerce_time(current_slot.start_time)
+        matches = self.session.exec(
+            select(Match).where(Match.schedule_version_id == self.version_id)
+        ).all()
+        for match in matches:
+            if match.id is None or match.id == current_match.id:
+                continue
+            # Ignore placeholder/unassigned rows that cannot be started yet.
+            if match.team_a_id is None or match.team_b_id is None:
+                continue
+            slot = self._slot_for_match(match.id)
+            if not slot:
+                continue
+            if slot.day_date != current_slot.day_date:
+                continue
+            if self._coerce_time(slot.start_time) != current_time:
+                continue
+            status = (match.runtime_status or "SCHEDULED").upper()
+            if status in {"SCHEDULED", "DELAYED"}:
+                return False
+        return True
 
     def run_first_match_24h_reminders(
         self,
@@ -463,6 +623,10 @@ class SmsAutomationEngine:
         if self._settings is None:
             return default
         return bool(getattr(self._settings, field_name, default))
+
+    def _is_checkin_management(self) -> bool:
+        mode = str(getattr(self.tournament, "desk_management_mode", "") or "")
+        return mode.strip().lower() == "checkin_management"
 
     # ------------------------------------------------------------------
     # Match/slot/team helpers
