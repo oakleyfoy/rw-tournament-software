@@ -537,7 +537,7 @@ def _build_checkin_snapshot(
     candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
     for m in all_matches:
         status = (m.runtime_status or "SCHEDULED").upper()
-        if status == "FINAL":
+        if status in ("FINAL", "IN_PROGRESS", "PAUSED"):
             continue
         a = assignment_map.get(m.id)
         if not a:

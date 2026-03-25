@@ -8099,7 +8099,7 @@ export default function TournamentDeskPage() {
     if (section.assignedMatchIds.size > 0) {
       section.matches = Array.from(section.assignedMatchIds)
         .map((id) => matchById.get(id))
-        .filter((m): m is DeskMatchItem => !!m && m.status !== 'FINAL')
+        .filter((m): m is DeskMatchItem => !!m && !['FINAL', 'IN_PROGRESS', 'PAUSED'].includes(m.status))
       section.matches.sort((a, b) => a.match_number - b.match_number)
       return
     }
@@ -8651,7 +8651,7 @@ export default function TournamentDeskPage() {
                                         height: 24,
                                         borderRadius: 999,
                                         border: '1px solid #607d8b',
-                                        backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#c8e6c9' : '#fffde7',
+                                        backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#e8f5e9' : '#fff',
                                         color: '#f9a825',
                                         cursor: state.team_id ? 'pointer' : 'default',
                                         opacity: state.team_id ? 1 : 0.45,
@@ -8660,16 +8660,18 @@ export default function TournamentDeskPage() {
                                         padding: 0,
                                       }}
                                     >
-                                      <span
-                                        style={{
-                                          display: 'inline-block',
-                                          width: 12,
-                                          height: 12,
-                                          borderRadius: 999,
-                                          backgroundColor: '#fdd835',
-                                          border: '1px solid #f9a825',
-                                        }}
-                                      />
+                                      {(cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) && (
+                                        <span
+                                          style={{
+                                            display: 'inline-block',
+                                            width: 12,
+                                            height: 12,
+                                            borderRadius: 999,
+                                            backgroundColor: '#fdd835',
+                                            border: '1px solid #f9a825',
+                                          }}
+                                        />
+                                      )}
                                     </button>
                                     <button
                                       type="button"

@@ -2624,6 +2624,7 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     assert moved["assignment_id"] is not None
     assert moved["court_name"] is not None
     assert moved["status"] == "IN_PROGRESS"
+    assert all(cm["match_id"] != m1.id for cm in snap["checkin_matches"])
 
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
