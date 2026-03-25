@@ -1556,7 +1556,7 @@ def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
 def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     client, session, setup_tournament_with_teams
 ):
-    """Runner returns disabled when toggle off, and scans all first matches when on."""
+    """Runner scans all first matches regardless of auto_first_match toggle."""
     tournament, event, teams = setup_tournament_with_teams
 
     _create_single_match_schedule(
@@ -1570,7 +1570,7 @@ def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
         end_time_local=time(11, 0),
     )
 
-    # No settings row => auto_first_match defaults OFF
+    # No settings row: first-match manual run should still work.
     off = client.post(
         f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
         params={
@@ -1581,8 +1581,8 @@ def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     )
     assert off.status_code == 200
     off_data = off.json()
-    assert off_data["disabled"] is True
-    assert off_data["sent"] == 0
+    assert off_data.get("disabled") in (None, False)
+    assert off_data["sent"] == 3
 
     # Turn on first-match automation and run far ahead of the match date.
     # Time-window constraints are disabled, so teams should still be eligible.
@@ -1609,7 +1609,7 @@ def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     )
     assert outside.status_code == 200
     outside_data = outside.json()
-    assert outside_data["disabled"] is False
+    assert outside_data.get("disabled") in (None, False)
     assert outside_data["considered_teams"] == 2
     assert outside_data["eligible_teams"] == 2
     assert outside_data["outside_window"] == 0

@@ -403,10 +403,6 @@ class SmsAutomationEngine:
             "window_minutes": 0,
             "now_utc": (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
         }
-        if not self._is_enabled("auto_first_match", default=False):
-            stats["disabled"] = True
-            return stats
-
         active, _template = self._template_for("first_match")
         if not active:
             stats["template_inactive"] = True
@@ -493,10 +489,6 @@ class SmsAutomationEngine:
             "force_resend": force_resend,
             "resend_run_key": None,
         }
-        if not self._is_enabled("auto_first_match", default=False):
-            stats["disabled"] = True
-            return stats
-
         active, _template = self._template_for("rr_first_match")
         if not active:
             stats["template_inactive"] = True
