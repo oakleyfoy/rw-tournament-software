@@ -8766,6 +8766,7 @@ export default function TournamentDeskPage() {
                 </div>
               )}
             </div>
+            </div>
           </>
         )}
 
