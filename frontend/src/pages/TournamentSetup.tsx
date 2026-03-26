@@ -700,6 +700,15 @@ function TournamentSetup() {
         return
       }
 
+      // Derive block length from current event settings so auto-generated
+      // windows align with configured match durations.
+      const eventDurations = events.flatMap((ev) => {
+        const wf = ev.wf_block_minutes ?? null
+        const standard = ev.standard_block_minutes ?? null
+        return [wf, standard].filter((v): v is number => typeof v === 'number' && v > 0)
+      })
+      const autoBlockMinutes = eventDurations.length > 0 ? Math.max(...eventDurations) : 120
+
       // Build payloads with normalized dates/times
       const payloads = activeDays.map((d) => {
         const dayDate = toISODate(d.date)
@@ -712,7 +721,7 @@ function TournamentSetup() {
           start_time: startTime,
           end_time: endTime,
           courts_available: courts,
-          block_minutes: 120,
+          block_minutes: autoBlockMinutes,
           label: 'Auto',
           is_active: true,
         }

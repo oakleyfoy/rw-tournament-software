@@ -1345,9 +1345,10 @@ def generate_matches(
             )
             over_generated = existing_before > expected_count
 
-            # Check if event needs rebuild due to old placeholder format
-            # Sample bracket matches to detect old format placeholders
+            # Check if event needs rebuild due to stale inventory details
+            # (old placeholder format or duration mismatch vs current settings).
             needs_rebuild = False
+            rebuild_reason: Optional[str] = None
             if existing_before >= expected_count:
                 # Check a sample of bracket matches for old placeholder format
                 sample_bracket_matches = session.exec(
@@ -1375,9 +1376,36 @@ def generate_matches(
                             placeholder_b.startswith("Bracket ")
                         ):
                             needs_rebuild = True
+                            rebuild_reason = "old placeholder format detected"
                             logger.info(
                                 f"Event {event.id} ({event.name}): Detected old placeholder format "
                                 f"('{placeholder_a}' / '{placeholder_b}'), marking for rebuild"
+                            )
+                            break
+
+                # Also rebuild if stored match durations no longer match current spec
+                # (e.g., WF and RR timing changed or were previously generated with stale values).
+                if not needs_rebuild:
+                    existing_matches_for_event = session.exec(
+                        select(Match).where(
+                            Match.schedule_version_id == version.id,
+                            Match.event_id == event.id,
+                        )
+                    ).all()
+                    for m in existing_matches_for_event:
+                        expected_duration = spec.waterfall_minutes if m.match_type == "WF" else spec.standard_minutes
+                        if (m.duration_minutes or 0) != expected_duration:
+                            needs_rebuild = True
+                            rebuild_reason = (
+                                f"duration mismatch: match_type={m.match_type} "
+                                f"stored={m.duration_minutes} expected={expected_duration}"
+                            )
+                            logger.info(
+                                "Event %s (%s): Duration mismatch on %s (%s), marking for rebuild",
+                                event.id,
+                                event.name,
+                                m.match_code,
+                                rebuild_reason,
                             )
                             break
 
@@ -1419,7 +1447,7 @@ def generate_matches(
                 existing_codes.difference_update(wiped_codes)
                 if needs_rebuild:
                     decision = "rebuild_placeholders"
-                    reason = "old placeholder format detected"
+                    reason = rebuild_reason or "existing inventory requires rebuild"
                 else:
                     decision = "rebuild_over_generated"
                     reason = "existing inventory exceeds expected"

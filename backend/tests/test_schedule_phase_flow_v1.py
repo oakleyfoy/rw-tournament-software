@@ -140,6 +140,52 @@ def test_generate_matches_only_idempotent(client: TestClient, session: Session, 
     assert len(codes) == len(set(codes)), "No duplicate match codes"
 
 
+def test_generate_matches_rebuilds_when_duration_settings_change(
+    client: TestClient, session: Session, wf_pools_setup
+):
+    """If event timing changes, generate-matches should rebuild existing inventory."""
+    tid = wf_pools_setup["tournament_id"]
+    vid = wf_pools_setup["version_id"]
+    eid = wf_pools_setup["event_id"]
+
+    first = client.post(f"/api/tournaments/{tid}/schedule/versions/{vid}/matches/generate")
+    assert first.status_code == 200, first.text
+
+    before = session.exec(select(Match).where(Match.schedule_version_id == vid, Match.event_id == eid)).all()
+    assert len(before) > 0
+    assert any(m.match_type == "WF" and m.duration_minutes == 60 for m in before)
+    assert any(m.match_type != "WF" and m.duration_minutes == 105 for m in before)
+
+    event = session.get(Event, eid)
+    assert event is not None
+    event.wf_block_minutes = 105
+    event.standard_block_minutes = 60
+    event.draw_plan_json = json.dumps(
+        {
+            "template_type": "WF_TO_POOLS_4",
+            "wf_rounds": 2,
+            "guarantee": 5,
+            "timing": {
+                "wf_block_minutes": 105,
+                "standard_block_minutes": 60,
+            },
+        }
+    )
+    session.add(event)
+    session.commit()
+
+    second = client.post(f"/api/tournaments/{tid}/schedule/versions/{vid}/matches/generate")
+    assert second.status_code == 200, second.text
+    payload = second.json()
+    assert payload["matches_generated"] > 0
+    assert payload["already_generated"] is False
+
+    after = session.exec(select(Match).where(Match.schedule_version_id == vid, Match.event_id == eid)).all()
+    assert len(after) == len(before)
+    assert all(m.duration_minutes == 105 for m in after if m.match_type == "WF")
+    assert all(m.duration_minutes == 60 for m in after if m.match_type != "WF")
+
+
 def test_generate_matches_fills_missing_event_mixed_has_16_womens_missing(session: Session, client: TestClient):
     """
     When Mixed has 16 matches but Women's has 0, generate must add Women's (30) → total 46.
