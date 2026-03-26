@@ -7020,6 +7020,15 @@ function SmsAdminTab({
   }
   const checkinTemplateRows = templates.filter(row => row.message_type.startsWith('checkin_'))
   const courtTemplateRows = templates.filter(row => !row.message_type.startsWith('checkin_'))
+  const visibleLogs = useMemo(() => {
+    return logs.filter(l => {
+      const status = String(l.status || '').trim().toLowerCase()
+      if (status === 'blocked_test_mode') return false
+      if (status === 'sent' || status === 'delivered') return true
+      if (status.includes('fail') || status === 'undelivered') return true
+      return Boolean((l.error_message || '').trim())
+    })
+  }, [logs])
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -7030,7 +7039,7 @@ function SmsAdminTab({
       )}
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', order: 2, flex: '0 1 500px', minWidth: 420 }}>
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', flex: '1 1 560px', minWidth: 460 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>SMS Status</h3>
           <button onClick={loadStatusAndSettings} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>Refresh</button>
@@ -7240,7 +7249,7 @@ function SmsAdminTab({
 
       </div>
 
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', order: 1, flex: '1 1 700px', minWidth: 560 }}>
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', flex: '1 1 560px', minWidth: 460 }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Manual Send / Preview</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 260px) minmax(360px, 1fr)', gap: 8, marginBottom: 8, alignItems: 'start' }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
@@ -7522,7 +7531,7 @@ function SmsAdminTab({
       </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px, 1fr) minmax(420px, 1fr)', gap: 12, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gap: 12, alignItems: 'start' }}>
         <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <h3 style={{ margin: 0, fontSize: 15 }}>Automation Toggles</h3>
@@ -7773,7 +7782,7 @@ function SmsAdminTab({
               </tr>
             </thead>
             <tbody>
-              {logs.map(l => (
+              {visibleLogs.map(l => (
                 <tr key={l.id} style={{ borderTop: '1px solid #f0f0f0' }}>
                   <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{formatLogTime(l.sent_at)}</td>
                   <td style={{ padding: 6 }}>{l.message_type}</td>
@@ -7783,10 +7792,10 @@ function SmsAdminTab({
                   <td style={{ padding: 6, color: '#c62828' }}>{l.error_message || '—'}</td>
                 </tr>
               ))}
-              {logs.length === 0 && (
+              {visibleLogs.length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ padding: 10, color: '#888', fontStyle: 'italic' }}>
-                    No log entries yet
+                    No successful sends or true errors yet
                   </td>
                 </tr>
               )}
