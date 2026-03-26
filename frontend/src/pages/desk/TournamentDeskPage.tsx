@@ -7020,15 +7020,13 @@ function SmsAdminTab({
   }
   const checkinTemplateRows = templates.filter(row => row.message_type.startsWith('checkin_'))
   const courtTemplateRows = templates.filter(row => !row.message_type.startsWith('checkin_'))
-  const visibleLogs = useMemo(() => {
-    return logs.filter(l => {
-      const status = String(l.status || '').trim().toLowerCase()
-      if (status === 'blocked_test_mode') return false
-      if (status === 'sent' || status === 'delivered') return true
-      if (status.includes('fail') || status === 'undelivered') return true
-      return Boolean((l.error_message || '').trim())
-    })
-  }, [logs])
+  const visibleLogs = logs.filter(l => {
+    const status = String(l.status || '').trim().toLowerCase()
+    if (status === 'blocked_test_mode') return false
+    if (status === 'sent' || status === 'delivered') return true
+    if (status.includes('fail') || status === 'undelivered') return true
+    return Boolean((l.error_message || '').trim())
+  })
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
