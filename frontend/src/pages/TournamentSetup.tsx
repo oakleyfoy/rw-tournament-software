@@ -700,28 +700,36 @@ function TournamentSetup() {
         return
       }
 
-      // Derive block length from current event settings so auto-generated
-      // windows align with configured match durations.
-      const eventDurations = events.flatMap((ev) => {
-        const wf = ev.wf_block_minutes ?? null
-        const standard = ev.standard_block_minutes ?? null
-        return [wf, standard].filter((v): v is number => typeof v === 'number' && v > 0)
-      })
-      const autoBlockMinutes = eventDurations.length > 0 ? Math.max(...eventDurations) : 120
+      // Derive block length(s) from current event settings.
+      // If both WF and standard timings exist and multiple days are active,
+      // use WF timing on the first active day and standard timing afterwards.
+      const wfCandidates = events
+        .map((ev) => ev.wf_block_minutes ?? null)
+        .filter((v): v is number => typeof v === 'number' && v > 0)
+      const standardCandidates = events
+        .map((ev) => ev.standard_block_minutes ?? null)
+        .filter((v): v is number => typeof v === 'number' && v > 0)
+      const wfBlockMinutes = wfCandidates.length > 0 ? Math.min(...wfCandidates) : 60
+      const standardBlockMinutes = standardCandidates.length > 0 ? Math.max(...standardCandidates) : 120
 
       // Build payloads with normalized dates/times
-      const payloads = activeDays.map((d) => {
+      const orderedDays = [...activeDays].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      const payloads = orderedDays.map((d, idx) => {
         const dayDate = toISODate(d.date)
         const startTime = toHHMM(d.start_time)
         const endTime = toHHMM(d.end_time)
         const courts = Number(d.courts_available)
+        const hasBothDurations = wfCandidates.length > 0 && standardCandidates.length > 0
+        const blockMinutes = hasBothDurations && orderedDays.length > 1
+          ? (idx === 0 ? wfBlockMinutes : standardBlockMinutes)
+          : (standardCandidates.length > 0 ? standardBlockMinutes : wfBlockMinutes)
 
         return {
           day_date: dayDate,
           start_time: startTime,
           end_time: endTime,
           courts_available: courts,
-          block_minutes: autoBlockMinutes,
+          block_minutes: blockMinutes,
           label: 'Auto',
           is_active: true,
         }
