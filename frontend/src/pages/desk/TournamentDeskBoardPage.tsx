@@ -321,6 +321,9 @@ export default function TournamentDeskBoardPage() {
 
   const isStaffFallback = data.version_status !== 'FINAL' && data.version_status !== 'final'
   const deskDraft = data.version_status === 'draft' || data.version_status === 'DRAFT'
+  const visibleBoardCourts = data.board_by_court.filter(
+    slot => Boolean(slot.now_playing || slot.up_next || slot.on_deck)
+  )
 
   return (
     <div style={{
@@ -382,7 +385,7 @@ export default function TournamentDeskBoardPage() {
         overflow: 'auto',
         minHeight: 0,
       }}>
-        {data.board_by_court.length === 0 ? (
+        {visibleBoardCourts.length === 0 ? (
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -391,7 +394,7 @@ export default function TournamentDeskBoardPage() {
             color: 'rgba(255,255,255,0.4)',
             fontSize: 20,
           }}>
-            No courts configured
+            No courts with matches right now
           </div>
         ) : (
           <div style={{
@@ -399,7 +402,7 @@ export default function TournamentDeskBoardPage() {
             gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
             gap: 10,
           }}>
-            {data.board_by_court.map((slot) => (
+            {visibleBoardCourts.map((slot) => (
               <CourtCard key={slot.court_name} slot={slot} />
             ))}
           </div>

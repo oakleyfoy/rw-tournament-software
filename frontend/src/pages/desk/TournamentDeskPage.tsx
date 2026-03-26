@@ -8210,6 +8210,17 @@ export default function TournamentDeskPage() {
       .filter((x): x is { court: string; match: DeskMatchItem } => x !== null)
   }, [data])
 
+  const visibleCourts = useMemo(() => {
+    if (!data) return []
+    return data.courts.filter(court =>
+      Boolean(
+        data.now_playing_by_court[court] ||
+        data.up_next_by_court[court] ||
+        data.on_deck_by_court[court]
+      )
+    )
+  }, [data])
+
   const handleStartAllOpen = useCallback(() => {
     setStartAllExcluded(new Set())
     setStartAllOpen(true)
@@ -8679,7 +8690,7 @@ export default function TournamentDeskPage() {
                 gap: 8,
                 marginTop: 8,
               }}>
-                {data.courts.map(court => {
+                {visibleCourts.map(court => {
                   const courtLabel = court.replace(/^Court\s+/i, '')
                   const courtMatches = data.matches
                     .filter(m => m.court_name === court && m.status === 'FINAL')
@@ -8703,10 +8714,11 @@ export default function TournamentDeskPage() {
                     />
                   )
                 })}
-              </div>
-              {data.courts.length === 0 && (
-                <div style={{ color: '#888', fontSize: 13, fontStyle: 'italic' }}>No courts found</div>
-              )}
+                {visibleCourts.length === 0 && (
+                  <div style={{ color: '#888', fontSize: 13, fontStyle: 'italic' }}>
+                    No courts with matches right now
+                  </div>
+                )}
             </div>
 
             <div style={{ marginBottom: 24 }}>
