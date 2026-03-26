@@ -2725,11 +2725,11 @@ def test_checkin_assign_accepts_noncanonical_slot_id_for_available_court(client,
     )
     assert ready_resp.status_code == 200
 
-    # slot_c2_t2 is a different slot id for Court 2; backend should remap it.
-    slot_c2_t2 = slots[3]
+    # Use Court 2's currently occupied slot; assign should still succeed.
+    slot_c2_t1_occupied = slots[1]
     assign = client.post(
         f"/api/desk/tournaments/{t.id}/checkin/assign",
-        json={"version_id": v.id, "match_id": m1.id, "slot_id": slot_c2_t2.id},
+        json={"version_id": v.id, "match_id": m1.id, "slot_id": slot_c2_t1_occupied.id},
     )
     assert assign.status_code == 200
     snap = assign.json()

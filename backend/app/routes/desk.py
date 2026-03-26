@@ -1685,15 +1685,36 @@ def assign_ready_match_to_slot(
         )
     ).first()
 
+    assigned_slot_id = effective_slot_id
     if target_assignment and target_assignment.match_id != payload.match_id:
-        selected_slot_id = selected_assignment.slot_id
-        target_assignment.slot_id = selected_slot_id
-        target_assignment.assigned_by = "CHECKIN_SWAP"
+        # In check-in mode, chosen courts may still carry preplanned assignments.
+        # Park the occupant into any currently unoccupied slot so this court can
+        # be used immediately by the ready match.
+        all_assignments = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == payload.version_id,
+            )
+        ).all()
+        occupied_slot_ids = {a.slot_id for a in all_assignments}
+        free_slot = session.exec(
+            select(ScheduleSlot).where(
+                ScheduleSlot.schedule_version_id == payload.version_id,
+                ~ScheduleSlot.id.in_(list(occupied_slot_ids)),  # type: ignore[arg-type]
+            ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
+        ).first()
+        if not free_slot:
+            raise HTTPException(
+                status_code=400,
+                detail="No free slot available to park preassigned match on selected court",
+            )
+        target_assignment.slot_id = free_slot.id
+        target_assignment.assigned_by = "CHECKIN_PARK"
         target_assignment.assigned_at = datetime.utcnow()
-        target_assignment.locked = True
+        target_assignment.locked = False
         session.add(target_assignment)
+        session.flush()
 
-    selected_assignment.slot_id = effective_slot_id
+    selected_assignment.slot_id = assigned_slot_id
     selected_assignment.assigned_by = "CHECKIN_DESK"
     selected_assignment.assigned_at = datetime.utcnow()
     selected_assignment.locked = True
@@ -1715,7 +1736,7 @@ def assign_ready_match_to_slot(
         )
         automation.handle_checkin_court_assigned(
             match=match,
-            slot_id=effective_slot_id,
+            slot_id=assigned_slot_id,
         )
     except Exception:
         logger.exception(
