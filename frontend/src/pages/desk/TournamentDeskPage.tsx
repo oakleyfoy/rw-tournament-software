@@ -6913,13 +6913,40 @@ function SmsAdminTab({
   ) => {
     setSmsTemplateMode(nextMode)
     const rows = [...templates]
-    if (rows.length === 0) return
+    const courtMode = nextMode === 'court_management'
+    const nextAutomationDefaults = {
+      auto_first_match: courtMode,
+      auto_post_match_next: courtMode,
+      auto_on_deck: courtMode,
+      auto_up_next: courtMode,
+      auto_court_change: courtMode,
+      auto_checkin_first_match: !courtMode,
+      auto_checkin_slot_checkin: !courtMode,
+      auto_checkin_post_match_next: !courtMode,
+      auto_checkin_court_assigned: !courtMode,
+    }
+    const settingsMismatch = settingsDraft
+      ? (
+          settingsDraft.auto_first_match !== nextAutomationDefaults.auto_first_match ||
+          settingsDraft.auto_post_match_next !== nextAutomationDefaults.auto_post_match_next ||
+          settingsDraft.auto_on_deck !== nextAutomationDefaults.auto_on_deck ||
+          settingsDraft.auto_up_next !== nextAutomationDefaults.auto_up_next ||
+          settingsDraft.auto_court_change !== nextAutomationDefaults.auto_court_change ||
+          settingsDraft.auto_checkin_first_match !== nextAutomationDefaults.auto_checkin_first_match ||
+          settingsDraft.auto_checkin_slot_checkin !== nextAutomationDefaults.auto_checkin_slot_checkin ||
+          settingsDraft.auto_checkin_post_match_next !== nextAutomationDefaults.auto_checkin_post_match_next ||
+          settingsDraft.auto_checkin_court_assigned !== nextAutomationDefaults.auto_checkin_court_assigned
+        )
+      : false
     const hasMismatch = rows.some(row => {
       const isCheckin = row.message_type.startsWith('checkin_')
       const shouldBeActive = nextMode === 'checkin_management' ? isCheckin : !isCheckin
       return row.is_active !== shouldBeActive
     })
-    if (!hasMismatch) return
+    if (settingsDraft) {
+      setSettingsDraft(prev => prev ? ({ ...prev, ...nextAutomationDefaults }) : prev)
+    }
+    if (!hasMismatch && !settingsMismatch) return
     setApplyingTemplateMode(true)
     setError(null)
     const nextTemplates = rows.map(row => {
@@ -6929,15 +6956,30 @@ function SmsAdminTab({
     })
     setTemplates(nextTemplates)
     try {
-      await Promise.all(
-        nextTemplates.map(row =>
-          putSmsTemplate(tournamentId, row.message_type, {
-            template_body: templateBodies[row.message_type] ?? row.template_body,
-            is_active: row.is_active,
+      const tasks: Promise<any>[] = []
+      if (hasMismatch) {
+        tasks.push(
+          Promise.all(
+            nextTemplates.map(row =>
+              putSmsTemplate(tournamentId, row.message_type, {
+                template_body: templateBodies[row.message_type] ?? row.template_body,
+                is_active: row.is_active,
+              })
+            )
+          )
+        )
+      }
+      if (settingsMismatch) {
+        tasks.push(
+          patchSmsSettings(tournamentId, nextAutomationDefaults).then(updated => {
+            setSettingsDraft(updated)
           })
         )
-      )
-      await loadTemplates()
+      }
+      await Promise.all(tasks)
+      if (hasMismatch) {
+        await loadTemplates()
+      }
     } catch (e: any) {
       setError(e?.message || 'Failed to apply template mode defaults')
     } finally {
@@ -6993,7 +7035,7 @@ function SmsAdminTab({
           <h3 style={{ margin: 0, fontSize: 15 }}>SMS Status</h3>
           <button onClick={loadStatusAndSettings} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>Refresh</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 260px))', gap: 8, justifyContent: 'start', fontSize: 13 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, fontSize: 13 }}>
           <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
             <strong>Twilio:</strong> {status?.twilio_configured ? 'Configured' : 'Not Configured'}
           </div>
@@ -7048,6 +7090,49 @@ function SmsAdminTab({
             TEST mode is ON. Sends are restricted to allowlisted numbers:
             <div style={{ marginTop: 4, color: '#6d4c41' }}>
               {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
+            </div>
+          </div>
+        )}
+        {settingsDraft && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.test_mode)}
+                onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_mode: e.target.checked }) : prev)}
+              />
+              TEST mode (allowlist-only delivery)
+            </label>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+              When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
+            </div>
+            <div style={{ width: '25%', minWidth: 240, maxWidth: 320 }}>
+              <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
+                <input
+                  type="text"
+                  value={quickTestPhone}
+                  onChange={e => setQuickTestPhone(e.target.value)}
+                  placeholder="Add my phone number to test (ex: +19015551234)"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+                />
+                <button
+                  onClick={handleAddQuickTestPhone}
+                  disabled={savingQuickTestPhone}
+                  style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
+                >
+                  {savingQuickTestPhone ? 'Adding…' : 'Add My Number'}
+                </button>
+              </div>
+              <input
+                type="text"
+                value={settingsDraft.test_allowlist ?? ''}
+                onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_allowlist: e.target.value }) : prev)}
+                placeholder="+19013593035, +19703092022"
+                style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+              />
+              <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
+                Use comma or newline-separated numbers. They are normalized to E.164 on save.
+              </div>
             </div>
           </div>
         )}
@@ -7488,47 +7573,6 @@ function SmsAdminTab({
                           {label}
                         </label>
                       ))}
-                    </div>
-                  </div>
-                </div>
-                <div style={{ marginBottom: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(settingsDraft.test_mode)}
-                      onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_mode: e.target.checked }) : prev)}
-                    />
-                    TEST mode (allowlist-only delivery)
-                  </label>
-                  <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
-                    When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
-                  </div>
-                  <div style={{ width: '25%', minWidth: 240, maxWidth: 320 }}>
-                    <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
-                      <input
-                        type="text"
-                        value={quickTestPhone}
-                        onChange={e => setQuickTestPhone(e.target.value)}
-                        placeholder="Add my phone number to test (ex: +19015551234)"
-                        style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
-                      />
-                      <button
-                        onClick={handleAddQuickTestPhone}
-                        disabled={savingQuickTestPhone}
-                        style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
-                      >
-                        {savingQuickTestPhone ? 'Adding…' : 'Add My Number'}
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={settingsDraft.test_allowlist ?? ''}
-                      onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_allowlist: e.target.value }) : prev)}
-                      placeholder="+19013593035, +19703092022"
-                      style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
-                    />
-                    <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
-                      Use comma or newline-separated numbers. They are normalized to E.164 on save.
                     </div>
                   </div>
                 </div>
