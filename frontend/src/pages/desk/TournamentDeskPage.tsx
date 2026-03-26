@@ -340,6 +340,8 @@ function CourtCard({
   onMatchClick,
   onSmsTeamClick,
   onSmsMatchClick,
+  ballIssuedBySide,
+  getBallIssuedKey,
 }: {
   courtName: string
   nowPlaying?: DeskMatchItem
@@ -354,6 +356,8 @@ function CourtCard({
   onMatchClick?: (m: DeskMatchItem) => void
   onSmsTeamClick?: (teamId: number) => void
   onSmsMatchClick?: (matchId: number, phaseHint?: 'upcoming' | 'completed') => void
+  ballIssuedBySide?: Record<string, boolean>
+  getBallIssuedKey?: (matchId: number, side: 'A' | 'B') => string
 }) {
   const [editingNote, setEditingNote] = useState(false)
   const [noteText, setNoteText] = useState(courtState?.note || '')
@@ -530,6 +534,8 @@ function CourtCard({
               onMatchClick={onMatchClick}
               onSmsTeamClick={onSmsTeamClick}
               onSmsMatchClick={onSmsMatchClick}
+              ballIssuedBySide={ballIssuedBySide}
+              getBallIssuedKey={getBallIssuedKey}
             />
           </div>
         ) : (
@@ -551,6 +557,8 @@ function CourtCard({
               onMatchClick={onMatchClick}
               onSmsTeamClick={onSmsTeamClick}
               onSmsMatchClick={onSmsMatchClick}
+              ballIssuedBySide={ballIssuedBySide}
+              getBallIssuedKey={getBallIssuedKey}
             />
           </div>
         ) : (
@@ -601,6 +609,7 @@ function CourtCard({
                     </div>
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 10, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
+                    {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'A')] && <BallDot />}
                     <span style={{ color: onDeck.team1_defaulted ? '#c62828' : '#555', textDecoration: onDeck.team1_defaulted ? 'line-through' : 'none' }}>
                       {onDeck.team1_display}
                     </span>
@@ -614,6 +623,7 @@ function CourtCard({
                     <span style={{ color: onDeck.team2_defaulted ? '#c62828' : '#555', textDecoration: onDeck.team2_defaulted ? 'line-through' : 'none' }}>
                       {onDeck.team2_display}
                     </span>
+                    {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'B')] && <BallDot />}
                     {onSmsTeamClick && onDeck.team2_id && (
                       <SmsQuickActionButton
                         title={`Text ${onDeck.team2_display}`}
@@ -763,6 +773,22 @@ function SmsQuickActionButton({ title, onClick }: { title: string; onClick: () =
   )
 }
 
+function BallDot() {
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        backgroundColor: '#d4ff4f',
+        border: '1px solid #a5d63a',
+        flexShrink: 0,
+      }}
+    />
+  )
+}
+
 function MiniMatchCard({
   match,
   isDraft,
@@ -772,6 +798,8 @@ function MiniMatchCard({
   onMatchClick,
   onSmsTeamClick,
   onSmsMatchClick,
+  ballIssuedBySide,
+  getBallIssuedKey,
 }: {
   match: DeskMatchItem
   isDraft: boolean
@@ -781,6 +809,8 @@ function MiniMatchCard({
   onMatchClick?: (m: DeskMatchItem) => void
   onSmsTeamClick?: (teamId: number) => void
   onSmsMatchClick?: (matchId: number, phaseHint?: 'upcoming' | 'completed') => void
+  ballIssuedBySide?: Record<string, boolean>
+  getBallIssuedKey?: (matchId: number, side: 'A' | 'B') => string
 }) {
   const sc = STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED
   const team1TBD = !match.team1_id && match.source_match_a_id
@@ -830,6 +860,7 @@ function MiniMatchCard({
         textDecoration: match.team1_defaulted ? 'line-through' : 'none',
         display: 'flex', alignItems: 'center', gap: 3,
       }}>
+        {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(match.match_id, 'A')] && <BallDot />}
         <span>{match.team1_display}</span>
         {match.team1_notes && <NoteIcon note={match.team1_notes} />}
         {onSmsTeamClick && match.team1_id && (
@@ -852,6 +883,7 @@ function MiniMatchCard({
         display: 'flex', alignItems: 'center', gap: 3,
       }}>
         <span>{match.team2_display}</span>
+        {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(match.match_id, 'B')] && <BallDot />}
         {match.team2_notes && <NoteIcon note={match.team2_notes} />}
         {onSmsTeamClick && match.team2_id && (
           <SmsQuickActionButton
@@ -8152,11 +8184,46 @@ export default function TournamentDeskPage() {
     return division ? `${rq.event_name} ${division}` : rq.event_name
   }, [])
 
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now())
+
   const getBallIssuedKey = useCallback((matchId: number, side: 'A' | 'B') => `${matchId}:${side}`, [])
   const toggleBallIssued = useCallback((matchId: number, side: 'A' | 'B') => {
     const key = getBallIssuedKey(matchId, side)
-    setBallIssuedBySide(prev => ({ ...prev, [key]: !prev[key] }))
+    const keyA = getBallIssuedKey(matchId, 'A')
+    const keyB = getBallIssuedKey(matchId, 'B')
+    setBallIssuedBySide(prev => {
+      const next = { ...prev }
+      const wasSelected = Boolean(prev[key])
+      if (wasSelected) {
+        next[key] = false
+        return next
+      }
+      next[keyA] = side === 'A'
+      next[keyB] = side === 'B'
+      return next
+    })
   }, [getBallIssuedKey])
+
+  const formatStartedAtLabel = useCallback((iso?: string | null): string | null => {
+    if (!iso) return null
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return null
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  }, [])
+
+  const formatElapsedLabel = useCallback((startIso?: string | null, endIso?: string | null): string | null => {
+    if (!startIso) return null
+    const start = new Date(startIso).getTime()
+    if (Number.isNaN(start)) return null
+    const end = endIso ? new Date(endIso).getTime() : clockNowMs
+    if (Number.isNaN(end) || end <= start) return '0:00'
+    const totalSeconds = Math.floor((end - start) / 1000)
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    return `${minutes}:${String(seconds).padStart(2, '0')}`
+  }, [clockNowMs])
 
   const renderInlinePlayerToggle = useCallback((
     checked: boolean,
@@ -8261,6 +8328,11 @@ export default function TournamentDeskPage() {
       // ignore local storage failures
     }
   }, [tid, ballIssuedBySide])
+
+  useEffect(() => {
+    const id = window.setInterval(() => setClockNowMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const handleStartAllConfirm = useCallback(async () => {
     if (!tid || !data) return
@@ -8724,6 +8796,8 @@ export default function TournamentDeskPage() {
                       onMatchClick={m => setDrawerMatch(m)}
                       onSmsTeamClick={handleQuickSmsTeam}
                       onSmsMatchClick={handleQuickSmsMatch}
+                      ballIssuedBySide={ballIssuedBySide}
+                      getBallIssuedKey={getBallIssuedKey}
                     />
                   )
                 })}
@@ -8944,6 +9018,7 @@ export default function TournamentDeskPage() {
                                         color: '#455a64',
                                         marginBottom: 3,
                                       }}>
+                                        {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
                                         {renderInlinePlayerToggle(
                                           !!(state.team_checked_in || p1?.checked_in),
                                           (checkinEnabled && p1) ? () => handlePlayerCheckIn(cm!, side, p1.player_id, !(state.team_checked_in || p1.checked_in)) : undefined,
@@ -8957,6 +9032,7 @@ export default function TournamentDeskPage() {
                                           (checkinEnabled && p2) ? () => handlePlayerCheckIn(cm!, side, p2.player_id, !(state.team_checked_in || p2.checked_in)) : undefined,
                                           'right'
                                         )}
+                                        {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}
                                       </div>
                                     )
                                   })()}
@@ -9056,7 +9132,13 @@ export default function TournamentDeskPage() {
                               <tr key={rq.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
                                 <td style={{ padding: '6px 8px', fontSize: 12, verticalAlign: 'top' }}>
                                   <div style={{ fontWeight: 700, color: '#263238' }}>{formatReadyQueueLabel(rq)}</div>
-                                  <div style={{ color: '#455a64' }}>{rq.team1_display} vs {rq.team2_display}</div>
+                                  <div style={{ color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                    {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'A')] && <BallDot />}
+                                    <span>{rq.team1_display}</span>
+                                    <span>vs</span>
+                                    <span>{rq.team2_display}</span>
+                                    {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'B')] && <BallDot />}
+                                  </div>
                                   <div style={{ color: '#90a4ae', fontSize: 11 }}>{rq.day_label} {rq.scheduled_time || ''}</div>
                                 </td>
                                 <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
@@ -9108,20 +9190,66 @@ export default function TournamentDeskPage() {
                         const onDeck = data.on_deck_by_court[court]
                         const courtLabel = court.replace(/^Court\s+/i, '')
                         const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
+                        const displayMatch = now || upNext || onDeck
+                        const startAtLabel = formatStartedAtLabel(displayMatch?.started_at)
+                        const elapsedLabel = formatElapsedLabel(displayMatch?.started_at, displayMatch?.completed_at)
                         return (
                           <div key={court} style={{ border: '1px solid #eef2f5', borderRadius: 4, padding: '6px 7px', fontSize: 11 }}>
                             <div style={{ fontWeight: 700, color: '#263238', marginBottom: 2 }}>{court}</div>
-                            <div style={{ color: '#607d8b' }}>
+                            <div style={{ color: '#607d8b', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                               {isClosed
                                 ? 'Closed'
                                 : now
-                                ? `Playing: ${now.team1_display} vs ${now.team2_display}`
+                                ? (
+                                  <>
+                                    <span>Playing:</span>
+                                    {ballIssuedBySide[getBallIssuedKey(now.match_id, 'A')] && <BallDot />}
+                                    <span>{now.team1_display}</span>
+                                    <span>vs</span>
+                                    <span>{now.team2_display}</span>
+                                    {ballIssuedBySide[getBallIssuedKey(now.match_id, 'B')] && <BallDot />}
+                                  </>
+                                )
                                 : upNext
-                                  ? `Up Next: ${upNext.team1_display} vs ${upNext.team2_display}`
+                                  ? (
+                                    <>
+                                      <span>Up Next:</span>
+                                      {ballIssuedBySide[getBallIssuedKey(upNext.match_id, 'A')] && <BallDot />}
+                                      <span>{upNext.team1_display}</span>
+                                      <span>vs</span>
+                                      <span>{upNext.team2_display}</span>
+                                      {ballIssuedBySide[getBallIssuedKey(upNext.match_id, 'B')] && <BallDot />}
+                                    </>
+                                  )
                                   : onDeck
-                                    ? `On Deck: ${onDeck.team1_display} vs ${onDeck.team2_display}`
+                                    ? (
+                                      <>
+                                        <span>On Deck:</span>
+                                        {ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'A')] && <BallDot />}
+                                        <span>{onDeck.team1_display}</span>
+                                        <span>vs</span>
+                                        <span>{onDeck.team2_display}</span>
+                                        {ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'B')] && <BallDot />}
+                                      </>
+                                    )
                                     : ''}
                             </div>
+                            {displayMatch && (
+                              <div style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
+                                <EventBadge name={displayMatch.event_name} />
+                                <Badge label={displayMatch.stage} bg={STAGE_COLORS[displayMatch.stage] || '#757575'} color="#fff" />
+                              </div>
+                            )}
+                            {startAtLabel && (
+                              <div style={{ marginTop: 3, fontSize: 10, color: '#607d8b', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                <span>Start: {startAtLabel}</span>
+                                <span>
+                                  {displayMatch?.status === 'FINAL'
+                                    ? `Total: ${elapsedLabel || '0:00'}`
+                                    : `Running: ${elapsedLabel || '0:00'}`}
+                                </span>
+                              </div>
+                            )}
                             {now && (
                               <button
                                 type="button"
