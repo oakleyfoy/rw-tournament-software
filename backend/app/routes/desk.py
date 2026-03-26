@@ -1655,8 +1655,19 @@ def assign_ready_match_to_slot(
     if payload.match_id not in ready_ids:
         raise HTTPException(status_code=400, detail="Match is not ready to play")
     slot_ids = {s.slot_id for s in available_slots}
+    effective_slot_id = payload.slot_id
     if payload.slot_id not in slot_ids:
-        raise HTTPException(status_code=400, detail="Slot is not currently available")
+        # Availability is court-based; slot IDs can differ for the same court
+        # between snapshots. Accept any slot on a currently available court.
+        target_court_label = target_slot.court_label or str(target_slot.court_number)
+        target_court_name = (
+            f"Court {target_court_label}"
+            if not target_court_label.lower().startswith("court")
+            else target_court_label
+        )
+        available_court_names = {s.court_name for s in available_slots}
+        if target_court_name not in available_court_names:
+            raise HTTPException(status_code=400, detail="Slot is not currently available")
 
     selected_assignment = session.exec(
         select(MatchAssignment).where(
@@ -1670,7 +1681,7 @@ def assign_ready_match_to_slot(
     target_assignment = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == payload.version_id,
-            MatchAssignment.slot_id == payload.slot_id,
+            MatchAssignment.slot_id == effective_slot_id,
         )
     ).first()
 
@@ -1682,7 +1693,7 @@ def assign_ready_match_to_slot(
         target_assignment.locked = True
         session.add(target_assignment)
 
-    selected_assignment.slot_id = payload.slot_id
+    selected_assignment.slot_id = effective_slot_id
     selected_assignment.assigned_by = "CHECKIN_DESK"
     selected_assignment.assigned_at = datetime.utcnow()
     selected_assignment.locked = True
@@ -1704,7 +1715,7 @@ def assign_ready_match_to_slot(
         )
         automation.handle_checkin_court_assigned(
             match=match,
-            slot_id=payload.slot_id,
+            slot_id=effective_slot_id,
         )
     except Exception:
         logger.exception(

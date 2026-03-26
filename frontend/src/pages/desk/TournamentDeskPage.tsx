@@ -6221,9 +6221,11 @@ function formatEventScopeLabel(event: Event): string {
 function SmsAdminTab({
   tournamentId,
   quickTarget,
+  managementMode,
 }: {
   tournamentId: number
   quickTarget?: SmsQuickTargetPrefill | null
+  managementMode?: 'court_management' | 'checkin_management'
 }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -6998,6 +7000,13 @@ function SmsAdminTab({
     appliedTemplateDefaultsForTournamentRef.current = true
     void handleTemplateModeChange(smsTemplateMode)
   }, [templates, smsTemplateMode, applyingTemplateMode])
+
+  useEffect(() => {
+    if (!managementMode) return
+    if (applyingTemplateMode) return
+    if (smsTemplateMode === managementMode) return
+    void handleTemplateModeChange(managementMode)
+  }, [managementMode, smsTemplateMode, applyingTemplateMode])
 
   if (loading) return <div style={{ padding: 20, color: '#888' }}>Loading SMS admin…</div>
 
@@ -9246,7 +9255,11 @@ export default function TournamentDeskPage() {
         )}
 
         {activeTab === 'sms' && (
-          <SmsAdminTab tournamentId={tid!} quickTarget={smsQuickTarget} />
+          <SmsAdminTab
+            tournamentId={tid!}
+            quickTarget={smsQuickTarget}
+            managementMode={managementMode}
+          />
         )}
       </div>
 

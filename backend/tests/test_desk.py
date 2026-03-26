@@ -2691,6 +2691,52 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     assert moved["status"] == "IN_PROGRESS"
     assert all(cm["match_id"] != m1.id for cm in snap["checkin_matches"])
 
+
+def test_checkin_assign_accepts_noncanonical_slot_id_for_available_court(client, session):
+    """Assign should accept a different slot id on the same available court."""
+    t, v, _ev, teams, matches, slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    delta_players = _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    # Make match ready.
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[0].id, "checked_in": True},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[1].id, "checked_in": True},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[0].id, "checked_in": True},
+    )
+    ready_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[1].id, "checked_in": True},
+    )
+    assert ready_resp.status_code == 200
+
+    # slot_c2_t2 is a different slot id for Court 2; backend should remap it.
+    slot_c2_t2 = slots[3]
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": m1.id, "slot_id": slot_c2_t2.id},
+    )
+    assert assign.status_code == 200
+    snap = assign.json()
+    moved = [m for m in snap["matches"] if m["match_id"] == m1.id][0]
+    assert moved["court_name"] == "Court 2"
+    assert moved["status"] == "IN_PROGRESS"
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
