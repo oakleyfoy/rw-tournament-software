@@ -218,6 +218,7 @@ class CheckInSlotOption(BaseModel):
 class DeskSnapshotResponse(BaseModel):
     tournament_id: int
     tournament_name: str
+    tournament_timezone: Optional[str] = None
     version_id: int
     version_status: str
     courts: List[str]
@@ -1304,6 +1305,7 @@ def desk_snapshot(
     return DeskSnapshotResponse(
         tournament_id=tournament.id,
         tournament_name=tournament.name,
+        tournament_timezone=tournament.timezone,
         version_id=version.id,
         version_status=version.status,
         courts=courts_sorted,

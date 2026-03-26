@@ -8185,6 +8185,7 @@ export default function TournamentDeskPage() {
   }, [])
 
   const [clockNowMs, setClockNowMs] = useState(() => Date.now())
+  const tournamentTimeZone = data?.tournament_timezone || undefined
 
   const getBallIssuedKey = useCallback((matchId: number, side: 'A' | 'B') => `${matchId}:${side}`, [])
   const toggleBallIssued = useCallback((matchId: number, side: 'A' | 'B') => {
@@ -8204,26 +8205,42 @@ export default function TournamentDeskPage() {
     })
   }, [getBallIssuedKey])
 
-  const formatStartedAtLabel = useCallback((iso?: string | null): string | null => {
+  const parseApiTimestampMs = useCallback((iso?: string | null): number | null => {
     if (!iso) return null
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return null
-    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const hasOffset = /(?:Z|[+-]\d{2}:\d{2})$/i.test(iso)
+    const normalized = hasOffset ? iso : `${iso}Z`
+    const ms = Date.parse(normalized)
+    if (Number.isNaN(ms)) return null
+    return ms
   }, [])
 
+  const formatStartedAtLabel = useCallback((iso?: string | null): string | null => {
+    const ms = parseApiTimestampMs(iso)
+    if (ms === null) return null
+    const d = new Date(ms)
+    try {
+      return d.toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: tournamentTimeZone,
+      })
+    } catch {
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    }
+  }, [parseApiTimestampMs, tournamentTimeZone])
+
   const formatElapsedLabel = useCallback((startIso?: string | null, endIso?: string | null): string | null => {
-    if (!startIso) return null
-    const start = new Date(startIso).getTime()
-    if (Number.isNaN(start)) return null
-    const end = endIso ? new Date(endIso).getTime() : clockNowMs
-    if (Number.isNaN(end) || end <= start) return '0:00'
+    const start = parseApiTimestampMs(startIso)
+    if (start === null) return null
+    const end = endIso ? parseApiTimestampMs(endIso) : clockNowMs
+    if (end === null || end <= start) return '0:00'
     const totalSeconds = Math.floor((end - start) / 1000)
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     const seconds = totalSeconds % 60
     if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
     return `${minutes}:${String(seconds).padStart(2, '0')}`
-  }, [clockNowMs])
+  }, [clockNowMs, parseApiTimestampMs])
 
   const renderInlinePlayerToggle = useCallback((
     checked: boolean,

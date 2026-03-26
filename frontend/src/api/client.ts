@@ -2277,6 +2277,7 @@ export interface CheckInSlotOption {
 export interface DeskSnapshotResponse {
   tournament_id: number
   tournament_name: string
+  tournament_timezone: string | null
   version_id: number
   version_status: string
   courts: string[]
