@@ -1600,6 +1600,16 @@ def build_spec_from_event(event, draw_plan: Optional[dict] = None) -> DrawPlanSp
 
     template_type = draw_plan.get("template_type", "RR_ONLY")
     wf_rounds = draw_plan.get("wf_rounds", 0)
+    timing = draw_plan.get("timing") if isinstance(draw_plan.get("timing"), dict) else {}
+
+    # Prefer timing persisted in draw_plan_json (source of truth from Draw Builder),
+    # and fall back to event columns for older records.
+    wf_minutes = timing.get("wf_block_minutes")
+    if not isinstance(wf_minutes, int) or wf_minutes <= 0:
+        wf_minutes = event.wf_block_minutes or 60
+    standard_minutes = timing.get("standard_block_minutes")
+    if not isinstance(standard_minutes, int) or standard_minutes <= 0:
+        standard_minutes = event.standard_block_minutes or 120
 
     return DrawPlanSpec(
         event_id=event.id,
@@ -1610,8 +1620,8 @@ def build_spec_from_event(event, draw_plan: Optional[dict] = None) -> DrawPlanSp
         template_key=normalize_template_key(template_type),
         guarantee=event.guarantee_selected or 5,
         waterfall_rounds=wf_rounds,
-        waterfall_minutes=event.wf_block_minutes or 60,
-        standard_minutes=event.standard_block_minutes or 120,
+        waterfall_minutes=wf_minutes,
+        standard_minutes=standard_minutes,
         tournament_id=event.tournament_id,
         event_category=event.category,
     )

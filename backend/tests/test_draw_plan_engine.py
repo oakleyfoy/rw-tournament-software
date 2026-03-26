@@ -19,6 +19,7 @@ from app.services.draw_plan_engine import (
     InventoryCounts,
     BRACKET_MATCHES_G4,
     BRACKET_MATCHES_G5,
+    build_spec_from_event,
     bracket_inventory,
     bracket_matches_for_guarantee,
     compute_inventory,
@@ -55,6 +56,33 @@ def make_spec(
         waterfall_minutes=60,
         standard_minutes=105,
     )
+
+
+def test_build_spec_from_event_prefers_draw_plan_timing_values():
+    event = Event(
+        id=101,
+        tournament_id=7,
+        category="mixed",
+        name="Mixed",
+        team_count=16,
+        wf_block_minutes=60,
+        standard_block_minutes=60,  # Intentionally stale/wrong
+        draw_plan_json=json.dumps(
+            {
+                "version": "1.0",
+                "template_type": "WF_TO_POOLS_DYNAMIC",
+                "wf_rounds": 2,
+                "timing": {
+                    "wf_block_minutes": 60,
+                    "standard_block_minutes": 105,
+                },
+            }
+        ),
+    )
+
+    spec = build_spec_from_event(event)
+    assert spec.waterfall_minutes == 60
+    assert spec.standard_minutes == 105
 
 
 # -----------------------------------------------------------------------------
