@@ -6967,7 +6967,8 @@ function SmsAdminTab({
         </div>
       )}
 
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', order: 2, flex: '0 1 500px', minWidth: 420 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>SMS Status</h3>
           <button onClick={loadStatusAndSettings} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>Refresh</button>
@@ -7022,35 +7023,41 @@ function SmsAdminTab({
           Selected template set: <strong>{smsTemplateMode === 'checkin_management' ? 'Check-In Management' : 'Court Management'}</strong>.
           {' '}Send anytime. TEST mode + allowlist is the active safety check.
         </div>
-        {settingsDraft?.test_mode && (
-          <div style={{ marginTop: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100', maxWidth: 820 }}>
-            TEST mode is ON. Sends are restricted to allowlisted numbers:
-            <div style={{ marginTop: 4, color: '#6d4c41' }}>
-              {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: settingsDraft?.test_mode ? 'minmax(360px, 1fr) minmax(320px, 420px)' : 'minmax(320px, 420px)', gap: 10, alignItems: 'start' }}>
+          {settingsDraft?.test_mode && (
+            <div style={{ padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100' }}>
+              TEST mode is ON. Sends are restricted to allowlisted numbers:
+              <div style={{ marginTop: 4, color: '#6d4c41' }}>
+                {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, backgroundColor: '#fff', maxWidth: 980 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => setShowTemplates(v => !v)}
-              style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-            >
-              {showTemplates ? 'Hide templates' : 'Show templates'}
-            </button>
-            {showTemplates && (
-              <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
-                Reset to defaults
-              </button>
+          )}
+          <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setShowTemplates(v => !v)}
+                  style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  {showTemplates ? 'Hide templates' : 'Show templates'}
+                </button>
+                {showTemplates && (
+                  <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                    Reset to defaults
+                  </button>
+                )}
+              </div>
+            </div>
+            {!showTemplates && (
+              <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
+                Templates are hidden. Click "Show templates" to edit message templates.
+              </div>
             )}
           </div>
         </div>
-        {showTemplates ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
+        {showTemplates && (
+          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
             <div style={{ border: '1px solid #e8eaf6', borderRadius: 8, padding: 10, backgroundColor: '#f8f9ff' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>Court Management Templates</div>
@@ -7143,10 +7150,6 @@ function SmsAdminTab({
                 </div>
               )}
             </div>
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
-            Templates are hidden. Click "Show templates" to edit message templates.
           </div>
         )}
       </div>
@@ -7253,7 +7256,7 @@ function SmsAdminTab({
 
       </div>
 
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', maxWidth: 980 }}>
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', order: 1, flex: '1 1 700px', minWidth: 560 }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Manual Send / Preview</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 260px) minmax(360px, 1fr)', gap: 8, marginBottom: 8, alignItems: 'start' }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
@@ -7533,6 +7536,7 @@ function SmsAdminTab({
           </div>
         )}
       </div>
+      </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Automation Toggles</h3>
@@ -7591,22 +7595,23 @@ function SmsAdminTab({
               <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
                 When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
               </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-              <input
-                type="text"
-                value={quickTestPhone}
-                onChange={e => setQuickTestPhone(e.target.value)}
-                placeholder="Add my phone number to test (ex: +19015551234)"
-                style={{ flex: '1 1 320px', minWidth: 260, padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
-              />
-              <button
-                onClick={handleAddQuickTestPhone}
-                disabled={savingQuickTestPhone}
-                style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer' }}
-              >
-                {savingQuickTestPhone ? 'Adding…' : 'Add My Number'}
-              </button>
-            </div>
+              <div style={{ width: '25%', minWidth: 240, maxWidth: 320 }}>
+                <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
+                  <input
+                    type="text"
+                    value={quickTestPhone}
+                    onChange={e => setQuickTestPhone(e.target.value)}
+                    placeholder="Add my phone number to test (ex: +19015551234)"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+                  />
+                  <button
+                    onClick={handleAddQuickTestPhone}
+                    disabled={savingQuickTestPhone}
+                    style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
+                  >
+                    {savingQuickTestPhone ? 'Adding…' : 'Add My Number'}
+                  </button>
+                </div>
               <input
                 type="text"
                 value={settingsDraft.test_allowlist ?? ''}
@@ -7616,6 +7621,7 @@ function SmsAdminTab({
               />
               <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
                 Use comma or newline-separated numbers. They are normalized to E.164 on save.
+              </div>
               </div>
             </div>
             <div style={{ marginBottom: 10, padding: 10, border: '1px solid #e8eaf6', borderRadius: 6, backgroundColor: '#f5f7ff' }}>
