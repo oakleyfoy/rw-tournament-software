@@ -1255,6 +1255,18 @@ function MatchDrawer({
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
+        {/* Downstream Impact */}
+        <DrawerImpact
+          tournamentId={tournamentId}
+          versionId={versionId}
+          matchId={match.match_id}
+          matchStatus={effectiveStatus}
+          stage={effectiveMatch.stage}
+          matchItem={effectiveMatch}
+          allMatches={allMatches}
+          onSwitchToImpact={undefined}
+        />
+
         <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
           <Badge label={effectiveMatch.stage} bg={STAGE_COLORS[effectiveMatch.stage] || '#757575'} color="#fff" />
           <Badge label={STATUS_LABEL[effectiveStatus] || effectiveStatus} bg={sc.bg} color={sc.text} />
@@ -1494,18 +1506,6 @@ function MatchDrawer({
             )}
           </div>
         )}
-
-        {/* Downstream Impact */}
-        <DrawerImpact
-          tournamentId={tournamentId}
-          versionId={versionId}
-          matchId={match.match_id}
-          matchStatus={effectiveStatus}
-          stage={effectiveMatch.stage}
-          matchItem={effectiveMatch}
-          allMatches={allMatches}
-          onSwitchToImpact={undefined}
-        />
 
         {/* Match History Timeline */}
         <MatchTimeline match={effectiveMatch} />
