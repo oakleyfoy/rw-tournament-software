@@ -7119,7 +7119,7 @@ function SmsAdminTab({
                   type="text"
                   value={quickTestPhone}
                   onChange={e => setQuickTestPhone(e.target.value)}
-                  placeholder="Add my phone number to test (ex: +19015551234)"
+                      placeholder="Add my number (e.g. +19015551234)"
                   style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
                 />
                 <button
@@ -7590,10 +7590,10 @@ function SmsAdminTab({
                       checked={Boolean(settingsDraft.player_contacts_only)}
                       onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, player_contacts_only: e.target.checked }) : prev)}
                     />
-                    Player contacts only (deprecate team-field texting)
+                    Send texts to player records only
                   </label>
                   <div style={{ fontSize: 12, color: '#555' }}>
-                    When enabled, team/event/division/match sends use Player records linked to teams. Legacy team phone fields are no longer used directly for those sends.
+                    Use the phone numbers saved on Player records linked to each team. Do not use old phone fields saved directly on the Team.
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                     <button
@@ -7604,7 +7604,7 @@ function SmsAdminTab({
                       {syncingPlayerContacts ? 'Rebuilding…' : 'Rebuild Player Links'}
                     </button>
                     <span style={{ fontSize: 11, color: '#666' }}>
-                      Team create/update/delete now auto-syncs links. Use rebuild after large imports or if data ever looks out of sync.
+                      Team changes sync automatically. Use Rebuild only after a big import or if something looks wrong.
                     </span>
                   </div>
                   {playerSyncSummary && (
@@ -7636,7 +7636,16 @@ function SmsAdminTab({
                 {showTemplates ? 'Hide templates' : 'Show templates'}
               </button>
               {showTemplates && (
-                <button onClick={handleResetTemplates} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                <button
+                  onClick={() => {
+                    const ok = window.confirm(
+                      'Reset all SMS templates to defaults? This will overwrite current template text and active states.'
+                    )
+                    if (!ok) return
+                    void handleResetTemplates()
+                  }}
+                  style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+                >
                   Reset to defaults
                 </button>
               )}
