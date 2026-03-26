@@ -997,16 +997,24 @@ def generate_slots(
                 status_code=400, detail="No active tournament days found. Configure days and courts first."
             )
 
-        # Determine block_minutes from the tournament's events.
-        # Use the wf_block_minutes (typically 60 min) since WF matches
-        # are the most common and set the base time-slot rhythm.
+        # Determine a single block_minutes for days/courts mode from event durations.
+        # Use the maximum configured match duration across events so all generated
+        # matches can fit into available slots.
         # Falls back to 60 if no events exist yet.
         from app.models import Event as EventModel
         event_list = session.exec(
             select(EventModel).where(EventModel.tournament_id == tournament_id)
         ).all()
         if event_list:
-            block_mins = event_list[0].wf_block_minutes or 60
+            duration_candidates: list[int] = []
+            for ev in event_list:
+                wf = ev.wf_block_minutes or 60
+                std = ev.standard_block_minutes or 120
+                if wf > 0:
+                    duration_candidates.append(wf)
+                if std > 0:
+                    duration_candidates.append(std)
+            block_mins = max(duration_candidates) if duration_candidates else 60
         else:
             block_mins = 60  # sensible default: 1-hour slots
 
