@@ -1885,56 +1885,61 @@ def finalize_match(
     # Auto-advance
     adv_result = apply_advancement_with_details(session, match.id)
 
-    # Auto-start next match on the same court
-    auto_started_match_id = None
-    finalized_assignment = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == payload.version_id,
-            MatchAssignment.match_id == match.id,
-        )
-    ).first()
-    if finalized_assignment:
-        finalized_slot = session.get(ScheduleSlot, finalized_assignment.slot_id)
-        if finalized_slot:
-            court_num = finalized_slot.court_number
-            court_slots = session.exec(
-                select(ScheduleSlot).where(
-                    ScheduleSlot.schedule_version_id == payload.version_id,
-                    ScheduleSlot.court_number == court_num,
-                    ScheduleSlot.day_date == finalized_slot.day_date,
-                ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
-            ).all()
-            court_slot_ids = [s.id for s in court_slots]
-            if court_slot_ids:
-                court_assignments = session.exec(
-                    select(MatchAssignment).where(
-                        MatchAssignment.schedule_version_id == payload.version_id,
-                        MatchAssignment.slot_id.in_(court_slot_ids),
-                    )
-                ).all()
-                slot_order = {sid: i for i, sid in enumerate(court_slot_ids)}
-                court_assignments.sort(key=lambda a: slot_order.get(a.slot_id, 0))
+    management_mode = _normalize_management_mode(
+        getattr(tournament, "desk_management_mode", None)
+    )
 
-                finalized_order = slot_order.get(finalized_assignment.slot_id, -1)
-                for ca in court_assignments:
-                    if slot_order.get(ca.slot_id, -1) <= finalized_order:
-                        continue
-                    next_slot = session.get(ScheduleSlot, ca.slot_id)
-                    if not next_slot or not _slot_start_has_arrived(tournament, next_slot):
-                        continue
-                    next_match = session.get(Match, ca.match_id)
-                    if (
-                        next_match
-                        and (next_match.runtime_status or "SCHEDULED").upper() == "SCHEDULED"
-                        and next_match.team_a_id is not None
-                        and next_match.team_b_id is not None
-                    ):
-                        next_match.runtime_status = "IN_PROGRESS"
-                        next_match.started_at = datetime.utcnow()
-                        session.add(next_match)
-                        session.commit()
-                        auto_started_match_id = next_match.id
-                        break
+    # Auto-start next match on the same court (court-management only).
+    auto_started_match_id = None
+    if management_mode != MODE_CHECKIN_MANAGEMENT:
+        finalized_assignment = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == payload.version_id,
+                MatchAssignment.match_id == match.id,
+            )
+        ).first()
+        if finalized_assignment:
+            finalized_slot = session.get(ScheduleSlot, finalized_assignment.slot_id)
+            if finalized_slot:
+                court_num = finalized_slot.court_number
+                court_slots = session.exec(
+                    select(ScheduleSlot).where(
+                        ScheduleSlot.schedule_version_id == payload.version_id,
+                        ScheduleSlot.court_number == court_num,
+                        ScheduleSlot.day_date == finalized_slot.day_date,
+                    ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
+                ).all()
+                court_slot_ids = [s.id for s in court_slots]
+                if court_slot_ids:
+                    court_assignments = session.exec(
+                        select(MatchAssignment).where(
+                            MatchAssignment.schedule_version_id == payload.version_id,
+                            MatchAssignment.slot_id.in_(court_slot_ids),
+                        )
+                    ).all()
+                    slot_order = {sid: i for i, sid in enumerate(court_slot_ids)}
+                    court_assignments.sort(key=lambda a: slot_order.get(a.slot_id, 0))
+
+                    finalized_order = slot_order.get(finalized_assignment.slot_id, -1)
+                    for ca in court_assignments:
+                        if slot_order.get(ca.slot_id, -1) <= finalized_order:
+                            continue
+                        next_slot = session.get(ScheduleSlot, ca.slot_id)
+                        if not next_slot or not _slot_start_has_arrived(tournament, next_slot):
+                            continue
+                        next_match = session.get(Match, ca.match_id)
+                        if (
+                            next_match
+                            and (next_match.runtime_status or "SCHEDULED").upper() == "SCHEDULED"
+                            and next_match.team_a_id is not None
+                            and next_match.team_b_id is not None
+                        ):
+                            next_match.runtime_status = "IN_PROGRESS"
+                            next_match.started_at = datetime.utcnow()
+                            session.add(next_match)
+                            session.commit()
+                            auto_started_match_id = next_match.id
+                            break
 
     desk_item = _match_to_desk_item(match, session, tournament)
 
