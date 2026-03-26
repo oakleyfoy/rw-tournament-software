@@ -9098,13 +9098,21 @@ export default function TournamentDeskPage() {
                       Courts (Compact)
                     </div>
                     <div style={{ padding: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                      {data.courts.map((court) => {
+                      {visibleCourts.map((court) => {
                         const now = data.now_playing_by_court[court]
+                        const upNext = data.up_next_by_court[court]
+                        const onDeck = data.on_deck_by_court[court]
                         return (
                           <div key={court} style={{ border: '1px solid #eef2f5', borderRadius: 4, padding: '6px 7px', fontSize: 11 }}>
                             <div style={{ fontWeight: 700, color: '#263238', marginBottom: 2 }}>{court}</div>
                             <div style={{ color: '#607d8b' }}>
-                              {now ? `Playing: ${now.team1_display} vs ${now.team2_display}` : 'Playing: Open'}
+                              {now
+                                ? `Playing: ${now.team1_display} vs ${now.team2_display}`
+                                : upNext
+                                  ? `Up Next: ${upNext.team1_display} vs ${upNext.team2_display}`
+                                  : onDeck
+                                    ? `On Deck: ${onDeck.team1_display} vs ${onDeck.team2_display}`
+                                    : ''}
                             </div>
                             {now && (
                               <button
@@ -9128,6 +9136,11 @@ export default function TournamentDeskPage() {
                           </div>
                         )
                       })}
+                      {visibleCourts.length === 0 && (
+                        <div style={{ color: '#888', fontSize: 12, fontStyle: 'italic' }}>
+                          No courts with matches right now
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
