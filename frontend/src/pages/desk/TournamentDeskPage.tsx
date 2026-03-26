@@ -8213,13 +8213,17 @@ export default function TournamentDeskPage() {
   const visibleCourts = useMemo(() => {
     if (!data) return []
     return data.courts.filter(court =>
-      Boolean(
+      (() => {
+        const courtLabel = court.replace(/^Court\s+/i, '')
+        const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
+        return isClosed || Boolean(
         data.now_playing_by_court[court] ||
         data.up_next_by_court[court] ||
         data.on_deck_by_court[court]
-      )
+        )
+      })()
     )
-  }, [data])
+  }, [data, courtStates])
 
   const handleStartAllOpen = useCallback(() => {
     setStartAllExcluded(new Set())
@@ -8817,14 +8821,6 @@ export default function TournamentDeskPage() {
                           {(() => {
                             const rows: JSX.Element[] = []
                             filteredSlotSections.forEach((section) => {
-                              rows.push(
-                                <tr key={`slot-${section.key}`} style={{ borderTop: '1px solid #dbe4eb', backgroundColor: '#f7fafc' }}>
-                                  <td colSpan={3} style={{ padding: '6px 8px', fontSize: 12, color: '#455a64', fontWeight: 700 }}>
-                                    {section.label}
-                                  </td>
-                                </tr>
-                              )
-
                               const checkInMatchesForSection =
                                 section.checkinRows.length > 0
                                   ? section.checkinRows
@@ -8850,17 +8846,16 @@ export default function TournamentDeskPage() {
                                       }))
 
                               if (rowEntries.length === 0) {
-                                rows.push(
-                                  <tr key={`slot-empty-${section.key}`} style={{ borderTop: '1px solid #f0f3f6' }}>
-                                    <td style={{ padding: '6px 8px', fontSize: 12, color: '#78909c', fontStyle: 'italic' }}>
-                                      (Open slot)
-                                    </td>
-                                    <td style={{ padding: '6px 8px', fontSize: 12, color: '#b0bec5' }}>TBD / TBD</td>
-                                    <td style={{ padding: '6px 8px', fontSize: 12, color: '#b0bec5' }}>TBD / TBD</td>
-                                  </tr>
-                                )
                                 return
                               }
+
+                              rows.push(
+                                <tr key={`slot-${section.key}`} style={{ borderTop: '1px solid #dbe4eb', backgroundColor: '#f7fafc' }}>
+                                  <td colSpan={3} style={{ padding: '6px 8px', fontSize: 12, color: '#455a64', fontWeight: 700 }}>
+                                    {section.label}
+                                  </td>
+                                </tr>
+                              )
 
                               rowEntries.forEach(({ baseMatch, cm }) => {
                               const fallbackMatch: DeskMatchItem = baseMatch || {
@@ -9102,11 +9097,15 @@ export default function TournamentDeskPage() {
                         const now = data.now_playing_by_court[court]
                         const upNext = data.up_next_by_court[court]
                         const onDeck = data.on_deck_by_court[court]
+                        const courtLabel = court.replace(/^Court\s+/i, '')
+                        const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
                         return (
                           <div key={court} style={{ border: '1px solid #eef2f5', borderRadius: 4, padding: '6px 7px', fontSize: 11 }}>
                             <div style={{ fontWeight: 700, color: '#263238', marginBottom: 2 }}>{court}</div>
                             <div style={{ color: '#607d8b' }}>
-                              {now
+                              {isClosed
+                                ? 'Closed'
+                                : now
                                 ? `Playing: ${now.team1_display} vs ${now.team2_display}`
                                 : upNext
                                   ? `Up Next: ${upNext.team1_display} vs ${upNext.team2_display}`
