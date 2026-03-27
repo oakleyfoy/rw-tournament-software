@@ -7586,7 +7586,6 @@ function SmsAdminTab({
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Court Management SMS Options</div>
                     <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
                       {([
-                        ['auto_first_match', 'First match alert'],
                         ['auto_post_match_next', 'Post-match next'],
                         ['auto_on_deck', 'On deck'],
                         ['auto_up_next', 'Up next'],
