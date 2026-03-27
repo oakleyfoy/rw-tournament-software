@@ -204,12 +204,12 @@ function DrawBuilder() {
       }
     }
 
-    if (event.standard_block_minutes) {
+    if (!event.draw_plan_json && event.standard_block_minutes) {
       standardMinutes = event.standard_block_minutes
     }
 
-    // Fallback to event.wf_block_minutes if available (for backwards compatibility)
-    if (event.wf_block_minutes) {
+    // Fallback to event.wf_block_minutes only when timing is absent from draw_plan_json.
+    if (!event.draw_plan_json && event.wf_block_minutes) {
       waterfallMinutes = event.wf_block_minutes
     }
 

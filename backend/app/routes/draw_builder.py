@@ -135,6 +135,18 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     event.draw_plan_json = json.dumps(draw_plan)
     event.draw_plan_version = "1.0"
 
+    timing = draw_plan.get("timing") if isinstance(draw_plan.get("timing"), dict) else {}
+    wf_block_minutes = timing.get("wf_block_minutes")
+    if not isinstance(wf_block_minutes, int) or wf_block_minutes <= 0:
+        wf_block_minutes = event.wf_block_minutes or 60
+    standard_block_minutes = timing.get("standard_block_minutes")
+    if not isinstance(standard_block_minutes, int) or standard_block_minutes <= 0:
+        standard_block_minutes = event.standard_block_minutes or 120
+
+    # Keep legacy event columns aligned with the persisted draw_plan timing.
+    event.wf_block_minutes = wf_block_minutes
+    event.standard_block_minutes = standard_block_minutes
+
     # Delete any existing matches for this event (in case re-finalizing)
     existing_matches = session.exec(select(Match).where(Match.event_id == event_id)).all()
     for match in existing_matches:
@@ -160,7 +172,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
             schedule_version_id=schedule_version_id,
             tournament_id=tournament_id,
             wf_rounds=wf_rounds,
-            duration_minutes=event.wf_block_minutes,
+            duration_minutes=wf_block_minutes,
             event_prefix=event_prefix,
             session=session,
         )
@@ -187,7 +199,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
         schedule_version_id=schedule_version_id,
         tournament_id=tournament_id,
         count=standard_count,
-        duration_minutes=event.standard_block_minutes,
+        duration_minutes=standard_block_minutes,
         event_prefix=event_prefix,
         template_type=template_type,
     )
@@ -199,7 +211,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
             event=event,
             schedule_version_id=schedule_version_id,
             tournament_id=tournament_id,
-            duration_minutes=event.standard_block_minutes,
+            duration_minutes=standard_block_minutes,
             event_prefix=event_prefix,
             guarantee=request.guarantee_selected,
         )
@@ -211,7 +223,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
                 event=event,
                 schedule_version_id=schedule_version_id,
                 tournament_id=tournament_id,
-                duration_minutes=event.standard_block_minutes,
+                duration_minutes=standard_block_minutes,
                 event_prefix=event_prefix,
             )
             all_matches.extend(placement_matches)
