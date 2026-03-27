@@ -37,6 +37,28 @@ def _court_label_to_str(value: object) -> str:
     if isinstance(value, list):
         return ",".join(str(x) for x in value)
     return str(value)
+
+
+def _resolve_event_slot_durations(event: Event) -> tuple[int, int]:
+    """Prefer draw_plan_json timing and fall back to legacy event columns."""
+    wf_minutes = event.wf_block_minutes or 60
+    standard_minutes = event.standard_block_minutes or 120
+
+    if event.draw_plan_json:
+        try:
+            draw_plan = json.loads(event.draw_plan_json)
+        except (TypeError, json.JSONDecodeError):
+            draw_plan = {}
+        timing = draw_plan.get("timing") if isinstance(draw_plan, dict) else {}
+        if isinstance(timing, dict):
+            candidate_wf = timing.get("wf_block_minutes")
+            if isinstance(candidate_wf, int) and candidate_wf > 0:
+                wf_minutes = candidate_wf
+            candidate_standard = timing.get("standard_block_minutes")
+            if isinstance(candidate_standard, int) and candidate_standard > 0:
+                standard_minutes = candidate_standard
+
+    return wf_minutes, standard_minutes
 from app.utils.rest_rules import auto_assign_with_rest
 from app.utils.sql import scalar_int
 from app.utils.version_guards import require_draft_version, require_final_version
@@ -997,36 +1019,43 @@ def generate_slots(
                 status_code=400, detail="No active tournament days found. Configure days and courts first."
             )
 
-        # Determine a single block_minutes for days/courts mode from event durations.
-        # Use the maximum configured match duration across events so all generated
-        # matches can fit into available slots.
-        # Falls back to 60 if no events exist yet.
+        # Derive block minutes from event timing using draw_plan_json as source of truth.
+        # Align with Tournament Setup auto-window behavior:
+        # - first active day uses WF timing when both durations exist
+        # - later days use standard timing
+        # - if only one duration exists, use that one
         from app.models import Event as EventModel
         event_list = session.exec(
             select(EventModel).where(EventModel.tournament_id == tournament_id)
         ).all()
-        if event_list:
-            duration_candidates: list[int] = []
-            for ev in event_list:
-                wf = ev.wf_block_minutes or 60
-                std = ev.standard_block_minutes or 120
-                if wf > 0:
-                    duration_candidates.append(wf)
-                if std > 0:
-                    duration_candidates.append(std)
-            block_mins = max(duration_candidates) if duration_candidates else 60
-        else:
-            block_mins = 60  # sensible default: 1-hour slots
+        wf_candidates: list[int] = []
+        standard_candidates: list[int] = []
+        for ev in event_list:
+            wf, std = _resolve_event_slot_durations(ev)
+            if wf > 0:
+                wf_candidates.append(wf)
+            if std > 0:
+                standard_candidates.append(std)
 
-        print(f"[DEBUG] days_courts mode: using block_minutes={block_mins}")
+        wf_block_minutes = min(wf_candidates) if wf_candidates else 60
+        standard_block_minutes = max(standard_candidates) if standard_candidates else 120
+        has_both_durations = bool(wf_candidates and standard_candidates)
 
         # Generate slots for each active day
-        for day in active_days:
+        ordered_days = sorted(active_days, key=lambda d: d.date)
+        for day_idx, day in enumerate(ordered_days):
             if not day.start_time or not day.end_time:
                 continue  # Skip days without time range
 
             if day.courts_available < 1:
                 continue  # Skip days with no courts
+
+            if has_both_durations and len(ordered_days) > 1:
+                block_mins = wf_block_minutes if day_idx == 0 else standard_block_minutes
+            elif standard_candidates:
+                block_mins = standard_block_minutes
+            else:
+                block_mins = wf_block_minutes
 
             # Calculate start and end minutes
             start_minutes = day.start_time.hour * 60 + day.start_time.minute
