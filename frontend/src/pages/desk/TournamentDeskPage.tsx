@@ -7606,7 +7606,6 @@ function SmsAdminTab({
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Check-In Management SMS Options</div>
                     <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
                       {([
-                        ['auto_checkin_first_match', 'First match check-in'],
                         ['auto_checkin_slot_checkin', 'Prior slot started: check-in now'],
                         ['auto_checkin_post_match_next', 'Post-match next (no court)'],
                         ['auto_checkin_court_assigned', 'Court assigned: go to your court'],
