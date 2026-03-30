@@ -20,6 +20,7 @@ type SharedScreenConfig = {
 }
 
 const DRAW_REFRESH_MS = 30_000
+const PANEL_GAP_PX = 10
 
 function parseConfig(raw: string | null | undefined): SharedScreenConfig | null {
   if (!raw) return null
@@ -38,6 +39,136 @@ function normalizePanels(panels: string[]): string[] {
   return [...panels.slice(0, 4), '', '', '', ''].slice(0, 4)
 }
 
+function EmptyPanel() {
+  return (
+    <div style={{
+      width: '100%',
+      height: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: '#90a4ae',
+      fontSize: 18,
+      textAlign: 'center',
+      padding: 20,
+      boxSizing: 'border-box',
+      backgroundColor: '#fff',
+    }}>
+      Panel not selected
+    </div>
+  )
+}
+
+function FitPanelFrame({
+  title,
+  src,
+}: {
+  title: string
+  src: string
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [frameStyle, setFrameStyle] = useState({
+    width: 1280,
+    height: 720,
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  })
+
+  const recomputeScale = useCallback(() => {
+    const container = containerRef.current
+    const iframe = iframeRef.current
+    if (!container || !iframe) return
+
+    let contentWidth = 1280
+    let contentHeight = 720
+
+    try {
+      const doc = iframe.contentDocument
+      if (doc) {
+        const html = doc.documentElement
+        const body = doc.body
+        contentWidth = Math.max(
+          html?.scrollWidth || 0,
+          html?.offsetWidth || 0,
+          body?.scrollWidth || 0,
+          body?.offsetWidth || 0,
+          1280
+        )
+        contentHeight = Math.max(
+          html?.scrollHeight || 0,
+          html?.offsetHeight || 0,
+          body?.scrollHeight || 0,
+          body?.offsetHeight || 0,
+          720
+        )
+      }
+    } catch {
+      // Same-origin pages are expected, but keep a safe fallback size.
+    }
+
+    const containerWidth = Math.max(container.clientWidth, 1)
+    const containerHeight = Math.max(container.clientHeight, 1)
+    const scale = Math.min(containerWidth / contentWidth, containerHeight / contentHeight)
+    const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+    const scaledWidth = contentWidth * safeScale
+    const scaledHeight = contentHeight * safeScale
+
+    setFrameStyle({
+      width: contentWidth,
+      height: contentHeight,
+      scale: safeScale,
+      offsetX: Math.max((containerWidth - scaledWidth) / 2, 0),
+      offsetY: Math.max((containerHeight - scaledHeight) / 2, 0),
+    })
+  }, [])
+
+  useEffect(() => {
+    recomputeScale()
+    const observer = new ResizeObserver(() => recomputeScale())
+    if (containerRef.current) observer.observe(containerRef.current)
+    pollRef.current = setInterval(recomputeScale, 3000)
+    return () => {
+      observer.disconnect()
+      if (pollRef.current) clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [recomputeScale, src])
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        backgroundColor: '#fff',
+      }}
+    >
+      <iframe
+        ref={iframeRef}
+        title={title}
+        src={src}
+        onLoad={recomputeScale}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: frameStyle.width,
+          height: frameStyle.height,
+          border: 'none',
+          backgroundColor: '#fff',
+          transform: `translate(${frameStyle.offsetX}px, ${frameStyle.offsetY}px) scale(${frameStyle.scale})`,
+          transformOrigin: 'top left',
+        }}
+      />
+    </div>
+  )
+}
+
 export default function TournamentDeskSharedScreenPage() {
   const { tournamentId } = useParams<{ tournamentId: string }>()
   const tid = Number(tournamentId)
@@ -54,8 +185,10 @@ export default function TournamentDeskSharedScreenPage() {
   const [panelKeys, setPanelKeys] = useState<string[]>(['', '', '', ''])
   const [kioskMode, setKioskMode] = useState<boolean>(initialKiosk)
   const [drawRefreshTick, setDrawRefreshTick] = useState<number>(0)
+  const [squareSize, setSquareSize] = useState<number>(320)
   const initializedRef = useRef(false)
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const gridHostRef = useRef<HTMLDivElement | null>(null)
 
   const setKiosk = useCallback((enabled: boolean) => {
     setKioskMode(enabled)
@@ -143,12 +276,12 @@ export default function TournamentDeskSharedScreenPage() {
   }, [tournament, panelOptions, optionMap])
 
   const selectedPanels = useMemo(
-    () => panelKeys.map((key) => optionMap.get(key)).filter((opt): opt is PanelOption => Boolean(opt)),
+    () => panelKeys.map((key) => optionMap.get(key) || null),
     [panelKeys, optionMap]
   )
 
   useEffect(() => {
-    const hasDrawPanels = selectedPanels.some((panel) => panel.kind === 'draw')
+    const hasDrawPanels = selectedPanels.some((panel) => panel?.kind === 'draw')
     if (!hasDrawPanels) {
       if (refreshRef.current) clearInterval(refreshRef.current)
       refreshRef.current = null
@@ -172,6 +305,29 @@ export default function TournamentDeskSharedScreenPage() {
       void document.exitFullscreen?.().catch(() => undefined)
     }
   }, [kioskMode])
+
+  useEffect(() => {
+    const recomputeGrid = () => {
+      const host = gridHostRef.current
+      if (!host) return
+      const width = host.clientWidth
+      const height = host.clientHeight
+      const next = Math.max(
+        Math.floor(Math.min((width - PANEL_GAP_PX) / 2, (height - PANEL_GAP_PX) / 2)),
+        120
+      )
+      setSquareSize(next)
+    }
+
+    recomputeGrid()
+    const observer = new ResizeObserver(recomputeGrid)
+    if (gridHostRef.current) observer.observe(gridHostRef.current)
+    window.addEventListener('resize', recomputeGrid)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', recomputeGrid)
+    }
+  }, [])
 
   const handlePanelChange = (index: number, value: string) => {
     setPanelKeys((prev) => {
@@ -209,9 +365,6 @@ export default function TournamentDeskSharedScreenPage() {
     return <div style={{ padding: 24, color: '#c62828' }}>{error}</div>
   }
 
-  const gridColumns =
-    selectedPanels.length <= 1 ? '1fr' : selectedPanels.length === 2 ? '1fr 1fr' : '1fr 1fr'
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -234,7 +387,7 @@ export default function TournamentDeskSharedScreenPage() {
           <div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{tournament?.name || 'Shared Screen'}</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-              Shared TV screen: choose 1-4 panels. Draw panels refresh every 30 seconds.
+              Shared TV screen: 4 equal square panels. Draw panels refresh every 30 seconds.
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -317,7 +470,7 @@ export default function TournamentDeskSharedScreenPage() {
       )}
 
       <div style={{ flex: 1, padding: kioskMode ? 8 : 12, minHeight: 0 }}>
-        {selectedPanels.length === 0 ? (
+        {selectedPanels.every((panel) => panel == null) ? (
           <div style={{
             height: '100%',
             display: 'flex',
@@ -330,43 +483,54 @@ export default function TournamentDeskSharedScreenPage() {
             Choose at least one panel for the shared screen.
           </div>
         ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: gridColumns,
-            gridAutoRows: selectedPanels.length <= 2 ? '1fr' : 'minmax(0, 1fr)',
-            gap: 10,
-            height: '100%',
-          }}>
-            {selectedPanels.map((panel) => {
-              const iframeSrc =
-                panel.kind === 'draw'
-                  ? `${panel.path}${panel.path.includes('?') ? '&' : '?'}tv_refresh=${drawRefreshTick}`
-                  : panel.path
-              return (
-                <div
-                  key={`${panel.key}:${panel.kind === 'draw' ? drawRefreshTick : 'live'}`}
-                  style={{
-                    backgroundColor: '#fff',
-                    borderRadius: 8,
-                    overflow: 'hidden',
-                    boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
-                    minHeight: 0,
-                  }}
-                >
-                  <iframe
-                    title={panel.label}
-                    src={iframeSrc}
+          <div
+            ref={gridHostRef}
+            style={{
+              height: '100%',
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 0,
+            }}
+          >
+            <div style={{
+              width: squareSize * 2 + PANEL_GAP_PX,
+              height: squareSize * 2 + PANEL_GAP_PX,
+              display: 'grid',
+              gridTemplateColumns: `${squareSize}px ${squareSize}px`,
+              gridTemplateRows: `${squareSize}px ${squareSize}px`,
+              gap: PANEL_GAP_PX,
+            }}>
+              {selectedPanels.map((panel, idx) => {
+                const iframeSrc = panel
+                  ? (panel.kind === 'draw'
+                    ? `${panel.path}${panel.path.includes('?') ? '&' : '?'}tv_refresh=${drawRefreshTick}`
+                    : panel.path)
+                  : ''
+                const frameKey = panel
+                  ? `${panel.key}:${panel.kind === 'draw' ? drawRefreshTick : 'live'}`
+                  : `empty-${idx}`
+
+                return (
+                  <div
+                    key={frameKey}
                     style={{
-                      width: '100%',
-                      height: '100%',
-                      minHeight: 320,
-                      border: 'none',
                       backgroundColor: '#fff',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
                     }}
-                  />
-                </div>
-              )
-            })}
+                  >
+                    {panel ? (
+                      <FitPanelFrame title={panel.label} src={iframeSrc} />
+                    ) : (
+                      <EmptyPanel />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>
