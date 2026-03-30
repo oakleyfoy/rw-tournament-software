@@ -8592,7 +8592,22 @@ export default function TournamentDeskPage() {
               cursor: 'pointer',
             }}
           >
-            Board View
+            Court Management Board View
+          </button>
+          <button
+            onClick={() => window.open(`/desk/t/${tid}/checkin-board?kiosk=1`, '_blank')}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: '#2e7d32',
+              color: '#fff',
+              border: '1px solid rgba(255,255,255,0.3)',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Check-In Management Board View
           </button>
         </div>
       </div>
