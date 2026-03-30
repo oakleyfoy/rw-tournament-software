@@ -72,6 +72,7 @@ class TournamentUpdate(BaseModel):
     is_archived: Optional[bool] = None
     use_time_windows: Optional[bool] = None
     court_names: Optional[List[str]] = None
+    shared_screen_config_json: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_date_range(self):
@@ -92,6 +93,7 @@ class TournamentResponse(BaseModel):
     use_time_windows: bool
     court_names: Optional[List[str]] = None
     public_schedule_version_id: Optional[int] = None
+    shared_screen_config_json: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

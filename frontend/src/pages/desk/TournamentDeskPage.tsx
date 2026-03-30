@@ -8595,6 +8595,21 @@ export default function TournamentDeskPage() {
             Court Management Board View
           </button>
           <button
+            onClick={() => window.open(`/desk/t/${tid}/shared-screen`, '_blank')}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: '#6a1b9a',
+              color: '#fff',
+              border: '1px solid rgba(255,255,255,0.3)',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Shared Screen
+          </button>
+          <button
             onClick={() => window.open(`/desk/t/${tid}/checkin-board?kiosk=1`, '_blank')}
             style={{
               padding: '6px 14px',

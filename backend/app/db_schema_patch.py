@@ -23,6 +23,7 @@ REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("public_schedule_version_id", "INTEGER", "INTEGER"),
     ("is_archived", "INTEGER", "BOOLEAN"),
     ("desk_management_mode", "TEXT", "TEXT"),
+    ("shared_screen_config_json", "TEXT", "TEXT"),
 ]
 
 # Columns we must ensure exist in the "team" table.

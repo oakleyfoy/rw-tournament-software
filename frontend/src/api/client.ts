@@ -28,6 +28,7 @@ export interface Tournament {
   use_time_windows: boolean;
   court_names?: string[] | null;
   public_schedule_version_id: number | null;
+  shared_screen_config_json?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -51,6 +52,7 @@ export interface TournamentUpdate {
   is_archived?: boolean;
   use_time_windows?: boolean;
   court_names?: string[] | null;
+  shared_screen_config_json?: string | null;
 }
 
 export interface TournamentStartOverResponse {
