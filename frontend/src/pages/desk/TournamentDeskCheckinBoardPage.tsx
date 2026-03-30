@@ -175,7 +175,7 @@ function ReadyQueuePanel({ queue }: { queue: ReadyQueueItem[] }) {
         fontWeight: 800,
         letterSpacing: 0.3,
       }}>
-        Ready To Play
+        On Deck
       </div>
       {queue.length === 0 ? (
         <div style={{ padding: 16, color: '#888', fontSize: 14 }}>No ready matches yet.</div>

@@ -8897,7 +8897,7 @@ export default function TournamentDeskPage() {
             ) : (
               <>
                 <div style={{ marginBottom: 4, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
-                  Player Check-In / Ready To Play - full event view
+                  Player Check-In / On Deck - full event view
                 </div>
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 12, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -9143,7 +9143,7 @@ export default function TournamentDeskPage() {
 
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
                     <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
-                      Ready To Play
+                      On Deck
                     </div>
                     {data.ready_queue.length === 0 ? (
                       <div style={{ padding: 12, fontSize: 12, color: '#888' }}>No ready matches yet.</div>
@@ -9157,7 +9157,7 @@ export default function TournamentDeskPage() {
                         </thead>
                         <tbody>
                           {data.ready_queue.map((rq) => {
-                            const selectedSlot = readySlotChoice[rq.match_id] || (data.available_slots[0]?.slot_id ?? 0)
+                            const selectedSlot = readySlotChoice[rq.match_id] ?? 0
                             return (
                               <tr key={rq.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
                                 <td style={{ padding: '6px 8px', fontSize: 12, verticalAlign: 'top' }}>
@@ -9174,9 +9174,16 @@ export default function TournamentDeskPage() {
                                 <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                                   <select
                                     value={selectedSlot || ''}
-                                    onChange={e => setReadySlotChoice(prev => ({ ...prev, [rq.match_id]: parseInt(e.target.value, 10) }))}
+                                    onChange={e => {
+                                      const value = e.target.value
+                                      setReadySlotChoice(prev => ({
+                                        ...prev,
+                                        [rq.match_id]: value ? parseInt(value, 10) : 0,
+                                      }))
+                                    }}
                                     style={{ width: '100%', fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #ccc', marginBottom: 4 }}
                                   >
+                                    <option value="">Choose Court</option>
                                     {data.available_slots.map((s: AvailableCourtSlot) => (
                                       <option key={s.slot_id} value={s.slot_id}>
                                         {s.court_name}
