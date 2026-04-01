@@ -7154,6 +7154,18 @@ function SmsAdminTab({
             <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
               When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+              <button
+                onClick={saveSettings}
+                disabled={savingSettings}
+                style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {savingSettings ? 'Saving…' : 'Save Test Mode'}
+              </button>
+              <span style={{ fontSize: 11, color: '#666' }}>
+                Save after turning test mode on or off so the change takes effect.
+              </span>
+            </div>
             <div style={{ width: '25%', minWidth: 240, maxWidth: 320 }}>
               <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
                 <input

@@ -75,15 +75,16 @@ const COLORS = {
   consolation: { bg: '#fff3e0', border: '#ffb74d', bgFinal: '#ffe0b2' },
 }
 
-function MatchCard({ match, variant }: {
+function MatchCard({ match, variant, showCourtInfo }: {
   match: BracketMatchBox
   variant: 'main' | 'consolation'
+  showCourtInfo: boolean
 }) {
   const palette = COLORS[variant]
   const isFinal = match.status === 'FINAL'
 
   const schedParts: string[] = []
-  if (match.court_label) schedParts.push(match.court_label)
+  if (showCourtInfo && match.court_label) schedParts.push(match.court_label)
   if (match.day_display) schedParts.push(match.day_display)
   if (match.time_display) schedParts.push(match.time_display)
   const schedLine = schedParts.length > 0 ? schedParts.join(' • ') : null
@@ -114,7 +115,7 @@ function MatchCard({ match, variant }: {
         justifyContent: 'space-between',
         alignItems: 'center',
       }}>
-        <span>Match #{match.match_id}</span>
+        <span>{`Match #${match.match_id}`}</span>
         {isFinal && match.score_display && (
           <span data-score-badge style={{
             fontSize: 9,
@@ -173,10 +174,11 @@ interface RoundColumn {
   matches: BracketMatchBox[]
 }
 
-function BracketTree({ matches, variant, roundLabels }: {
+function BracketTree({ matches, variant, roundLabels, showCourtInfo }: {
   matches: BracketMatchBox[]
   variant: 'main' | 'consolation'
   roundLabels?: Record<number, string>
+  showCourtInfo: boolean
 }) {
   const rounds: RoundColumn[] = useMemo(() => {
     const roundMap = new Map<number, BracketMatchBox[]>()
@@ -264,7 +266,7 @@ function BracketTree({ matches, variant, roundLabels }: {
                       left: 0,
                     }}
                   >
-                    <MatchCard match={m} variant={variant} />
+                    <MatchCard match={m} variant={variant} showCourtInfo={showCourtInfo} />
                   </div>
                 ))}
               </div>
@@ -276,7 +278,7 @@ function BracketTree({ matches, variant, roundLabels }: {
   )
 }
 
-function ConsolationSection({ matches }: { matches: BracketMatchBox[] }) {
+function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchBox[]; showCourtInfo: boolean }) {
   if (matches.length === 0) return null
 
   const { bracketMatches, standaloneMatches } = useMemo(() => {
@@ -339,6 +341,7 @@ function ConsolationSection({ matches }: { matches: BracketMatchBox[] }) {
           matches={bracketMatches}
           variant="consolation"
           roundLabels={{ 1: 'Consolation Semis', 2: 'Consolation Final' }}
+          showCourtInfo={showCourtInfo}
         />
       )}
 
@@ -356,7 +359,7 @@ function ConsolationSection({ matches }: { matches: BracketMatchBox[] }) {
           </div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             {standaloneMatches.map(m => (
-              <MatchCard key={m.match_id} match={m} variant="consolation" />
+              <MatchCard key={m.match_id} match={m} variant="consolation" showCourtInfo={showCourtInfo} />
             ))}
           </div>
         </div>
@@ -404,6 +407,8 @@ export default function PublicBracketPage() {
     injectBracketPrintStyles()
     setTimeout(() => window.print(), 100)
   }, [])
+
+  const showCourtInfo = data?.show_court_info !== false
 
   if (loading) {
     return (
@@ -520,8 +525,8 @@ export default function PublicBracketPage() {
       {/* Bracket canvas */}
       <div data-bracket-canvas style={{ overflowX: 'auto', padding: captureMode ? '10px 14px' : '20px 24px' }}>
         <div data-bracket-inner style={{ display: 'inline-block', minWidth: captureMode ? 640 : 800 }}>
-          <BracketTree matches={data.main_matches} variant="main" />
-          <ConsolationSection matches={data.consolation_matches} />
+          <BracketTree matches={data.main_matches} variant="main" showCourtInfo={showCourtInfo} />
+          <ConsolationSection matches={data.consolation_matches} showCourtInfo={showCourtInfo} />
         </div>
       </div>
     </div>

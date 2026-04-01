@@ -1952,6 +1952,7 @@ export interface PublicWaterfallResponse {
   event_name: string
   rows: PublicWaterfallRow[]
   division_type: 'bracket' | 'roundrobin'
+  show_court_info: boolean
 }
 
 export interface DivisionItem {
@@ -2020,6 +2021,7 @@ export interface BracketResponse {
   division_code: string
   main_matches: BracketMatchBox[]
   consolation_matches: BracketMatchBox[]
+  show_court_info: boolean
 }
 
 export async function getPublicBracket(
@@ -2079,6 +2081,7 @@ export interface RoundRobinResponse {
   pools: RRPool[]
   standings: RRPoolStandings[]
   tiebreaker_note: string
+  show_court_info: boolean
 }
 
 export async function getPublicRoundRobin(

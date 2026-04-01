@@ -123,7 +123,7 @@ function MatchBoxCard({ box, variant }: {
         alignItems: 'center',
         gap: 6,
       }}>
-        <span>{box.top_line}</span>
+        {box.top_line && <span>{box.top_line}</span>}
         {isFinal && (
           <span style={{
             fontSize: 9,

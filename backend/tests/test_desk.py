@@ -2028,6 +2028,91 @@ def test_standings_ignores_non_rr_match_codes(client, session):
     assert alpha["games_won"] == 12
 
 
+def test_standings_supports_fifth_pool_division(client, session):
+    """Standings should handle POOLE / Division V without crashing."""
+    t = Tournament(
+        name="RR Five Pool Test",
+        location="Test Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 6, 5),
+        end_date=date(2026, 6, 7),
+    )
+    session.add(t)
+    session.flush()
+
+    v = ScheduleVersion(
+        tournament_id=t.id,
+        version_number=1,
+        status="draft",
+    )
+    session.add(v)
+    session.flush()
+
+    ev = Event(
+        tournament_id=t.id,
+        category="mixed",
+        name="Mixed A",
+        team_count=4,
+    )
+    session.add(ev)
+    session.flush()
+
+    team1 = Team(event_id=ev.id, name="Alpha", seed=1, display_name="Alpha")
+    team2 = Team(event_id=ev.id, name="Bravo", seed=2, display_name="Bravo")
+    team3 = Team(event_id=ev.id, name="Echo", seed=3, display_name="Echo")
+    team4 = Team(event_id=ev.id, name="Foxtrot", seed=4, display_name="Foxtrot")
+    session.add_all([team1, team2, team3, team4])
+    session.flush()
+
+    session.add_all([
+        Match(
+            tournament_id=t.id,
+            event_id=ev.id,
+            schedule_version_id=v.id,
+            match_code="MIX_E1_RR_POOLA_M01",
+            match_type="RR",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=team1.id,
+            team_b_id=team2.id,
+            placeholder_side_a="Seed 1",
+            placeholder_side_b="Seed 2",
+            runtime_status="FINAL",
+            winner_team_id=team1.id,
+            score_json={"display": "6-4 6-4"},
+        ),
+        Match(
+            tournament_id=t.id,
+            event_id=ev.id,
+            schedule_version_id=v.id,
+            match_code="MIX_E1_RR_POOLE_M01",
+            match_type="RR",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=2,
+            duration_minutes=60,
+            team_a_id=team3.id,
+            team_b_id=team4.id,
+            placeholder_side_a="Seed 3",
+            placeholder_side_b="Seed 4",
+            runtime_status="FINAL",
+            winner_team_id=team3.id,
+            score_json={"display": "6-3 6-2"},
+        ),
+    ])
+    session.commit()
+
+    resp = client.get(f"/api/desk/tournaments/{t.id}/standings?version_id={v.id}")
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    division_names = [event["division_name"] for event in body["events"]]
+    assert "Division I" in division_names
+    assert "Division V" in division_names
+
+
 # ── Pool Projection + Placement tests ────────────────────────────────────
 
 def _setup_wf_pool_tournament(session: Session):

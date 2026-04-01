@@ -668,6 +668,10 @@ _POOL_DIVISION_CODES = {
     "POOLB": "Division II",
     "POOLC": "Division III",
     "POOLD": "Division IV",
+    "POOLE": "Division V",
+    "POOLF": "Division VI",
+    "POOLG": "Division VII",
+    "POOLH": "Division VIII",
 }
 
 

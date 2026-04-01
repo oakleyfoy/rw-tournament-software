@@ -59,6 +59,7 @@ class WaterfallResponse(BaseModel):
     event_name: str
     rows: List[WaterfallRow]
     division_type: str = "bracket"  # "bracket" or "roundrobin"
+    show_court_info: bool = True
 
 
 class BracketMatchBox(BaseModel):
@@ -86,6 +87,7 @@ class BracketResponse(BaseModel):
     division_code: str
     main_matches: List[BracketMatchBox]
     consolation_matches: List[BracketMatchBox]
+    show_court_info: bool = True
 
 
 class DivisionItem(BaseModel):
@@ -197,6 +199,11 @@ def _get_public_version(session: Session, tournament_id: int) -> Optional[Schedu
     return version
 
 
+def _public_show_court_info(tournament: Tournament) -> bool:
+    mode = str(getattr(tournament, "desk_management_mode", "") or "").strip().lower()
+    return mode != "checkin_management"
+
+
 def _build_match_box(
     match: Match,
     team_map: Dict[int, Team],
@@ -204,6 +211,7 @@ def _build_match_box(
     slot_map: Dict[int, ScheduleSlot],
     all_matches_by_id: Dict[int, Match],
     is_center: bool,
+    show_court_info: bool,
 ) -> MatchBox:
     """Build a MatchBox for a single match."""
 
@@ -240,7 +248,7 @@ def _build_match_box(
         top_line = f"{match_num_str} \u2022 {score_display}"
     elif status in ("SCHEDULED", "IN_PROGRESS") and (court_display or day_display):
         parts = [match_num_str]
-        if court_display:
+        if show_court_info and court_display:
             parts.append(court_display)
         if day_display:
             parts.append(day_display)
@@ -477,6 +485,7 @@ def public_waterfall(
         version = _get_public_version(session, tournament_id)
     if not version:
         return NotPublishedResponse()
+    show_court_info = _public_show_court_info(tournament)
 
     # Load all WF matches for this event + version
     wf_matches = session.exec(
@@ -592,18 +601,21 @@ def public_waterfall(
         center = _build_match_box(
             r1, team_map, assignment_map, slot_map, all_matches_by_id,
             is_center=True,
+            show_court_info=show_court_info,
         )
 
         winner_match = r1_to_winner.get(r1.id)
         winner = _build_match_box(
             winner_match, team_map, assignment_map, slot_map, all_matches_by_id,
             is_center=False,
+            show_court_info=show_court_info,
         ) if winner_match else None
 
         loser_match = r1_to_loser.get(r1.id)
         loser = _build_match_box(
             loser_match, team_map, assignment_map, slot_map, all_matches_by_id,
             is_center=False,
+            show_court_info=show_court_info,
         ) if loser_match else None
 
         winner_dest = None
@@ -653,6 +665,7 @@ def public_waterfall(
         event_name=event.name,
         rows=rows,
         division_type=div_type,
+        show_court_info=show_court_info,
     )
 
 
@@ -698,6 +711,7 @@ def _build_bracket_box(
     assignment_map: Dict[int, Any],
     slot_map: Dict[int, Any],
     match_map: Dict[int, Match],
+    show_court_info: bool,
 ) -> BracketMatchBox:
     status = (match.status or "unscheduled").upper()
     asgn = assignment_map.get(match.id)
@@ -714,7 +728,7 @@ def _build_bracket_box(
         top_line = f"{match_num_str} \u2022 {score_display}"
     elif status in ("SCHEDULED", "IN_PROGRESS") and (court_display or day_display):
         parts = [match_num_str]
-        if court_display:
+        if show_court_info and court_display:
             parts.append(court_display)
         if day_display:
             parts.append(day_display)
@@ -782,6 +796,7 @@ def public_bracket(
         version = _get_public_version(session, tournament_id)
     if not version:
         return NotPublishedResponse()
+    show_court_info = _public_show_court_info(tournament)
 
     div_upper = division_code.upper()
     div_label = _CODE_TO_DIV.get(div_upper, division_code)
@@ -802,6 +817,7 @@ def public_bracket(
             division_code=div_upper,
             main_matches=[],
             consolation_matches=[],
+            show_court_info=show_court_info,
         )
 
     match_map = {m.id: m for m in bracket_matches}
@@ -835,7 +851,10 @@ def public_bracket(
 
     for m in sorted(bracket_matches,
                     key=lambda m: (m.round_index or 0, m.sequence_in_round or 0)):
-        box = _build_bracket_box(m, team_map, assignment_map, slot_map, match_map)
+        box = _build_bracket_box(
+            m, team_map, assignment_map, slot_map, match_map,
+            show_court_info=show_court_info,
+        )
         if (m.match_type or "").upper() == "CONSOLATION":
             consolation_matches.append(box)
         else:
@@ -848,13 +867,22 @@ def public_bracket(
         division_code=div_upper,
         main_matches=main_matches,
         consolation_matches=consolation_matches,
+        show_court_info=show_court_info,
     )
 
 
 # ── Public round robin ──────────────────────────────────────────────────
 
-_POOL_LABELS = {"POOLA": "Division I", "POOLB": "Division II",
-                "POOLC": "Division III", "POOLD": "Division IV"}
+_POOL_LABELS = {
+    "POOLA": "Division I",
+    "POOLB": "Division II",
+    "POOLC": "Division III",
+    "POOLD": "Division IV",
+    "POOLE": "Division V",
+    "POOLF": "Division VI",
+    "POOLG": "Division VII",
+    "POOLH": "Division VIII",
+}
 
 
 class RRMatchBox(BaseModel):
@@ -904,6 +932,7 @@ class RoundRobinResponse(BaseModel):
         "1) Match Wins 2) Set Differential 3) Game Differential "
         "4) Head-to-Head (two-team ties)"
     )
+    show_court_info: bool = True
 
 
 @router.get(
@@ -932,6 +961,7 @@ def public_round_robin(
         version = _get_public_version(session, tournament_id)
     if not version:
         return NotPublishedResponse()
+    show_court_info = _public_show_court_info(tournament)
 
     rr_matches = session.exec(
         select(Match).where(
@@ -948,6 +978,7 @@ def public_round_robin(
             tournament_name=tournament.name,
             event_name=event.name,
             pools=[],
+            show_court_info=show_court_info,
         )
 
     team_ids = set()
@@ -1176,6 +1207,7 @@ def public_round_robin(
         event_name=event.name,
         pools=pools,
         standings=standings_list,
+        show_court_info=show_court_info,
     )
 
 

@@ -477,3 +477,93 @@ def test_public_round_robin_retired_uses_literal_score_orientation(client, sessi
     assert row_b["sets_won"] == 1 and row_b["sets_lost"] == 0
     assert row_a["games_won"] == 6 and row_a["games_lost"] == 7
     assert row_b["games_won"] == 7 and row_b["games_lost"] == 6
+
+
+def test_public_round_robin_hides_court_info_in_checkin_management(client, session):
+    t, ev, _winner_team = _setup_published_rr_tournament(session)
+    t.desk_management_mode = "checkin_management"
+    session.add(t)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/events/{ev.id}/roundrobin")
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["show_court_info"] is False
+
+
+def test_public_bracket_hides_court_info_in_checkin_management(client, session):
+    t = Tournament(
+        name="Bracket Public Test",
+        location="Test Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 6, 5),
+        end_date=date(2026, 6, 7),
+        desk_management_mode="checkin_management",
+    )
+    session.add(t)
+    session.flush()
+
+    v = ScheduleVersion(
+        tournament_id=t.id,
+        version_number=1,
+        status="final",
+    )
+    session.add(v)
+    session.flush()
+
+    ev = Event(
+        tournament_id=t.id,
+        category="womens",
+        name="Women's A",
+        team_count=8,
+    )
+    session.add(ev)
+    session.flush()
+
+    team1 = Team(event_id=ev.id, name="Alpha / One", seed=1, display_name="Alpha / One")
+    team2 = Team(event_id=ev.id, name="Bravo / Two", seed=2, display_name="Bravo / Two")
+    session.add_all([team1, team2])
+    session.flush()
+
+    match = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="WOM_BWW_QF1",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team1.id,
+        team_b_id=team2.id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+    )
+    session.add(match)
+    session.flush()
+
+    slot = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 6, 5),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add(slot)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=match.id, slot_id=slot.id))
+
+    t.public_schedule_version_id = v.id
+    session.add(t)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/events/{ev.id}/bracket/BWW")
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["show_court_info"] is False

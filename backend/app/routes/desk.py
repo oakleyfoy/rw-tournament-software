@@ -86,6 +86,10 @@ _POOL_LABELS = {
     "POOLB": "Division II",
     "POOLC": "Division III",
     "POOLD": "Division IV",
+    "POOLE": "Division V",
+    "POOLF": "Division VI",
+    "POOLG": "Division VII",
+    "POOLH": "Division VIII",
 }
 
 MODE_COURT_MANAGEMENT = "court_management"
@@ -3228,7 +3232,7 @@ def get_standings(
 
     standings_events: List[StandingsEvent] = []
 
-    for (eid, pool), matches in sorted(matches_by_event_pool.items()):
+    for (eid, pool), matches in sorted(matches_by_event_pool.items(), key=lambda item: (item[0][0], item[0][1] or "")):
         ev = event_map.get(eid)
         ev_name = ev.name if ev else "Unknown"
         div_name = _POOL_LABELS.get(pool) if pool else None

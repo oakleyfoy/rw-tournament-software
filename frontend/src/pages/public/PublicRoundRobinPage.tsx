@@ -54,11 +54,11 @@ function injectPrintStyles() {
 
 // ── Match card ──────────────────────────────────────────────────────────
 
-function RRMatchCard({ match }: { match: RRMatchBox }) {
+function RRMatchCard({ match, showCourtInfo }: { match: RRMatchBox; showCourtInfo: boolean }) {
   const isFinal = match.status === 'FINAL'
 
   const infoParts: string[] = [`Match #${match.match_id}`]
-  if (match.court_label) infoParts.push(match.court_label)
+  if (showCourtInfo && match.court_label) infoParts.push(match.court_label)
 
   const schedParts: string[] = []
   if (match.day_display) schedParts.push(match.day_display)
@@ -137,7 +137,7 @@ function RRMatchCard({ match }: { match: RRMatchBox }) {
 
 // ── Pool section ────────────────────────────────────────────────────────
 
-function PoolSection({ pool, eventName }: { pool: RRPool; eventName: string }) {
+function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
   const title = `${eventName} Round Robin ${pool.pool_label}`.toUpperCase()
 
   const rows: RRMatchBox[][] = []
@@ -188,7 +188,7 @@ function PoolSection({ pool, eventName }: { pool: RRPool; eventName: string }) {
               Round {ri + 1}
             </div>
             {row.map(m => (
-              <RRMatchCard key={m.match_id} match={m} />
+              <RRMatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
             ))}
           </div>
         ))}
@@ -413,6 +413,8 @@ export default function PublicRoundRobinPage() {
     setTimeout(() => window.print(), 100)
   }, [])
 
+  const showCourtInfo = data?.show_court_info !== false
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: '#666', fontSize: 16 }}>
@@ -541,7 +543,7 @@ export default function PublicRoundRobinPage() {
             }}>
               {pair.map(pool => (
                 <div key={pool.pool_code} style={{ flex: '1 1 48%', minWidth: 320 }}>
-                  <PoolSection pool={pool} eventName={data.event_name} />
+                  <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
                 </div>
               ))}
             </div>

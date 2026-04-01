@@ -182,7 +182,7 @@ def _format_slot_fields(slot: Optional[ScheduleSlot]) -> Tuple[str, str, str]:
 
 def _pool_from_match_code(match_code: str) -> str:
     code = (match_code or "").upper()
-    for marker in ("POOLA", "POOLB", "POOLC", "POOLD"):
+    for marker in ("POOLA", "POOLB", "POOLC", "POOLD", "POOLE", "POOLF", "POOLG", "POOLH"):
         if f"_{marker}_" in code:
             return marker
     return ""
@@ -213,6 +213,10 @@ def _build_print_packet_pdf(
         "POOLB": "Division II",
         "POOLC": "Division III",
         "POOLD": "Division IV",
+        "POOLE": "Division V",
+        "POOLF": "Division VI",
+        "POOLG": "Division VII",
+        "POOLH": "Division VIII",
     }
     dest_label_map = {
         "BWW": "Division I",
@@ -634,7 +638,16 @@ def _build_print_packet_pdf(
 
         ordered_pool_keys = sorted(
             pools.keys(),
-            key=lambda p: {"POOLA": 1, "POOLB": 2, "POOLC": 3, "POOLD": 4}.get(p, 99),
+            key=lambda p: {
+                "POOLA": 1,
+                "POOLB": 2,
+                "POOLC": 3,
+                "POOLD": 4,
+                "POOLE": 5,
+                "POOLF": 6,
+                "POOLG": 7,
+                "POOLH": 8,
+            }.get(p, 99),
         )
         if not ordered_pool_keys:
             c.setFillGray(C_DARK)
