@@ -147,29 +147,67 @@ def _event_wf_rounds(event: Event) -> int:
 
 # ── True list-rotation for event priority ────────────────────────────
 
+def _get_manual_schedule_order(event: Event) -> Optional[int]:
+    """Return explicit schedule priority when configured on the draw."""
+    raw = getattr(event, "schedule_profile_json", None)
+    if not raw:
+        return None
+    try:
+        profile = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(profile, dict):
+        return None
+    value = profile.get("schedule_order")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            parsed = int(stripped)
+            return parsed if parsed > 0 else None
+    return None
+
+
 def _build_rotated_event_list(events: List[Event], day_index: int) -> List[Event]:
     """
-    Build a deterministic event ordering with size-bucket rotation.
+    Build a deterministic event ordering with manual overrides first.
 
-    Primary key: team_count DESC — NEVER violated.
-    Secondary key: daily rotation — ONLY within same-size events.
+    If an event has schedule_profile_json.schedule_order, that explicit order
+    wins and stays fixed across days. Remaining events continue to use the
+    existing largest-draw-first rule with same-size daily rotation.
 
-    A smaller event can never jump ahead of a larger one.
-
-    1. Group events by team_count.
-    2. Process buckets largest → smallest.
-    3. Within each bucket, sort by event_id ASC, then rotate by day_index.
+    1. Manual-order events sorted by schedule_order ASC.
+    2. Unordered events bucketed by team_count DESC.
+    3. Within each unordered bucket, rotate by day_index.
     """
     if not events:
         return []
 
+    manual_events: List[Tuple[int, Event]] = []
+    automatic_events: List[Event] = []
+    for event in events:
+        manual_order = _get_manual_schedule_order(event)
+        if manual_order is None:
+            automatic_events.append(event)
+        else:
+            manual_events.append((manual_order, event))
+
+    ordered: List[Event] = [
+        event for _, event in sorted(manual_events, key=lambda item: (item[0], item[1].id or 0))
+    ]
+
+    if not automatic_events:
+        return ordered
+
     # Step 1: group by team_count
     buckets: Dict[int, List[Event]] = {}
-    for e in events:
+    for e in automatic_events:
         buckets.setdefault(e.team_count, []).append(e)
 
     # Step 2: process buckets largest → smallest
-    ordered: List[Event] = []
     for team_count in sorted(buckets.keys(), reverse=True):
         bucket = sorted(buckets[team_count], key=lambda e: e.id or 0)
         # Rotate ONLY inside this bucket

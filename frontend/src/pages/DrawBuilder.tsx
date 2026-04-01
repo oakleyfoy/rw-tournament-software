@@ -62,6 +62,29 @@ interface EventEditorState {
   scheduleProfile: ScheduleProfile
 }
 
+function createDefaultScheduleProfile(): ScheduleProfile {
+  return {
+    preferred: { fri: 2, sat: 2, sun: 1 },
+    fallback: { fri: 2, sat: 1, sun: 2 },
+    schedule_order: null,
+  }
+}
+
+function normalizeScheduleOrder(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
+}
+
+function normalizeScheduleProfile(value: unknown): ScheduleProfile {
+  const defaults = createDefaultScheduleProfile()
+  if (!value || typeof value !== 'object') return defaults
+  const raw = value as Partial<ScheduleProfile>
+  return {
+    preferred: raw.preferred ?? defaults.preferred,
+    fallback: raw.fallback ?? defaults.fallback,
+    schedule_order: normalizeScheduleOrder(raw.schedule_order),
+  }
+}
+
 function DrawBuilder() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -162,10 +185,7 @@ function DrawBuilder() {
     
     let standardMinutes = event.standard_block_minutes || 120
     let waterfallMinutes = 60 // Default to 1 hour
-    let scheduleProfile: ScheduleProfile = {
-      preferred: { fri: 2, sat: 2, sun: 1 },
-      fallback: { fri: 2, sat: 1, sun: 2 },
-    }
+    let scheduleProfile: ScheduleProfile = createDefaultScheduleProfile()
 
     // Parse from existing data if present
     if (event.draw_plan_json) {
@@ -198,7 +218,7 @@ function DrawBuilder() {
 
     if (event.schedule_profile_json) {
       try {
-        scheduleProfile = JSON.parse(event.schedule_profile_json)
+        scheduleProfile = normalizeScheduleProfile(JSON.parse(event.schedule_profile_json))
       } catch (e) {
         // Invalid JSON, use defaults
       }
@@ -230,6 +250,50 @@ function DrawBuilder() {
         ...updates,
       },
     }))
+  }
+
+  const persistScheduleOrder = async (event: Event) => {
+    const state = eventEditorStates[event.id]
+    if (!state) return
+
+    const normalizedProfile = {
+      ...state.scheduleProfile,
+      schedule_order: normalizeScheduleOrder(state.scheduleProfile.schedule_order),
+    }
+    let currentProfile = createDefaultScheduleProfile()
+    if (event.schedule_profile_json) {
+      try {
+        currentProfile = normalizeScheduleProfile(JSON.parse(event.schedule_profile_json))
+      } catch {
+        currentProfile = createDefaultScheduleProfile()
+      }
+    }
+
+    if (currentProfile.schedule_order === normalizedProfile.schedule_order) {
+      updateEventEditorState(event.id, { scheduleProfile: normalizedProfile })
+      return
+    }
+
+    updateEventEditorState(event.id, { scheduleProfile: normalizedProfile })
+
+    try {
+      await updateEvent(event.id, {
+        schedule_profile_json: JSON.stringify(normalizedProfile),
+      })
+      setEvents(prev => prev.map(ev => (
+        ev.id === event.id
+          ? { ...ev, schedule_profile_json: JSON.stringify(normalizedProfile) }
+          : ev
+      )))
+      showToast(
+        normalizedProfile.schedule_order
+          ? `Schedule order saved: ${normalizedProfile.schedule_order}`
+          : 'Schedule order cleared; using auto order',
+        'success'
+      )
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save schedule order', 'error')
+    }
   }
 
   const validateEvent = (event: Event, state: EventEditorState): string[] => {
@@ -709,6 +773,33 @@ function DrawBuilder() {
               <option value={5}>5</option>
             </select>
           </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label style={{ marginRight: '8px' }}>Schedule Order:</label>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={state.scheduleProfile.schedule_order ?? ''}
+              placeholder="Auto"
+              onChange={(e) => {
+                const value = e.target.value.trim()
+                const parsed = parseInt(value, 10)
+                updateEventEditorState(event.id, {
+                  scheduleProfile: {
+                    ...state.scheduleProfile,
+                    schedule_order: value === '' || Number.isNaN(parsed) ? null : parsed,
+                  },
+                })
+              }}
+              onBlur={() => void persistScheduleOrder(event)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur()
+                }
+              }}
+              style={{ padding: '4px 8px', fontSize: '14px', width: '96px', boxSizing: 'border-box' }}
+            />
+          </div>
           {event.draw_status === 'final' && state.templateType !== 'RR_ONLY' && (
             <Link
               to={`/t/${tournamentId}/draws/${event.id}/waterfall`}
@@ -727,6 +818,10 @@ function DrawBuilder() {
               View Waterfall
             </Link>
           )}
+        </div>
+
+        <div style={{ marginTop: '-8px', marginBottom: '16px', fontSize: '12px', color: '#666' }}>
+          Lower order schedules earlier. Leave blank to keep the automatic larger-draw-first order.
         </div>
 
         {errors.length > 0 && (

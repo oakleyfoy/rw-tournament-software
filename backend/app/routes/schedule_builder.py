@@ -5,6 +5,7 @@ Uses Draw Plan Engine for all calculations. No local template math.
 """
 
 import logging
+import json
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +22,24 @@ from app.services.draw_plan_engine import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _get_manual_schedule_order(event: Event) -> int | None:
+    raw = event.schedule_profile_json
+    if not raw:
+        return None
+    try:
+        profile = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(profile, dict):
+        return None
+    value = profile.get("schedule_order")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
 
 
 def _build_event_payload(event: Event) -> Dict[str, Any]:
@@ -44,6 +63,7 @@ def _build_event_payload(event: Event) -> Dict[str, Any]:
         "template_key": spec.template_key,
         "family": resolve_event_family(spec),
         "guarantee": spec.guarantee,
+        "schedule_order": _get_manual_schedule_order(event),
         "waterfall_rounds": spec.waterfall_rounds,
         "wf_matches": inventory.wf_matches,
         "bracket_matches": inventory.bracket_matches,

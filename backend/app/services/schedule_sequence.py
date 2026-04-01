@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+import json
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlmodel import Session, select
@@ -108,6 +109,46 @@ def _phase_key(k: Tuple[str, int]) -> int:
     return STAGE_ORDER_FALLBACK.get(k[0], 99) * 10 + k[1]
 
 
+def _get_manual_schedule_order(event: Event) -> Optional[int]:
+    """Return explicit schedule priority when configured on the draw."""
+    raw = getattr(event, "schedule_profile_json", None)
+    if not raw:
+        return None
+    try:
+        profile = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(profile, dict):
+        return None
+    value = profile.get("schedule_order")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            parsed = int(stripped)
+            return parsed if parsed > 0 else None
+    return None
+
+
+def _sort_events_for_sequence(events: List[Event]) -> List[Event]:
+    """Manual schedule order overrides size-based defaults."""
+    manual_events: List[Tuple[int, Event]] = []
+    automatic_events: List[Event] = []
+    for event in events:
+        manual_order = _get_manual_schedule_order(event)
+        if manual_order is None:
+            automatic_events.append(event)
+        else:
+            manual_events.append((manual_order, event))
+    return (
+        [event for _, event in sorted(manual_events, key=lambda item: (item[0], item[1].id or 0))]
+        + sorted(automatic_events, key=lambda e: (-(e.team_count or 0), e.id))
+    )
+
+
 def _build_event_phase_map(
     matches: List[Match],
 ) -> Dict[int, Tuple[str, int, List[Match]]]:
@@ -136,26 +177,30 @@ def _build_event_phase_map(
 
 def _rotate_events(events: List[Event], rotation: int) -> List[Event]:
     """
-    Rotate event order among tied team_count groups.
+    Rotate only the unordered auto-priority group.
 
-    Only rotates within the largest tied group (the ones that share the
-    highest team_count).  Smaller events stay at the end in their
-    original order.
+    Events with explicit schedule order stay fixed. For the remaining
+    auto-ordered events, rotate only within the largest tied team_count group.
     """
     if not events or rotation == 0:
         return list(events)
 
-    # Find the largest team_count group
-    max_tc = events[0].team_count or 0
-    top_group = [e for e in events if (e.team_count or 0) == max_tc]
-    rest = [e for e in events if (e.team_count or 0) != max_tc]
+    manual_prefix = [e for e in events if _get_manual_schedule_order(e) is not None]
+    auto_events = [e for e in events if _get_manual_schedule_order(e) is None]
+    if not auto_events:
+        return list(events)
+
+    # Find the largest team_count group among auto-priority events.
+    max_tc = auto_events[0].team_count or 0
+    top_group = [e for e in auto_events if (e.team_count or 0) == max_tc]
+    rest = [e for e in auto_events if (e.team_count or 0) != max_tc]
 
     if len(top_group) <= 1:
         return list(events)  # nothing to rotate
 
     r = rotation % len(top_group)
     rotated_top = top_group[r:] + top_group[:r]
-    return rotated_top + rest
+    return manual_prefix + rotated_top + rest
 
 
 def _compute_day_rotations(num_team_rounds: int) -> Dict[int, int]:
@@ -207,8 +252,8 @@ def build_master_sequence(
         select(Event).where(Event.tournament_id == tournament_id)
     ).all()
 
-    # Event ordering: largest team_count first, event_id tiebreak
-    events_sorted = sorted(events, key=lambda e: (-(e.team_count or 0), e.id))
+    # Event ordering: explicit schedule order first, otherwise largest draw first.
+    events_sorted = _sort_events_for_sequence(events)
 
     # Group matches by event
     matches_by_event: Dict[int, List[Match]] = defaultdict(list)

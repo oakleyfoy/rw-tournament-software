@@ -507,6 +507,7 @@ export interface ScheduleBuilderEvent {
   team_count: number;
   template_type: string;
   guarantee: number;
+  schedule_order?: number | null;
   waterfall_rounds: number;
   wf_matches: number;
   bracket_matches: number;

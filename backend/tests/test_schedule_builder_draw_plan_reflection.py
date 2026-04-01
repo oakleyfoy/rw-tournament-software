@@ -144,3 +144,38 @@ def test_schedule_builder_rejects_wf_to_pools_4_for_8_teams(session: Session):
     assert "error" in event_data, "Event should have error for invalid template/team_count combination"
     assert "divisible by 4" in event_data["error"].lower() or "WF_TO_POOLS_4" in event_data["error"], \
         f"Error should mention WF_TO_POOLS_4 constraint, got: {event_data.get('error')}"
+
+
+def test_schedule_builder_exposes_manual_schedule_order(session: Session):
+    tournament = Tournament(
+        name="Order Preview Tournament",
+        location="Test Location",
+        timezone="America/New_York",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 3),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=12,
+        draw_plan_json='{"version":"1.0","template_type":"WF_TO_POOLS_DYNAMIC","wf_rounds":2}',
+        draw_status="final",
+        guarantee_selected=5,
+        wf_block_minutes=60,
+        standard_block_minutes=105,
+        schedule_profile_json='{"preferred":{"fri":2,"sat":2,"sun":1},"fallback":{"fri":2,"sat":1,"sun":2},"schedule_order":1}',
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    response = get_schedule_builder(tournament.id, session)
+    event_data = next((e for e in response["events"] if e["event_id"] == event.id), None)
+
+    assert event_data is not None, "Event should appear in Schedule Builder"
+    assert event_data["schedule_order"] == 1

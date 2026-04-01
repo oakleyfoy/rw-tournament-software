@@ -212,6 +212,17 @@ export default function ScheduleBuilderPage() {
     return map
   }, [data, planReport])
 
+  const effectiveEventOrder = useMemo(() => {
+    if (!data?.events?.length) return []
+    const manual = data.events
+      .filter((event) => typeof event.schedule_order === 'number' && event.schedule_order > 0)
+      .sort((a, b) => (a.schedule_order ?? 0) - (b.schedule_order ?? 0) || a.event_id - b.event_id)
+    const automatic = data.events
+      .filter((event) => !(typeof event.schedule_order === 'number' && event.schedule_order > 0))
+      .sort((a, b) => (b.team_count - a.team_count) || (a.event_id - b.event_id))
+    return [...manual, ...automatic]
+  }, [data])
+
   // Version mismatch detection
   const usingVersionId = selectedVersion?.id ?? null
   const versionMismatch = activeVersionFromBackend != null
@@ -448,6 +459,53 @@ export default function ScheduleBuilderPage() {
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {effectiveEventOrder.length > 0 && (
+        <div className="card" style={{ padding: 24, marginBottom: 24 }}>
+          <h3 style={{ marginTop: 0, marginBottom: 8 }}>Schedule Order Preview</h3>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
+            Build order uses manual `Schedule Order` first. Blank events stay on automatic larger-draw-first ordering.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {effectiveEventOrder.map((event, idx) => {
+              const isManual = typeof event.schedule_order === 'number' && event.schedule_order > 0
+              return (
+                <div
+                  key={event.event_id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 12px',
+                    borderRadius: 999,
+                    backgroundColor: isManual ? 'rgba(26, 115, 232, 0.1)' : 'rgba(0,0,0,0.05)',
+                    border: `1px solid ${isManual ? 'rgba(26, 115, 232, 0.25)' : 'rgba(0,0,0,0.08)'}`,
+                  }}
+                >
+                  <span style={{
+                    minWidth: 24,
+                    height: 24,
+                    borderRadius: '50%',
+                    backgroundColor: isManual ? '#1a73e8' : '#666',
+                    color: '#fff',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}>
+                    {idx + 1}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{event.event_name}</span>
+                  <span style={{ fontSize: 12, color: '#666' }}>
+                    {isManual ? `manual #${event.schedule_order}` : `${event.team_count} teams auto`}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 

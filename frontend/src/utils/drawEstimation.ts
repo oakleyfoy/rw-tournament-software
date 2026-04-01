@@ -16,6 +16,7 @@ export interface DrawPlan {
   cadence_hint?: {
     preferred: { fri: number; sat: number; sun: number };
     fallback: { fri: number; sat: number; sun: number };
+    schedule_order?: number | null;
   };
   flights?: Array<{
     size: number;
@@ -27,6 +28,7 @@ export interface DrawPlan {
 export interface ScheduleProfile {
   preferred: { fri: number; sat: number; sun: number };
   fallback: { fri: number; sat: number; sun: number };
+  schedule_order?: number | null;
 }
 
 // Match count helpers (even-only; if odd throw)
