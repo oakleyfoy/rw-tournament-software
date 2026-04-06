@@ -9017,12 +9017,12 @@ export default function TournamentDeskPage() {
                   </div>
                   <div style={{ padding: 10 }}>
                     <div style={{ fontSize: 12, color: '#546e7a', marginBottom: 6 }}>
-                      Paste Excel rows with headers: <strong>Player Name</strong>, <strong>Towel Color</strong>, optional <strong>Phone</strong>, <strong>Email</strong>, <strong>Report URL</strong>.
+                      Paste Excel rows with exactly these headers: <strong>Player Name</strong>, <strong>Towel Color</strong>, <strong>Report URL</strong>. Leave the report URL cell blank if you do not want the pill clickable.
                     </div>
                     <textarea
                       value={lookupImportText}
                       onChange={e => setLookupImportText(e.target.value)}
-                      placeholder={'Player Name\tTowel Color\tPhone\tEmail\tReport URL'}
+                      placeholder={'Player Name\tTowel Color\tReport URL'}
                       style={{ width: '100%', minHeight: 92, padding: '8px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box', resize: 'vertical' }}
                     />
                     <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

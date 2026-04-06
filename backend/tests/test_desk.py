@@ -2840,9 +2840,9 @@ def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, sessio
         f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
         json={
             "raw_text": (
-                "Player Name\tTowel Color\tPhone\tEmail\tReport URL\n"
-                "Alpha Player 1\tBlue\t\t\thttps://example.com/reports/alpha-1\n"
-                "Unknown Player\tGreen\t\t\t\n"
+                "Player Name\tTowel Color\tReport URL\n"
+                "Alpha Player 1\tBlue\thttps://example.com/reports/alpha-1\n"
+                "Unknown Player\tGreen\t\n"
             )
         },
     )

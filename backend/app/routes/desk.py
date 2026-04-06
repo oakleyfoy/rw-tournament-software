@@ -149,12 +149,14 @@ def _parse_temporary_player_lookup_rows(raw_text: str) -> List[Dict[str, Optiona
     if name_idx is None or color_idx is None:
         raise HTTPException(
             status_code=400,
-            detail="Header row must include Player Name and Towel Color columns",
+            detail="Header row must include Player Name, Towel Color, and Report URL columns",
         )
-
-    phone_idx = index_map.get("phone")
-    email_idx = index_map.get("email")
     report_idx = index_map.get("report_url")
+    if report_idx is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Header row must include Player Name, Towel Color, and Report URL columns",
+        )
 
     parsed: List[Dict[str, Optional[str]]] = []
     for raw_line in lines[1:]:
@@ -173,8 +175,8 @@ def _parse_temporary_player_lookup_rows(raw_text: str) -> List[Dict[str, Optiona
         parsed.append(
             {
                 "source_name": source_name,
-                "source_phone": _field(phone_idx),
-                "source_email": _field(email_idx),
+                "source_phone": None,
+                "source_email": None,
                 "towel_color": towel_color,
                 "report_url": _field(report_idx),
             }
