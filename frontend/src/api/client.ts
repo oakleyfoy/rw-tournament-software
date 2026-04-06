@@ -2221,6 +2221,8 @@ export interface PlayerCheckInState {
   player_display: string
   checked_in: boolean
   checked_in_at: string | null
+  towel_color: string | null
+  report_url: string | null
 }
 
 export interface MatchCheckInSideState {
@@ -2300,6 +2302,28 @@ export interface DeskSnapshotResponse {
   available_slots: AvailableCourtSlot[]
   checkin_slot_options: CheckInSlotOption[]
   checkin_slot_rows: Record<string, CheckInMatchItem[]>
+}
+
+export interface TemporaryPlayerLookupItem {
+  id: number
+  player_id: number | null
+  source_name: string
+  source_phone: string | null
+  source_email: string | null
+  towel_color: string
+  report_url: string | null
+}
+
+export interface TemporaryPlayerLookupListResponse {
+  tournament_id: number
+  items: TemporaryPlayerLookupItem[]
+}
+
+export interface TemporaryPlayerLookupImportResponse {
+  tournament_id: number
+  imported_count: number
+  matched_count: number
+  items: TemporaryPlayerLookupItem[]
 }
 
 export interface DeskManagementModeResponse {
@@ -2472,6 +2496,24 @@ export async function assignReadyMatchToSlot(
   return fetchJson<DeskSnapshotResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/checkin/assign`,
     { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function getTemporaryPlayerLookups(
+  tournamentId: number
+): Promise<TemporaryPlayerLookupListResponse> {
+  return fetchJson<TemporaryPlayerLookupListResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups`
+  )
+}
+
+export async function importTemporaryPlayerLookups(
+  tournamentId: number,
+  rawText: string
+): Promise<TemporaryPlayerLookupImportResponse> {
+  return fetchJson<TemporaryPlayerLookupImportResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups/import`,
+    { method: 'POST', body: JSON.stringify({ raw_text: rawText }) }
   )
 }
 

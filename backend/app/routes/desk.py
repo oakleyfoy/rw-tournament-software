@@ -27,6 +27,7 @@ from app.models.team import Team
 from app.models.team_player import TeamPlayer
 from app.models.match_lock import MatchLock
 from app.models.match_player_checkin import MatchPlayerCheckIn
+from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.services.advancement_service import apply_advancement_with_details, resolve_all_dependencies
 from app.services.sms_automation import SmsAutomationEngine
@@ -97,6 +98,145 @@ MODE_CHECKIN_MANAGEMENT = "checkin_management"
 ALLOWED_DESK_MODES = {MODE_COURT_MANAGEMENT, MODE_CHECKIN_MANAGEMENT}
 
 
+def _normalize_lookup_name(value: Optional[str]) -> str:
+    raw = (value or "").strip().lower()
+    return " ".join(raw.replace(",", " ").split())
+
+
+def _normalize_lookup_phone(value: Optional[str]) -> Optional[str]:
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    if not digits:
+        return None
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits or None
+
+
+def _normalize_lookup_email(value: Optional[str]) -> Optional[str]:
+    email = (value or "").strip().lower()
+    return email or None
+
+
+def _parse_lookup_boolish_header(value: str) -> str:
+    return _normalize_lookup_name(value).replace(" ", "_")
+
+
+def _serialize_lookup_items(rows: List[TemporaryPlayerLookup]) -> List["TemporaryPlayerLookupItem"]:
+    return [
+        TemporaryPlayerLookupItem(
+            id=row.id,
+            player_id=row.player_id,
+            source_name=row.source_name,
+            source_phone=row.source_phone,
+            source_email=row.source_email,
+            towel_color=row.towel_color,
+            report_url=row.report_url,
+        )
+        for row in rows
+        if row.id is not None
+    ]
+
+
+def _parse_temporary_player_lookup_rows(raw_text: str) -> List[Dict[str, Optional[str]]]:
+    lines = [line.rstrip("\r") for line in (raw_text or "").splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(status_code=400, detail="Paste the Excel rows including a header row")
+
+    header_cells = [_parse_lookup_boolish_header(cell) for cell in lines[0].split("\t")]
+    index_map = {name: idx for idx, name in enumerate(header_cells)}
+    name_idx = index_map.get("player_name")
+    color_idx = index_map.get("towel_color")
+    if name_idx is None or color_idx is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Header row must include Player Name and Towel Color columns",
+        )
+
+    phone_idx = index_map.get("phone")
+    email_idx = index_map.get("email")
+    report_idx = index_map.get("report_url")
+
+    parsed: List[Dict[str, Optional[str]]] = []
+    for raw_line in lines[1:]:
+        fields = raw_line.split("\t")
+
+        def _field(idx: Optional[int]) -> Optional[str]:
+            if idx is None or idx >= len(fields):
+                return None
+            value = fields[idx].strip()
+            return value or None
+
+        source_name = _field(name_idx)
+        towel_color = _field(color_idx)
+        if not source_name or not towel_color:
+            continue
+        parsed.append(
+            {
+                "source_name": source_name,
+                "source_phone": _field(phone_idx),
+                "source_email": _field(email_idx),
+                "towel_color": towel_color,
+                "report_url": _field(report_idx),
+            }
+        )
+
+    if not parsed:
+        raise HTTPException(status_code=400, detail="No valid player rows found in pasted data")
+    return parsed
+
+
+def _resolve_lookup_player_ids(
+    session: Session,
+    tournament_id: int,
+    rows: List[Dict[str, Optional[str]]],
+) -> List[Dict[str, Optional[str]]]:
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+    player_by_phone = {
+        _normalize_lookup_phone(p.phone_e164): p.id
+        for p in players
+        if _normalize_lookup_phone(p.phone_e164) and p.id is not None
+    }
+    player_by_email = {
+        _normalize_lookup_email(p.email): p.id
+        for p in players
+        if _normalize_lookup_email(p.email) and p.id is not None
+    }
+
+    players_by_name: Dict[str, List[int]] = {}
+    for player in players:
+        player_name = _normalize_lookup_name(player.display_name or player.full_name)
+        if not player_name or player.id is None:
+            continue
+        players_by_name.setdefault(player_name, []).append(player.id)
+
+    resolved: List[Dict[str, Optional[str]]] = []
+    for row in rows:
+        player_id: Optional[int] = None
+        normalized_phone = _normalize_lookup_phone(row.get("source_phone"))
+        normalized_email = _normalize_lookup_email(row.get("source_email"))
+        normalized_name = _normalize_lookup_name(row.get("source_name"))
+
+        if normalized_phone and normalized_phone in player_by_phone:
+            player_id = player_by_phone[normalized_phone]
+        elif normalized_email and normalized_email in player_by_email:
+            player_id = player_by_email[normalized_email]
+        else:
+            matches = players_by_name.get(normalized_name, [])
+            if len(matches) == 1:
+                player_id = matches[0]
+
+        resolved.append(
+            {
+                **row,
+                "player_id": player_id,
+                "normalized_name": normalized_name,
+                "normalized_phone": normalized_phone,
+                "normalized_email": normalized_email,
+            }
+        )
+    return resolved
+
+
 class DeskMatchItem(BaseModel):
     match_id: int
     match_number: int
@@ -160,6 +300,8 @@ class PlayerCheckInState(BaseModel):
     player_display: str
     checked_in: bool = False
     checked_in_at: Optional[str] = None
+    towel_color: Optional[str] = None
+    report_url: Optional[str] = None
 
 
 class MatchCheckInSideState(BaseModel):
@@ -275,6 +417,32 @@ class ReadyQueueResponse(BaseModel):
     available_slots: List[AvailableCourtSlot]
     checkin_slot_options: List[CheckInSlotOption] = []
     checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
+
+
+class TemporaryPlayerLookupItem(BaseModel):
+    id: int
+    player_id: Optional[int] = None
+    source_name: str
+    source_phone: Optional[str] = None
+    source_email: Optional[str] = None
+    towel_color: str
+    report_url: Optional[str] = None
+
+
+class TemporaryPlayerLookupListResponse(BaseModel):
+    tournament_id: int
+    items: List[TemporaryPlayerLookupItem]
+
+
+class TemporaryPlayerLookupImportRequest(BaseModel):
+    raw_text: str
+
+
+class TemporaryPlayerLookupImportResponse(BaseModel):
+    tournament_id: int
+    imported_count: int
+    matched_count: int
+    items: List[TemporaryPlayerLookupItem]
 
 
 class AssignReadyMatchRequest(BaseModel):
@@ -577,6 +745,14 @@ def _build_checkin_snapshot(
         select(Player).where(Player.id.in_(list(player_ids)))  # type: ignore[arg-type]
     ).all() if player_ids else []
     player_map = {p.id: p for p in players}
+    lookup_rows = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament.id)
+    ).all()
+    lookup_by_player_id = {
+        row.player_id: row
+        for row in lookup_rows
+        if row.player_id is not None
+    }
 
     team_checkins = session.exec(
         select(MatchCheckIn).where(
@@ -635,6 +811,8 @@ def _build_checkin_snapshot(
                         player_display=(p.display_name or p.full_name) if p else f"Player {pid}",
                         checked_in=checked,
                         checked_in_at=checked_at.isoformat() if checked_at else None,
+                        towel_color=(lookup_by_player_id.get(pid).towel_color if lookup_by_player_id.get(pid) else None),
+                        report_url=(lookup_by_player_id.get(pid).report_url if lookup_by_player_id.get(pid) else None),
                     )
                 )
 
@@ -1625,6 +1803,84 @@ def get_checkin_queue(
         available_slots=available_slots,
         checkin_slot_options=checkin_slot_options,
         checkin_slot_rows=checkin_slot_rows,
+    )
+
+
+@router.get(
+    "/desk/tournaments/{tournament_id}/temporary-player-lookups",
+    response_model=TemporaryPlayerLookupListResponse,
+)
+def get_temporary_player_lookups(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    rows = session.exec(
+        select(TemporaryPlayerLookup)
+        .where(TemporaryPlayerLookup.tournament_id == tournament_id)
+        .order_by(func.lower(TemporaryPlayerLookup.source_name), TemporaryPlayerLookup.id)
+    ).all()
+    return TemporaryPlayerLookupListResponse(
+        tournament_id=tournament_id,
+        items=_serialize_lookup_items(rows),
+    )
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/temporary-player-lookups/import",
+    response_model=TemporaryPlayerLookupImportResponse,
+)
+def import_temporary_player_lookups(
+    tournament_id: int,
+    payload: TemporaryPlayerLookupImportRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    parsed_rows = _parse_temporary_player_lookup_rows(payload.raw_text)
+    resolved_rows = _resolve_lookup_player_ids(session, tournament_id, parsed_rows)
+
+    existing_rows = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
+    ).all()
+    for row in existing_rows:
+        session.delete(row)
+    session.flush()
+
+    created_rows: List[TemporaryPlayerLookup] = []
+    matched_count = 0
+    for row in resolved_rows:
+        lookup_row = TemporaryPlayerLookup(
+            tournament_id=tournament_id,
+            player_id=row.get("player_id"),
+            source_name=row["source_name"] or "",
+            normalized_name=row["normalized_name"] or "",
+            source_phone=row.get("source_phone"),
+            normalized_phone=row.get("normalized_phone"),
+            source_email=row.get("source_email"),
+            normalized_email=row.get("normalized_email"),
+            towel_color=row["towel_color"] or "",
+            report_url=row.get("report_url"),
+        )
+        if lookup_row.player_id is not None:
+            matched_count += 1
+        session.add(lookup_row)
+        created_rows.append(lookup_row)
+
+    session.commit()
+    for row in created_rows:
+        session.refresh(row)
+
+    return TemporaryPlayerLookupImportResponse(
+        tournament_id=tournament_id,
+        imported_count=len(created_rows),
+        matched_count=matched_count,
+        items=_serialize_lookup_items(created_rows),
     )
 
 

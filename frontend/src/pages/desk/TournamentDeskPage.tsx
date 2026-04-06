@@ -65,6 +65,8 @@ import {
   getSmsEventDivisions,
   getSmsPlayers,
   syncSmsPlayerContacts,
+  getTemporaryPlayerLookups,
+  importTemporaryPlayerLookups,
   sendSmsBlast,
   sendSmsEvent,
   sendSmsEventDivision,
@@ -96,6 +98,7 @@ import {
   SmsDivisionLookupItem,
   SmsPlayerLookupItem,
   SmsPlayerSyncResponse,
+  TemporaryPlayerLookupItem,
 } from '../../api/client'
 import {
   DndContext,
@@ -203,6 +206,52 @@ function EventBadge({ name }: { name: string }) {
   const prefix = abbr.replace(/[A-D]$/, '')
   const bg = EVENT_COLORS[prefix] || '#616161'
   return <Badge label={abbr} bg={bg} color="#fff" />
+}
+
+function getTowelPillStyles(colorName: string): { backgroundColor: string; color: string; borderColor: string } {
+  const key = colorName.trim().toLowerCase()
+  const presets: Record<string, { backgroundColor: string; color: string; borderColor: string }> = {
+    blue: { backgroundColor: '#e3f2fd', color: '#0d47a1', borderColor: '#90caf9' },
+    red: { backgroundColor: '#ffebee', color: '#b71c1c', borderColor: '#ef9a9a' },
+    green: { backgroundColor: '#e8f5e9', color: '#1b5e20', borderColor: '#a5d6a7' },
+    yellow: { backgroundColor: '#fff8e1', color: '#8d6e00', borderColor: '#ffe082' },
+    orange: { backgroundColor: '#fff3e0', color: '#e65100', borderColor: '#ffcc80' },
+    purple: { backgroundColor: '#f3e5f5', color: '#6a1b9a', borderColor: '#ce93d8' },
+    pink: { backgroundColor: '#fce4ec', color: '#ad1457', borderColor: '#f48fb1' },
+    black: { backgroundColor: '#eceff1', color: '#263238', borderColor: '#b0bec5' },
+    white: { backgroundColor: '#fafafa', color: '#455a64', borderColor: '#cfd8dc' },
+    gray: { backgroundColor: '#f5f5f5', color: '#424242', borderColor: '#d6d6d6' },
+    grey: { backgroundColor: '#f5f5f5', color: '#424242', borderColor: '#d6d6d6' },
+  }
+  return presets[key] || { backgroundColor: '#eef2f7', color: '#334155', borderColor: '#cbd5e1' }
+}
+
+function TowelColorPill({ colorName, reportUrl }: { colorName: string | null; reportUrl?: string | null }) {
+  if (!colorName) return null
+  const styles = getTowelPillStyles(colorName)
+  const clickable = !!reportUrl
+  return (
+    <span
+      title={clickable ? `Open report: ${reportUrl}` : undefined}
+      onClick={clickable ? () => window.open(reportUrl!, '_blank', 'noopener,noreferrer') : undefined}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '1px 7px',
+        borderRadius: 999,
+        border: `1px solid ${styles.borderColor}`,
+        backgroundColor: styles.backgroundColor,
+        color: styles.color,
+        fontSize: 10,
+        fontWeight: 700,
+        lineHeight: '16px',
+        cursor: clickable ? 'pointer' : 'default',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {colorName}
+    </span>
+  )
 }
 
 const CONFLICT_ICONS: Record<string, string> = {
@@ -7878,6 +7927,10 @@ export default function TournamentDeskPage() {
   const [data, setData] = useState<DeskSnapshotResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [lookupItems, setLookupItems] = useState<TemporaryPlayerLookupItem[]>([])
+  const [lookupImportText, setLookupImportText] = useState('')
+  const [lookupImporting, setLookupImporting] = useState(false)
+  const [lookupMessage, setLookupMessage] = useState<string | null>(null)
 
   const [draftVersionId, setDraftVersionId] = useState<number | null>(null)
   const [creatingDraft, setCreatingDraft] = useState(false)
@@ -7918,10 +7971,21 @@ export default function TournamentDeskPage() {
     } catch { /* ignore */ }
   }, [tid])
 
+  const loadTemporaryPlayerLookups = useCallback(async () => {
+    if (!tid) return
+    try {
+      const resp = await getTemporaryPlayerLookups(tid)
+      setLookupItems(resp.items || [])
+    } catch {
+      setLookupItems([])
+    }
+  }, [tid])
+
   useEffect(() => {
     loadSnapshot()
     loadCourtStates()
-  }, [loadSnapshot, loadCourtStates])
+    loadTemporaryPlayerLookups()
+  }, [loadSnapshot, loadCourtStates, loadTemporaryPlayerLookups])
 
   const handleCreateDraft = useCallback(async () => {
     if (!tid) return
@@ -7949,7 +8013,8 @@ export default function TournamentDeskPage() {
     } else {
       loadSnapshot()
     }
-  }, [draftVersionId, loadSnapshot])
+    loadTemporaryPlayerLookups()
+  }, [draftVersionId, loadSnapshot, loadTemporaryPlayerLookups])
 
   const handleAction = useCallback((match: DeskMatchItem, action: string) => {
     if (action === 'FINALIZE') {
@@ -8146,6 +8211,26 @@ export default function TournamentDeskPage() {
       setError(e instanceof Error ? e.message : 'Failed team quick check-in')
     }
   }, [tid, data, handleRefresh])
+
+  const handleImportTemporaryLookups = useCallback(async () => {
+    if (!tid) return
+    if (!lookupImportText.trim()) {
+      setLookupMessage('Paste Excel rows first.')
+      return
+    }
+    setLookupImporting(true)
+    setLookupMessage(null)
+    try {
+      const resp = await importTemporaryPlayerLookups(tid, lookupImportText)
+      setLookupItems(resp.items || [])
+      setLookupMessage(`Imported ${resp.imported_count} rows. Matched ${resp.matched_count} player${resp.matched_count === 1 ? '' : 's'}.`)
+      await handleRefresh()
+    } catch (e) {
+      setLookupMessage(e instanceof Error ? e.message : 'Import failed')
+    } finally {
+      setLookupImporting(false)
+    }
+  }, [tid, lookupImportText, handleRefresh])
 
   const formatCheckInMatchLabel = useCallback((match: CheckInMatchItem) => {
     const code = (match.match_code || '').toUpperCase()
@@ -8926,6 +9011,63 @@ export default function TournamentDeskPage() {
                 <div style={{ marginBottom: 4, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
                   Player Check-In / On Deck - full event view
                 </div>
+                <div style={{ marginBottom: 8, border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
+                  <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
+                    Towel Color Import
+                  </div>
+                  <div style={{ padding: 10 }}>
+                    <div style={{ fontSize: 12, color: '#546e7a', marginBottom: 6 }}>
+                      Paste Excel rows with headers: <strong>Player Name</strong>, <strong>Towel Color</strong>, optional <strong>Phone</strong>, <strong>Email</strong>, <strong>Report URL</strong>.
+                    </div>
+                    <textarea
+                      value={lookupImportText}
+                      onChange={e => setLookupImportText(e.target.value)}
+                      placeholder={'Player Name\tTowel Color\tPhone\tEmail\tReport URL'}
+                      style={{ width: '100%', minHeight: 92, padding: '8px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box', resize: 'vertical' }}
+                    />
+                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={handleImportTemporaryLookups}
+                        disabled={lookupImporting}
+                        style={{
+                          padding: '6px 12px',
+                          border: 'none',
+                          borderRadius: 4,
+                          backgroundColor: '#1a237e',
+                          color: '#fff',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: lookupImporting ? 'default' : 'pointer',
+                          opacity: lookupImporting ? 0.6 : 1,
+                        }}
+                      >
+                        {lookupImporting ? 'Importing...' : 'Import Towel Data'}
+                      </button>
+                      <span style={{ fontSize: 12, color: '#546e7a' }}>
+                        {lookupItems.length} imported row{lookupItems.length === 1 ? '' : 's'}
+                      </span>
+                      {lookupMessage && (
+                        <span style={{ fontSize: 12, color: lookupMessage.toLowerCase().includes('fail') ? '#c62828' : '#2e7d32' }}>
+                          {lookupMessage}
+                        </span>
+                      )}
+                    </div>
+                    {lookupItems.length > 0 && (
+                      <div style={{ marginTop: 10, maxHeight: 140, overflow: 'auto', borderTop: '1px solid #eef2f5', paddingTop: 8 }}>
+                        {lookupItems.map((item) => (
+                          <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12, color: '#455a64', borderBottom: '1px dotted #eef2f5' }}>
+                            <span style={{ minWidth: 180 }}>{item.source_name}</span>
+                            <TowelColorPill colorName={item.towel_color} reportUrl={item.report_url} />
+                            <span style={{ color: item.player_id ? '#2e7d32' : '#ef6c00', fontWeight: 600 }}>
+                              {item.player_id ? 'Matched' : 'Unmatched'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 12, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span>Filter Slot:</span>
@@ -9074,6 +9216,7 @@ export default function TournamentDeskPage() {
                                         fontSize: 12,
                                         color: '#455a64',
                                         marginBottom: 3,
+                                        flexWrap: 'wrap',
                                       }}>
                                         {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
                                         {renderInlinePlayerToggle(
@@ -9082,8 +9225,10 @@ export default function TournamentDeskPage() {
                                           'left'
                                         )}
                                         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
+                                        <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
                                         <span style={{ color: '#90a4ae', margin: '0 2px' }}>/</span>
                                         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
+                                        <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
                                         {renderInlinePlayerToggle(
                                           !!(state.team_checked_in || p2?.checked_in),
                                           (checkinEnabled && p2) ? () => handlePlayerCheckIn(cm!, side, p2.player_id, !(state.team_checked_in || p2.checked_in)) : undefined,

@@ -2822,6 +2822,46 @@ def test_checkin_assign_accepts_noncanonical_slot_id_for_available_court(client,
     assert moved["court_name"] == "Court 2"
     assert moved["status"] == "IN_PROGRESS"
 
+
+def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tPhone\tEmail\tReport URL\n"
+                "Alpha Player 1\tBlue\t\t\thttps://example.com/reports/alpha-1\n"
+                "Unknown Player\tGreen\t\t\t\n"
+            )
+        },
+    )
+    assert import_resp.status_code == 200
+    imported = import_resp.json()
+    assert imported["imported_count"] == 2
+    assert imported["matched_count"] == 1
+
+    list_resp = client.get(f"/api/desk/tournaments/{t.id}/temporary-player-lookups")
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()["items"]) == 2
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == m1.id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert player_state["towel_color"] == "Blue"
+    assert player_state["report_url"] == "https://example.com/reports/alpha-1"
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

@@ -51,6 +51,7 @@ def init_db() -> None:
     from app.models.team import Team  # noqa: F401
     from app.models.team_avoid_edge import TeamAvoidEdge  # noqa: F401
     from app.models.team_player import TeamPlayer  # noqa: F401
+    from app.models.temporary_player_lookup import TemporaryPlayerLookup  # noqa: F401
     from app.models.tournament import Tournament  # noqa: F401
     from app.models.tournament_day import TournamentDay  # noqa: F401
     from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401

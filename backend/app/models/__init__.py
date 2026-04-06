@@ -18,6 +18,7 @@ from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_template import SmsTemplate
 from app.models.player import Player
 from app.models.team_player import TeamPlayer
+from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.models.user_account import UserAccount
@@ -46,6 +47,7 @@ __all__ = [
     "SmsTemplate",
     "Player",
     "TeamPlayer",
+    "TemporaryPlayerLookup",
     "TournamentSmsSettings",
     "UserAccount",
     "AuthSession",

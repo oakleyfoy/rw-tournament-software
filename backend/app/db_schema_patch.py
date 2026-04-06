@@ -58,6 +58,21 @@ REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
     ("auto_checkin_court_assigned", "INTEGER", "BOOLEAN"),
 ]
 
+# Columns we must ensure exist in the "temporary_player_lookup" table.
+REQUIRED_TEMPORARY_PLAYER_LOOKUP_COLUMNS: List[Tuple[str, str, str]] = [
+    ("player_id", "INTEGER", "INTEGER"),
+    ("source_name", "TEXT", "TEXT"),
+    ("normalized_name", "TEXT", "TEXT"),
+    ("source_phone", "TEXT", "TEXT"),
+    ("normalized_phone", "TEXT", "TEXT"),
+    ("source_email", "TEXT", "TEXT"),
+    ("normalized_email", "TEXT", "TEXT"),
+    ("towel_color", "TEXT", "TEXT"),
+    ("report_url", "TEXT", "TEXT"),
+    ("created_at", "TIMESTAMP", "TIMESTAMP"),
+    ("updated_at", "TIMESTAMP", "TIMESTAMP"),
+]
+
 
 def _is_sqlite(engine: Engine) -> bool:
     return engine.dialect.name.lower() == "sqlite"
@@ -401,4 +416,60 @@ def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
         logger = logging.getLogger(__name__)
         logger.warning(
             f"Failed to ensure tournament_sms_settings columns (this is OK if table doesn't exist yet): {e}"
+        )
+
+
+def ensure_temporary_player_lookup_columns(engine: Engine) -> None:
+    """
+    Idempotently adds required columns to the 'temporary_player_lookup' table if missing.
+    Safe to run at every startup.
+    """
+    try:
+        from app.models.temporary_player_lookup import TemporaryPlayerLookup
+
+        table = TemporaryPlayerLookup.__table__.name
+
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_TEMPORARY_PLAYER_LOOKUP_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type};"))
+        else:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    )
+                """
+                    ),
+                    {"table_name": table},
+                ).fetchone()
+                if not result or not result[0]:
+                    return
+
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_TEMPORARY_PLAYER_LOOKUP_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type};"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure temporary_player_lookup columns (this is OK if table doesn't exist yet): {e}"
         )

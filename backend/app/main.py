@@ -1,9 +1,10 @@
 import os
 import subprocess
+import json
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -16,6 +17,7 @@ from app.db_schema_patch import (
     ensure_event_columns,
     ensure_sms_log_columns,
     ensure_team_columns,
+    ensure_temporary_player_lookup_columns,
     ensure_tournament_columns,
     ensure_tournament_sms_settings_columns,
 )
@@ -45,6 +47,23 @@ from app.routes import (
 )
 
 app = FastAPI(title="RW Tournament Software API")
+_DEBUG_LOG_PATH = r"c:\RW Tournament Software\.cursor\debug.log"
+
+
+def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.utcnow().timestamp() * 1000),
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
 
 
 # Get build info
@@ -85,6 +104,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def agent_request_trace(request: Request, call_next):
+    if request.url.path.startswith("/api"):
+        # region agent log
+        _agent_debug_log(
+            "H12",
+            "main.py:middleware:entry",
+            "api request entry",
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "query": str(request.url.query or ""),
+                "host": request.headers.get("host"),
+                "origin": request.headers.get("origin"),
+                "referer": request.headers.get("referer"),
+            },
+        )
+        # endregion
+    response = await call_next(request)
+    if request.url.path.startswith("/api"):
+        # region agent log
+        _agent_debug_log(
+            "H12",
+            "main.py:middleware:return",
+            "api request return",
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "statusCode": response.status_code,
+            },
+        )
+        # endregion
+    return response
 
 # Include routers
 _protected_deps = [Depends(require_authenticated_user)]
@@ -149,6 +203,7 @@ def on_startup():
     ensure_team_columns(engine)
     ensure_sms_log_columns(engine)
     ensure_tournament_sms_settings_columns(engine)
+    ensure_temporary_player_lookup_columns(engine)
     start_first_match_runner_if_enabled()
 
     # Print all registered routes for debugging (full path stack)
