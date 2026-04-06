@@ -2327,6 +2327,12 @@ export interface TemporaryPlayerLookupImportResponse {
   items: TemporaryPlayerLookupItem[]
 }
 
+export interface TemporaryPlayerLookupUpsert {
+  source_name: string
+  towel_color: string
+  report_url?: string | null
+}
+
 export interface DeskManagementModeResponse {
   tournament_id: number
   version_id: number
@@ -2515,6 +2521,37 @@ export async function importTemporaryPlayerLookups(
   return fetchJson<TemporaryPlayerLookupImportResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups/import`,
     { method: 'POST', body: JSON.stringify({ raw_text: rawText }) }
+  )
+}
+
+export async function createTemporaryPlayerLookup(
+  tournamentId: number,
+  payload: TemporaryPlayerLookupUpsert
+): Promise<TemporaryPlayerLookupItem> {
+  return fetchJson<TemporaryPlayerLookupItem>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function updateTemporaryPlayerLookup(
+  tournamentId: number,
+  lookupId: number,
+  payload: TemporaryPlayerLookupUpsert
+): Promise<TemporaryPlayerLookupItem> {
+  return fetchJson<TemporaryPlayerLookupItem>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups/${lookupId}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deleteTemporaryPlayerLookup(
+  tournamentId: number,
+  lookupId: number
+): Promise<void> {
+  return fetchJson<void>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups/${lookupId}`,
+    { method: 'DELETE' }
   )
 }
 

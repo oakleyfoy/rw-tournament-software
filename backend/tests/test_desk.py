@@ -2863,6 +2863,74 @@ def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, sessio
     assert player_state["report_url"] == "https://example.com/reports/alpha-1"
 
 
+def test_temporary_player_lookup_crud_updates_checkin_snapshot(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    create_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups",
+        json={
+            "source_name": "Alpha Player 1",
+            "towel_color": "Blue",
+            "report_url": "https://example.com/reports/alpha-1",
+        },
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    assert created["matched"] is True
+    assert created["towel_color"] == "Blue"
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == m1.id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert player_state["towel_color"] == "Blue"
+
+    update_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/{created['id']}",
+        json={
+            "source_name": "Alpha Player 1",
+            "towel_color": "Red",
+            "report_url": "",
+        },
+    )
+    assert update_resp.status_code == 200
+    updated = update_resp.json()
+    assert updated["matched"] is True
+    assert updated["towel_color"] == "Red"
+    assert updated["report_url"] is None
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == m1.id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert player_state["towel_color"] == "Red"
+    assert player_state["report_url"] is None
+
+    delete_resp = client.delete(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/{created['id']}"
+    )
+    assert delete_resp.status_code == 200
+
+    list_resp = client.get(f"/api/desk/tournaments/{t.id}/temporary-player-lookups")
+    assert list_resp.status_code == 200
+    assert list_resp.json()["items"] == []
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == m1.id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert player_state["towel_color"] is None
+    assert player_state["report_url"] is None
+
+
 def test_temporary_player_lookup_matches_team_roster_names_without_player_rows(client, session):
     t, v, ev, teams, matches, _slots = _setup_draft_for_move(session)
     teams[0].name = "Venitta Reeves / Partner One"

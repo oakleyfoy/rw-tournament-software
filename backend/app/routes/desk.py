@@ -4,7 +4,7 @@ Now Playing / Up Next, score entry, auto-advancement, working draft management.
 """
 import logging
 import json
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -193,6 +193,37 @@ def _serialize_lookup_items(
         for row in rows
         if row.id is not None
     ]
+
+
+def _resolve_single_lookup_row(
+    session: Session,
+    tournament_id: int,
+    payload: "TemporaryPlayerLookupUpsertRequest",
+) -> Dict[str, Optional[str]]:
+    source_name = (payload.source_name or "").strip()
+    towel_color = (payload.towel_color or "").strip()
+    report_url = (payload.report_url or "").strip() or None
+    if not source_name:
+        raise HTTPException(status_code=400, detail="Player name is required")
+    if not towel_color:
+        raise HTTPException(status_code=400, detail="Towel color is required")
+
+    resolved_rows = _resolve_lookup_player_ids(
+        session,
+        tournament_id,
+        [
+            {
+                "source_name": source_name,
+                "source_phone": None,
+                "source_email": None,
+                "towel_color": towel_color,
+                "report_url": report_url,
+            }
+        ],
+    )
+    if not resolved_rows:
+        raise HTTPException(status_code=400, detail="Unable to save towel lookup row")
+    return resolved_rows[0]
 
 
 def _parse_temporary_player_lookup_rows(raw_text: str) -> List[Dict[str, Optional[str]]]:
@@ -517,6 +548,12 @@ class TemporaryPlayerLookupListResponse(BaseModel):
 
 class TemporaryPlayerLookupImportRequest(BaseModel):
     raw_text: str
+
+
+class TemporaryPlayerLookupUpsertRequest(BaseModel):
+    source_name: str
+    towel_color: str
+    report_url: Optional[str] = None
 
 
 class TemporaryPlayerLookupImportResponse(BaseModel):
@@ -2048,6 +2085,96 @@ def import_temporary_player_lookups(
         matched_count=matched_count,
         items=response_items,
     )
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/temporary-player-lookups",
+    response_model=TemporaryPlayerLookupItem,
+)
+def create_temporary_player_lookup(
+    tournament_id: int,
+    payload: TemporaryPlayerLookupUpsertRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    resolved = _resolve_single_lookup_row(session, tournament_id, payload)
+    lookup_row = TemporaryPlayerLookup(
+        tournament_id=tournament_id,
+        player_id=resolved.get("player_id"),
+        source_name=resolved["source_name"] or "",
+        normalized_name=resolved["normalized_name"] or "",
+        source_phone=resolved.get("source_phone"),
+        normalized_phone=resolved.get("normalized_phone"),
+        source_email=resolved.get("source_email"),
+        normalized_email=resolved.get("normalized_email"),
+        towel_color=resolved["towel_color"] or "",
+        report_url=resolved.get("report_url"),
+    )
+    session.add(lookup_row)
+    session.commit()
+    session.refresh(lookup_row)
+
+    matched_names = _compute_lookup_matched_names(session, tournament_id)
+    return _serialize_lookup_items([lookup_row], matched_names)[0]
+
+
+@router.patch(
+    "/desk/tournaments/{tournament_id}/temporary-player-lookups/{lookup_id}",
+    response_model=TemporaryPlayerLookupItem,
+)
+def update_temporary_player_lookup(
+    tournament_id: int,
+    lookup_id: int,
+    payload: TemporaryPlayerLookupUpsertRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    lookup_row = session.get(TemporaryPlayerLookup, lookup_id)
+    if not lookup_row or lookup_row.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Towel lookup row not found")
+
+    resolved = _resolve_single_lookup_row(session, tournament_id, payload)
+    lookup_row.player_id = resolved.get("player_id")
+    lookup_row.source_name = resolved["source_name"] or ""
+    lookup_row.normalized_name = resolved["normalized_name"] or ""
+    lookup_row.source_phone = resolved.get("source_phone")
+    lookup_row.normalized_phone = resolved.get("normalized_phone")
+    lookup_row.source_email = resolved.get("source_email")
+    lookup_row.normalized_email = resolved.get("normalized_email")
+    lookup_row.towel_color = resolved["towel_color"] or ""
+    lookup_row.report_url = resolved.get("report_url")
+    lookup_row.updated_at = datetime.now(timezone.utc)
+    session.add(lookup_row)
+    session.commit()
+    session.refresh(lookup_row)
+
+    matched_names = _compute_lookup_matched_names(session, tournament_id)
+    return _serialize_lookup_items([lookup_row], matched_names)[0]
+
+
+@router.delete("/desk/tournaments/{tournament_id}/temporary-player-lookups/{lookup_id}")
+def delete_temporary_player_lookup(
+    tournament_id: int,
+    lookup_id: int,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    lookup_row = session.get(TemporaryPlayerLookup, lookup_id)
+    if not lookup_row or lookup_row.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Towel lookup row not found")
+
+    session.delete(lookup_row)
+    session.commit()
+    return {"ok": True}
 
 
 @router.post(

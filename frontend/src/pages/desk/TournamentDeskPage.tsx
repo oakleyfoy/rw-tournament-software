@@ -67,6 +67,9 @@ import {
   syncSmsPlayerContacts,
   getTemporaryPlayerLookups,
   importTemporaryPlayerLookups,
+  createTemporaryPlayerLookup,
+  updateTemporaryPlayerLookup,
+  deleteTemporaryPlayerLookup,
   sendSmsBlast,
   sendSmsEvent,
   sendSmsEventDivision,
@@ -256,6 +259,28 @@ function TowelColorPill({ colorName, reportUrl }: { colorName: string | null; re
       {colorName}
     </span>
   )
+}
+
+function TowelCountBar({ colorName, count, maxCount }: { colorName: string; count: number; maxCount: number }) {
+  const styles = getTowelPillStyles(colorName)
+  const widthPct = maxCount > 0 ? Math.max((count / maxCount) * 100, count > 0 ? 8 : 0) : 0
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(80px, 1fr) 32px', alignItems: 'center', gap: 8 }}>
+      <TowelColorPill colorName={colorName} />
+      <div style={{ height: 12, borderRadius: 999, backgroundColor: '#edf2f7', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+        <div style={{ height: '100%', width: `${widthPct}%`, backgroundColor: styles.backgroundColor, borderRight: `1px solid ${styles.borderColor}` }} />
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 700, color: '#334155', textAlign: 'right' }}>{count}</span>
+    </div>
+  )
+}
+
+function toLookupDraft(item?: TemporaryPlayerLookupItem | null): { source_name: string; towel_color: string; report_url: string } {
+  return {
+    source_name: item?.source_name || '',
+    towel_color: item?.towel_color || '',
+    report_url: item?.report_url || '',
+  }
 }
 
 const CONFLICT_ICONS: Record<string, string> = {
@@ -7935,13 +7960,18 @@ export default function TournamentDeskPage() {
   const [lookupImportText, setLookupImportText] = useState('')
   const [lookupImporting, setLookupImporting] = useState(false)
   const [lookupMessage, setLookupMessage] = useState<string | null>(null)
+  const [lookupDrafts, setLookupDrafts] = useState<Record<number, { source_name: string; towel_color: string; report_url: string }>>({})
+  const [lookupNewDraft, setLookupNewDraft] = useState<{ source_name: string; towel_color: string; report_url: string }>(toLookupDraft())
+  const [lookupSavingIds, setLookupSavingIds] = useState<Set<number>>(new Set())
+  const [lookupDeletingIds, setLookupDeletingIds] = useState<Set<number>>(new Set())
+  const [lookupCreating, setLookupCreating] = useState(false)
 
   const [draftVersionId, setDraftVersionId] = useState<number | null>(null)
   const [creatingDraft, setCreatingDraft] = useState(false)
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
   const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
@@ -7986,6 +8016,14 @@ export default function TournamentDeskPage() {
   }, [tid])
 
   useEffect(() => {
+    setLookupDrafts(
+      Object.fromEntries(
+        lookupItems.map((item) => [item.id, toLookupDraft(item)])
+      )
+    )
+  }, [lookupItems])
+
+  useEffect(() => {
     loadSnapshot()
     loadCourtStates()
     loadTemporaryPlayerLookups()
@@ -8018,6 +8056,15 @@ export default function TournamentDeskPage() {
       loadSnapshot()
     }
     loadTemporaryPlayerLookups()
+  }, [draftVersionId, loadSnapshot, loadTemporaryPlayerLookups])
+
+  const refreshSnapshotAndLookups = useCallback(async () => {
+    if (draftVersionId) {
+      await loadSnapshot(draftVersionId)
+    } else {
+      await loadSnapshot()
+    }
+    await loadTemporaryPlayerLookups()
   }, [draftVersionId, loadSnapshot, loadTemporaryPlayerLookups])
 
   const handleAction = useCallback((match: DeskMatchItem, action: string) => {
@@ -8115,6 +8162,7 @@ export default function TournamentDeskPage() {
     () => ([
       'courts',
       ...(isCheckInManagement ? (['checkin'] as const) : []),
+      ...(isCheckInManagement ? (['towels'] as const) : []),
       'schedule',
       'draws',
       'impact',
@@ -8129,7 +8177,7 @@ export default function TournamentDeskPage() {
   )
 
   useEffect(() => {
-    if (!isCheckInManagement && activeTab === 'checkin') {
+    if (!isCheckInManagement && (activeTab === 'checkin' || activeTab === 'towels')) {
       setActiveTab('courts')
     }
   }, [isCheckInManagement, activeTab])
@@ -8144,7 +8192,7 @@ export default function TournamentDeskPage() {
       await handleRefresh()
       if (mode === 'checkin_management') {
         setActiveTab('checkin')
-      } else if (activeTab === 'checkin') {
+      } else if (activeTab === 'checkin' || activeTab === 'towels') {
         setActiveTab('courts')
       }
     } catch (e) {
@@ -8228,13 +8276,97 @@ export default function TournamentDeskPage() {
       const resp = await importTemporaryPlayerLookups(tid, lookupImportText)
       setLookupItems(resp.items || [])
       setLookupMessage(`Imported ${resp.imported_count} rows. Matched ${resp.matched_count} player${resp.matched_count === 1 ? '' : 's'}.`)
-      await handleRefresh()
+      await refreshSnapshotAndLookups()
     } catch (e) {
       setLookupMessage(e instanceof Error ? e.message : 'Import failed')
     } finally {
       setLookupImporting(false)
     }
-  }, [tid, lookupImportText, handleRefresh])
+  }, [tid, lookupImportText, refreshSnapshotAndLookups])
+
+  const handleLookupDraftChange = useCallback((lookupId: number, field: 'source_name' | 'towel_color' | 'report_url', value: string) => {
+    setLookupDrafts((prev) => ({
+      ...prev,
+      [lookupId]: {
+        ...toLookupDraft(lookupItems.find((item) => item.id === lookupId)),
+        ...(prev[lookupId] || {}),
+        [field]: value,
+      },
+    }))
+  }, [lookupItems])
+
+  const handleCreateLookup = useCallback(async () => {
+    if (!tid) return
+    if (!lookupNewDraft.source_name.trim() || !lookupNewDraft.towel_color.trim()) {
+      setLookupMessage('Player name and towel color are required.')
+      return
+    }
+    setLookupCreating(true)
+    setLookupMessage(null)
+    try {
+      await createTemporaryPlayerLookup(tid, {
+        source_name: lookupNewDraft.source_name.trim(),
+        towel_color: lookupNewDraft.towel_color.trim(),
+        report_url: lookupNewDraft.report_url.trim() || null,
+      })
+      setLookupNewDraft(toLookupDraft())
+      setLookupMessage('Added towel row.')
+      await refreshSnapshotAndLookups()
+    } catch (e) {
+      setLookupMessage(e instanceof Error ? e.message : 'Failed to add towel row')
+    } finally {
+      setLookupCreating(false)
+    }
+  }, [tid, lookupNewDraft, refreshSnapshotAndLookups])
+
+  const handleSaveLookup = useCallback(async (lookupId: number) => {
+    if (!tid) return
+    const draft = lookupDrafts[lookupId]
+    if (!draft || !draft.source_name.trim() || !draft.towel_color.trim()) {
+      setLookupMessage('Player name and towel color are required.')
+      return
+    }
+    setLookupSavingIds((prev) => new Set(prev).add(lookupId))
+    setLookupMessage(null)
+    try {
+      const updated = await updateTemporaryPlayerLookup(tid, lookupId, {
+        source_name: draft.source_name.trim(),
+        towel_color: draft.towel_color.trim(),
+        report_url: draft.report_url.trim() || null,
+      })
+      setLookupItems((prev) => prev.map((item) => item.id === lookupId ? updated : item))
+      setLookupMessage(`Saved ${updated.source_name}.`)
+      await refreshSnapshotAndLookups()
+    } catch (e) {
+      setLookupMessage(e instanceof Error ? e.message : 'Failed to save towel row')
+    } finally {
+      setLookupSavingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(lookupId)
+        return next
+      })
+    }
+  }, [tid, lookupDrafts, refreshSnapshotAndLookups])
+
+  const handleDeleteLookup = useCallback(async (lookupId: number) => {
+    if (!tid) return
+    setLookupDeletingIds((prev) => new Set(prev).add(lookupId))
+    setLookupMessage(null)
+    try {
+      await deleteTemporaryPlayerLookup(tid, lookupId)
+      setLookupItems((prev) => prev.filter((item) => item.id !== lookupId))
+      setLookupMessage('Deleted towel row.')
+      await refreshSnapshotAndLookups()
+    } catch (e) {
+      setLookupMessage(e instanceof Error ? e.message : 'Failed to delete towel row')
+    } finally {
+      setLookupDeletingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(lookupId)
+        return next
+      })
+    }
+  }, [tid, refreshSnapshotAndLookups])
 
   const formatCheckInMatchLabel = useCallback((match: CheckInMatchItem) => {
     const code = (match.match_code || '').toUpperCase()
@@ -8628,6 +8760,58 @@ export default function TournamentDeskPage() {
     (data.checkin_matches || []).map((cm) => [cm.match_id, cm])
   )
 
+  const getSectionCheckInMatches = (section: { checkinRows: CheckInMatchItem[]; slotIds: Set<number> }) =>
+    (
+      section.checkinRows.length > 0
+        ? section.checkinRows
+        : (data.checkin_matches || [])
+            .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
+            .sort((a, b) => a.match_number - b.match_number)
+    ).filter(cm => !cm.match_ready)
+
+  const summarizeTowelCounts = (matches: CheckInMatchItem[]) => {
+    const counts = new Map<string, number>()
+    matches.forEach((match) => {
+      ;[match.side_a, match.side_b].forEach((sideState) => {
+        ;(sideState.players || []).forEach((player) => {
+          const colorName = (player.towel_color || '').trim()
+          if (!colorName) return
+          counts.set(colorName, (counts.get(colorName) || 0) + 1)
+        })
+      })
+    })
+    return Array.from(counts.entries())
+      .map(([colorName, count]) => ({ colorName, count }))
+      .sort((a, b) => b.count - a.count || a.colorName.localeCompare(b.colorName))
+  }
+
+  const towelSlotSummaries = slotSections
+    .map((section) => {
+      const matches = getSectionCheckInMatches(section)
+      const counts = summarizeTowelCounts(matches)
+      return {
+        key: section.key,
+        label: section.label,
+        matchCount: matches.length,
+        totalTowels: counts.reduce((sum, row) => sum + row.count, 0),
+        counts,
+      }
+    })
+    .filter(section => section.totalTowels > 0)
+
+  const towelOverallCounts = summarizeTowelCounts(towelSlotSummaries.flatMap(section => {
+    const slotSection = slotSections.find(s => s.key === section.key)
+    return slotSection ? getSectionCheckInMatches(slotSection) : []
+  }))
+  const towelOverallTotal = towelOverallCounts.reduce((sum, row) => sum + row.count, 0)
+  const towelOverallMax = towelOverallCounts.reduce((max, row) => Math.max(max, row.count), 0)
+  const towelSlotMax = towelSlotSummaries.reduce(
+    (max, section) => Math.max(max, ...section.counts.map(row => row.count), 0),
+    0
+  )
+  const matchedLookupCount = lookupItems.filter(item => item.matched).length
+  const unmatchedLookupCount = lookupItems.length - matchedLookupCount
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
       {/* Header */}
@@ -8763,11 +8947,11 @@ export default function TournamentDeskPage() {
               backgroundColor: 'transparent',
               color: activeTab === tab ? '#1a237e' : '#888',
               cursor: 'pointer',
-              textTransform: tab === 'sms' ? 'none' : 'capitalize',
+              textTransform: tab === 'sms' || tab === 'checkin' ? 'none' : 'capitalize',
               marginBottom: -2,
             }}
           >
-            {tab === 'sms' ? 'SMS' : tab === 'checkin' ? 'Check-In' : tab}
+            {tab === 'sms' ? 'SMS' : tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab}
           </button>
         ))}
       </div>
@@ -9015,62 +9199,8 @@ export default function TournamentDeskPage() {
                 <div style={{ marginBottom: 4, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
                   Player Check-In / On Deck - full event view
                 </div>
-                <div style={{ marginBottom: 8, border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
-                  <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
-                    Towel Color Import
-                  </div>
-                  <div style={{ padding: 10 }}>
-                    <div style={{ fontSize: 12, color: '#546e7a', marginBottom: 6 }}>
-                      Paste Excel rows with exactly these headers: <strong>Player Name</strong>, <strong>Towel Color</strong>, <strong>Report URL</strong>. Leave the report URL cell blank if you do not want the pill clickable.
-                    </div>
-                    <textarea
-                      value={lookupImportText}
-                      onChange={e => setLookupImportText(e.target.value)}
-                      placeholder={'Player Name\tTowel Color\tReport URL'}
-                      style={{ width: '100%', minHeight: 92, padding: '8px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box', resize: 'vertical' }}
-                    />
-                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        onClick={handleImportTemporaryLookups}
-                        disabled={lookupImporting}
-                        style={{
-                          padding: '6px 12px',
-                          border: 'none',
-                          borderRadius: 4,
-                          backgroundColor: '#1a237e',
-                          color: '#fff',
-                          fontSize: 12,
-                          fontWeight: 700,
-                          cursor: lookupImporting ? 'default' : 'pointer',
-                          opacity: lookupImporting ? 0.6 : 1,
-                        }}
-                      >
-                        {lookupImporting ? 'Importing...' : 'Import Towel Data'}
-                      </button>
-                      <span style={{ fontSize: 12, color: '#546e7a' }}>
-                        {lookupItems.length} imported row{lookupItems.length === 1 ? '' : 's'}
-                      </span>
-                      {lookupMessage && (
-                        <span style={{ fontSize: 12, color: lookupMessage.toLowerCase().includes('fail') ? '#c62828' : '#2e7d32' }}>
-                          {lookupMessage}
-                        </span>
-                      )}
-                    </div>
-                    {lookupItems.length > 0 && (
-                      <div style={{ marginTop: 10, maxHeight: 140, overflow: 'auto', borderTop: '1px solid #eef2f5', paddingTop: 8 }}>
-                        {lookupItems.map((item) => (
-                          <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12, color: '#455a64', borderBottom: '1px dotted #eef2f5' }}>
-                            <span style={{ minWidth: 180 }}>{item.source_name}</span>
-                            <TowelColorPill colorName={item.towel_color} reportUrl={item.report_url} />
-                            <span style={{ color: item.matched ? '#2e7d32' : '#ef6c00', fontWeight: 600 }}>
-                              {item.matched ? 'Matched' : 'Unmatched'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                <div style={{ marginBottom: 8, fontSize: 12, color: '#607d8b' }}>
+                  Towel imports and color counts now live in the <strong>Towels</strong> tab.
                 </div>
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 12, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -9107,14 +9237,7 @@ export default function TournamentDeskPage() {
                           {(() => {
                             const rows: JSX.Element[] = []
                             filteredSlotSections.forEach((section) => {
-                              const checkInMatchesForSection =
-                                section.checkinRows.length > 0
-                                  ? section.checkinRows
-                                  : (data.checkin_matches || [])
-                                      .filter(cm => cm.slot_id != null && section.slotIds.has(cm.slot_id))
-                                      .sort((a, b) => a.match_number - b.match_number)
-                              const actionableCheckInMatchesForSection = checkInMatchesForSection
-                                .filter(cm => !cm.match_ready)
+                              const actionableCheckInMatchesForSection = getSectionCheckInMatches(section)
                               const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
                                 actionableCheckInMatchesForSection.length > 0
                                   ? actionableCheckInMatchesForSection.map((cm) => ({
@@ -9228,8 +9351,8 @@ export default function TournamentDeskPage() {
                                           (checkinEnabled && p1?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p1.player_id!, !(state.team_checked_in || p1.checked_in)) : undefined,
                                           'left'
                                         )}
-                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
                                         <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
                                         <span style={{ color: '#90a4ae', margin: '0 2px' }}>/</span>
                                         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
                                         <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
@@ -9491,6 +9614,282 @@ export default function TournamentDeskPage() {
                         </div>
                       )}
                     </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Towels Tab */}
+        {activeTab === 'towels' && (
+          <div>
+            {!isCheckInManagement ? (
+              <div style={{ color: '#888', fontSize: 13, fontStyle: 'italic' }}>
+                Enable Check-In Management from Actions in the Courts tab.
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 10, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
+                  Towel import and planning
+                </div>
+                <div style={{ marginBottom: 10, fontSize: 12, color: '#607d8b' }}>
+                  Counts below are based on current check-in matches that are not marked ready yet.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: 10, alignItems: 'start' }}>
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
+                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
+                      Towel Import
+                    </div>
+                    <div style={{ padding: 10 }}>
+                      <div style={{ marginBottom: 12, padding: 10, border: '1px solid #e2e8f0', borderRadius: 6, backgroundColor: '#f8fafc' }}>
+                        <div style={{ fontSize: 12, color: '#334155', fontWeight: 700, marginBottom: 8 }}>
+                          Add Player Manually
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.5fr auto', gap: 8, alignItems: 'end' }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#607d8b', marginBottom: 4 }}>Player Name</div>
+                            <input
+                              type="text"
+                              value={lookupNewDraft.source_name}
+                              onChange={e => setLookupNewDraft(prev => ({ ...prev, source_name: e.target.value }))}
+                              placeholder="Player name"
+                              style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#607d8b', marginBottom: 4 }}>Towel Color</div>
+                            <input
+                              type="text"
+                              value={lookupNewDraft.towel_color}
+                              onChange={e => setLookupNewDraft(prev => ({ ...prev, towel_color: e.target.value }))}
+                              placeholder="Lime"
+                              style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#607d8b', marginBottom: 4 }}>Report URL</div>
+                            <input
+                              type="text"
+                              value={lookupNewDraft.report_url}
+                              onChange={e => setLookupNewDraft(prev => ({ ...prev, report_url: e.target.value }))}
+                              placeholder="https://..."
+                              style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleCreateLookup}
+                            disabled={lookupCreating}
+                            style={{
+                              padding: '7px 12px',
+                              border: 'none',
+                              borderRadius: 4,
+                              backgroundColor: '#2e7d32',
+                              color: '#fff',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              cursor: lookupCreating ? 'default' : 'pointer',
+                              opacity: lookupCreating ? 0.6 : 1,
+                              height: 32,
+                            }}
+                          >
+                            {lookupCreating ? 'Adding...' : 'Add'}
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#546e7a', marginBottom: 6 }}>
+                        Paste Excel rows with exactly these headers: <strong>Player Name</strong>, <strong>Towel Color</strong>, <strong>Report URL</strong>. Leave the report URL cell blank if you do not want the pill clickable.
+                      </div>
+                      <textarea
+                        value={lookupImportText}
+                        onChange={e => setLookupImportText(e.target.value)}
+                        placeholder={'Player Name\tTowel Color\tReport URL'}
+                        style={{ width: '100%', minHeight: 92, padding: '8px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box', resize: 'vertical' }}
+                      />
+                      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={handleImportTemporaryLookups}
+                          disabled={lookupImporting}
+                          style={{
+                            padding: '6px 12px',
+                            border: 'none',
+                            borderRadius: 4,
+                            backgroundColor: '#1a237e',
+                            color: '#fff',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: lookupImporting ? 'default' : 'pointer',
+                            opacity: lookupImporting ? 0.6 : 1,
+                          }}
+                        >
+                          {lookupImporting ? 'Importing...' : 'Import Towel Data'}
+                        </button>
+                        <span style={{ fontSize: 12, color: '#546e7a' }}>
+                          {lookupItems.length} imported row{lookupItems.length === 1 ? '' : 's'}
+                        </span>
+                        <span style={{ fontSize: 12, color: '#2e7d32', fontWeight: 700 }}>
+                          {matchedLookupCount} matched
+                        </span>
+                        <span style={{ fontSize: 12, color: unmatchedLookupCount > 0 ? '#ef6c00' : '#607d8b', fontWeight: 700 }}>
+                          {unmatchedLookupCount} unmatched
+                        </span>
+                        {lookupMessage && (
+                          <span style={{ fontSize: 12, color: lookupMessage.toLowerCase().includes('fail') ? '#c62828' : '#2e7d32' }}>
+                            {lookupMessage}
+                          </span>
+                        )}
+                      </div>
+                      {lookupItems.length > 0 && (
+                        <div style={{ marginTop: 10, maxHeight: 300, overflow: 'auto', borderTop: '1px solid #eef2f5', paddingTop: 8 }}>
+                          <div style={{ fontSize: 12, color: '#334155', fontWeight: 700, marginBottom: 8 }}>
+                            Color Table
+                          </div>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            {lookupItems.map((item) => {
+                              const draft = lookupDrafts[item.id] || toLookupDraft(item)
+                              const saving = lookupSavingIds.has(item.id)
+                              const deleting = lookupDeletingIds.has(item.id)
+                              return (
+                                <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1.45fr 1fr 1.4fr auto auto', gap: 8, alignItems: 'center', padding: '6px 0', fontSize: 12, color: '#455a64', borderBottom: '1px dotted #eef2f5' }}>
+                                  <input
+                                    type="text"
+                                    value={draft.source_name}
+                                    onChange={e => handleLookupDraftChange(item.id, 'source_name', e.target.value)}
+                                    style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
+                                  />
+                                  <div style={{ display: 'grid', gap: 4 }}>
+                                    <input
+                                      type="text"
+                                      value={draft.towel_color}
+                                      onChange={e => handleLookupDraftChange(item.id, 'towel_color', e.target.value)}
+                                      style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
+                                    />
+                                    <div style={{ minHeight: 18 }}>
+                                      <TowelColorPill colorName={draft.towel_color || null} reportUrl={draft.report_url || null} />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={draft.report_url}
+                                    onChange={e => handleLookupDraftChange(item.id, 'report_url', e.target.value)}
+                                    placeholder="https://..."
+                                    style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
+                                  />
+                                  <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
+                                    <span style={{ color: item.matched ? '#2e7d32' : '#ef6c00', fontWeight: 700 }}>
+                                      {item.matched ? 'Matched' : 'Unmatched'}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveLookup(item.id)}
+                                      disabled={saving || deleting}
+                                      style={{
+                                        padding: '5px 10px',
+                                        border: 'none',
+                                        borderRadius: 4,
+                                        backgroundColor: '#1565c0',
+                                        color: '#fff',
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        cursor: (saving || deleting) ? 'default' : 'pointer',
+                                        opacity: (saving || deleting) ? 0.6 : 1,
+                                      }}
+                                    >
+                                      {saving ? 'Saving...' : 'Save'}
+                                    </button>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteLookup(item.id)}
+                                    disabled={saving || deleting}
+                                    style={{
+                                      padding: '5px 10px',
+                                      border: '1px solid #ef9a9a',
+                                      borderRadius: 4,
+                                      backgroundColor: '#fff5f5',
+                                      color: '#c62828',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: (saving || deleting) ? 'default' : 'pointer',
+                                      opacity: (saving || deleting) ? 0.6 : 1,
+                                    }}
+                                  >
+                                    {deleting ? 'Removing...' : 'Remove'}
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
+                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
+                      Overall Color Totals
+                    </div>
+                    <div style={{ padding: 10 }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                        <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', minWidth: 108 }}>
+                          <div style={{ fontSize: 11, color: '#607d8b', textTransform: 'uppercase', fontWeight: 700 }}>Total Towels</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: '#1e293b' }}>{towelOverallTotal}</div>
+                        </div>
+                        <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', minWidth: 108 }}>
+                          <div style={{ fontSize: 11, color: '#607d8b', textTransform: 'uppercase', fontWeight: 700 }}>Colors Used</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: '#1e293b' }}>{towelOverallCounts.length}</div>
+                        </div>
+                        <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', minWidth: 108 }}>
+                          <div style={{ fontSize: 11, color: '#607d8b', textTransform: 'uppercase', fontWeight: 700 }}>Time Slots</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: '#1e293b' }}>{towelSlotSummaries.length}</div>
+                        </div>
+                      </div>
+                      {towelOverallCounts.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#888' }}>No towel colors are attached to the current not-ready check-in matches.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          {towelOverallCounts.map((row) => (
+                            <TowelCountBar key={row.colorName} colorName={row.colorName} count={row.count} maxCount={towelOverallMax} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10, border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
+                  <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
+                    Color Totals By Time Slot
+                  </div>
+                  <div style={{ padding: 10 }}>
+                    {towelSlotSummaries.length === 0 ? (
+                      <div style={{ fontSize: 12, color: '#888' }}>No time slots currently need towels.</div>
+                    ) : (
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {towelSlotSummaries.map((section) => (
+                          <div key={section.key} style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: 10, backgroundColor: '#fcfdff' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>{section.label}</div>
+                                <div style={{ fontSize: 11, color: '#607d8b' }}>
+                                  {section.matchCount} match{section.matchCount === 1 ? '' : 'es'} needing check-in
+                                </div>
+                              </div>
+                              <div style={{ padding: '5px 9px', borderRadius: 999, backgroundColor: '#e8f0fe', color: '#1a237e', fontSize: 12, fontWeight: 800 }}>
+                                {section.totalTowels} total towels
+                              </div>
+                            </div>
+                            <div style={{ display: 'grid', gap: 8 }}>
+                              {section.counts.map((row) => (
+                                <TowelCountBar key={`${section.key}-${row.colorName}`} colorName={row.colorName} count={row.count} maxCount={towelSlotMax} />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
