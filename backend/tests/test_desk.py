@@ -3009,6 +3009,55 @@ def test_temporary_player_lookup_matches_roster_names_with_location_suffixes(cli
     assert side_b_players[1]["player_display"] == "Wladimir E Chacon, Miami, FL"
     assert side_b_players[1]["towel_color"] == "Lime"
 
+
+def test_temporary_player_lookup_enriches_linked_players_by_name_fallback(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    alpha_p1 = Player(tournament_id=t.id, full_name="Mayada Innenberg", display_name="Mayada")
+    alpha_p2 = Player(tournament_id=t.id, full_name="Lisa Sample", display_name="Lisa")
+    delta_p1 = Player(tournament_id=t.id, full_name="Kristin Rosenbaum", display_name="Kristin")
+    delta_p2 = Player(tournament_id=t.id, full_name="Jennifer Sample", display_name="Jennifer")
+    session.add_all([alpha_p1, alpha_p2, delta_p1, delta_p2])
+    session.flush()
+    session.add_all(
+        [
+            TeamPlayer(team_id=teams[0].id, player_id=alpha_p1.id, lineup_slot=1),
+            TeamPlayer(team_id=teams[0].id, player_id=alpha_p2.id, lineup_slot=2),
+            TeamPlayer(team_id=teams[3].id, player_id=delta_p1.id, lineup_slot=1),
+            TeamPlayer(team_id=teams[3].id, player_id=delta_p2.id, lineup_slot=2),
+        ]
+    )
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Mayada Innenberg\tLime\t\n"
+                "Kristin Rosenbaum\tPurple\thttps://example.com/reports/kristin\n"
+            )
+        },
+    )
+    assert import_resp.status_code == 200
+    assert import_resp.json()["matched_count"] == 2
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+
+    side_a_player = next(p for p in match_state["side_a"]["players"] if p["player_display"] == "Mayada")
+    assert side_a_player["towel_color"] == "Lime"
+
+    side_b_player = next(p for p in match_state["side_b"]["players"] if p["player_display"] == "Kristin")
+    assert side_b_player["towel_color"] == "Purple"
+    assert side_b_player["report_url"] == "https://example.com/reports/kristin"
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

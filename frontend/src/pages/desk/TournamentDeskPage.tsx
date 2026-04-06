@@ -211,17 +211,21 @@ function EventBadge({ name }: { name: string }) {
 function getTowelPillStyles(colorName: string): { backgroundColor: string; color: string; borderColor: string } {
   const key = colorName.trim().toLowerCase()
   const presets: Record<string, { backgroundColor: string; color: string; borderColor: string }> = {
-    blue: { backgroundColor: '#e3f2fd', color: '#0d47a1', borderColor: '#90caf9' },
-    red: { backgroundColor: '#ffebee', color: '#b71c1c', borderColor: '#ef9a9a' },
-    green: { backgroundColor: '#e8f5e9', color: '#1b5e20', borderColor: '#a5d6a7' },
-    yellow: { backgroundColor: '#fff8e1', color: '#8d6e00', borderColor: '#ffe082' },
-    orange: { backgroundColor: '#fff3e0', color: '#e65100', borderColor: '#ffcc80' },
-    purple: { backgroundColor: '#f3e5f5', color: '#6a1b9a', borderColor: '#ce93d8' },
-    pink: { backgroundColor: '#fce4ec', color: '#ad1457', borderColor: '#f48fb1' },
-    black: { backgroundColor: '#eceff1', color: '#263238', borderColor: '#b0bec5' },
+    lime: { backgroundColor: '#c6ff00', color: '#1b1b1b', borderColor: '#99cc00' },
+    black: { backgroundColor: '#111111', color: '#ffffff', borderColor: '#000000' },
+    royal: { backgroundColor: '#4169e1', color: '#ffffff', borderColor: '#2746a6' },
+    navy: { backgroundColor: '#001f5b', color: '#ffffff', borderColor: '#00143d' },
+    red: { backgroundColor: '#d32f2f', color: '#ffffff', borderColor: '#9a0007' },
+    purple: { backgroundColor: '#8e24aa', color: '#ffffff', borderColor: '#5c007a' },
+    orange: { backgroundColor: '#ef6c00', color: '#ffffff', borderColor: '#b53d00' },
+    pine: { backgroundColor: '#1b5e20', color: '#ffffff', borderColor: '#0d3b12' },
+    yellow: { backgroundColor: '#ffd54f', color: '#2f2400', borderColor: '#c8a415' },
+    gray: { backgroundColor: '#757575', color: '#ffffff', borderColor: '#4a4a4a' },
+    grey: { backgroundColor: '#757575', color: '#ffffff', borderColor: '#4a4a4a' },
+    blue: { backgroundColor: '#1976d2', color: '#ffffff', borderColor: '#0d47a1' },
+    green: { backgroundColor: '#2e7d32', color: '#ffffff', borderColor: '#1b5e20' },
+    pink: { backgroundColor: '#d81b60', color: '#ffffff', borderColor: '#8e0038' },
     white: { backgroundColor: '#fafafa', color: '#455a64', borderColor: '#cfd8dc' },
-    gray: { backgroundColor: '#f5f5f5', color: '#424242', borderColor: '#d6d6d6' },
-    grey: { backgroundColor: '#f5f5f5', color: '#424242', borderColor: '#d6d6d6' },
   }
   return presets[key] || { backgroundColor: '#eef2f7', color: '#334155', borderColor: '#cbd5e1' }
 }

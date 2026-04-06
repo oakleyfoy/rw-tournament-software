@@ -155,8 +155,9 @@ def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[s
     players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
     matched_names: set[str] = set()
     for player in players:
-        for alias in _lookup_name_keys(player.display_name or player.full_name):
-            matched_names.add(alias)
+        for source in (player.display_name, player.full_name):
+            for alias in _lookup_name_keys(source):
+                matched_names.add(alias)
 
     teams = session.exec(
         select(Team)
@@ -265,8 +266,9 @@ def _resolve_lookup_player_ids(
     for player in players:
         if player.id is None:
             continue
-        for player_name in _lookup_name_keys(player.display_name or player.full_name):
-            players_by_name.setdefault(player_name, []).append(player.id)
+        for source in (player.display_name, player.full_name):
+            for player_name in _lookup_name_keys(source):
+                players_by_name.setdefault(player_name, []).append(player.id)
 
     teams = session.exec(
         select(Team)
@@ -886,6 +888,17 @@ def _build_checkin_snapshot(
                 chk = player_checkin_map.get((m.id, side_key, pid))
                 checked = bool(chk and chk.checked_in)
                 checked_at = chk.checked_in_at if chk else None
+                lookup_row = lookup_by_player_id.get(pid)
+                if lookup_row is None and p is not None:
+                    lookup_row = next(
+                        (
+                            lookup_by_name[alias]
+                            for source in (p.display_name, p.full_name)
+                            for alias in _lookup_name_keys(source)
+                            if alias in lookup_by_name
+                        ),
+                        None,
+                    )
                 if checked and checked_at:
                     side_player_times.append(checked_at)
                 player_states.append(
@@ -894,8 +907,8 @@ def _build_checkin_snapshot(
                         player_display=(p.display_name or p.full_name) if p else f"Player {pid}",
                         checked_in=checked,
                         checked_in_at=checked_at.isoformat() if checked_at else None,
-                        towel_color=(lookup_by_player_id.get(pid).towel_color if lookup_by_player_id.get(pid) else None),
-                        report_url=(lookup_by_player_id.get(pid).report_url if lookup_by_player_id.get(pid) else None),
+                        towel_color=lookup_row.towel_color if lookup_row else None,
+                        report_url=lookup_row.report_url if lookup_row else None,
                     )
                 )
 
