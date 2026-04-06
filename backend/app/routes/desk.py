@@ -100,6 +100,10 @@ ALLOWED_DESK_MODES = {MODE_COURT_MANAGEMENT, MODE_CHECKIN_MANAGEMENT}
 
 def _normalize_lookup_name(value: Optional[str]) -> str:
     raw = (value or "").strip().lower()
+    if "," in raw:
+        parts = [part.strip() for part in raw.split(",", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            raw = f"{parts[1]} {parts[0]}"
     return " ".join(raw.replace(",", " ").split())
 
 
@@ -853,7 +857,20 @@ def _build_checkin_snapshot(
                 )
 
             if not player_states:
-                fallback_names = _split_team_player_names(_team_display(team_id, fallback, team_map))
+                team_obj = team_map.get(team_id) if team_id else None
+                fallback_names: List[str] = []
+                seen_fallback_names: set[str] = set()
+                for source in (
+                    team_obj.name if team_obj else None,
+                    team_obj.display_name if team_obj else None,
+                    _team_display(team_id, fallback, team_map),
+                ):
+                    for candidate in _split_team_player_names(source):
+                        normalized_candidate = _normalize_lookup_name(candidate)
+                        if not normalized_candidate or normalized_candidate in seen_fallback_names:
+                            continue
+                        seen_fallback_names.add(normalized_candidate)
+                        fallback_names.append(candidate)
                 for fallback_name in fallback_names:
                     lookup_row = lookup_by_name.get(_normalize_lookup_name(fallback_name))
                     player_states.append(
