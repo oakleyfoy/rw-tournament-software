@@ -2958,6 +2958,53 @@ def test_temporary_player_lookup_matches_last_first_roster_names(client, session
     assert side_b_players[1]["player_display"] == "Chacon, Wladimir E"
     assert side_b_players[1]["towel_color"] == "Lime"
 
+
+def test_temporary_player_lookup_matches_roster_names_with_location_suffixes(client, session):
+    t, v, ev, teams, matches, _slots = _setup_draft_for_move(session)
+    teams[0].name = "Venitta Reeves, Beaufort, SC / Partner One, City, ST"
+    teams[0].display_name = "Venitta / Partner"
+    teams[3].name = "Wayne Steed, Beaufort, SC / Wladimir E Chacon, Miami, FL"
+    teams[3].display_name = "Wayne / Wladimir"
+    session.add(teams[0])
+    session.add(teams[3])
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Venitta Reeves\tBlack\thttps://example.com/reports/venitta\n"
+                "Wayne Steed\tRoyal\thttps://example.com/reports/wayne\n"
+                "Wladimir E Chacon\tLime\t\n"
+            )
+        },
+    )
+    assert import_resp.status_code == 200
+    imported = import_resp.json()
+    assert imported["matched_count"] == 3
+    assert all(item["matched"] is True for item in imported["items"])
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+
+    side_a_players = match_state["side_a"]["players"]
+    assert side_a_players[0]["player_display"] == "Venitta Reeves, Beaufort, SC"
+    assert side_a_players[0]["towel_color"] == "Black"
+
+    side_b_players = match_state["side_b"]["players"]
+    assert side_b_players[0]["player_display"] == "Wayne Steed, Beaufort, SC"
+    assert side_b_players[0]["towel_color"] == "Royal"
+    assert side_b_players[1]["player_display"] == "Wladimir E Chacon, Miami, FL"
+    assert side_b_players[1]["towel_color"] == "Lime"
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

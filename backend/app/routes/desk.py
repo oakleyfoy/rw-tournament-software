@@ -100,10 +100,6 @@ ALLOWED_DESK_MODES = {MODE_COURT_MANAGEMENT, MODE_CHECKIN_MANAGEMENT}
 
 def _normalize_lookup_name(value: Optional[str]) -> str:
     raw = (value or "").strip().lower()
-    if "," in raw:
-        parts = [part.strip() for part in raw.split(",", 1)]
-        if len(parts) == 2 and parts[0] and parts[1]:
-            raw = f"{parts[1]} {parts[0]}"
     return " ".join(raw.replace(",", " ").split())
 
 
@@ -136,6 +132,23 @@ def _split_team_player_names(team_name: Optional[str]) -> List[str]:
     else:
         parts = [raw]
     return parts[:2]
+
+
+def _lookup_name_keys(value: Optional[str]) -> set[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return set()
+
+    keys: set[str] = set()
+    keys.add(_normalize_lookup_name(raw))
+
+    segments = [segment.strip() for segment in raw.split(",") if segment.strip()]
+    if segments:
+        keys.add(_normalize_lookup_name(segments[0]))
+    if len(segments) >= 2:
+        keys.add(_normalize_lookup_name(f"{segments[1]} {segments[0]}"))
+
+    return {key for key in keys if key}
 
 
 def _serialize_lookup_items(rows: List[TemporaryPlayerLookup]) -> List["TemporaryPlayerLookupItem"]:
@@ -224,10 +237,10 @@ def _resolve_lookup_player_ids(
 
     players_by_name: Dict[str, List[int]] = {}
     for player in players:
-        player_name = _normalize_lookup_name(player.display_name or player.full_name)
-        if not player_name or player.id is None:
+        if player.id is None:
             continue
-        players_by_name.setdefault(player_name, []).append(player.id)
+        for player_name in _lookup_name_keys(player.display_name or player.full_name):
+            players_by_name.setdefault(player_name, []).append(player.id)
 
     teams = session.exec(
         select(Team)
@@ -235,11 +248,11 @@ def _resolve_lookup_player_ids(
         .where(Event.tournament_id == tournament_id)
     ).all()
     roster_names = {
-        _normalize_lookup_name(name)
+        alias
         for team in teams
         for field in (team.display_name, team.name)
         for name in _split_team_player_names(field)
-        if _normalize_lookup_name(name)
+        for alias in _lookup_name_keys(name)
     }
 
     resolved: List[Dict[str, Optional[str]]] = []
@@ -247,16 +260,21 @@ def _resolve_lookup_player_ids(
         player_id: Optional[int] = None
         normalized_phone = _normalize_lookup_phone(row.get("source_phone"))
         normalized_email = _normalize_lookup_email(row.get("source_email"))
-        normalized_name = _normalize_lookup_name(row.get("source_name"))
+        normalized_names = _lookup_name_keys(row.get("source_name"))
+        normalized_name = next(iter(normalized_names), "")
 
         if normalized_phone and normalized_phone in player_by_phone:
             player_id = player_by_phone[normalized_phone]
         elif normalized_email and normalized_email in player_by_email:
             player_id = player_by_email[normalized_email]
         else:
-            matches = players_by_name.get(normalized_name, [])
-            if len(matches) == 1:
-                player_id = matches[0]
+            matched_ids = {
+                player_id_match
+                for key in normalized_names
+                for player_id_match in players_by_name.get(key, [])
+            }
+            if len(matched_ids) == 1:
+                player_id = next(iter(matched_ids))
 
         resolved.append(
             {
@@ -265,7 +283,7 @@ def _resolve_lookup_player_ids(
                 "normalized_name": normalized_name,
                 "normalized_phone": normalized_phone,
                 "normalized_email": normalized_email,
-                "matched_by_name": bool(player_id is not None or normalized_name in roster_names),
+                "matched_by_name": bool(player_id is not None or any(key in roster_names for key in normalized_names)),
             }
         )
     return resolved
@@ -788,11 +806,10 @@ def _build_checkin_snapshot(
         for row in lookup_rows
         if row.player_id is not None
     }
-    lookup_by_name = {
-        row.normalized_name: row
-        for row in lookup_rows
-        if row.normalized_name
-    }
+    lookup_by_name: Dict[str, TemporaryPlayerLookup] = {}
+    for row in lookup_rows:
+        for alias in _lookup_name_keys(row.source_name or row.normalized_name):
+            lookup_by_name[alias] = row
 
     team_checkins = session.exec(
         select(MatchCheckIn).where(
@@ -872,7 +889,10 @@ def _build_checkin_snapshot(
                         seen_fallback_names.add(normalized_candidate)
                         fallback_names.append(candidate)
                 for fallback_name in fallback_names:
-                    lookup_row = lookup_by_name.get(_normalize_lookup_name(fallback_name))
+                    lookup_row = next(
+                        (lookup_by_name[alias] for alias in _lookup_name_keys(fallback_name) if alias in lookup_by_name),
+                        None,
+                    )
                     player_states.append(
                         PlayerCheckInState(
                             player_id=None,
