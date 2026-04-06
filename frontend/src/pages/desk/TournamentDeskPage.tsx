@@ -8168,14 +8168,14 @@ export default function TournamentDeskPage() {
     try {
       const anyChecked = state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)
       if (anyChecked) {
-        const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in)
+        const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
         if (checkedPlayers.length > 0) {
           await Promise.all(
             checkedPlayers.map((p: PlayerCheckInState) =>
               deskCheckInPlayer(tid, match.match_id, {
                 version_id: data.version_id,
                 side,
-                player_id: p.player_id,
+                player_id: p.player_id!,
                 checked_in: false,
               })
             )
@@ -8187,14 +8187,14 @@ export default function TournamentDeskPage() {
           checked_in: false,
         })
       } else {
-        const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in)
+        const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in && p.player_id != null)
         if (uncheckedPlayers.length > 0) {
           await Promise.all(
             uncheckedPlayers.map((p: PlayerCheckInState) =>
               deskCheckInPlayer(tid, match.match_id, {
                 version_id: data.version_id,
                 side,
-                player_id: p.player_id,
+                player_id: p.player_id!,
                 checked_in: true,
               })
             )
@@ -9059,8 +9059,8 @@ export default function TournamentDeskPage() {
                           <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12, color: '#455a64', borderBottom: '1px dotted #eef2f5' }}>
                             <span style={{ minWidth: 180 }}>{item.source_name}</span>
                             <TowelColorPill colorName={item.towel_color} reportUrl={item.report_url} />
-                            <span style={{ color: item.player_id ? '#2e7d32' : '#ef6c00', fontWeight: 600 }}>
-                              {item.player_id ? 'Matched' : 'Unmatched'}
+                            <span style={{ color: item.matched ? '#2e7d32' : '#ef6c00', fontWeight: 600 }}>
+                              {item.matched ? 'Matched' : 'Unmatched'}
                             </span>
                           </div>
                         ))}
@@ -9221,7 +9221,7 @@ export default function TournamentDeskPage() {
                                         {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
                                         {renderInlinePlayerToggle(
                                           !!(state.team_checked_in || p1?.checked_in),
-                                          (checkinEnabled && p1) ? () => handlePlayerCheckIn(cm!, side, p1.player_id, !(state.team_checked_in || p1.checked_in)) : undefined,
+                                          (checkinEnabled && p1?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p1.player_id!, !(state.team_checked_in || p1.checked_in)) : undefined,
                                           'left'
                                         )}
                                         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
@@ -9231,7 +9231,7 @@ export default function TournamentDeskPage() {
                                         <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
                                         {renderInlinePlayerToggle(
                                           !!(state.team_checked_in || p2?.checked_in),
-                                          (checkinEnabled && p2) ? () => handlePlayerCheckIn(cm!, side, p2.player_id, !(state.team_checked_in || p2.checked_in)) : undefined,
+                                          (checkinEnabled && p2?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p2.player_id!, !(state.team_checked_in || p2.checked_in)) : undefined,
                                           'right'
                                         )}
                                         {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}

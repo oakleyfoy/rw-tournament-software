@@ -2217,7 +2217,7 @@ export interface SnapshotSlot {
 }
 
 export interface PlayerCheckInState {
-  player_id: number
+  player_id: number | null
   player_display: string
   checked_in: boolean
   checked_in_at: string | null
@@ -2307,6 +2307,7 @@ export interface DeskSnapshotResponse {
 export interface TemporaryPlayerLookupItem {
   id: number
   player_id: number | null
+  matched: boolean
   source_name: string
   source_phone: string | null
   source_email: string | null

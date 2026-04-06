@@ -121,11 +121,25 @@ def _parse_lookup_boolish_header(value: str) -> str:
     return _normalize_lookup_name(value).replace(" ", "_")
 
 
+def _split_team_player_names(team_name: Optional[str]) -> List[str]:
+    raw = (team_name or "").strip()
+    if not raw:
+        return []
+    if "/" in raw:
+        parts = [part.strip() for part in raw.split("/") if part.strip()]
+    elif "&" in raw:
+        parts = [part.strip() for part in raw.split("&") if part.strip()]
+    else:
+        parts = [raw]
+    return parts[:2]
+
+
 def _serialize_lookup_items(rows: List[TemporaryPlayerLookup]) -> List["TemporaryPlayerLookupItem"]:
     return [
         TemporaryPlayerLookupItem(
             id=row.id,
             player_id=row.player_id,
+            matched=bool(row.player_id),
             source_name=row.source_name,
             source_phone=row.source_phone,
             source_email=row.source_email,
@@ -211,6 +225,19 @@ def _resolve_lookup_player_ids(
             continue
         players_by_name.setdefault(player_name, []).append(player.id)
 
+    teams = session.exec(
+        select(Team)
+        .join(Event, Event.id == Team.event_id)
+        .where(Event.tournament_id == tournament_id)
+    ).all()
+    roster_names = {
+        _normalize_lookup_name(name)
+        for team in teams
+        for field in (team.display_name, team.name)
+        for name in _split_team_player_names(field)
+        if _normalize_lookup_name(name)
+    }
+
     resolved: List[Dict[str, Optional[str]]] = []
     for row in rows:
         player_id: Optional[int] = None
@@ -234,6 +261,7 @@ def _resolve_lookup_player_ids(
                 "normalized_name": normalized_name,
                 "normalized_phone": normalized_phone,
                 "normalized_email": normalized_email,
+                "matched_by_name": bool(player_id is not None or normalized_name in roster_names),
             }
         )
     return resolved
@@ -298,7 +326,7 @@ class SnapshotSlot(BaseModel):
 
 
 class PlayerCheckInState(BaseModel):
-    player_id: int
+    player_id: Optional[int] = None
     player_display: str
     checked_in: bool = False
     checked_in_at: Optional[str] = None
@@ -424,6 +452,7 @@ class ReadyQueueResponse(BaseModel):
 class TemporaryPlayerLookupItem(BaseModel):
     id: int
     player_id: Optional[int] = None
+    matched: bool = False
     source_name: str
     source_phone: Optional[str] = None
     source_email: Optional[str] = None
@@ -755,6 +784,11 @@ def _build_checkin_snapshot(
         for row in lookup_rows
         if row.player_id is not None
     }
+    lookup_by_name = {
+        row.normalized_name: row
+        for row in lookup_rows
+        if row.normalized_name
+    }
 
     team_checkins = session.exec(
         select(MatchCheckIn).where(
@@ -817,6 +851,21 @@ def _build_checkin_snapshot(
                         report_url=(lookup_by_player_id.get(pid).report_url if lookup_by_player_id.get(pid) else None),
                     )
                 )
+
+            if not player_states:
+                fallback_names = _split_team_player_names(_team_display(team_id, fallback, team_map))
+                for fallback_name in fallback_names:
+                    lookup_row = lookup_by_name.get(_normalize_lookup_name(fallback_name))
+                    player_states.append(
+                        PlayerCheckInState(
+                            player_id=None,
+                            player_display=fallback_name,
+                            checked_in=False,
+                            checked_in_at=None,
+                            towel_color=lookup_row.towel_color if lookup_row else None,
+                            report_url=lookup_row.report_url if lookup_row else None,
+                        )
+                    )
 
             players_total = len(side_players)
             players_checked = len([p for p in player_states if p.checked_in])
@@ -1856,6 +1905,7 @@ def import_temporary_player_lookups(
 
     created_rows: List[TemporaryPlayerLookup] = []
     matched_count = 0
+    response_items: List[TemporaryPlayerLookupItem] = []
     for row in resolved_rows:
         lookup_row = TemporaryPlayerLookup(
             tournament_id=tournament_id,
@@ -1869,7 +1919,8 @@ def import_temporary_player_lookups(
             towel_color=row["towel_color"] or "",
             report_url=row.get("report_url"),
         )
-        if lookup_row.player_id is not None:
+        matched = bool(row.get("matched_by_name"))
+        if matched:
             matched_count += 1
         session.add(lookup_row)
         created_rows.append(lookup_row)
@@ -1877,12 +1928,25 @@ def import_temporary_player_lookups(
     session.commit()
     for row in created_rows:
         session.refresh(row)
+    for row, resolved in zip(created_rows, resolved_rows):
+        response_items.append(
+            TemporaryPlayerLookupItem(
+                id=row.id or 0,
+                player_id=row.player_id,
+                matched=bool(resolved.get("matched_by_name")),
+                source_name=row.source_name,
+                source_phone=row.source_phone,
+                source_email=row.source_email,
+                towel_color=row.towel_color,
+                report_url=row.report_url,
+            )
+        )
 
     return TemporaryPlayerLookupImportResponse(
         tournament_id=tournament_id,
         imported_count=len(created_rows),
         matched_count=matched_count,
-        items=_serialize_lookup_items(created_rows),
+        items=response_items,
     )
 
 
