@@ -2944,6 +2944,10 @@ def test_temporary_player_lookup_matches_last_first_roster_names(client, session
     assert imported["matched_count"] == 3
     assert all(item["matched"] is True for item in imported["items"])
 
+    lookup_list = client.get(f"/api/desk/tournaments/{t.id}/temporary-player-lookups")
+    assert lookup_list.status_code == 200
+    assert all(item["matched"] is True for item in lookup_list.json()["items"])
+
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
     assert snap.status_code == 200
     match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)

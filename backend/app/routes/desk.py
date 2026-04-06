@@ -151,12 +151,38 @@ def _lookup_name_keys(value: Optional[str]) -> set[str]:
     return {key for key in keys if key}
 
 
-def _serialize_lookup_items(rows: List[TemporaryPlayerLookup]) -> List["TemporaryPlayerLookupItem"]:
+def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[str]:
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+    matched_names: set[str] = set()
+    for player in players:
+        for alias in _lookup_name_keys(player.display_name or player.full_name):
+            matched_names.add(alias)
+
+    teams = session.exec(
+        select(Team)
+        .join(Event, Event.id == Team.event_id)
+        .where(Event.tournament_id == tournament_id)
+    ).all()
+    for team in teams:
+        for field in (team.display_name, team.name):
+            for name in _split_team_player_names(field):
+                for alias in _lookup_name_keys(name):
+                    matched_names.add(alias)
+    return matched_names
+
+
+def _serialize_lookup_items(
+    rows: List[TemporaryPlayerLookup],
+    matched_names: Optional[set[str]] = None,
+) -> List["TemporaryPlayerLookupItem"]:
     return [
         TemporaryPlayerLookupItem(
             id=row.id,
             player_id=row.player_id,
-            matched=bool(row.player_id),
+            matched=bool(
+                row.player_id
+                or (matched_names is not None and any(alias in matched_names for alias in _lookup_name_keys(row.source_name or row.normalized_name)))
+            ),
             source_name=row.source_name,
             source_phone=row.source_phone,
             source_email=row.source_email,
@@ -1911,9 +1937,10 @@ def get_temporary_player_lookups(
         .where(TemporaryPlayerLookup.tournament_id == tournament_id)
         .order_by(func.lower(TemporaryPlayerLookup.source_name), TemporaryPlayerLookup.id)
     ).all()
+    matched_names = _compute_lookup_matched_names(session, tournament_id)
     return TemporaryPlayerLookupListResponse(
         tournament_id=tournament_id,
-        items=_serialize_lookup_items(rows),
+        items=_serialize_lookup_items(rows, matched_names),
     )
 
 
