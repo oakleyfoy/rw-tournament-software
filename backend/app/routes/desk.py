@@ -815,7 +815,9 @@ def _build_checkin_snapshot(
             side_team_ids.add(m.team_b_id)
 
     team_player_rows = session.exec(
-        select(TeamPlayer).where(TeamPlayer.team_id.in_(list(side_team_ids)))  # type: ignore[arg-type]
+        select(TeamPlayer)
+        .where(TeamPlayer.team_id.in_(list(side_team_ids)))  # type: ignore[arg-type]
+        .order_by(TeamPlayer.team_id, TeamPlayer.lineup_slot, TeamPlayer.id)
     ).all() if side_team_ids else []
     players_by_team: Dict[int, List[int]] = {}
     player_ids: set[int] = set()
@@ -883,6 +885,7 @@ def _build_checkin_snapshot(
             player_states: List[PlayerCheckInState] = []
             side_players = players_by_team.get(team_id or -1, [])
             side_player_times: List[datetime] = []
+            fallback_names = _split_team_player_names(_team_display(team_id, fallback, team_map))
             for pid in side_players:
                 p = player_map.get(pid)
                 chk = player_checkin_map.get((m.id, side_key, pid))
@@ -899,6 +902,13 @@ def _build_checkin_snapshot(
                         ),
                         None,
                     )
+                if lookup_row is None:
+                    slot_index = len(player_states)
+                    if slot_index < len(fallback_names):
+                        lookup_row = next(
+                            (lookup_by_name[alias] for alias in _lookup_name_keys(fallback_names[slot_index]) if alias in lookup_by_name),
+                            None,
+                        )
                 if checked and checked_at:
                     side_player_times.append(checked_at)
                 player_states.append(
