@@ -883,9 +883,23 @@ def _build_checkin_snapshot(
             team_checked_at = team_row.checked_in_at if team_row else None
 
             player_states: List[PlayerCheckInState] = []
+            team_obj = team_map.get(team_id) if team_id else None
             side_players = players_by_team.get(team_id or -1, [])
             side_player_times: List[datetime] = []
-            fallback_names = _split_team_player_names(_team_display(team_id, fallback, team_map))
+            slot_name_candidates: List[List[str]] = [[], []]
+            source_priority = (
+                team_obj.name if team_obj else None,
+                team_obj.display_name if team_obj else None,
+                _team_display(team_id, fallback, team_map),
+            )
+            for idx in range(2):
+                for source in source_priority:
+                    parts = _split_team_player_names(source)
+                    if idx >= len(parts):
+                        continue
+                    part = parts[idx]
+                    if part and part not in slot_name_candidates[idx]:
+                        slot_name_candidates[idx].append(part)
             for pid in side_players:
                 p = player_map.get(pid)
                 chk = player_checkin_map.get((m.id, side_key, pid))
@@ -904,9 +918,14 @@ def _build_checkin_snapshot(
                     )
                 if lookup_row is None:
                     slot_index = len(player_states)
-                    if slot_index < len(fallback_names):
+                    if slot_index < len(slot_name_candidates):
                         lookup_row = next(
-                            (lookup_by_name[alias] for alias in _lookup_name_keys(fallback_names[slot_index]) if alias in lookup_by_name),
+                            (
+                                lookup_by_name[alias]
+                                for candidate in slot_name_candidates[slot_index]
+                                for alias in _lookup_name_keys(candidate)
+                                if alias in lookup_by_name
+                            ),
                             None,
                         )
                 if checked and checked_at:
@@ -923,25 +942,19 @@ def _build_checkin_snapshot(
                 )
 
             if not player_states:
-                team_obj = team_map.get(team_id) if team_id else None
-                fallback_names: List[str] = []
-                seen_fallback_names: set[str] = set()
-                for source in (
-                    team_obj.name if team_obj else None,
-                    team_obj.display_name if team_obj else None,
-                    _team_display(team_id, fallback, team_map),
-                ):
-                    for candidate in _split_team_player_names(source):
-                        normalized_candidate = _normalize_lookup_name(candidate)
-                        if not normalized_candidate or normalized_candidate in seen_fallback_names:
-                            continue
-                        seen_fallback_names.add(normalized_candidate)
-                        fallback_names.append(candidate)
-                for fallback_name in fallback_names:
+                for slot_candidates in slot_name_candidates:
                     lookup_row = next(
-                        (lookup_by_name[alias] for alias in _lookup_name_keys(fallback_name) if alias in lookup_by_name),
+                        (
+                            lookup_by_name[alias]
+                            for candidate in slot_candidates
+                            for alias in _lookup_name_keys(candidate)
+                            if alias in lookup_by_name
+                        ),
                         None,
                     )
+                    fallback_name = slot_candidates[0] if slot_candidates else None
+                    if not fallback_name:
+                        continue
                     player_states.append(
                         PlayerCheckInState(
                             player_id=None,
