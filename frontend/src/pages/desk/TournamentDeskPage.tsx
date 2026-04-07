@@ -9759,14 +9759,14 @@ export default function TournamentDeskPage() {
                                     onChange={e => handleLookupDraftChange(item.id, 'source_name', e.target.value)}
                                     style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
                                   />
-                                  <div style={{ display: 'grid', gap: 4 }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center' }}>
                                     <input
                                       type="text"
                                       value={draft.towel_color}
                                       onChange={e => handleLookupDraftChange(item.id, 'towel_color', e.target.value)}
                                       style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #cbd5e1', fontSize: 12, boxSizing: 'border-box' }}
                                     />
-                                    <div style={{ minHeight: 18 }}>
+                                    <div style={{ minHeight: 18, display: 'flex', alignItems: 'center' }}>
                                       <TowelColorPill colorName={draft.towel_color || null} reportUrl={draft.report_url || null} />
                                     </div>
                                   </div>
