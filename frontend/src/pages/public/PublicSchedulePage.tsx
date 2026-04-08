@@ -34,7 +34,7 @@ function StageBadge({ stage }: { stage: string }) {
   )
 }
 
-function MatchCard({ match }: { match: ScheduleMatchItem }) {
+function MatchCard({ match, showCourtInfo }: { match: ScheduleMatchItem; showCourtInfo: boolean }) {
   const isFinal = match.status === 'FINAL'
   const w = match.winner_team_id
   const t1Won = isFinal && w != null && match.team_a_id === w
@@ -92,10 +92,10 @@ function MatchCard({ match }: { match: ScheduleMatchItem }) {
           `Score: ${match.score_display || '—'}`
         ) : (
           <>
-            {match.court_name && <span>{match.court_name}</span>}
-            {match.court_name && match.scheduled_time && <span> &middot; </span>}
+            {showCourtInfo && match.court_name && <span>{match.court_name}</span>}
+            {showCourtInfo && match.court_name && match.scheduled_time && <span> &middot; </span>}
             {match.scheduled_time && <span>{match.scheduled_time}</span>}
-            {!match.court_name && !match.scheduled_time && <span style={{ color: '#bbb' }}>Unscheduled</span>}
+            {!match.scheduled_time && <span style={{ color: '#bbb' }}>Unscheduled</span>}
           </>
         )}
       </div>
@@ -217,6 +217,7 @@ export default function PublicSchedulePage() {
   }
 
   if (!data) return null
+  const showCourtInfo = data.show_court_info !== false
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', padding: '24px 16px' }}>
@@ -379,7 +380,7 @@ export default function PublicSchedulePage() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
             {data.matches.map(m => (
-              <MatchCard key={m.match_id} match={m} />
+              <MatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
             ))}
           </div>
         </div>
@@ -415,7 +416,7 @@ export default function PublicSchedulePage() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                       {timeGroup.matches.map(m => (
-                        <MatchCard key={m.match_id} match={m} />
+                        <MatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
                       ))}
                     </div>
                   </div>

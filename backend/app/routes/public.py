@@ -1268,6 +1268,7 @@ class PublicScheduleResponse(BaseModel):
     events: List[ScheduleEventOption]
     divisions: List[str]
     days: List[ScheduleDayOption]
+    show_court_info: bool = True
 
 
 _STAGE_MAP = {
@@ -1327,6 +1328,7 @@ def public_schedule(
     version = _get_public_version(session, tournament_id)
     if not version:
         return NotPublishedResponse()
+    show_court_info = _public_show_court_info(tournament)
 
     all_matches = session.exec(
         select(Match).where(Match.schedule_version_id == version.id)
@@ -1340,6 +1342,7 @@ def public_schedule(
             events=[],
             divisions=[],
             days=[],
+            show_court_info=show_court_info,
         )
 
     # Bulk-load related data
@@ -1414,6 +1417,8 @@ def public_schedule(
             )
             if court_name and court_name.lower().startswith("court court"):
                 court_name = court_name[6:]
+            if not show_court_info:
+                court_name = None
         else:
             day_offset = 0
             day_label = "Unscheduled"
@@ -1492,4 +1497,5 @@ def public_schedule(
         events=event_options,
         divisions=division_list,
         days=day_options,
+        show_court_info=show_court_info,
     )

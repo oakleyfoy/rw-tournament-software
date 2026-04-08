@@ -352,6 +352,21 @@ def test_search_case_insensitive(client, session):
     assert body_upper["matches"][0]["match_id"] == body_lower["matches"][0]["match_id"]
 
 
+def test_public_schedule_hides_court_info_in_checkin_management(client, session):
+    t, v, ev1, ev2, m1, m2 = _setup_published_tournament(session)
+    t.desk_management_mode = "checkin_management"
+    session.add(t)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/schedule")
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["show_court_info"] is False
+    assert len(body["matches"]) == 2
+    assert all(match["court_name"] is None for match in body["matches"])
+
+
 def test_public_round_robin_uses_runtime_status_for_score_and_winner(client, session):
     """Public RR cards should show finalized score/winner from runtime_status data."""
     t, ev, winner_team = _setup_published_rr_tournament(session)

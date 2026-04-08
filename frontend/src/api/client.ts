@@ -2137,6 +2137,7 @@ export interface PublicScheduleResponse {
   events: ScheduleEventOption[]
   divisions: string[]
   days: ScheduleDayOption[]
+  show_court_info: boolean
 }
 
 export async function getPublicSchedule(
