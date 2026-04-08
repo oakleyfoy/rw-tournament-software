@@ -315,7 +315,7 @@ def _team_line_for_r2(
     if team_id is not None:
         team = team_map.get(team_id)
         if team:
-            return team.display_name or team.name
+            return _public_team_name(team)
 
     if source_match_id and source_role:
         role_label = "Winner" if source_role == "WINNER" else "Loser"
@@ -644,11 +644,11 @@ def public_waterfall(
         if winner_match and winner_match.winner_team_id:
             t = team_map.get(winner_match.winner_team_id)
             if t:
-                r2_winner_name = t.display_name or t.name
+                r2_winner_name = _public_team_name(t)
         if loser_match and loser_match.winner_team_id:
             t = team_map.get(loser_match.winner_team_id)
             if t:
-                r2_loser_name = t.display_name or t.name
+                r2_loser_name = _public_team_name(t)
 
         rows.append(WaterfallRow(
             center_box=center,
@@ -688,7 +688,7 @@ def _bracket_team_line(
     if team_id:
         team = team_map.get(team_id)
         if team:
-            return team.display_name or team.name
+            return _public_team_name(team)
     if source_match_id and source_role:
         role = "Winner" if source_role == "WINNER" else "Loser"
         return f"{role} of Match #{source_match_id}"
@@ -1153,7 +1153,7 @@ def public_round_robin(
 
         def _disp(tid: int) -> str:
             t = team_map.get(tid)
-            return (t.display_name or t.name or f"Team {tid}") if t else f"Team {tid}"
+            return _public_team_name(t) if t else f"Team {tid}"
 
         base_sorted_rows = sorted(
             rows_data.items(),
@@ -1215,7 +1215,7 @@ def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: 
     if team_id:
         t = team_map.get(team_id)
         if t:
-            return t.display_name or t.name
+            return _public_short_team_name(t)
     if placeholder:
         if placeholder.startswith("SEED_"):
             return f"Seed {placeholder[5:]}"
@@ -1324,6 +1324,14 @@ def _schedule_short_team_name(value: Optional[str]) -> str:
         return _schedule_short_player_name(raw)
     short_names = [_schedule_short_player_name(player) for player in players[:2]]
     return " / ".join(name for name in short_names if name) or raw
+
+
+def _public_short_team_name(team: Team) -> str:
+    return _schedule_short_team_name(team.name) or team.display_name or team.name
+
+
+def _public_team_name(team: Team) -> str:
+    return team.name or team.display_name or f"Team {team.id}"
 
 
 def _schedule_team_line(

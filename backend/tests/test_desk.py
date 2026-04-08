@@ -3174,6 +3174,30 @@ def test_temporary_player_lookup_uses_lineup_slot_to_match_visible_short_names(c
     assert side_a_players[1]["player_display"] == "Kristin"
     assert side_a_players[1]["towel_color"] == "Purple"
 
+
+def test_checkin_snapshot_prefers_short_names_from_team_name_over_stale_display_name(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    teams[0].name = "Jon Miller, Ocala, FL / Lisa Steed, Ocala, FL"
+    teams[0].display_name = "venitta / Ed"
+    teams[3].name = "Eric Tatum, Marietta, GA / Leana Tatum, Marietta, GA"
+    teams[3].display_name = "Eric / Leana"
+    session.add(teams[0])
+    session.add(teams[3])
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+
+    assert match_state["side_a"]["team_display"] == "Jon / Lisa"
+    assert match_state["side_b"]["team_display"] == "Eric / Leana"
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

@@ -134,6 +134,45 @@ def _split_team_player_names(team_name: Optional[str]) -> List[str]:
     return parts[:2]
 
 
+def _short_team_player_name(value: Optional[str]) -> str:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return ""
+    if "," in raw:
+        segments = [segment.strip() for segment in raw.split(",") if segment.strip()]
+        if len(segments) >= 2:
+            first_segment_words = segments[0].split()
+            second_segment_words = segments[1].split()
+            if len(first_segment_words) == 1 and second_segment_words:
+                return second_segment_words[0]
+            if first_segment_words:
+                return first_segment_words[0]
+    parts = raw.split()
+    return parts[0] if parts else raw
+
+
+def _short_team_display_name(value: Optional[str]) -> str:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return ""
+    if "/" in raw:
+        players = [part.strip() for part in raw.split("/") if part.strip()]
+    elif "&" in raw:
+        players = [part.strip() for part in raw.split("&") if part.strip()]
+    else:
+        return _short_team_player_name(raw)
+    short_names = [_short_team_player_name(player) for player in players[:2]]
+    return " / ".join(name for name in short_names if name) or raw
+
+
+def _team_short_name(team: Team) -> str:
+    return _short_team_display_name(team.name) or team.display_name or team.name
+
+
+def _team_full_name(team: Team) -> str:
+    return team.name or team.display_name or f"Team {team.id}"
+
+
 def _lookup_name_keys(value: Optional[str]) -> set[str]:
     raw = (value or "").strip()
     if not raw:
@@ -1215,7 +1254,7 @@ def _team_display(
     if team_id:
         t = team_map.get(team_id)
         if t:
-            return t.display_name or t.name
+            return _team_short_name(t)
     return placeholder or "TBD"
 
 
@@ -3123,7 +3162,7 @@ def get_impact(
     def _team_disp(tid, placeholder):
         if tid and tid in team_map:
             t = team_map[tid]
-            return t.display_name or t.name or f"Team {tid}"
+            return _team_short_name(t)
         return placeholder or "TBD"
 
     def _slot_context(target_match: Match) -> Tuple[Optional[str], Optional[str], Optional[str]]:
