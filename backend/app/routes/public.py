@@ -1293,6 +1293,39 @@ def _derive_division(match_code: str, match_type: str) -> Optional[str]:
     return None
 
 
+def _schedule_short_player_name(value: Optional[str]) -> str:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return ""
+    if "," in raw:
+        segments = [segment.strip() for segment in raw.split(",") if segment.strip()]
+        if len(segments) >= 2:
+            first_segment_words = segments[0].split()
+            second_segment_words = segments[1].split()
+            # "Last, First" -> use first token from the second segment.
+            if len(first_segment_words) == 1 and second_segment_words:
+                return second_segment_words[0]
+            # "First Last, City, ST" -> use the first token from the name segment.
+            if first_segment_words:
+                return first_segment_words[0]
+    parts = raw.split()
+    return parts[0] if parts else raw
+
+
+def _schedule_short_team_name(value: Optional[str]) -> str:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return ""
+    if "/" in raw:
+        players = [part.strip() for part in raw.split("/") if part.strip()]
+    elif "&" in raw:
+        players = [part.strip() for part in raw.split("&") if part.strip()]
+    else:
+        return _schedule_short_player_name(raw)
+    short_names = [_schedule_short_player_name(player) for player in players[:2]]
+    return " / ".join(name for name in short_names if name) or raw
+
+
 def _schedule_team_line(
     team_id: Optional[int],
     placeholder: Optional[str],
@@ -1303,7 +1336,7 @@ def _schedule_team_line(
         t = team_map.get(team_id)
         if t:
             if short:
-                return t.display_name or t.name
+                return _schedule_short_team_name(t.name) or t.display_name or t.name
             return t.name
     return placeholder or "TBD"
 

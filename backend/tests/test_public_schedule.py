@@ -367,6 +367,31 @@ def test_public_schedule_hides_court_info_in_checkin_management(client, session)
     assert all(match["court_name"] is None for match in body["matches"])
 
 
+def test_public_schedule_prefers_short_names_from_team_name_over_stale_display_name(client, session):
+    t, v, ev1, ev2, m1, m2 = _setup_published_tournament(session)
+
+    team_c = session.get(Team, m2.team_a_id)
+    team_d = session.get(Team, m2.team_b_id)
+    assert team_c is not None and team_d is not None
+
+    team_c.name = "Jon Miller, Ocala, FL / Lisa Steed, Ocala, FL"
+    team_c.display_name = "venitta / Ed"
+    team_d.name = "Eric Tatum, Marietta, GA / Leana Tatum, Marietta, GA"
+    team_d.display_name = "Eric / Leana"
+    session.add(team_c)
+    session.add(team_d)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/schedule")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    target = next(match for match in body["matches"] if match["match_id"] == m2.id)
+    assert target["team1_display"] == "Jon / Lisa"
+    assert target["team1_full_name"] == "Jon Miller, Ocala, FL / Lisa Steed, Ocala, FL"
+    assert target["team2_display"] == "Eric / Leana"
+
+
 def test_public_round_robin_uses_runtime_status_for_score_and_winner(client, session):
     """Public RR cards should show finalized score/winner from runtime_status data."""
     t, ev, winner_team = _setup_published_rr_tournament(session)
