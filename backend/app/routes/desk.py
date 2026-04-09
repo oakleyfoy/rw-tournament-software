@@ -471,11 +471,14 @@ class CheckInMatchItem(BaseModel):
     match_id: int
     match_number: int
     match_code: str
+    event_id: Optional[int] = None
     event_name: str
     day_label: str
     scheduled_time: Optional[str] = None
     sort_time: Optional[str] = None
     slot_id: Optional[int] = None
+    team1_notes: Optional[str] = None
+    team2_notes: Optional[str] = None
     side_a: MatchCheckInSideState
     side_b: MatchCheckInSideState
     match_ready: bool = False
@@ -1083,11 +1086,14 @@ def _build_checkin_snapshot(
                 match_id=m.id,
                 match_number=m.id,
                 match_code=m.match_code or "",
+                event_id=m.event_id,
                 event_name=event_name,
                 day_label=_to_day_label(s.day_date),
                 scheduled_time=_to_sched_label(s.start_time),
                 sort_time=s.start_time.strftime("%H:%M"),
                 slot_id=s.id,
+                team1_notes=getattr(team_map.get(m.team_a_id), 'notes', None) if m.team_a_id else None,
+                team2_notes=getattr(team_map.get(m.team_b_id), 'notes', None) if m.team_b_id else None,
                 side_a=side_a,
                 side_b=side_b,
                 match_ready=ready,

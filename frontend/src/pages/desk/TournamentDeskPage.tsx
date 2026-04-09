@@ -9534,29 +9534,34 @@ export default function TournamentDeskPage() {
                                       <div style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: 4,
+                                        justifyContent: 'space-between',
+                                        gap: 8,
                                         fontSize: 12,
                                         color: '#455a64',
                                         marginBottom: 3,
-                                        flexWrap: 'wrap',
+                                        minWidth: 0,
                                       }}>
-                                        {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
-                                        {renderInlinePlayerToggle(
-                                          !!(state.team_checked_in || p1?.checked_in),
-                                          (checkinEnabled && p1?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p1.player_id!, !(state.team_checked_in || p1.checked_in)) : undefined,
-                                          'left'
-                                        )}
-                                        <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
-                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leftName}</span>
-                                        <span style={{ color: '#90a4ae', margin: '0 2px' }}>/</span>
-                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rightName}</span>
-                                        <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
-                                        {renderInlinePlayerToggle(
-                                          !!(state.team_checked_in || p2?.checked_in),
-                                          (checkinEnabled && p2?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p2.player_id!, !(state.team_checked_in || p2.checked_in)) : undefined,
-                                          'right'
-                                        )}
-                                        {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
+                                          {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
+                                          {renderInlinePlayerToggle(
+                                            !!(state.team_checked_in || p1?.checked_in),
+                                            (checkinEnabled && p1?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p1.player_id!, !(state.team_checked_in || p1.checked_in)) : undefined,
+                                            'left'
+                                          )}
+                                          <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
+                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{leftName}</span>
+                                          <span style={{ color: '#90a4ae', margin: '0 2px', flexShrink: 0 }}>/</span>
+                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{rightName}</span>
+                                          <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
+                                          {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 6 }}>
+                                          {renderInlinePlayerToggle(
+                                            !!(state.team_checked_in || p2?.checked_in),
+                                            (checkinEnabled && p2?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p2.player_id!, !(state.team_checked_in || p2.checked_in)) : undefined,
+                                            'right'
+                                          )}
+                                        </div>
                                       </div>
                                     )
                                   })()}
