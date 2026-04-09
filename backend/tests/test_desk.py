@@ -3198,6 +3198,48 @@ def test_checkin_snapshot_prefers_short_names_from_team_name_over_stale_display_
     assert match_state["side_a"]["team_display"] == "Jon / Lisa"
     assert match_state["side_b"]["team_display"] == "Eric / Leana"
 
+
+def test_checkin_snapshot_prefers_latest_towel_lookup_row_for_same_player(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    teams[0].name = "Jon Miller, Ocala, FL / Lisa Steed, Ocala, FL"
+    teams[0].display_name = "venitta / Ed"
+    session.add(teams[0])
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    first_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups",
+        json={
+            "source_name": "Jon Miller",
+            "towel_color": "Royal",
+            "report_url": "https://old.example/jon",
+        },
+    )
+    assert first_resp.status_code == 200
+
+    second_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups",
+        json={
+            "source_name": "Jon Miller",
+            "towel_color": "Black",
+            "report_url": "https://new.example/jon",
+        },
+    )
+    assert second_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_display"] == "Jon Miller, Ocala, FL")
+
+    assert player_state["towel_color"] == "Black"
+    assert player_state["report_url"] == "https://new.example/jon"
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)

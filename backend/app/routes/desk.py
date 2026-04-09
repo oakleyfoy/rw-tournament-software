@@ -905,17 +905,18 @@ def _build_checkin_snapshot(
     ).all() if player_ids else []
     player_map = {p.id: p for p in players}
     lookup_rows = session.exec(
-        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament.id)
+        select(TemporaryPlayerLookup)
+        .where(TemporaryPlayerLookup.tournament_id == tournament.id)
+        .order_by(TemporaryPlayerLookup.updated_at.desc(), TemporaryPlayerLookup.id.desc())
     ).all()
-    lookup_by_player_id = {
-        row.player_id: row
-        for row in lookup_rows
-        if row.player_id is not None
-    }
+    lookup_by_player_id: Dict[int, TemporaryPlayerLookup] = {}
+    for row in lookup_rows:
+        if row.player_id is not None:
+            lookup_by_player_id.setdefault(row.player_id, row)
     lookup_by_name: Dict[str, TemporaryPlayerLookup] = {}
     for row in lookup_rows:
         for alias in _lookup_name_keys(row.source_name or row.normalized_name):
-            lookup_by_name[alias] = row
+            lookup_by_name.setdefault(alias, row)
 
     team_checkins = session.exec(
         select(MatchCheckIn).where(
