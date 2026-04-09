@@ -70,6 +70,7 @@ import {
   createTemporaryPlayerLookup,
   updateTemporaryPlayerLookup,
   deleteTemporaryPlayerLookup,
+  clearTemporaryPlayerLookups,
   sendSmsBlast,
   sendSmsEvent,
   sendSmsEventDivision,
@@ -397,6 +398,105 @@ function ConflictWarningsModal({
             }}
           >
             Proceed Anyway
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function CheckInNoteModal({
+  teamLabel,
+  note,
+  busy,
+  onKeep,
+  onDelete,
+  onCancel,
+}: {
+  teamLabel: string
+  note: string
+  busy: boolean
+  onKeep: () => void
+  onDelete: () => void
+  onCancel: () => void
+}) {
+  return (
+    <>
+      <div
+        onClick={busy ? undefined : onCancel}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'rgba(0,0,0,0.45)',
+          zIndex: 2000,
+        }}
+      />
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: 460,
+        maxWidth: 'calc(100vw - 32px)',
+        backgroundColor: '#fff',
+        borderRadius: 10,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+        zIndex: 2001,
+        overflow: 'hidden',
+      }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#fff8e1' }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: '#8d6e63' }}>
+            Team Note
+          </div>
+          <div style={{ fontSize: 13, color: '#5d4037', marginTop: 4 }}>
+            {teamLabel}
+          </div>
+        </div>
+        <div style={{ padding: 20 }}>
+          <div style={{ fontSize: 13, color: '#37474f', marginBottom: 10 }}>
+            This team has a note attached. Keep it or delete it before check-in continues.
+          </div>
+          <div style={{
+            whiteSpace: 'pre-wrap',
+            fontSize: 13,
+            lineHeight: 1.45,
+            color: '#263238',
+            backgroundColor: '#fafafa',
+            border: '1px solid #eceff1',
+            borderRadius: 6,
+            padding: 12,
+            minHeight: 72,
+          }}>
+            {note}
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '0 20px 18px 20px' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #cfd8dc', backgroundColor: '#fff', cursor: busy ? 'default' : 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onKeep}
+            disabled={busy}
+            style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #90a4ae', backgroundColor: '#eceff1', color: '#263238', fontWeight: 700, cursor: busy ? 'default' : 'pointer' }}
+          >
+            {busy ? 'Working...' : 'Keep Note'}
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            style={{ padding: '8px 14px', borderRadius: 6, border: 'none', backgroundColor: '#c62828', color: '#fff', fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1 }}
+          >
+            {busy ? 'Working...' : 'Delete Note'}
           </button>
         </div>
       </div>
@@ -7965,6 +8065,7 @@ export default function TournamentDeskPage() {
   const [lookupSavingIds, setLookupSavingIds] = useState<Set<number>>(new Set())
   const [lookupDeletingIds, setLookupDeletingIds] = useState<Set<number>>(new Set())
   const [lookupCreating, setLookupCreating] = useState(false)
+  const [lookupClearing, setLookupClearing] = useState(false)
 
   const [draftVersionId, setDraftVersionId] = useState<number | null>(null)
   const [creatingDraft, setCreatingDraft] = useState(false)
@@ -7977,6 +8078,14 @@ export default function TournamentDeskPage() {
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
   const [bulkToast, setBulkToast] = useState<string | null>(null)
   const [bulkConfirm, setBulkConfirm] = useState<{ label: string; fn: () => Promise<void> } | null>(null)
+  const [checkInNotePrompt, setCheckInNotePrompt] = useState<{
+    eventId: number
+    teamId: number
+    teamLabel: string
+    note: string
+    proceed: () => Promise<void>
+  } | null>(null)
+  const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
 
   const loadSnapshot = useCallback(async (versionId?: number) => {
     if (!tid) return
@@ -8200,9 +8309,58 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh, activeTab])
 
+  const runCheckInWithNotePrompt = useCallback(async (
+    eventId: number | null | undefined,
+    teamId: number | null | undefined,
+    teamLabel: string,
+    note: string | null | undefined,
+    proceed: () => Promise<void>
+  ) => {
+    const trimmedNote = (note || '').trim()
+    if (!trimmedNote || !eventId || !teamId) {
+      await proceed()
+      return
+    }
+    setCheckInNotePrompt({
+      eventId,
+      teamId,
+      teamLabel,
+      note: trimmedNote,
+      proceed,
+    })
+  }, [])
+
+  const handleKeepCheckInNote = useCallback(async () => {
+    if (!checkInNotePrompt) return
+    setCheckInNoteBusy(true)
+    try {
+      await checkInNotePrompt.proceed()
+      setCheckInNotePrompt(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to complete check-in')
+    } finally {
+      setCheckInNoteBusy(false)
+    }
+  }, [checkInNotePrompt])
+
+  const handleDeleteCheckInNote = useCallback(async () => {
+    if (!checkInNotePrompt) return
+    setCheckInNoteBusy(true)
+    try {
+      await updateTeam(checkInNotePrompt.eventId, checkInNotePrompt.teamId, { notes: '' })
+      await checkInNotePrompt.proceed()
+      setCheckInNotePrompt(null)
+      await handleRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete note')
+    } finally {
+      setCheckInNoteBusy(false)
+    }
+  }, [checkInNotePrompt, handleRefresh])
+
   const handlePlayerCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', playerId: number, checked: boolean) => {
     if (!tid || !data) return
-    try {
+    const applyCheckIn = async () => {
       await deskCheckInPlayer(tid, match.match_id, {
         version_id: data.version_id,
         side,
@@ -8210,14 +8368,24 @@ export default function TournamentDeskPage() {
         checked_in: checked,
       })
       await handleRefresh()
+    }
+    try {
+      const note = side === 'A' ? (match as any).team1_notes : (match as any).team2_notes
+      const teamId = side === 'A' ? match.side_a.team_id : match.side_b.team_id
+      const teamLabel = side === 'A' ? match.side_a.team_display : match.side_b.team_display
+      if (checked) {
+        await runCheckInWithNotePrompt((match as any).event_id ?? null, teamId, teamLabel, note, applyCheckIn)
+      } else {
+        await applyCheckIn()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed player check-in update')
     }
-  }, [tid, data, handleRefresh])
+  }, [tid, data, handleRefresh, runCheckInWithNotePrompt])
 
   const handleTeamQuickCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', state: MatchCheckInSideState) => {
     if (!tid || !data) return
-    try {
+    const applyCheckIn = async () => {
       const anyChecked = state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)
       if (anyChecked) {
         const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
@@ -8259,10 +8427,20 @@ export default function TournamentDeskPage() {
         })
       }
       await handleRefresh()
+    }
+    try {
+      const anyChecked = state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)
+      const note = side === 'A' ? (match as any).team1_notes : (match as any).team2_notes
+      const teamLabel = side === 'A' ? match.side_a.team_display : match.side_b.team_display
+      if (!anyChecked) {
+        await runCheckInWithNotePrompt((match as any).event_id ?? null, state.team_id, teamLabel, note, applyCheckIn)
+      } else {
+        await applyCheckIn()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed team quick check-in')
     }
-  }, [tid, data, handleRefresh])
+  }, [tid, data, handleRefresh, runCheckInWithNotePrompt])
 
   const handleImportTemporaryLookups = useCallback(async () => {
     if (!tid) return
@@ -8275,7 +8453,7 @@ export default function TournamentDeskPage() {
     try {
       const resp = await importTemporaryPlayerLookups(tid, lookupImportText)
       setLookupItems(resp.items || [])
-      setLookupMessage(`Imported ${resp.imported_count} rows. Matched ${resp.matched_count} player${resp.matched_count === 1 ? '' : 's'}.`)
+      setLookupMessage(`Imported ${resp.imported_count} rows and replaced the previous towel list. Matched ${resp.matched_count} player${resp.matched_count === 1 ? '' : 's'}.`)
       await refreshSnapshotAndLookups()
     } catch (e) {
       setLookupMessage(e instanceof Error ? e.message : 'Import failed')
@@ -8365,6 +8543,23 @@ export default function TournamentDeskPage() {
         next.delete(lookupId)
         return next
       })
+    }
+  }, [tid, refreshSnapshotAndLookups])
+
+  const handleClearAllLookups = useCallback(async () => {
+    if (!tid) return
+    setLookupClearing(true)
+    setLookupMessage(null)
+    try {
+      const resp = await clearTemporaryPlayerLookups(tid)
+      setLookupItems([])
+      setLookupDrafts({})
+      setLookupMessage(`Cleared ${resp.deleted_count} towel row${resp.deleted_count === 1 ? '' : 's'}.`)
+      await refreshSnapshotAndLookups()
+    } catch (e) {
+      setLookupMessage(e instanceof Error ? e.message : 'Failed to clear towel rows')
+    } finally {
+      setLookupClearing(false)
     }
   }, [tid, refreshSnapshotAndLookups])
 
@@ -9272,7 +9467,7 @@ export default function TournamentDeskPage() {
                                 match_number: cm?.match_number || -1,
                                 match_code: cm?.match_code || '',
                                 stage: 'WF',
-                                event_id: 0,
+                                event_id: cm?.event_id || 0,
                                 event_name: cm?.event_name || 'Match',
                                 division_name: null,
                                 day_index: 0,
@@ -9296,8 +9491,8 @@ export default function TournamentDeskPage() {
                                 duration_minutes: 0,
                                 team1_defaulted: false,
                                 team2_defaulted: false,
-                                team1_notes: null,
-                                team2_notes: null,
+                                team1_notes: cm?.team1_notes || null,
+                                team2_notes: cm?.team2_notes || null,
                                 slot_id: cm?.slot_id || null,
                                 assignment_id: null,
                                 court_number: null,
@@ -9711,7 +9906,7 @@ export default function TournamentDeskPage() {
                         <button
                           type="button"
                           onClick={handleImportTemporaryLookups}
-                          disabled={lookupImporting}
+                          disabled={lookupImporting || lookupClearing}
                           style={{
                             padding: '6px 12px',
                             border: 'none',
@@ -9720,11 +9915,29 @@ export default function TournamentDeskPage() {
                             color: '#fff',
                             fontSize: 12,
                             fontWeight: 700,
-                            cursor: lookupImporting ? 'default' : 'pointer',
-                            opacity: lookupImporting ? 0.6 : 1,
+                            cursor: (lookupImporting || lookupClearing) ? 'default' : 'pointer',
+                            opacity: (lookupImporting || lookupClearing) ? 0.6 : 1,
                           }}
                         >
                           {lookupImporting ? 'Importing...' : 'Import Towel Data'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearAllLookups}
+                          disabled={lookupClearing || lookupImporting || lookupItems.length === 0}
+                          style={{
+                            padding: '6px 12px',
+                            border: '1px solid #ef9a9a',
+                            borderRadius: 4,
+                            backgroundColor: '#fff5f5',
+                            color: '#c62828',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: (lookupClearing || lookupImporting || lookupItems.length === 0) ? 'default' : 'pointer',
+                            opacity: (lookupClearing || lookupImporting || lookupItems.length === 0) ? 0.6 : 1,
+                          }}
+                        >
+                          {lookupClearing ? 'Clearing...' : 'Clear All Towels'}
                         </button>
                         <span style={{ fontSize: 12, color: '#546e7a' }}>
                           {lookupItems.length} imported row{lookupItems.length === 1 ? '' : 's'}
@@ -10099,6 +10312,17 @@ export default function TournamentDeskPage() {
             </div>
           </div>
         </>
+      )}
+
+      {checkInNotePrompt && (
+        <CheckInNoteModal
+          teamLabel={checkInNotePrompt.teamLabel}
+          note={checkInNotePrompt.note}
+          busy={checkInNoteBusy}
+          onKeep={handleKeepCheckInNote}
+          onDelete={handleDeleteCheckInNote}
+          onCancel={() => !checkInNoteBusy && setCheckInNotePrompt(null)}
+        />
       )}
 
       {/* Drawer overlay */}

@@ -2863,6 +2863,59 @@ def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, sessio
     assert player_state["report_url"] == "https://example.com/reports/alpha-1"
 
 
+def test_temporary_player_lookup_reimport_replaces_existing_rows(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    first_import = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Alpha Player 1\tBlue\thttps://example.com/reports/alpha-1\n"
+                "Old Player\tGreen\thttps://example.com/reports/old\n"
+            )
+        },
+    )
+    assert first_import.status_code == 200
+    assert first_import.json()["imported_count"] == 2
+
+    second_import = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Alpha Player 1\tRed\thttps://example.com/reports/alpha-1-new\n"
+            )
+        },
+    )
+    assert second_import.status_code == 200
+    body = second_import.json()
+    assert body["imported_count"] == 1
+    assert body["matched_count"] == 1
+
+    list_resp = client.get(f"/api/desk/tournaments/{t.id}/temporary-player-lookups")
+    assert list_resp.status_code == 200
+    items = list_resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["source_name"] == "Alpha Player 1"
+    assert items[0]["towel_color"] == "Red"
+    assert items[0]["report_url"] == "https://example.com/reports/alpha-1-new"
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert player_state["towel_color"] == "Red"
+    assert player_state["report_url"] == "https://example.com/reports/alpha-1-new"
+
+
 def test_temporary_player_lookup_crud_updates_checkin_snapshot(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     m1 = matches[0]

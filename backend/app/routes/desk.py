@@ -602,6 +602,11 @@ class TemporaryPlayerLookupImportResponse(BaseModel):
     items: List[TemporaryPlayerLookupItem]
 
 
+class TemporaryPlayerLookupClearResponse(BaseModel):
+    tournament_id: int
+    deleted_count: int
+
+
 class AssignReadyMatchRequest(BaseModel):
     version_id: int
     match_id: int
@@ -2215,6 +2220,31 @@ def delete_temporary_player_lookup(
     session.delete(lookup_row)
     session.commit()
     return {"ok": True}
+
+
+@router.delete(
+    "/desk/tournaments/{tournament_id}/temporary-player-lookups",
+    response_model=TemporaryPlayerLookupClearResponse,
+)
+def clear_temporary_player_lookups(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    rows = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
+    ).all()
+    deleted_count = len(rows)
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    return TemporaryPlayerLookupClearResponse(
+        tournament_id=tournament_id,
+        deleted_count=deleted_count,
+    )
 
 
 @router.post(

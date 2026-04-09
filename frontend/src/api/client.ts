@@ -2243,11 +2243,14 @@ export interface CheckInMatchItem {
   match_id: number
   match_number: number
   match_code: string
+  event_id?: number | null
   event_name: string
   day_label: string
   scheduled_time: string | null
   sort_time: string | null
   slot_id: number | null
+  team1_notes?: string | null
+  team2_notes?: string | null
   side_a: MatchCheckInSideState
   side_b: MatchCheckInSideState
   match_ready: boolean
@@ -2326,6 +2329,11 @@ export interface TemporaryPlayerLookupImportResponse {
   imported_count: number
   matched_count: number
   items: TemporaryPlayerLookupItem[]
+}
+
+export interface TemporaryPlayerLookupClearResponse {
+  tournament_id: number
+  deleted_count: number
 }
 
 export interface TemporaryPlayerLookupUpsert {
@@ -2552,6 +2560,15 @@ export async function deleteTemporaryPlayerLookup(
 ): Promise<void> {
   return fetchJson<void>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups/${lookupId}`,
+    { method: 'DELETE' }
+  )
+}
+
+export async function clearTemporaryPlayerLookups(
+  tournamentId: number
+): Promise<TemporaryPlayerLookupClearResponse> {
+  return fetchJson<TemporaryPlayerLookupClearResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/temporary-player-lookups`,
     { method: 'DELETE' }
   )
 }
