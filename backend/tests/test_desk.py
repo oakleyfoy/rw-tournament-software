@@ -3529,8 +3529,8 @@ def test_update_court_renames_label_and_slots(client, session):
     assert all(s.court_label == "Stadium" for s in c2_slots)
 
 
-def test_delete_newest_court_requires_slot_opt_in_then_deletes(client, session):
-    """Deleting newest court with slots requires opt-in; with opt-in it succeeds."""
+def test_delete_middle_court_requires_slot_opt_in_then_renumbers_remaining(client, session):
+    """Deleting any court with slots requires opt-in and shifts higher court numbers down."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
 
     add_resp = client.post(
@@ -3538,6 +3538,15 @@ def test_delete_newest_court_requires_slot_opt_in_then_deletes(client, session):
         json={
             "version_id": v.id,
             "court_label": "3",
+            "create_matching_slots": True,
+        },
+    )
+    assert add_resp.status_code == 200
+    add_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/courts",
+        json={
+            "version_id": v.id,
+            "court_label": "4",
             "create_matching_slots": True,
         },
     )
@@ -3570,7 +3579,16 @@ def test_delete_newest_court_requires_slot_opt_in_then_deletes(client, session):
     assert body["removed_slots"] > 0
 
     session.refresh(t)
-    assert t.court_names == ["1", "2"]
+    assert t.court_names == ["1", "2", "4"]
+
+    remaining_slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)
+    ).all()
+    court_numbers = sorted({slot.court_number for slot in remaining_slots})
+    assert court_numbers == [1, 2, 3]
+    shifted_slots = [slot for slot in remaining_slots if slot.court_number == 3]
+    assert shifted_slots
+    assert all(slot.court_label == "4" for slot in shifted_slots)
 
 
 def test_fill_court_slots_creates_missing_open_slots(client, session):

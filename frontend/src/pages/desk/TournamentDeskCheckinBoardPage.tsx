@@ -29,17 +29,17 @@ function LiveDot() {
     <span style={{
       display: 'inline-flex',
       alignItems: 'center',
-      gap: 5,
-      fontSize: 14,
+      gap: 4,
+      fontSize: 11,
       fontWeight: 800,
       color: '#d32f2f',
       textTransform: 'uppercase',
-      letterSpacing: 0.5,
+      letterSpacing: 0.4,
       animation: 'board-pulse 2s ease-in-out infinite',
     }}>
       <span style={{
-        width: 10,
-        height: 10,
+        width: 8,
+        height: 8,
         borderRadius: '50%',
         backgroundColor: '#d32f2f',
       }} />
@@ -66,47 +66,47 @@ function CurrentCourtCard({ courtName, match }: { courtName: string; match: Desk
       <div style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '6px 12px',
-        fontSize: 16,
+        padding: '5px 10px',
+        fontSize: 14,
         fontWeight: 800,
         textAlign: 'center',
         letterSpacing: 0.3,
       }}>
         {courtName}
       </div>
-      <div style={{ padding: '10px 12px', backgroundColor: '#fff8f0', minHeight: 122 }}>
+      <div style={{ padding: '7px 9px', backgroundColor: '#fff8f0', minHeight: 92 }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginBottom: 4,
-          gap: 8,
+          marginBottom: 2,
+          gap: 6,
         }}>
           <div style={{
-            fontSize: 11,
+            fontSize: 9,
             fontWeight: 700,
             color: '#e65100',
             textTransform: 'uppercase',
-            letterSpacing: 0.8,
+            letterSpacing: 0.6,
             display: 'flex',
             alignItems: 'center',
-            gap: 6,
+            gap: 4,
           }}>
             Now Playing
             {match.status === 'IN_PROGRESS' && <LiveDot />}
             {match.status === 'PAUSED' && (
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#c62828', letterSpacing: 1 }}>Paused</span>
+              <span style={{ fontSize: 8, fontWeight: 700, color: '#c62828', letterSpacing: 0.8 }}>Paused</span>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: '#555' }}>#{match.match_number}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#555' }}>#{match.match_number}</span>
             {abbr ? (
               <span style={{
-                fontSize: 12,
+                fontSize: 9,
                 fontWeight: 700,
                 color: '#fff',
                 backgroundColor: eventBg,
-                padding: '2px 6px',
+                padding: '1px 5px',
                 borderRadius: 3,
                 textTransform: 'uppercase',
               }}>
@@ -114,11 +114,11 @@ function CurrentCourtCard({ courtName, match }: { courtName: string; match: Desk
               </span>
             ) : null}
             <span style={{
-              fontSize: 12,
+              fontSize: 9,
               fontWeight: 700,
               color: '#fff',
               backgroundColor: stageColor,
-              padding: '2px 6px',
+              padding: '1px 5px',
               borderRadius: 3,
               textTransform: 'uppercase',
             }}>
@@ -128,9 +128,9 @@ function CurrentCourtCard({ courtName, match }: { courtName: string; match: Desk
         </div>
         <div style={{
           fontWeight: 700,
-          fontSize: 19,
+          fontSize: 15,
           color: '#1a1a1a',
-          lineHeight: 1.25,
+          lineHeight: 1.15,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -139,16 +139,16 @@ function CurrentCourtCard({ courtName, match }: { courtName: string; match: Desk
         </div>
         <div style={{
           fontWeight: 700,
-          fontSize: 19,
+          fontSize: 15,
           color: '#1a1a1a',
-          lineHeight: 1.25,
+          lineHeight: 1.15,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}>
           {match.team2_display || 'TBD'}
         </div>
-        <div style={{ marginTop: 6, fontSize: 11, color: '#607d8b' }}>
+        <div style={{ marginTop: 4, fontSize: 10, color: '#607d8b' }}>
           {match.day_label} {match.scheduled_time || ''}
         </div>
       </div>
@@ -170,44 +170,44 @@ function ReadyQueuePanel({ queue }: { queue: ReadyQueueItem[] }) {
       <div style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '6px 12px',
-        fontSize: 16,
+        padding: '5px 10px',
+        fontSize: 14,
         fontWeight: 800,
         letterSpacing: 0.3,
       }}>
         On Deck
       </div>
       {queue.length === 0 ? (
-        <div style={{ padding: 16, color: '#888', fontSize: 14 }}>No ready matches yet.</div>
+        <div style={{ padding: 12, color: '#888', fontSize: 12 }}>No ready matches yet.</div>
       ) : (
         <div style={{ overflow: 'auto', minHeight: 0 }}>
           {queue.map((rq, idx) => (
             <div
               key={rq.match_id}
               style={{
-                padding: '10px 12px',
+                padding: '7px 9px',
                 borderTop: idx === 0 ? 'none' : '1px solid #eef2f5',
                 backgroundColor: idx % 2 === 0 ? '#fff' : '#fbfcfe',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                <div style={{ fontWeight: 700, color: '#263238', fontSize: 13 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 2 }}>
+                <div style={{ fontWeight: 700, color: '#263238', fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {idx + 1}. {rq.event_name}
                 </div>
-                <div style={{ fontSize: 12, color: '#607d8b', fontWeight: 700 }}>
+                <div style={{ fontSize: 10, color: '#607d8b', fontWeight: 700, flexShrink: 0 }}>
                   Match #{rq.match_number}
                 </div>
               </div>
-              <div style={{ fontSize: 14, color: '#334155', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, color: '#334155', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {rq.team1_display}
               </div>
-              <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.3 }}>
+              <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.1 }}>
                 vs
               </div>
-              <div style={{ fontSize: 14, color: '#334155', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, color: '#334155', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {rq.team2_display}
               </div>
-              <div style={{ marginTop: 6, fontSize: 11, color: '#90a4ae' }}>
+              <div style={{ marginTop: 3, fontSize: 9, color: '#90a4ae' }}>
                 {rq.day_label} {rq.scheduled_time || ''}
               </div>
             </div>
@@ -362,21 +362,21 @@ export default function TournamentDeskCheckinBoardPage() {
 
       <div style={{
         flex: 1,
-        padding: kioskMode ? 8 : 10,
+        padding: kioskMode ? 6 : 8,
         overflow: 'hidden',
         minHeight: 0,
       }}>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: kioskMode ? '2.2fr 1fr' : '2fr 1fr',
-          gap: 10,
+          gridTemplateColumns: kioskMode ? '2.7fr 0.9fr' : '2.45fr 0.95fr',
+          gap: 8,
           height: '100%',
           minHeight: 0,
         }}>
           <div style={{
             borderRadius: 8,
             backgroundColor: 'rgba(255,255,255,0.06)',
-            padding: 8,
+            padding: 6,
             overflow: 'auto',
             minHeight: 0,
           }}>
@@ -395,8 +395,8 @@ export default function TournamentDeskCheckinBoardPage() {
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                gap: 10,
+                gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                gap: 8,
               }}>
                 {visibleBoardCourts.map((slot) => (
                   <CurrentCourtCard key={slot.court_name} courtName={slot.court_name} match={slot.now_playing!} />

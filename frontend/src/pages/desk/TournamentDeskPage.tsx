@@ -5881,7 +5881,7 @@ function ManageCourtsModal({
         <div style={{ padding: '16px 20px', borderBottom: '1px solid #e0e0e0' }}>
           <div style={{ fontWeight: 700, fontSize: 15 }}>Manage Courts</div>
           <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-            Rename any court. Delete is limited to the newest court for safety.
+            Rename or delete any court. Deleting a court shifts higher-numbered courts down in this draft.
           </div>
         </div>
         <div style={{ padding: '12px 20px', maxHeight: '60vh', overflowY: 'auto' }}>
@@ -5950,7 +5950,6 @@ function ManageCourtsModal({
               <tbody>
                 {sortedCourts.map((label, idx) => {
                   const draft = renameDrafts[label] ?? label
-                  const isLast = idx === sortedCourts.length - 1
                   const slotCount = slotCountByCourtLabel[label] || 0
                   const rowBusy = busyLabel === label
                   return (
@@ -6017,8 +6016,8 @@ function ManageCourtsModal({
                       </td>
                       <td style={{ padding: '8px 6px', borderBottom: '1px solid #f0f0f0', textAlign: 'right' }}>
                         <button
-                          disabled={rowBusy || !isLast}
-                          title={isLast ? 'Delete court' : 'Only newest court can be deleted'}
+                          disabled={rowBusy}
+                          title="Delete court"
                           onClick={async () => {
                             const suffix = deleteWithSlots
                               ? ' This will also delete unassigned slots on this court.'
@@ -6035,9 +6034,9 @@ function ManageCourtsModal({
                           style={{
                             padding: '5px 10px', fontSize: 11, fontWeight: 600,
                             border: '1px solid #c62828', borderRadius: 4,
-                            backgroundColor: isLast ? '#ffebee' : '#f5f5f5',
-                            color: isLast ? '#c62828' : '#999',
-                            cursor: isLast ? 'pointer' : 'not-allowed',
+                            backgroundColor: '#ffebee',
+                            color: '#c62828',
+                            cursor: 'pointer',
                           }}
                         >
                           Delete
@@ -6055,7 +6054,7 @@ function ManageCourtsModal({
               checked={deleteWithSlots}
               onChange={e => setDeleteWithSlots(e.target.checked)}
             />
-            When deleting newest court, also remove its matching slots
+            When deleting a court, also remove its matching slots
           </label>
         </div>
         <div style={{
@@ -9412,7 +9411,7 @@ export default function TournamentDeskPage() {
                     </select>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr 1.3fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2.1fr 0.9fr 1.1fr', gap: 8 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
                     <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
                       Player Check-In
@@ -9423,9 +9422,9 @@ export default function TournamentDeskPage() {
                       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                         <thead>
                           <tr style={{ backgroundColor: '#f8fafc' }}>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '24%' }}>Match</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '38%' }}>Team 1</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '38%' }}>Team 2</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '18%' }}>Match</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '41%' }}>Team 1</th>
+                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '41%' }}>Team 2</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -9535,13 +9534,13 @@ export default function TournamentDeskPage() {
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'space-between',
-                                        gap: 8,
+                                        gap: 6,
                                         fontSize: 12,
                                         color: '#455a64',
                                         marginBottom: 3,
                                         minWidth: 0,
                                       }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
                                           {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
                                           {renderInlinePlayerToggle(
                                             !!(state.team_checked_in || p1?.checked_in),
@@ -9549,13 +9548,13 @@ export default function TournamentDeskPage() {
                                             'left'
                                           )}
                                           <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
-                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{leftName}</span>
+                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>{leftName}</span>
                                           <span style={{ color: '#90a4ae', margin: '0 2px', flexShrink: 0 }}>/</span>
-                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{rightName}</span>
+                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>{rightName}</span>
                                           <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
                                           {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 6 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 4 }}>
                                           {renderInlinePlayerToggle(
                                             !!(state.team_checked_in || p2?.checked_in),
                                             (checkinEnabled && p2?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p2.player_id!, !(state.team_checked_in || p2.checked_in)) : undefined,

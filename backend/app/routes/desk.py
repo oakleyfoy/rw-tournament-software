@@ -5327,7 +5327,6 @@ def delete_court(
 
     Guardrails:
     - DRAFT only.
-    - Only the newest court (highest number) can be deleted to avoid renumbering issues.
     - If matching slots exist, caller must opt-in with delete_matching_slots.
     - Assigned slots cannot be deleted.
     """
@@ -5354,12 +5353,6 @@ def delete_court(
     idx = next((i for i, c in enumerate(court_names) if (c or "").strip().lower() == label.lower()), None)
     if idx is None:
         raise HTTPException(status_code=404, detail=f"Court '{label}' not found")
-
-    if idx != len(court_names) - 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Only the most recently added court can be deleted. Rename older courts instead.",
-        )
 
     court_number = idx + 1
     slots = session.exec(
@@ -5408,6 +5401,16 @@ def delete_court(
                 session.delete(lk)
             session.delete(s)
             removed_slots += 1
+
+    shifted_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.court_number > court_number,
+        )
+    ).all()
+    for slot in shifted_slots:
+        slot.court_number -= 1
+        session.add(slot)
 
     states = session.exec(
         select(TournamentCourtState).where(
