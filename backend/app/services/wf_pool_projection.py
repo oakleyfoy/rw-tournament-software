@@ -46,6 +46,17 @@ BUCKET_NAMES_2R = {BUCKET_WW: "WW", BUCKET_WL: "WL", BUCKET_LW: "LW", BUCKET_LL:
 BUCKET_NAMES_1R = {BUCKET_W: "W", BUCKET_L: "L"}
 
 
+def _is_retired_score(score_json: Optional[Dict[str, Any]]) -> bool:
+    if not score_json:
+        return False
+    display = ""
+    if isinstance(score_json, dict):
+        display = str(score_json.get("display") or score_json.get("actual") or "")
+    else:
+        display = str(score_json)
+    return "RET" in display.upper()
+
+
 @dataclass
 class ProjectedTeam:
     team_id: int
@@ -169,8 +180,15 @@ def compute_wf_projection(
 
         parsed = parse_score(m.score_json)
         if parsed:
-            r1_match_scores[m.team_a_id] = (parsed.team_a_games, parsed.team_b_games)
-            r1_match_scores[m.team_b_id] = (parsed.team_b_games, parsed.team_a_games)
+            a_games = parsed.team_a_games
+            b_games = parsed.team_b_games
+            if not _is_retired_score(m.score_json):
+                if m.winner_team_id == m.team_a_id and b_games > a_games:
+                    a_games, b_games = b_games, a_games
+                elif m.winner_team_id == m.team_b_id and a_games > b_games:
+                    a_games, b_games = b_games, a_games
+            r1_match_scores[m.team_a_id] = (a_games, b_games)
+            r1_match_scores[m.team_b_id] = (b_games, a_games)
 
     if num_wf_rounds == 1:
         bucket_names = BUCKET_NAMES_1R
@@ -212,8 +230,15 @@ def compute_wf_projection(
 
                 parsed = parse_score(m.score_json)
                 if parsed:
-                    r2_match_scores[a_id] = (parsed.team_a_games, parsed.team_b_games)
-                    r2_match_scores[b_id] = (parsed.team_b_games, parsed.team_a_games)
+                    a_games = parsed.team_a_games
+                    b_games = parsed.team_b_games
+                    if not _is_retired_score(m.score_json):
+                        if m.winner_team_id == a_id and b_games > a_games:
+                            a_games, b_games = b_games, a_games
+                        elif m.winner_team_id == b_id and a_games > b_games:
+                            a_games, b_games = b_games, a_games
+                    r2_match_scores[a_id] = (a_games, b_games)
+                    r2_match_scores[b_id] = (b_games, a_games)
             else:
                 # Not finalized yet — try to figure out who's in this match via advancement
                 if a_id:

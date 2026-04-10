@@ -6,10 +6,12 @@ import json
 from datetime import date, time
 
 import pytest
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
+from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
@@ -27,6 +29,7 @@ from app.services.draw_plan_engine import (
     resolve_event_family,
     validate_spec,
 )
+from app.services.wf_pool_projection import compute_wf_projection
 from app.services.draw_plan_rules import rr_pairings_by_round, rr_round_count
 from app.utils.wf_seeding import pool_assignment_contiguous, wf_rank_key, WFTeamResult
 
@@ -679,6 +682,154 @@ class TestWFSeedingTiebreak:
             key=lambda result: wf_rank_key(result, 10, 20),
         )
         assert [result.team_id for result in ranked_by_seed] == [5, 6]
+
+
+def test_wf_projection_interprets_winner_first_score_for_side_b_winner(session: Session):
+    tournament = Tournament(
+        name="WF Projection Test",
+        location="Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 4, 1),
+        end_date=date(2026, 4, 1),
+        court_names=["1", "2"],
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="draft",
+        notes="Desk Draft",
+    )
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        category="mixed",
+        name="Mixed WF",
+        team_count=4,
+        draw_plan_json=json.dumps({
+            "template_type": "WF_TO_POOLS_DYNAMIC",
+            "wf_rounds": 2,
+        }),
+    )
+    session.add(event)
+    session.flush()
+
+    teams = []
+    for seed, name in enumerate(["Alpha", "Bravo", "Charlie", "Delta"], start=1):
+        team = Team(event_id=event.id, name=name, display_name=name, seed=seed)
+        session.add(team)
+        session.flush()
+        teams.append(team)
+
+    r1_m1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_4",
+        winner_team_id=teams[0].id,
+        runtime_status="FINAL",
+        score_json={"display": "8-4"},
+    )
+    r1_m2 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
+        winner_team_id=teams[1].id,
+        runtime_status="FINAL",
+        score_json={"display": "8-6"},
+    )
+    r2_m1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        winner_team_id=teams[1].id,
+        runtime_status="FINAL",
+        score_json={"display": "8-2"},
+        placeholder_side_a="WINNER M1",
+        placeholder_side_b="WINNER M2",
+    )
+    session.add_all([r1_m1, r1_m2, r2_m1])
+    session.flush()
+
+    slots = [
+        ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            day_date=date(2026, 4, 1),
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+            court_number=1,
+            court_label="1",
+            block_minutes=60,
+        ),
+        ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            day_date=date(2026, 4, 1),
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+            court_number=2,
+            court_label="2",
+            block_minutes=60,
+        ),
+        ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            day_date=date(2026, 4, 1),
+            start_time=time(10, 15),
+            end_time=time(11, 15),
+            court_number=1,
+            court_label="1",
+            block_minutes=60,
+        ),
+    ]
+    session.add_all(slots)
+    session.flush()
+    session.add_all([
+        MatchAssignment(schedule_version_id=version.id, match_id=r1_m1.id, slot_id=slots[0].id),
+        MatchAssignment(schedule_version_id=version.id, match_id=r1_m2.id, slot_id=slots[1].id),
+        MatchAssignment(schedule_version_id=version.id, match_id=r2_m1.id, slot_id=slots[2].id),
+    ])
+    session.commit()
+
+    projection = compute_wf_projection(session, tournament.id, version.id, event.id)
+    assert projection is not None
+    bravo = next(team for pool in projection.pools for team in pool.teams if team.team_id == teams[1].id)
+
+    assert bravo.bucket == "WW"
+    assert bravo.wf2_game_diff == 6
+    assert bravo.wf_game_diff == 8
 
 
 # -----------------------------------------------------------------------------
