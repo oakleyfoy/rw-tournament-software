@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { getPublicDrawsList, PublicDrawsListResponse } from '../../api/client'
 
+const REFRESH_MS = 15000
+
 export default function PublicDrawsPage() {
   const { tournamentId } = useParams<{ tournamentId: string }>()
   const tid = tournamentId ? parseInt(tournamentId, 10) : null
@@ -13,18 +15,38 @@ export default function PublicDrawsPage() {
 
   useEffect(() => {
     if (!tid) return
-    setLoading(true)
-    setNotPublished(false)
-    getPublicDrawsList(tid)
-      .then((resp: any) => {
+    let cancelled = false
+
+    const load = async (showSpinner: boolean) => {
+      if (showSpinner) setLoading(true)
+      setNotPublished(false)
+      setError(null)
+      try {
+        const resp: any = await getPublicDrawsList(tid)
+        if (cancelled) return
         if (resp.status === 'NOT_PUBLISHED') {
           setNotPublished(true)
+          setData(null)
         } else {
           setData(resp)
+          setNotPublished(false)
         }
-      })
-      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load'))
-      .finally(() => setLoading(false))
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load')
+      } finally {
+        if (!cancelled && showSpinner) setLoading(false)
+      }
+    }
+
+    void load(true)
+    const timer = window.setInterval(() => {
+      void load(false)
+    }, REFRESH_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [tid])
 
   if (loading) {

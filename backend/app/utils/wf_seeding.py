@@ -30,6 +30,7 @@ class WFTeamResult:
     wf_games_lost: int = 0
     wf2_game_diff: int = 0  # 0 if no WF2
     wf2_games_lost: int = 0
+    original_seed: int = 999999
 
 
 def wf_rank_key(
@@ -40,14 +41,16 @@ def wf_rank_key(
     """
     Return sort key for post-WF ranking. Lower = better.
 
-    Order: pending last, then -wf_matches_won, -wf_game_diff,
-           stable_hash (asc for determinism).
+    Order: pending last, then -wf_matches_won, -wf2_game_diff,
+           -wf_game_diff, original_seed, stable_hash (asc).
     """
     stable_hash = _stable_hash(schedule_version_id, event_id, result.team_id)
     return (
         1 if result.bucket_rank == 99 else 0,
         -result.wf_matches_won,
+        -result.wf2_game_diff,
         -result.wf_game_diff,
+        result.original_seed,
         stable_hash,
     )
 

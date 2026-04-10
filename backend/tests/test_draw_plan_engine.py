@@ -611,6 +611,75 @@ class TestWFSeedingTiebreak:
 
         assert [result.team_id for result in ranked] == [2, 1]
 
+    def test_wf_tiebreak_uses_wf2_then_total_then_seed(self):
+        """Ties break by WF2 diff, then total diff, then highest original seed."""
+        better_wf2 = WFTeamResult(
+            team_id=1,
+            bucket_rank=1,
+            wf_matches_won=1,
+            wf2_game_diff=3,
+            wf_game_diff=1,
+            original_seed=4,
+        )
+        worse_wf2 = WFTeamResult(
+            team_id=2,
+            bucket_rank=2,
+            wf_matches_won=1,
+            wf2_game_diff=1,
+            wf_game_diff=10,
+            original_seed=1,
+        )
+        better_total_diff = WFTeamResult(
+            team_id=3,
+            bucket_rank=1,
+            wf_matches_won=1,
+            wf2_game_diff=2,
+            wf_game_diff=5,
+            original_seed=6,
+        )
+        worse_total_diff = WFTeamResult(
+            team_id=4,
+            bucket_rank=2,
+            wf_matches_won=1,
+            wf2_game_diff=2,
+            wf_game_diff=1,
+            original_seed=2,
+        )
+        higher_seed = WFTeamResult(
+            team_id=5,
+            bucket_rank=1,
+            wf_matches_won=1,
+            wf2_game_diff=0,
+            wf_game_diff=0,
+            original_seed=1,
+        )
+        lower_seed = WFTeamResult(
+            team_id=6,
+            bucket_rank=2,
+            wf_matches_won=1,
+            wf2_game_diff=0,
+            wf_game_diff=0,
+            original_seed=8,
+        )
+
+        ranked_by_wf2 = sorted(
+            [worse_wf2, better_wf2],
+            key=lambda result: wf_rank_key(result, 10, 20),
+        )
+        assert [result.team_id for result in ranked_by_wf2] == [1, 2]
+
+        ranked_by_total = sorted(
+            [worse_total_diff, better_total_diff],
+            key=lambda result: wf_rank_key(result, 10, 20),
+        )
+        assert [result.team_id for result in ranked_by_total] == [3, 4]
+
+        ranked_by_seed = sorted(
+            [lower_seed, higher_seed],
+            key=lambda result: wf_rank_key(result, 10, 20),
+        )
+        assert [result.team_id for result in ranked_by_seed] == [5, 6]
+
 
 # -----------------------------------------------------------------------------
 # compute_inventory tests: RR_ONLY

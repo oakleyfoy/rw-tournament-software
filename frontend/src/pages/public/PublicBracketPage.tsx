@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicBracket, BracketResponse, BracketMatchBox } from '../../api/client'
 
+const REFRESH_MS = 15000
+
 // ── Print styles ────────────────────────────────────────────────────────
 
 const PRINT_STYLE_ID = 'bracket-print-css'
@@ -389,18 +391,38 @@ export default function PublicBracketPage() {
 
   useEffect(() => {
     if (!tid || !eid) return
-    setLoading(true)
-    setNotPublished(false)
-    getPublicBracket(tid, eid, dc, versionId)
-      .then((resp: any) => {
+    let cancelled = false
+
+    const load = async (showSpinner: boolean) => {
+      if (showSpinner) setLoading(true)
+      setNotPublished(false)
+      setError(null)
+      try {
+        const resp: any = await getPublicBracket(tid, eid, dc, versionId)
+        if (cancelled) return
         if (resp.status === 'NOT_PUBLISHED') {
           setNotPublished(true)
+          setData(null)
         } else {
           setData(resp)
+          setNotPublished(false)
         }
-      })
-      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load'))
-      .finally(() => setLoading(false))
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load')
+      } finally {
+        if (!cancelled && showSpinner) setLoading(false)
+      }
+    }
+
+    void load(true)
+    const timer = window.setInterval(() => {
+      void load(false)
+    }, REFRESH_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [tid, eid, dc, versionId])
 
   const handlePrint = useCallback(() => {

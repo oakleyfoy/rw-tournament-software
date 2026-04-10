@@ -137,6 +137,8 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const isPublicRoute = url.includes('/public/')
   const isAuthLogin = url.includes('/auth/login')
   const isAuthBootstrap = url.includes('/auth/bootstrap-admin') || url.includes('/auth/bootstrap-needed')
+  const method = options?.method || 'GET'
+  const isGetRequest = method.toUpperCase() === 'GET'
 
   // Include JSON content-type whenever we send a body (including DELETE with body).
   const hasBody = options?.body != null
@@ -158,12 +160,13 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     fetch('http://127.0.0.1:7242/ingest/3aa7eda4-e97a-402c-ac3d-b6b632d2544d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H10',location:'client.ts:fetchJson:request',message:'frontend request dispatch',data:{method:options?.method||'GET',url,apiBase:API_BASE_URL,pageHref:typeof window!=='undefined'?window.location.href:null},timestamp:Date.now()})}).catch(()=>{});
   }
   // #endregion
-  console.log('fetchJson:', options?.method || 'GET', url, { headers, body: options?.body })
+  console.log('fetchJson:', method, url, { headers, body: options?.body })
   let response: Response
   try {
     response = await fetch(url, {
       ...options,
       headers,
+      cache: isPublicRoute && isGetRequest ? 'no-store' : options?.cache,
     });
     // #region agent log
     if (url.includes('/desk/') || url.includes('/auth/login') || url.includes('/auth/bootstrap')) {

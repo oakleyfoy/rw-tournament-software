@@ -140,6 +140,10 @@ def compute_wf_projection(
 
     teams = session.exec(select(Team).where(Team.id.in_(list(all_team_ids)))).all() if all_team_ids else []
     team_map = {t.id: t for t in teams}
+    original_seed_by_team = {
+        t.id: (t.seed if t.seed is not None else 999999)
+        for t in teams
+    }
 
     def _disp(tid: int) -> str:
         t = team_map.get(tid)
@@ -186,6 +190,7 @@ def compute_wf_projection(
                 wf_matches_won=1 if outcome == "W" else 0,
                 wf_game_diff=gf - ga,
                 wf_games_lost=ga,
+                original_seed=original_seed_by_team.get(tid, 999999),
             )
     else:
         bucket_names = BUCKET_NAMES_2R
@@ -250,6 +255,7 @@ def compute_wf_projection(
                 wf_games_lost=total_ga,
                 wf2_game_diff=r2_gf - r2_ga,
                 wf2_games_lost=r2_ga,
+                original_seed=original_seed_by_team.get(tid, 999999),
             )
 
     # Rank all teams
@@ -298,12 +304,15 @@ def compute_wf_projection(
                 if num_wf_rounds > 1:
                     placement_reason = (
                         f"WF record {wf_wins}-{wf_losses}, "
-                        f"total game diff ({wf_game_diff:+d})"
+                        f"WF2 diff ({wf2_game_diff:+d}), "
+                        f"total game diff ({wf_game_diff:+d}), "
+                        f"seed #{original_seed_by_team.get(tid, 999999)}"
                     )
                 else:
                     placement_reason = (
                         f"WF record {wf_wins}-{wf_losses}, "
-                        f"game diff ({wf_game_diff:+d})"
+                        f"game diff ({wf_game_diff:+d}), "
+                        f"seed #{original_seed_by_team.get(tid, 999999)}"
                     )
             else:
                 status = "confirmed"
@@ -317,12 +326,15 @@ def compute_wf_projection(
                 if num_wf_rounds > 1:
                     placement_reason = (
                         f"WF record {wf_wins}-{wf_losses}, "
-                        f"total game diff ({wf_game_diff:+d})"
+                        f"WF2 diff ({wf2_game_diff:+d}), "
+                        f"total game diff ({wf_game_diff:+d}), "
+                        f"seed #{original_seed_by_team.get(tid, 999999)}"
                     )
                 else:
                     placement_reason = (
                         f"WF record {wf_wins}-{wf_losses}, "
-                        f"game diff ({wf_game_diff:+d})"
+                        f"game diff ({wf_game_diff:+d}), "
+                        f"seed #{original_seed_by_team.get(tid, 999999)}"
                     )
 
             pool_teams.append(ProjectedTeam(
