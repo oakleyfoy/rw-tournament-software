@@ -297,14 +297,13 @@ def compute_wf_projection(
                 wf2_games_lost = result.wf2_games_lost
                 if num_wf_rounds > 1:
                     placement_reason = (
-                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
-                        f"total game diff ({wf_game_diff:+d}), WF2 diff ({wf2_game_diff:+d}), "
-                        f"games against ({wf_games_lost})"
+                        f"WF record {wf_wins}-{wf_losses}, "
+                        f"total game diff ({wf_game_diff:+d})"
                     )
                 else:
                     placement_reason = (
-                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
-                        f"game diff ({wf_game_diff:+d}), games against ({wf_games_lost})"
+                        f"WF record {wf_wins}-{wf_losses}, "
+                        f"game diff ({wf_game_diff:+d})"
                     )
             else:
                 status = "confirmed"
@@ -317,14 +316,13 @@ def compute_wf_projection(
                 wf2_games_lost = result.wf2_games_lost
                 if num_wf_rounds > 1:
                     placement_reason = (
-                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
-                        f"total game diff ({wf_game_diff:+d}), WF2 diff ({wf2_game_diff:+d}), "
-                        f"games against ({wf_games_lost})"
+                        f"WF record {wf_wins}-{wf_losses}, "
+                        f"total game diff ({wf_game_diff:+d})"
                     )
                 else:
                     placement_reason = (
-                        f"Bucket {bucket_str} by WF wins ({wf_wins}), "
-                        f"game diff ({wf_game_diff:+d}), games against ({wf_games_lost})"
+                        f"WF record {wf_wins}-{wf_losses}, "
+                        f"game diff ({wf_game_diff:+d})"
                     )
 
             pool_teams.append(ProjectedTeam(

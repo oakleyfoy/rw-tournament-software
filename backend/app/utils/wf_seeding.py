@@ -24,7 +24,7 @@ class WFTeamResult:
     """
 
     team_id: int
-    bucket_rank: int  # 0=best (WW or W), 3=worst (LL or L)
+    bucket_rank: int  # retained for display; 99 indicates pending/incomplete
     wf_matches_won: int = 0
     wf_game_diff: int = 0  # games_for - games_against
     wf_games_lost: int = 0
@@ -40,17 +40,14 @@ def wf_rank_key(
     """
     Return sort key for post-WF ranking. Lower = better.
 
-    Order: bucket, -wf_matches_won, -wf_game_diff, wf_games_lost,
-           -wf2_game_diff, wf2_games_lost, stable_hash (asc for determinism).
+    Order: pending last, then -wf_matches_won, -wf_game_diff,
+           stable_hash (asc for determinism).
     """
     stable_hash = _stable_hash(schedule_version_id, event_id, result.team_id)
     return (
-        result.bucket_rank,
+        1 if result.bucket_rank == 99 else 0,
         -result.wf_matches_won,
         -result.wf_game_diff,
-        result.wf_games_lost,
-        -result.wf2_game_diff,
-        result.wf2_games_lost,
         stable_hash,
     )
 

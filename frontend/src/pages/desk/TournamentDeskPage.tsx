@@ -3269,7 +3269,7 @@ function PoolProjectionPanel({
                             </table>
                           </div>
                           <div style={{ marginTop: 5, fontSize: 9, color: '#78909c' }}>
-                            Placement order: Bucket, then WF wins, then game diff, then games against.
+                            Placement order: WF W/L, then WF game diff.
                           </div>
                         </div>
                       )

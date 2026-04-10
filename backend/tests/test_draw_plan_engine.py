@@ -599,6 +599,18 @@ class TestWFSeedingTiebreak:
         # Same team, same context → same key
         assert wf_rank_key(r1, 1, 1) == k1
 
+    def test_one_and_one_wf_teams_sort_by_game_diff_not_path_bucket(self):
+        """1-1 WF teams rank by game diff even if one is WL and the other is LW."""
+        wl_team = WFTeamResult(team_id=1, bucket_rank=1, wf_matches_won=1, wf_game_diff=1)
+        lw_team = WFTeamResult(team_id=2, bucket_rank=2, wf_matches_won=1, wf_game_diff=4)
+
+        ranked = sorted(
+            [wl_team, lw_team],
+            key=lambda result: wf_rank_key(result, 10, 20),
+        )
+
+        assert [result.team_id for result in ranked] == [2, 1]
+
 
 # -----------------------------------------------------------------------------
 # compute_inventory tests: RR_ONLY
