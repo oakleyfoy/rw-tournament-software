@@ -3269,7 +3269,7 @@ function PoolProjectionPanel({
                             </table>
                           </div>
                           <div style={{ marginTop: 5, fontSize: 9, color: '#78909c' }}>
-                            Placement order: WF wins, then WF2 game diff, then combined WF game diff, then highest seed.
+                            Placement order: WF wins, then WF2 game diff, then combined WF game diff, then highest seed, all lowest to highest.
                           </div>
                         </div>
                       )

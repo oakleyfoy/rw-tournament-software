@@ -609,7 +609,7 @@ class TestWFSeedingTiebreak:
             key=lambda result: wf_rank_key(result, 10, 20),
         )
 
-        assert [result.team_id for result in ranked] == [2, 1]
+        assert [result.team_id for result in ranked] == [1, 2]
 
     def test_wf_tiebreak_uses_wf2_then_total_then_seed(self):
         """Ties break by WF2 diff, then total diff, then highest original seed."""
@@ -666,13 +666,13 @@ class TestWFSeedingTiebreak:
             [worse_wf2, better_wf2],
             key=lambda result: wf_rank_key(result, 10, 20),
         )
-        assert [result.team_id for result in ranked_by_wf2] == [1, 2]
+        assert [result.team_id for result in ranked_by_wf2] == [2, 1]
 
         ranked_by_total = sorted(
             [worse_total_diff, better_total_diff],
             key=lambda result: wf_rank_key(result, 10, 20),
         )
-        assert [result.team_id for result in ranked_by_total] == [3, 4]
+        assert [result.team_id for result in ranked_by_total] == [4, 3]
 
         ranked_by_seed = sorted(
             [lower_seed, higher_seed],
