@@ -170,45 +170,39 @@ function ReadyQueuePanel({ queue }: { queue: ReadyQueueItem[] }) {
       <div style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '5px 10px',
-        fontSize: 14,
+        padding: '4px 8px',
+        fontSize: 13,
         fontWeight: 800,
         letterSpacing: 0.3,
       }}>
         On Deck
       </div>
       {queue.length === 0 ? (
-        <div style={{ padding: 12, color: '#888', fontSize: 12 }}>No ready matches yet.</div>
+        <div style={{ padding: 10, color: '#888', fontSize: 11 }}>No ready matches yet.</div>
       ) : (
         <div style={{ overflow: 'auto', minHeight: 0 }}>
           {queue.map((rq, idx) => (
             <div
               key={rq.match_id}
               style={{
-                padding: '7px 9px',
+                padding: '5px 7px',
                 borderTop: idx === 0 ? 'none' : '1px solid #eef2f5',
                 backgroundColor: idx % 2 === 0 ? '#fff' : '#fbfcfe',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 2 }}>
-                <div style={{ fontWeight: 700, color: '#263238', fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 1 }}>
+                <div style={{ fontWeight: 700, color: '#263238', fontSize: 10, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {idx + 1}. {rq.event_name}
                 </div>
-                <div style={{ fontSize: 10, color: '#607d8b', fontWeight: 700, flexShrink: 0 }}>
-                  Match #{rq.match_number}
+                <div style={{ fontSize: 9, color: '#607d8b', fontWeight: 700, flexShrink: 0 }}>
+                  #{rq.match_number}
                 </div>
               </div>
-              <div style={{ fontSize: 12, color: '#334155', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {rq.team1_display}
+              <div style={{ fontSize: 11, color: '#334155', lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {rq.team1_display} <span style={{ color: '#94a3b8' }}>vs</span> {rq.team2_display}
               </div>
-              <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.1 }}>
-                vs
-              </div>
-              <div style={{ fontSize: 12, color: '#334155', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {rq.team2_display}
-              </div>
-              <div style={{ marginTop: 3, fontSize: 9, color: '#90a4ae' }}>
-                {rq.day_label} {rq.scheduled_time || ''}
+              <div style={{ marginTop: 2, fontSize: 8, color: '#90a4ae', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {rq.scheduled_time || rq.day_label}
               </div>
             </div>
           ))}
@@ -368,7 +362,7 @@ export default function TournamentDeskCheckinBoardPage() {
       }}>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: kioskMode ? '2.7fr 0.9fr' : '2.45fr 0.95fr',
+          gridTemplateColumns: kioskMode ? '3.15fr 0.72fr' : '2.85fr 0.78fr',
           gap: 8,
           height: '100%',
           minHeight: 0,
@@ -395,8 +389,8 @@ export default function TournamentDeskCheckinBoardPage() {
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
-                gap: 8,
+                gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+                gap: 6,
               }}>
                 {visibleBoardCourts.map((slot) => (
                   <CurrentCourtCard key={slot.court_name} courtName={slot.court_name} match={slot.now_playing!} />
