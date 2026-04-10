@@ -3241,7 +3241,8 @@ function PoolProjectionPanel({
                                   <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Team</th>
                                   <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Bucket</th>
                                   <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>WF W-L</th>
-                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>WF Game +/-</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>WF2 +/-</th>
+                                  <th style={{ textAlign: 'center', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>Combined +/-</th>
                                   <th style={{ textAlign: 'left', color: '#777', borderBottom: '1px solid #eee', padding: '3px 4px' }}>How placed</th>
                                 </tr>
                               </thead>
@@ -3259,6 +3260,9 @@ function PoolProjectionPanel({
                                     <td style={{ padding: '3px 4px', textAlign: 'center', color: '#333' }}>
                                       {team.status === 'pending' ? '—' : `${team.wf_wins}-${team.wf_losses}`}
                                     </td>
+                                    <td style={{ padding: '3px 4px', textAlign: 'center', color: team.wf2_game_diff >= 0 ? '#2e7d32' : '#c62828' }}>
+                                      {team.status === 'pending' ? '—' : `${team.wf2_game_diff >= 0 ? '+' : ''}${team.wf2_game_diff}`}
+                                    </td>
                                     <td style={{ padding: '3px 4px', textAlign: 'center', color: team.wf_game_diff >= 0 ? '#2e7d32' : '#c62828' }}>
                                       {team.status === 'pending' ? '—' : `${team.wf_game_diff >= 0 ? '+' : ''}${team.wf_game_diff}`}
                                     </td>
@@ -3269,7 +3273,7 @@ function PoolProjectionPanel({
                             </table>
                           </div>
                           <div style={{ marginTop: 5, fontSize: 9, color: '#78909c' }}>
-                            Placement order: WF wins, then first-round win over second-round win (WW, WL, LW, LL), then WF2 game diff, then combined WF game diff, then highest seed.
+                            Placement order: WF wins, then first-round win over second-round win (WW, WL, LW, LL), then WF2 game diff highest to lowest, then combined WF game diff highest to lowest, then highest seed.
                           </div>
                         </div>
                       )
