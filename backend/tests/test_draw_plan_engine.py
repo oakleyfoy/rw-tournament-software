@@ -599,8 +599,8 @@ class TestWFSeedingTiebreak:
         # Same team, same context → same key
         assert wf_rank_key(r1, 1, 1) == k1
 
-    def test_one_and_one_wf_teams_sort_by_game_diff_not_path_bucket(self):
-        """1-1 WF teams rank by game diff even if one is WL and the other is LW."""
+    def test_one_and_one_wf_teams_keep_wf_path_order_before_game_diff(self):
+        """1-1 WF teams stay in WL/LW path order before game diff tiebreaks."""
         wl_team = WFTeamResult(team_id=1, bucket_rank=1, wf_matches_won=1, wf_game_diff=1)
         lw_team = WFTeamResult(team_id=2, bucket_rank=2, wf_matches_won=1, wf_game_diff=4)
 
@@ -611,8 +611,8 @@ class TestWFSeedingTiebreak:
 
         assert [result.team_id for result in ranked] == [1, 2]
 
-    def test_wf_tiebreak_uses_wf2_then_total_then_seed(self):
-        """Ties break by WF2 diff, then total diff, then highest original seed."""
+    def test_wf_tiebreak_uses_wf2_then_total_then_seed_within_bucket(self):
+        """Within the same bucket, ties break by WF2 diff, then total diff, then seed."""
         better_wf2 = WFTeamResult(
             team_id=1,
             bucket_rank=1,
@@ -666,13 +666,13 @@ class TestWFSeedingTiebreak:
             [worse_wf2, better_wf2],
             key=lambda result: wf_rank_key(result, 10, 20),
         )
-        assert [result.team_id for result in ranked_by_wf2] == [2, 1]
+        assert [result.team_id for result in ranked_by_wf2] == [1, 2]
 
         ranked_by_total = sorted(
             [worse_total_diff, better_total_diff],
             key=lambda result: wf_rank_key(result, 10, 20),
         )
-        assert [result.team_id for result in ranked_by_total] == [4, 3]
+        assert [result.team_id for result in ranked_by_total] == [3, 4]
 
         ranked_by_seed = sorted(
             [lower_seed, higher_seed],
