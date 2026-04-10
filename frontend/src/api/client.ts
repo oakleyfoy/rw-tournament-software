@@ -2235,6 +2235,7 @@ export interface MatchCheckInSideState {
   team_display: string
   team_checked_in: boolean
   team_checked_in_at: string | null
+  show_towels: boolean
   players: PlayerCheckInState[]
   players_checked_in: number
   players_total: number

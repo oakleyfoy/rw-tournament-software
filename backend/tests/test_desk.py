@@ -2897,6 +2897,75 @@ def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, sessio
     assert player_state["report_url"] == "https://example.com/reports/alpha-1"
 
 
+def test_towels_only_show_on_team_first_tournament_checkin_match(client, session):
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    _add_two_players_for_team(session, t.id, teams[1].id, "Bravo")
+    _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    later_event = Event(
+        tournament_id=t.id,
+        category="mixed",
+        name="Mixed B",
+        team_count=4,
+    )
+    session.add(later_event)
+    session.flush()
+
+    later_match = Match(
+        tournament_id=t.id,
+        event_id=later_event.id,
+        schedule_version_id=v.id,
+        match_code="MIX_WF_R2_TEST",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="WINNER M1",
+        placeholder_side_b="WINNER M2",
+    )
+    session.add(later_match)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=later_match.id, slot_id=slots[2].id))
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Alpha Player 1\tBlue\thttps://example.com/reports/alpha-1\n"
+            )
+        },
+    )
+    assert import_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    checkin_matches = snap.json()["checkin_matches"]
+
+    first_match_state = next(m for m in checkin_matches if m["match_id"] == m1.id)
+    later_match_state = next(m for m in checkin_matches if m["match_id"] == later_match.id)
+
+    assert first_match_state["side_a"]["show_towels"] is True
+    first_player = next(p for p in first_match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert first_player["towel_color"] == "Blue"
+
+    assert later_match_state["side_a"]["show_towels"] is False
+    later_player = next(p for p in later_match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert later_player["towel_color"] == "Blue"
+
+
 def test_temporary_player_lookup_reimport_replaces_existing_rows(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")

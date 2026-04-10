@@ -9503,6 +9503,7 @@ export default function TournamentDeskPage() {
                                 team_display: fallbackMatch.team1_display,
                                 team_checked_in: false,
                                 team_checked_in_at: null,
+                                show_towels: false,
                                 players: [],
                                 players_checked_in: 0,
                                 players_total: 0,
@@ -9547,11 +9548,15 @@ export default function TournamentDeskPage() {
                                             (checkinEnabled && p1?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p1.player_id!, !(state.team_checked_in || p1.checked_in)) : undefined,
                                             'left'
                                           )}
-                                          <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
+                                          {state.show_towels && (
+                                            <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
+                                          )}
                                           <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>{leftName}</span>
                                           <span style={{ color: '#90a4ae', margin: '0 2px', flexShrink: 0 }}>/</span>
                                           <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>{rightName}</span>
-                                          <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
+                                          {state.show_towels && (
+                                            <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
+                                          )}
                                           {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 4 }}>

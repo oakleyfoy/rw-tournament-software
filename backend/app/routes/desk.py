@@ -460,6 +460,7 @@ class MatchCheckInSideState(BaseModel):
     team_display: str
     team_checked_in: bool = False
     team_checked_in_at: Optional[str] = None
+    show_towels: bool = False
     players: List[PlayerCheckInState] = []
     players_checked_in: int = 0
     players_total: int = 0
@@ -852,6 +853,17 @@ def _build_checkin_snapshot(
         select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
     ).all()
     slot_map = {s.id: s for s in slots}
+    slot_sort_key_by_match_id: Dict[int, tuple] = {}
+    for match_id, assignment in assignment_map.items():
+        slot = slot_map.get(assignment.slot_id)
+        if slot is None:
+            continue
+        slot_sort_key_by_match_id[match_id] = (
+            slot.day_date,
+            slot.start_time,
+            slot.court_number,
+            match_id,
+        )
 
     team_ids: set[int] = set()
     event_ids: set[int] = set()
@@ -871,6 +883,18 @@ def _build_checkin_snapshot(
             select(Event).where(Event.id.in_(list(event_ids)))  # type: ignore[arg-type]
         ).all()
     } if event_ids else {}
+    first_match_id_by_team: Dict[int, int] = {}
+    for m in all_matches:
+        slot_key = slot_sort_key_by_match_id.get(m.id)
+        if slot_key is None:
+            continue
+        for team_id in (m.team_a_id, m.team_b_id):
+            if not team_id:
+                continue
+            existing_match_id = first_match_id_by_team.get(team_id)
+            existing_key = slot_sort_key_by_match_id.get(existing_match_id) if existing_match_id is not None else None
+            if existing_key is None or slot_key < existing_key:
+                first_match_id_by_team[team_id] = m.id
 
     candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
     for m in all_matches:
@@ -966,6 +990,10 @@ def _build_checkin_snapshot(
             team_row = team_checkin_map.get((m.id, side_key))
             team_checked = bool(team_row and team_row.team_checked_in)
             team_checked_at = team_row.checked_in_at if team_row else None
+            show_towels = bool(
+                team_id
+                and first_match_id_by_team.get(team_id) == m.id
+            )
 
             player_states: List[PlayerCheckInState] = []
             team_obj = team_map.get(team_id) if team_id else None
@@ -1066,6 +1094,7 @@ def _build_checkin_snapshot(
                 team_display=_team_display(team_id, fallback, team_map),
                 team_checked_in=team_checked,
                 team_checked_in_at=team_checked_at.isoformat() if team_checked_at else None,
+                show_towels=show_towels,
                 players=player_states,
                 players_checked_in=players_checked,
                 players_total=players_total,
