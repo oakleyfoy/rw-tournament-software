@@ -1858,11 +1858,12 @@ def test_standings_with_finalized_rr(client, session):
         assert r["wins"] == 0
         assert r["losses"] == 1
         assert isinstance(r["rank"], int)
-        assert "SetDiff" in r["rank_explanation"]
+        assert "GameDiff" in r["rank_explanation"]
+        assert "SetDiff" not in r["rank_explanation"]
 
 
-def test_standings_sorting_by_set_diff(client, session):
-    """When wins are tied, set diff determines order."""
+def test_standings_sorting_by_game_diff(client, session):
+    """When overall records are tied, total game diff determines order."""
     t, v, ev, teams, matches = _setup_rr_tournament(session)
 
     draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
@@ -1893,8 +1894,7 @@ def test_standings_sorting_by_set_diff(client, session):
     body = resp.json()
     rows = body["events"][0]["rows"]
 
-    # All 3 teams have 1 win, 1 loss — sort by set diff (all 0 from 2 sets each),
-    # then game diff
+    # All 3 teams have 1 win, 1 loss — sort by total game diff.
     # Alpha: won 12-2 (games +10), lost 8-12 (games -4) => total games diff +6
     # Bravo: lost 2-12 (games -10), won 14-10 (games +4) => total games diff -6
     # Charlie: won 12-8 (games +4), lost 10-14 (games -4) => total games diff 0
@@ -1907,6 +1907,40 @@ def test_standings_sorting_by_set_diff(client, session):
     assert rows[2]["team_display"] == "Bravo"
     assert [rows[0]["rank"], rows[1]["rank"], rows[2]["rank"]] == [1, 2, 3]
     assert "GameDiff" in rows[0]["rank_explanation"]
+    assert "SetDiff" not in rows[0]["rank_explanation"]
+
+
+def test_standings_sorting_by_sets_lost_before_game_diff(client, session):
+    """When records are tied, fewer sets lost outranks better game diff."""
+    t, v, ev, teams, matches = _setup_rr_tournament(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    rr_matches = sorted([m for m in snap["matches"] if m["stage"] == "RR"], key=lambda m: m["match_id"])
+
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{rr_matches[0]['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "6-0 (RET)", "winner_team_id": rr_matches[0]["team1_id"]},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{rr_matches[1]['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "4-6 4-6", "winner_team_id": rr_matches[1]["team2_id"]},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{rr_matches[2]['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "7-6 (RET)", "winner_team_id": rr_matches[2]["team1_id"]},
+    )
+
+    resp = client.get(f"/api/desk/tournaments/{t.id}/standings?version_id={draft_id}")
+    assert resp.status_code == 200
+    rows = resp.json()["events"][0]["rows"]
+
+    assert [row["team_display"] for row in rows] == ["Charlie", "Bravo", "Alpha"]
+    assert rows[1]["sets_lost"] < rows[2]["sets_lost"]
+    assert rows[2]["sets_lost"] == 2
+    assert "SetsLost" in rows[0]["rank_explanation"]
 
 
 def test_standings_score_orientation_follows_selected_winner(client, session):

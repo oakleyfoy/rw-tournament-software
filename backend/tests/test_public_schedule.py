@@ -412,7 +412,68 @@ def test_public_round_robin_uses_runtime_status_for_score_and_winner(client, ses
     winner_row = [r for r in rows if r["team_id"] == winner_team.id][0]
     assert winner_row["wins"] == 1
     assert winner_row["played"] == 1
-    assert "Match Wins" in body["tiebreaker_note"]
+    assert "W/L" in body["tiebreaker_note"]
+    assert "Sets Lost" in body["tiebreaker_note"]
+    assert "Game Differential" in body["tiebreaker_note"]
+
+
+def test_public_round_robin_sorts_by_sets_lost_before_game_diff(client, session):
+    """Public RR standings use sets lost before game differential."""
+    t, ev, winner_team = _setup_published_rr_tournament(session)
+
+    team2 = session.exec(select(Team).where(Team.event_id == ev.id, Team.display_name == "Bravo / Two")).one()
+    team3 = session.exec(select(Team).where(Team.event_id == ev.id, Team.display_name == "Charlie / Three")).one()
+
+    match_one = session.exec(
+        select(Match).where(
+            Match.event_id == ev.id,
+            Match.schedule_version_id == t.public_schedule_version_id,
+            Match.match_code == "WOM_POOLA_RR_M01",
+        )
+    ).one()
+    match_one.score_json = {"display": "6-0 (RET)", "actual": "6-0"}
+    session.add(match_one)
+
+    match_two = session.exec(
+        select(Match).where(
+            Match.event_id == ev.id,
+            Match.schedule_version_id == t.public_schedule_version_id,
+            Match.match_code == "WOM_POOLA_RR_M02",
+        )
+    ).one()
+    match_two.team_a_id = winner_team.id
+    match_two.team_b_id = team3.id
+    match_two.runtime_status = "FINAL"
+    match_two.winner_team_id = team3.id
+    match_two.score_json = {"display": "4-6, 4-6"}
+    session.add(match_two)
+
+    match_three = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=t.public_schedule_version_id,
+        match_code="WOM_POOLA_RR_M03",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=3,
+        duration_minutes=60,
+        team_a_id=team2.id,
+        team_b_id=team3.id,
+        placeholder_side_a="Seed 2",
+        placeholder_side_b="Seed 3",
+        runtime_status="FINAL",
+        winner_team_id=team2.id,
+        score_json={"display": "7-6 (RET)"},
+    )
+    session.add(match_three)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/events/{ev.id}/roundrobin")
+    assert resp.status_code == 200
+    rows = resp.json()["standings"][0]["rows"]
+
+    assert [row["team_display"] for row in rows[:3]] == ["Charlie / Three", "Bravo / Two", "Alpha / One"]
 
 
 def test_public_round_robin_standings_ignore_non_rr_match_codes(client, session):

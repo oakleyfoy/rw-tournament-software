@@ -3772,8 +3772,7 @@ class StandingsEvent(BaseModel):
     division_name: Optional[str] = None
     rows: List[StandingsRow]
     tiebreak_notes: str = (
-        "Sorted by Wins, then Set Diff, then Game Diff, then Head-to-Head "
-        "(two-team ties)"
+        "Sorted by W/L, then Sets Lost (lowest), then Total Game Differential (highest to lowest)."
     )
     warnings: List[Dict[str, Any]] = []
 
@@ -3882,8 +3881,6 @@ def get_standings(
                 "games_lost": 0,
                 "played": 0,
             }
-        h2h_wins: Dict[int, Dict[int, int]] = defaultdict(dict)
-
         warnings: List[Dict[str, Any]] = []
 
         # Process only FINAL matches
@@ -3903,15 +3900,11 @@ def get_standings(
                 rows.setdefault(b_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
                 rows[a_id]["wins"] += 1
                 rows[b_id]["losses"] += 1
-                h2h_wins.setdefault(a_id, {})
-                h2h_wins[a_id][b_id] = h2h_wins[a_id].get(b_id, 0) + 1
             elif m.winner_team_id == b_id:
                 rows.setdefault(a_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
                 rows.setdefault(b_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
                 rows[b_id]["wins"] += 1
                 rows[a_id]["losses"] += 1
-                h2h_wins.setdefault(b_id, {})
-                h2h_wins[b_id][a_id] = h2h_wins[b_id].get(a_id, 0) + 1
 
             rows[a_id]["played"] += 1
             rows[b_id]["played"] += 1
@@ -3946,45 +3939,18 @@ def get_standings(
             elif m.score_json:
                 warnings.append({"match_number": m.id, "reason": "SCORE_PARSE_FAILED"})
 
-        # Base sort: wins desc, set diff desc, game diff desc, name asc
+        # Base sort: overall record, then sets lost (fewer is better),
+        # then total game differential, then name.
         base_sorted_rows = sorted(
             rows.items(),
             key=lambda item: (
                 -item[1]["wins"],
-                -(item[1]["sets_won"] - item[1]["sets_lost"]),
+                item[1]["sets_lost"],
                 -(item[1]["games_won"] - item[1]["games_lost"]),
                 _t_disp(item[0]),
             ),
         )
-        # Head-to-head tie break for exact two-team ties on primary metrics.
-        sorted_rows: List[tuple[int, dict]] = []
-        idx = 0
-        while idx < len(base_sorted_rows):
-            key = (
-                base_sorted_rows[idx][1]["wins"],
-                base_sorted_rows[idx][1]["sets_won"] - base_sorted_rows[idx][1]["sets_lost"],
-                base_sorted_rows[idx][1]["games_won"] - base_sorted_rows[idx][1]["games_lost"],
-            )
-            start = idx
-            while idx < len(base_sorted_rows):
-                probe = (
-                    base_sorted_rows[idx][1]["wins"],
-                    base_sorted_rows[idx][1]["sets_won"] - base_sorted_rows[idx][1]["sets_lost"],
-                    base_sorted_rows[idx][1]["games_won"] - base_sorted_rows[idx][1]["games_lost"],
-                )
-                if probe != key:
-                    break
-                idx += 1
-
-            group = list(base_sorted_rows[start:idx])
-            if len(group) == 2:
-                left_tid, right_tid = group[0][0], group[1][0]
-                left_over_right = h2h_wins.get(left_tid, {}).get(right_tid, 0)
-                right_over_left = h2h_wins.get(right_tid, {}).get(left_tid, 0)
-                if right_over_left > left_over_right:
-                    group = [group[1], group[0]]
-
-            sorted_rows.extend(group)
+        sorted_rows = base_sorted_rows
 
         label_suffix = f" — {div_name}" if div_name else ""
         standings_events.append(StandingsEvent(
@@ -4000,7 +3966,7 @@ def get_standings(
                     game_diff=(r["games_won"] - r["games_lost"]),
                     rank_explanation=(
                         f"W:{r['wins']} | "
-                        f"SetDiff:{(r['sets_won'] - r['sets_lost']):+d} | "
+                        f"SetsLost:{r['sets_lost']} | "
                         f"GameDiff:{(r['games_won'] - r['games_lost']):+d}"
                     ),
                     **r,
