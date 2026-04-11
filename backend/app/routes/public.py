@@ -888,6 +888,7 @@ _POOL_LABELS = {
 class RRMatchBox(BaseModel):
     match_id: int
     match_code: str
+    round_index: int
     line1: str
     line2: str
     status: str
@@ -1069,6 +1070,7 @@ def public_round_robin(
             boxes.append(RRMatchBox(
                 match_id=m.id,
                 match_code=m.match_code,
+                round_index=m.round_index or 0,
                 line1=line1,
                 line2=line2,
                 status=status,

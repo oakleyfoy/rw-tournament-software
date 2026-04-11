@@ -142,10 +142,17 @@ function RRMatchCard({ match, showCourtInfo }: { match: RRMatchBox; showCourtInf
 function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
   const title = `${eventName} Round Robin ${pool.pool_label}`.toUpperCase()
 
-  const rows: RRMatchBox[][] = []
-  for (let i = 0; i < pool.matches.length; i += 2) {
-    rows.push(pool.matches.slice(i, i + 2))
-  }
+  const rounds = Array.from(
+    pool.matches.reduce((acc, match) => {
+      const roundIndex = match.round_index || 0
+      const existing = acc.get(roundIndex) || []
+      existing.push(match)
+      acc.set(roundIndex, existing)
+      return acc
+    }, new Map<number, RRMatchBox[]>()).entries()
+  )
+    .sort((a, b) => a[0] - b[0])
+    .map(([roundIndex, matches]) => ({ roundIndex, matches }))
 
   return (
     <div style={{ marginBottom: 24 }}>
@@ -169,11 +176,11 @@ function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventNa
         padding: '12px',
         backgroundColor: '#fafafa',
       }}>
-        {rows.map((row, ri) => (
-          <div key={ri} style={{
+        {rounds.map(({ roundIndex, matches }, ri) => (
+          <div key={`${pool.pool_code}-${roundIndex}-${ri}`} style={{
             display: 'flex',
             gap: 16,
-            marginBottom: ri < rows.length - 1 ? 10 : 0,
+            marginBottom: ri < rounds.length - 1 ? 10 : 0,
             alignItems: 'center',
             flexWrap: 'wrap',
           }}>
@@ -187,9 +194,9 @@ function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventNa
               flexShrink: 0,
               textAlign: 'center',
             }}>
-              Round {ri + 1}
+              Round {roundIndex || ri + 1}
             </div>
-            {row.map(m => (
+            {matches.map(m => (
               <RRMatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
             ))}
           </div>

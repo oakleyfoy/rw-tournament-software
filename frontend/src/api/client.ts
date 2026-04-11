@@ -2044,6 +2044,7 @@ export async function getPublicBracket(
 export interface RRMatchBox {
   match_id: number
   match_code: string
+  round_index: number
   line1: string
   line2: string
   status: string
