@@ -8716,8 +8716,58 @@ export default function TournamentDeskPage() {
   const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
   const [startingAll, setStartingAll] = useState(false)
   const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
+  const [readyResettingIds, setReadyResettingIds] = useState<Set<number>>(new Set())
   const [selectedCheckInSlotKey, setSelectedCheckInSlotKey] = useState<string>('all')
   const [ballIssuedBySide, setBallIssuedBySide] = useState<Record<string, boolean>>({})
+
+  const handleResetReadyMatch = useCallback(async (matchId: number) => {
+    if (!tid || !data) return
+    const match = (data.checkin_matches || []).find((cm) => cm.match_id === matchId)
+    if (!match) return
+
+    const clearSide = async (side: 'A' | 'B', state: MatchCheckInSideState) => {
+      const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
+      if (checkedPlayers.length > 0) {
+        await Promise.all(
+          checkedPlayers.map((player) =>
+            deskCheckInPlayer(tid, matchId, {
+              version_id: data.version_id,
+              side,
+              player_id: player.player_id!,
+              checked_in: false,
+            })
+          )
+        )
+      }
+      if (state.team_checked_in) {
+        await deskCheckInTeam(tid, matchId, {
+          version_id: data.version_id,
+          side,
+          checked_in: false,
+        })
+      }
+    }
+
+    setReadyResettingIds((prev) => new Set(prev).add(matchId))
+    try {
+      await clearSide('A', match.side_a)
+      await clearSide('B', match.side_b)
+      setReadySlotChoice((prev) => {
+        const next = { ...prev }
+        delete next[matchId]
+        return next
+      })
+      await handleRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to return on-deck match to check-in')
+    } finally {
+      setReadyResettingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(matchId)
+        return next
+      })
+    }
+  }, [tid, data, handleRefresh])
 
   const startableCourts = useMemo(() => {
     if (!data) return []
@@ -9665,6 +9715,7 @@ export default function TournamentDeskPage() {
                         <tbody>
                           {data.ready_queue.map((rq) => {
                             const selectedSlot = readySlotChoice[rq.match_id] ?? 0
+                            const resetting = readyResettingIds.has(rq.match_id)
                             return (
                               <tr key={rq.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
                                 <td style={{ padding: '6px 8px', fontSize: 12, verticalAlign: 'top' }}>
@@ -9681,6 +9732,7 @@ export default function TournamentDeskPage() {
                                 <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                                   <select
                                     value={selectedSlot || ''}
+                                    disabled={resetting}
                                     onChange={e => {
                                       const value = e.target.value
                                       setReadySlotChoice(prev => ({
@@ -9698,7 +9750,7 @@ export default function TournamentDeskPage() {
                                     ))}
                                   </select>
                                   <button
-                                    disabled={!selectedSlot}
+                                    disabled={!selectedSlot || resetting}
                                     onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
                                     style={{
                                       width: '100%',
@@ -9713,6 +9765,25 @@ export default function TournamentDeskPage() {
                                     }}
                                   >
                                     Assign Court
+                                  </button>
+                                  <button
+                                    disabled={resetting}
+                                    onClick={() => handleResetReadyMatch(rq.match_id)}
+                                    style={{
+                                      width: '100%',
+                                      marginTop: 4,
+                                      padding: '4px 8px',
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      borderRadius: 4,
+                                      border: '1px solid #90a4ae',
+                                      backgroundColor: '#fff',
+                                      color: '#455a64',
+                                      cursor: resetting ? 'default' : 'pointer',
+                                      opacity: resetting ? 0.7 : 1,
+                                    }}
+                                  >
+                                    {resetting ? 'Returning...' : 'Return To Check-In'}
                                   </button>
                                 </td>
                               </tr>
