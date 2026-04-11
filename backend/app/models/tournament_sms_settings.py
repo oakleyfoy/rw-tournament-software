@@ -28,6 +28,7 @@ class TournamentSmsSettings(SQLModel, table=True):
 
     # Safety mode for live testing:
     # if enabled, sends are restricted to numbers in test_allowlist.
+    texts_enabled: bool = Field(default=True)
     test_mode: bool = Field(default=False)
     test_allowlist: Optional[str] = Field(default=None)
 

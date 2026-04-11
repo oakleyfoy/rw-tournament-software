@@ -49,6 +49,7 @@ REQUIRED_SMS_LOG_COLUMNS: List[Tuple[str, str, str]] = [
 
 # Columns we must ensure exist in the "tournament_sms_settings" table.
 REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
+    ("texts_enabled", "INTEGER", "BOOLEAN"),
     ("test_mode", "INTEGER", "BOOLEAN"),
     ("test_allowlist", "TEXT", "TEXT"),
     ("player_contacts_only", "INTEGER", "BOOLEAN"),

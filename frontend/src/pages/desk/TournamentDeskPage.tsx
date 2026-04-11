@@ -7085,6 +7085,7 @@ function SmsAdminTab({
         auto_checkin_slot_checkin: settingsDraft.auto_checkin_slot_checkin,
         auto_checkin_post_match_next: settingsDraft.auto_checkin_post_match_next,
         auto_checkin_court_assigned: settingsDraft.auto_checkin_court_assigned,
+        texts_enabled: settingsDraft.texts_enabled,
         test_mode: settingsDraft.test_mode,
         test_allowlist: settingsDraft.test_allowlist,
         player_contacts_only: settingsDraft.player_contacts_only,
@@ -7242,6 +7243,7 @@ function SmsAdminTab({
   }
   const checkinTemplateRows = templates.filter(row => row.message_type.startsWith('checkin_'))
   const courtTemplateRows = templates.filter(row => !row.message_type.startsWith('checkin_'))
+  const textsEnabled = settingsDraft?.texts_enabled ?? true
   const visibleLogs = logs.filter(l => {
     const status = String(l.status || '').trim().toLowerCase()
     if (status === 'blocked_test_mode') return false
@@ -7276,6 +7278,9 @@ function SmsAdminTab({
           </div>
           <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
             <strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}
+          </div>
+          <div style={{ border: `1px solid ${textsEnabled ? '#c8e6c9' : '#ffcdd2'}`, borderRadius: 8, padding: '8px 10px', backgroundColor: textsEnabled ? '#f1f8e9' : '#ffebee' }}>
+            <strong>Texts:</strong> {textsEnabled ? 'ON' : 'OFF'}
           </div>
           <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
             <strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}
@@ -7314,6 +7319,51 @@ function SmsAdminTab({
           Selected template set: <strong>{smsTemplateMode === 'checkin_management' ? 'Check-In Management' : 'Court Management'}</strong>.
           {' '}Send anytime. TEST mode + allowlist is the active safety check.
         </div>
+        {settingsDraft && (
+          <div style={{ marginTop: 10, padding: 10, border: `1px solid ${textsEnabled ? '#dcedc8' : '#ffcdd2'}`, borderRadius: 6, backgroundColor: textsEnabled ? '#f9fff1' : '#fff5f5' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: textsEnabled ? '#2e7d32' : '#c62828' }}>
+                  {textsEnabled ? 'All texting is ON' : 'All texting is OFF'}
+                </div>
+                <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
+                  This is the tournament-wide emergency switch. When OFF, both automatic texts and manual sends are blocked.
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  setSavingSettings(true)
+                  setError(null)
+                  try {
+                    const updated = await patchSmsSettings(tournamentId, {
+                      texts_enabled: !textsEnabled,
+                    })
+                    setSettingsDraft(updated)
+                  } catch (e: any) {
+                    setError(e?.message || 'Failed to update text sending status')
+                  } finally {
+                    setSavingSettings(false)
+                  }
+                }}
+                disabled={savingSettings}
+                style={{
+                  padding: '8px 14px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  borderRadius: 4,
+                  border: 'none',
+                  cursor: savingSettings ? 'default' : 'pointer',
+                  backgroundColor: textsEnabled ? '#c62828' : '#2e7d32',
+                  color: '#fff',
+                  minWidth: 150,
+                  opacity: savingSettings ? 0.75 : 1,
+                }}
+              >
+                {savingSettings ? 'Saving…' : textsEnabled ? 'Turn Off All Texts' : 'Turn On All Texts'}
+              </button>
+            </div>
+          </div>
+        )}
         {settingsDraft?.test_mode && (
           <div style={{ marginTop: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100', maxWidth: 820 }}>
             TEST mode is ON. Sends are restricted to allowlisted numbers:
@@ -7390,14 +7440,14 @@ function SmsAdminTab({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
               <button
                 onClick={() => handleRunFirstMatchReminder(true)}
-                disabled={runningReminder}
+                disabled={runningReminder || !textsEnabled}
                 style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
               >
                 {runningReminder ? 'Running…' : 'Test first-match text'}
               </button>
               <button
                 onClick={() => handleRunFirstMatchReminder(false)}
-                disabled={runningReminder}
+                disabled={runningReminder || !textsEnabled}
                 style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
               >
                 {runningReminder ? 'Running…' : 'Send first-match text'}
@@ -7448,14 +7498,14 @@ function SmsAdminTab({
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   onClick={() => handleRunRrFirstMatchReminder(true)}
-                  disabled={runningRrReminder || rrEventOptions.length === 0}
+                  disabled={runningRrReminder || rrEventOptions.length === 0 || !textsEnabled}
                   style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
                 >
                   {runningRrReminder ? 'Running…' : 'Test RR first-match text'}
                 </button>
                 <button
                   onClick={() => handleRunRrFirstMatchReminder(false)}
-                  disabled={runningRrReminder || rrEventOptions.length === 0}
+                  disabled={runningRrReminder || rrEventOptions.length === 0 || !textsEnabled}
                   style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
                 >
                   {runningRrReminder ? 'Running…' : 'Send RR first-match text'}
@@ -7703,6 +7753,12 @@ function SmsAdminTab({
           </div>
         )}
 
+        {!textsEnabled && (
+          <div style={{ marginBottom: 8, padding: 10, border: '1px solid #ffcdd2', borderRadius: 6, backgroundColor: '#ffebee', fontSize: 12, color: '#b71c1c' }}>
+            All texts are currently turned off for this tournament. Manual sends and automatic texts are blocked until you turn texts back on above.
+          </div>
+        )}
+
         <textarea
           value={message}
           onChange={e => setMessage(e.target.value)}
@@ -7711,20 +7767,20 @@ function SmsAdminTab({
           style={{ width: '100%', boxSizing: 'border-box', padding: 8, borderRadius: 4, border: '1px solid #ccc', marginBottom: 8 }}
         />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={handlePreview} disabled={previewing || sending} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
+          <button onClick={handlePreview} disabled={previewing || sending || !textsEnabled} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
             {previewing ? 'Previewing…' : 'Preview'}
           </button>
           <button
             onClick={handleSend}
-            disabled={sending || previewing || !message.trim() || !hasValidTarget || !confirmOk}
+            disabled={sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk}
             style={{
               padding: '7px 14px',
               fontWeight: 700,
-              backgroundColor: (sending || previewing || !message.trim() || !hasValidTarget || !confirmOk) ? '#9fa8da' : '#1a237e',
+              backgroundColor: (sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk) ? '#9fa8da' : '#1a237e',
               color: '#fff',
               border: 'none',
               borderRadius: 4,
-              cursor: (sending || previewing || !message.trim() || !hasValidTarget || !confirmOk) ? 'not-allowed' : 'pointer',
+              cursor: (sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk) ? 'not-allowed' : 'pointer',
             }}
           >
             {sending ? 'Sending…' : 'Send'}

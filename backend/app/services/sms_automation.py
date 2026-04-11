@@ -394,6 +394,7 @@ class SmsAutomationEngine:
         stats: Dict[str, Any] = {
             "tournament_id": self.tournament.id,
             "version_id": self.version_id,
+            "disabled": False,
             "considered_teams": 0,
             "eligible_teams": 0,
             "outside_window": 0,
@@ -409,6 +410,9 @@ class SmsAutomationEngine:
             "window_minutes": 0,
             "now_utc": (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
         }
+        if not self._texts_enabled():
+            stats["disabled"] = True
+            return stats
         normalized_mode = _normalize_sms_template_mode(template_mode)
         message_type = (
             "checkin_first_match"
@@ -497,6 +501,7 @@ class SmsAutomationEngine:
             "tournament_id": self.tournament.id,
             "version_id": self.version_id,
             "event_id": event_id,
+            "disabled": False,
             "considered_teams": 0,
             "eligible_teams": 0,
             "missing_slot": 0,
@@ -509,6 +514,9 @@ class SmsAutomationEngine:
             "force_resend": force_resend,
             "resend_run_key": None,
         }
+        if not self._texts_enabled():
+            stats["disabled"] = True
+            return stats
         normalized_mode = _normalize_sms_template_mode(template_mode)
         message_type = (
             "checkin_rr_first_match"
@@ -649,7 +657,20 @@ class SmsAutomationEngine:
             ).first()
         if self._settings is None:
             return default
+        if not bool(getattr(self._settings, "texts_enabled", True)):
+            return False
         return bool(getattr(self._settings, field_name, default))
+
+    def _texts_enabled(self) -> bool:
+        if self._settings is None:
+            self._settings = self.session.exec(
+                select(TournamentSmsSettings).where(
+                    TournamentSmsSettings.tournament_id == self.tournament.id
+                )
+            ).first()
+        if self._settings is None:
+            return True
+        return bool(getattr(self._settings, "texts_enabled", True))
 
     def _is_checkin_management(self) -> bool:
         mode = str(getattr(self.tournament, "desk_management_mode", "") or "")

@@ -135,6 +135,7 @@ class SmsSettingsResponse(BaseModel):
     auto_checkin_slot_checkin: bool
     auto_checkin_post_match_next: bool
     auto_checkin_court_assigned: bool
+    texts_enabled: bool
     test_mode: bool
     test_allowlist: Optional[str] = None
     player_contacts_only: bool
@@ -152,6 +153,7 @@ class SmsSettingsUpdate(BaseModel):
     auto_checkin_slot_checkin: Optional[bool] = None
     auto_checkin_post_match_next: Optional[bool] = None
     auto_checkin_court_assigned: Optional[bool] = None
+    texts_enabled: Optional[bool] = None
     test_mode: Optional[bool] = None
     test_allowlist: Optional[str] = None
     player_contacts_only: Optional[bool] = None
@@ -828,6 +830,7 @@ def _settings_to_response(
             auto_checkin_slot_checkin=False,
             auto_checkin_post_match_next=False,
             auto_checkin_court_assigned=False,
+            texts_enabled=True,
             test_mode=False,
             test_allowlist=None,
             player_contacts_only=False,
@@ -851,6 +854,7 @@ def _settings_to_response(
         auto_checkin_court_assigned=bool(
             getattr(settings, "auto_checkin_court_assigned", False)
         ),
+        texts_enabled=bool(getattr(settings, "texts_enabled", True)),
         test_mode=bool(getattr(settings, "test_mode", False)),
         test_allowlist=getattr(settings, "test_allowlist", None),
         player_contacts_only=bool(getattr(settings, "player_contacts_only", False)),
@@ -1257,6 +1261,18 @@ def _send_to_phone_targets(
             TournamentSmsSettings.tournament_id == tournament_id
         )
     ).first()
+    if settings is not None and not bool(getattr(settings, "texts_enabled", True)):
+        return SmsSendResponse(
+            total=0,
+            sent=0,
+            failed=0,
+            skipped_no_phone=skipped_no_phone,
+            skipped_consent=0,
+            skipped_dedupe=0,
+            skipped_test_mode=0,
+            message_type=message_type,
+            results=[],
+        )
     test_mode_enabled = bool(settings and getattr(settings, "test_mode", False))
     test_allowlist = _allowlist_set(
         getattr(settings, "test_allowlist", None) if settings else None

@@ -3363,6 +3363,7 @@ export interface SmsSettingsResponse {
   auto_checkin_slot_checkin: boolean
   auto_checkin_post_match_next: boolean
   auto_checkin_court_assigned: boolean
+  texts_enabled: boolean
   test_mode: boolean
   test_allowlist: string | null
   player_contacts_only: boolean
@@ -3786,6 +3787,7 @@ export async function patchSmsSettings(
     'auto_checkin_slot_checkin' |
     'auto_checkin_post_match_next' |
     'auto_checkin_court_assigned' |
+    'texts_enabled' |
     'test_mode' |
     'test_allowlist' |
     'player_contacts_only'

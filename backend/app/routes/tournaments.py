@@ -1403,6 +1403,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                     auto_on_deck=source_sms_settings.auto_on_deck,
                     auto_up_next=source_sms_settings.auto_up_next,
                     auto_court_change=source_sms_settings.auto_court_change,
+                    texts_enabled=getattr(source_sms_settings, "texts_enabled", True),
                     test_mode=source_sms_settings.test_mode,
                     test_allowlist=source_sms_settings.test_allowlist,
                     player_contacts_only=source_sms_settings.player_contacts_only,
