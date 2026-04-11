@@ -884,6 +884,27 @@ _POOL_LABELS = {
     "POOLH": "Division VIII",
 }
 
+# Temporary live-display override for the current women's Jekyll RR board.
+# The tournament director requested RR rounds 1 and 2 to appear swapped on
+# the public draws page for this one event, without changing scores/teams.
+_PUBLIC_RR_SWAP_FIRST_TWO_ROUNDS: set[tuple[int, int]] = {
+    (5, 12),
+}
+
+
+def _public_rr_display_round(
+    tournament_id: int,
+    event_id: int,
+    round_index: Optional[int],
+) -> int:
+    round_value = int(round_index or 0)
+    if (tournament_id, event_id) in _PUBLIC_RR_SWAP_FIRST_TWO_ROUNDS:
+        if round_value == 1:
+            return 2
+        if round_value == 2:
+            return 1
+    return round_value
+
 
 class RRMatchBox(BaseModel):
     match_id: int
@@ -1015,10 +1036,18 @@ def public_round_robin(
     for pool_code in sorted(pool_matches.keys()):
         matches = sorted(
             pool_matches[pool_code],
-            key=lambda m: (m.round_index or 0, m.sequence_in_round or 0),
+            key=lambda m: (
+                _public_rr_display_round(tournament_id, event_id, m.round_index),
+                m.sequence_in_round or 0,
+            ),
         )
         boxes: List[RRMatchBox] = []
         for m in matches:
+            display_round_index = _public_rr_display_round(
+                tournament_id,
+                event_id,
+                m.round_index,
+            )
             line1 = _rr_team_line(m.team_a_id, m.placeholder_side_a, team_map)
             line2 = _rr_team_line(m.team_b_id, m.placeholder_side_b, team_map)
 
@@ -1070,7 +1099,7 @@ def public_round_robin(
             boxes.append(RRMatchBox(
                 match_id=m.id,
                 match_code=m.match_code,
-                round_index=m.round_index or 0,
+                round_index=display_round_index,
                 line1=line1,
                 line2=line2,
                 status=status,
