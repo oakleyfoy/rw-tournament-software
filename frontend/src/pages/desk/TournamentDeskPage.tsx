@@ -8727,31 +8727,6 @@ export default function TournamentDeskPage() {
     return `${minutes}:${String(seconds).padStart(2, '0')}`
   }, [clockNowMs, parseApiTimestampMs])
 
-  const renderInlinePlayerToggle = useCallback((
-    checked: boolean,
-    onClick?: () => void,
-    align: 'left' | 'right' = 'left'
-  ) => (
-    <button
-      type="button"
-      disabled={!onClick}
-      onClick={onClick}
-      style={{
-        width: 12,
-        height: 12,
-        borderRadius: '50%',
-        border: `1px solid ${checked ? '#2e7d32' : '#90a4ae'}`,
-        backgroundColor: checked ? '#2e7d32' : '#fff',
-        padding: 0,
-        cursor: onClick ? 'pointer' : 'default',
-        flexShrink: 0,
-        marginLeft: align === 'right' ? 6 : 0,
-        marginRight: align === 'left' ? 6 : 0,
-      }}
-      title={checked ? 'Checked in' : 'Not checked in'}
-    />
-  ), [])
-
   const handleAssignReadyMatch = useCallback(async (matchId: number, slotId: number) => {
     if (!tid || !data) return
     try {
@@ -9115,6 +9090,426 @@ export default function TournamentDeskPage() {
   )
   const matchedLookupCount = lookupItems.filter(item => item.matched).length
   const unmatchedLookupCount = lookupItems.length - matchedLookupCount
+  const slotOrderByKey = new Map<string, number>()
+  const slotLabelByKey = new Map<string, string>()
+  const slotKeyBySlotId = new Map<number, string>()
+  const slotKeyByMatchId = new Map<number, string>()
+  slotSections.forEach((section, index) => {
+    slotOrderByKey.set(section.key, index)
+    slotLabelByKey.set(section.key, section.label)
+    section.slotIds.forEach((slotId) => {
+      slotKeyBySlotId.set(slotId, section.key)
+    })
+    section.assignedMatchIds.forEach((matchId) => {
+      if (!slotKeyByMatchId.has(matchId)) {
+        slotKeyByMatchId.set(matchId, section.key)
+      }
+    })
+  })
+  ;(data.checkin_matches || []).forEach((cm) => {
+    if (cm.slot_id != null) {
+      const slotKey = slotKeyBySlotId.get(cm.slot_id)
+      if (slotKey) {
+        slotKeyByMatchId.set(cm.match_id, slotKey)
+      }
+    }
+  })
+  const autoFocusSlotKey = slotSections.find((section) => {
+    const hasWaiting = getSectionCheckInMatches(section).length > 0
+    const hasReady = data.ready_queue.some((rq) => slotKeyByMatchId.get(rq.match_id) === section.key)
+    const hasCourtOccupancy = data.courts.some((court) => {
+      const displayMatch = data.now_playing_by_court[court] || data.up_next_by_court[court] || data.on_deck_by_court[court]
+      return !!displayMatch && slotKeyByMatchId.get(displayMatch.match_id) === section.key
+    })
+    return hasWaiting || hasReady || hasCourtOccupancy
+  })?.key ?? slotSections[0]?.key ?? null
+  const focusSlotKey = effectiveSelectedCheckInSlotKey === 'all' ? autoFocusSlotKey : effectiveSelectedCheckInSlotKey
+  const focusSlotLabel = focusSlotKey ? (slotLabelByKey.get(focusSlotKey) || focusSlotKey) : null
+  const focusSlotIndex = focusSlotKey != null ? (slotOrderByKey.get(focusSlotKey) ?? null) : null
+  const preferredAvailableSlots = focusSlotKey
+    ? data.available_slots.filter((slot) => slotKeyBySlotId.get(slot.slot_id) === focusSlotKey)
+    : data.available_slots
+  const visibleReadyAssignSlots = preferredAvailableSlots.length > 0 ? preferredAvailableSlots : data.available_slots
+
+  const buildFallbackDeskMatch = (cm: CheckInMatchItem): DeskMatchItem => ({
+    match_id: cm.match_id,
+    match_number: cm.match_number,
+    match_code: cm.match_code || '',
+    stage: 'WF',
+    event_id: cm.event_id || 0,
+    event_name: cm.event_name || 'Match',
+    division_name: null,
+    day_index: 0,
+    day_label: cm.day_label || '',
+    scheduled_time: cm.scheduled_time || null,
+    sort_time: cm.sort_time || null,
+    court_name: null,
+    status: 'SCHEDULED',
+    team1_id: cm.side_a.team_id || null,
+    team1_display: cm.side_a.team_display || 'TBD',
+    team2_id: cm.side_b.team_id || null,
+    team2_display: cm.side_b.team_display || 'TBD',
+    score_display: null,
+    source_match_a_id: null,
+    source_match_b_id: null,
+    created_at: null,
+    started_at: null,
+    completed_at: null,
+    winner_display: null,
+    winner_team_id: null,
+    duration_minutes: 0,
+    team1_defaulted: false,
+    team2_defaulted: false,
+    team1_notes: cm.team1_notes || null,
+    team2_notes: cm.team2_notes || null,
+    slot_id: cm.slot_id || null,
+    assignment_id: null,
+    court_number: null,
+    day_date: null,
+  })
+
+  const waitingBoardEntries = filteredSlotSections.flatMap((section) => {
+    const actionableCheckInMatchesForSection = getSectionCheckInMatches(section)
+    const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
+      actionableCheckInMatchesForSection.length > 0
+        ? actionableCheckInMatchesForSection.map((cm) => ({
+            cm,
+            baseMatch: matchById.get(cm.match_id) || null,
+          }))
+        : section.matches
+            .filter((baseMatch) => {
+              const cm = checkInByMatchId.get(baseMatch.match_id)
+              return !cm || !cm.match_ready
+            })
+            .map((baseMatch) => ({
+              baseMatch,
+              cm: checkInByMatchId.get(baseMatch.match_id) || null,
+            }))
+
+    return rowEntries.map(({ baseMatch, cm }) => {
+      const match = baseMatch || (cm ? buildFallbackDeskMatch(cm) : null)
+      if (!match) return null
+      const disabledState: MatchCheckInSideState = {
+        side: 'A',
+        team_id: match.team1_id,
+        team_display: match.team1_display,
+        team_checked_in: false,
+        team_checked_in_at: null,
+        show_towels: false,
+        players: [],
+        players_checked_in: 0,
+        players_total: 0,
+        side_ready: false,
+        ready_at: null,
+      }
+      return {
+        key: `${section.key}-${match.match_id}-${cm?.match_id || 'row'}`,
+        slotKey: section.key,
+        slotLabel: section.label,
+        match,
+        checkinMatch: cm,
+        checkinEnabled: !!cm?.checkin_enabled,
+        sideA: cm?.side_a ?? disabledState,
+        sideB: cm?.side_b ?? {
+          ...disabledState,
+          side: 'B',
+          team_id: match.team2_id,
+          team_display: match.team2_display,
+        },
+      }
+    }).filter((entry): entry is {
+      key: string
+      slotKey: string
+      slotLabel: string
+      match: DeskMatchItem
+      checkinMatch: CheckInMatchItem | null
+      checkinEnabled: boolean
+      sideA: MatchCheckInSideState
+      sideB: MatchCheckInSideState
+    } => entry !== null)
+  })
+
+  const filteredReadyQueue = data.ready_queue.filter((rq) => (
+    effectiveSelectedCheckInSlotKey === 'all' ||
+    slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
+  ))
+
+  const courtBoardRows = data.courts.map((court) => {
+    const now = data.now_playing_by_court[court]
+    const upNext = data.up_next_by_court[court]
+    const onDeck = data.on_deck_by_court[court]
+    const courtLabel = court.replace(/^Court\s+/i, '')
+    const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
+    const displayMatch = now || upNext || onDeck || null
+    const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
+    const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
+    const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === court)
+    let lane: 'behind' | 'current' | 'open' = 'open'
+    let slotStateLabel = isClosed ? 'Closed' : 'Open'
+    let slotStateColor = isClosed
+      ? { bg: '#eceff1', color: '#455a64' }
+      : { bg: '#e8f5e9', color: '#2e7d32' }
+
+    if (displayMatch) {
+      lane = 'current'
+      if (focusSlotIndex != null && matchSlotIndex != null && matchSlotIndex < focusSlotIndex) {
+        lane = 'behind'
+        slotStateLabel = 'Previous Slot'
+        slotStateColor = { bg: '#fff3e0', color: '#e65100' }
+      } else if (focusSlotIndex != null && matchSlotIndex != null && matchSlotIndex > focusSlotIndex) {
+        slotStateLabel = 'Future Slot'
+        slotStateColor = { bg: '#e3f2fd', color: '#1565c0' }
+      } else if (matchSlotKey) {
+        slotStateLabel = 'Current Slot'
+        slotStateColor = { bg: '#e8f5e9', color: '#2e7d32' }
+      } else {
+        slotStateLabel = 'Assigned'
+        slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
+      }
+    } else if (!isClosed && availableSlotsForCourt.length > 0) {
+      slotStateLabel = focusSlotKey ? 'Ready For Assignment' : 'Open'
+      slotStateColor = { bg: '#e8f5e9', color: '#2e7d32' }
+    }
+
+    return {
+      court,
+      now,
+      upNext,
+      onDeck,
+      displayMatch,
+      isClosed,
+      lane,
+      slotKey: matchSlotKey,
+      slotLabel: matchSlotKey ? (slotLabelByKey.get(matchSlotKey) || null) : null,
+      slotStateLabel,
+      slotStateColor,
+      startAtLabel: formatStartedAtLabel(displayMatch?.started_at),
+      elapsedLabel: formatElapsedLabel(displayMatch?.started_at, displayMatch?.completed_at),
+      availableSlotsForCourt,
+    }
+  })
+
+  const behindCourtRows = courtBoardRows.filter((row) => row.lane === 'behind')
+  const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
+  const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open')
+
+  const renderCheckInTeamPanel = (
+    entry: {
+      checkinMatch: CheckInMatchItem | null
+      checkinEnabled: boolean
+    },
+    side: 'A' | 'B',
+    state: MatchCheckInSideState
+  ) => {
+    const cm = entry.checkinMatch
+    const anyChecked = state.team_checked_in || state.players.some((player) => player.checked_in)
+    const totalPlayers = Math.max(state.players_total || 0, state.players.length)
+    const checkedPlayers = state.players.filter((player) => state.team_checked_in || player.checked_in).length
+    return (
+      <div style={{
+        border: `1px solid ${anyChecked ? '#a5d6a7' : '#d7dee5'}`,
+        borderRadius: 8,
+        padding: 10,
+        backgroundColor: anyChecked ? '#f1f8e9' : '#fff',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#263238', wordBreak: 'break-word' }}>
+              {state.team_display || 'TBD'}
+            </div>
+            <div style={{ marginTop: 3, fontSize: 11, color: '#607d8b' }}>
+              {totalPlayers > 0 ? `${checkedPlayers}/${totalPlayers} players checked in` : 'Roster not loaded yet'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button
+              type="button"
+              disabled={!state.team_id}
+              onClick={() => cm && state.team_id && toggleBallIssued(cm.match_id, side)}
+              title="Mark tennis ball issued"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 999,
+                border: '1px solid #90a4ae',
+                backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#fff8e1' : '#fff',
+                cursor: state.team_id ? 'pointer' : 'default',
+                opacity: state.team_id ? 1 : 0.45,
+                padding: 0,
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {(cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? 'B' : 'o'}
+            </button>
+            <button
+              type="button"
+              disabled={!entry.checkinEnabled}
+              onClick={() => entry.checkinEnabled && cm && handleTeamQuickCheckIn(cm, side, state)}
+              style={{
+                padding: '6px 10px',
+                fontSize: 11,
+                fontWeight: 700,
+                borderRadius: 6,
+                border: '1px solid #90a4ae',
+                backgroundColor: anyChecked ? '#2e7d32' : '#fff',
+                color: anyChecked ? '#fff' : '#455a64',
+                cursor: entry.checkinEnabled ? 'pointer' : 'default',
+                opacity: entry.checkinEnabled ? 1 : 0.5,
+              }}
+            >
+              {anyChecked ? 'Uncheck Team' : 'Check In Team'}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+          {state.players.length === 0 ? (
+            <div style={{
+              padding: '8px 10px',
+              borderRadius: 6,
+              border: '1px dashed #cfd8dc',
+              color: '#90a4ae',
+              fontSize: 11,
+            }}>
+              Player rows not available yet.
+            </div>
+          ) : (
+            state.players.map((player, index) => {
+              const isChecked = state.team_checked_in || player.checked_in
+              return (
+                <button
+                  key={`${state.team_id || state.team_display}-${player.player_id || index}`}
+                  type="button"
+                  disabled={!entry.checkinEnabled || player.player_id == null}
+                  onClick={() => cm && player.player_id != null && handlePlayerCheckIn(cm, side, player.player_id, !isChecked)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '7px 9px',
+                    borderRadius: 6,
+                    border: `1px solid ${isChecked ? '#81c784' : '#cfd8dc'}`,
+                    backgroundColor: isChecked ? '#e8f5e9' : '#fff',
+                    cursor: entry.checkinEnabled && player.player_id != null ? 'pointer' : 'default',
+                    opacity: entry.checkinEnabled && player.player_id != null ? 1 : 0.6,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 999,
+                    border: `1px solid ${isChecked ? '#2e7d32' : '#90a4ae'}`,
+                    backgroundColor: isChecked ? '#2e7d32' : '#fff',
+                    color: '#fff',
+                    fontSize: 11,
+                    lineHeight: '16px',
+                    textAlign: 'center',
+                    flexShrink: 0,
+                  }}>
+                    {isChecked ? '✓' : ''}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#37474f', fontWeight: 600 }}>
+                    {player.player_display || `Player ${index + 1}`}
+                  </span>
+                  {state.show_towels && (
+                    <TowelColorPill colorName={player.towel_color || null} reportUrl={player.report_url || null} />
+                  )}
+                </button>
+              )
+            })
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const renderCourtBoardCard = (row: typeof courtBoardRows[number]) => {
+    const match = row.displayMatch
+    const matchStatus = match ? STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED : null
+    const occupancyLabel = row.isClosed
+      ? 'Closed'
+      : row.now
+        ? 'Playing'
+        : row.upNext
+          ? 'Up Next'
+          : row.onDeck
+            ? 'On Deck'
+            : 'Open'
+    return (
+      <div key={row.court} style={{
+        border: '1px solid #d7dee5',
+        borderRadius: 10,
+        backgroundColor: '#fff',
+        padding: 12,
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1f2937' }}>{row.court}</div>
+            <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <Badge label={occupancyLabel} bg={row.isClosed ? '#eceff1' : '#e3f2fd'} color={row.isClosed ? '#455a64' : '#1565c0'} />
+              <Badge label={row.slotStateLabel} bg={row.slotStateColor.bg} color={row.slotStateColor.color} />
+              {matchStatus && <Badge label={STATUS_LABEL[match!.status] || match!.status} bg={matchStatus.bg} color={matchStatus.text} />}
+            </div>
+          </div>
+          {row.slotLabel && (
+            <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
+              {row.slotLabel}
+            </div>
+          )}
+        </div>
+        {match ? (
+          <>
+            <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: '#263238' }}>
+              #{match.match_number} {match.team1_display} vs {match.team2_display}
+            </div>
+            <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <EventBadge name={match.event_name} />
+              <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
+            </div>
+            {(row.startAtLabel || row.elapsedLabel) && (
+              <div style={{ marginTop: 8, fontSize: 11, color: '#607d8b', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {row.startAtLabel && <span>Start: {row.startAtLabel}</span>}
+                {row.elapsedLabel && <span>{match.status === 'FINAL' ? `Total: ${row.elapsedLabel}` : `Running: ${row.elapsedLabel}`}</span>}
+              </div>
+            )}
+            {(row.now || row.upNext || row.onDeck) && (
+              <button
+                type="button"
+                onClick={() => setDrawerMatch(match)}
+                style={{
+                  marginTop: 10,
+                  padding: '6px 10px',
+                  border: 'none',
+                  borderRadius: 6,
+                  backgroundColor: '#1565c0',
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Open Match
+              </button>
+            )}
+          </>
+        ) : (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: row.isClosed ? '#607d8b' : '#2e7d32' }}>
+              {row.isClosed ? 'Court closed right now.' : 'Open court.'}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 11, color: '#607d8b' }}>
+              {row.availableSlotsForCourt.length > 0
+                ? `Ready for ${focusSlotLabel || 'the selected slot'}`
+                : (focusSlotLabel ? `No open ${focusSlotLabel} slot on this court.` : 'No open assignment slot at the moment.')}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
@@ -9500,292 +9895,134 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 4, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
-                  Player Check-In / On Deck - full event view
+                <div style={{ marginBottom: 10, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
+                  Court-first check-in board
                 </div>
-                <div style={{ marginBottom: 8, fontSize: 12, color: '#607d8b' }}>
-                  Towel imports and color counts now live in the <strong>Towels</strong> tab.
+                <div style={{ marginBottom: 12, fontSize: 12, color: '#607d8b' }}>
+                  First pass: keep current check-in buttons and ready assignment, but organize the page by slot and court so you can work top to bottom.
                 </div>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ padding: '6px 8px', backgroundColor: '#f5f7fa', border: '1px solid #e2e8ee', borderRadius: 6, fontSize: 12, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>Filter Slot:</span>
+                <div style={{ marginBottom: 14, padding: 10, backgroundColor: '#fff', border: '1px solid #dfe4ea', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#334155' }}>Focus Slot</div>
                     <select
                       value={effectiveSelectedCheckInSlotKey}
                       onChange={e => setSelectedCheckInSlotKey(e.target.value)}
-                      style={{ fontSize: 12, padding: '4px 7px', borderRadius: 4, border: '1px solid #b0bec5', minWidth: 280 }}
+                      style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid #b0bec5', minWidth: 280 }}
                     >
-                      <option value="all">All Time Slots</option>
+                      <option value="all">Auto / All Time Slots</option>
                       {slotSections.map((s) => (
                         <option key={s.key} value={s.key}>{s.label}</option>
                       ))}
                     </select>
+                    <div style={{ fontSize: 11, color: '#607d8b' }}>
+                      Board focus: <strong>{focusSlotLabel || 'No slot selected'}</strong>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#fff3e0', border: '1px solid #ffe0b2' }}>
+                      <div style={{ fontSize: 11, color: '#e65100', fontWeight: 800 }}>Behind Courts</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#bf360c' }}>{behindCourtRows.length}</div>
+                    </div>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#e3f2fd', border: '1px solid #bbdefb' }}>
+                      <div style={{ fontSize: 11, color: '#1565c0', fontWeight: 800 }}>Current Courts</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#0d47a1' }}>{currentCourtRows.length}</div>
+                    </div>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#e8f5e9', border: '1px solid #c8e6c9' }}>
+                      <div style={{ fontSize: 11, color: '#2e7d32', fontWeight: 800 }}>Ready To Go</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#1b5e20' }}>{filteredReadyQueue.length}</div>
+                    </div>
+                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#fff', border: '1px solid #dfe4ea' }}>
+                      <div style={{ fontSize: 11, color: '#455a64', fontWeight: 800 }}>Waiting For Check-In</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#263238' }}>{waitingBoardEntries.length}</div>
+                    </div>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '2.1fr 0.9fr 1.1fr', gap: 8 }}>
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
-                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
-                      Player Check-In
+
+                <div style={{ display: 'grid', gap: 14 }}>
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#e65100', backgroundColor: '#fff8f1' }}>
+                      Courts Still Finishing Previous Slot
                     </div>
-                    {filteredSlotSections.length === 0 ? (
-                      <div style={{ padding: 12, fontSize: 12, color: '#888' }}>No check-in eligible matches right now.</div>
-                    ) : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f8fafc' }}>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '18%' }}>Match</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '41%' }}>Team 1</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b', width: '41%' }}>Team 2</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(() => {
-                            const rows: JSX.Element[] = []
-                            filteredSlotSections.forEach((section) => {
-                              const actionableCheckInMatchesForSection = getSectionCheckInMatches(section)
-                              const rowEntries: Array<{ baseMatch: DeskMatchItem | null; cm: CheckInMatchItem | null }> =
-                                actionableCheckInMatchesForSection.length > 0
-                                  ? actionableCheckInMatchesForSection.map((cm) => ({
-                                      cm,
-                                      baseMatch: matchById.get(cm.match_id) || null,
-                                    }))
-                                  : section.matches
-                                      .filter((baseMatch) => {
-                                        const cm = checkInByMatchId.get(baseMatch.match_id)
-                                        return !cm || !cm.match_ready
-                                      })
-                                      .map((baseMatch) => ({
-                                        baseMatch,
-                                        cm: checkInByMatchId.get(baseMatch.match_id) || null,
-                                      }))
-
-                              if (rowEntries.length === 0) {
-                                return
-                              }
-
-                              rows.push(
-                                <tr key={`slot-${section.key}`} style={{ borderTop: '1px solid #dbe4eb', backgroundColor: '#f7fafc' }}>
-                                  <td colSpan={3} style={{ padding: '6px 8px', fontSize: 12, color: '#455a64', fontWeight: 700 }}>
-                                    {section.label}
-                                  </td>
-                                </tr>
-                              )
-
-                              rowEntries.forEach(({ baseMatch, cm }) => {
-                              const fallbackMatch: DeskMatchItem = baseMatch || {
-                                match_id: cm?.match_id || -1,
-                                match_number: cm?.match_number || -1,
-                                match_code: cm?.match_code || '',
-                                stage: 'WF',
-                                event_id: cm?.event_id || 0,
-                                event_name: cm?.event_name || 'Match',
-                                division_name: null,
-                                day_index: 0,
-                                day_label: cm?.day_label || '',
-                                scheduled_time: cm?.scheduled_time || null,
-                                sort_time: cm?.sort_time || null,
-                                court_name: null,
-                                status: 'SCHEDULED',
-                                team1_id: cm?.side_a.team_id || null,
-                                team1_display: cm?.side_a.team_display || 'TBD',
-                                team2_id: cm?.side_b.team_id || null,
-                                team2_display: cm?.side_b.team_display || 'TBD',
-                                score_display: null,
-                                source_match_a_id: null,
-                                source_match_b_id: null,
-                                created_at: null,
-                                started_at: null,
-                                completed_at: null,
-                                winner_display: null,
-                                winner_team_id: null,
-                                duration_minutes: 0,
-                                team1_defaulted: false,
-                                team2_defaulted: false,
-                                team1_notes: cm?.team1_notes || null,
-                                team2_notes: cm?.team2_notes || null,
-                                slot_id: cm?.slot_id || null,
-                                assignment_id: null,
-                                court_number: null,
-                                day_date: null,
-                              }
-                              const disabledState = {
-                                side: 'A' as const,
-                                team_id: fallbackMatch.team1_id,
-                                team_display: fallbackMatch.team1_display,
-                                team_checked_in: false,
-                                team_checked_in_at: null,
-                                show_towels: false,
-                                players: [],
-                                players_checked_in: 0,
-                                players_total: 0,
-                                side_ready: false,
-                                ready_at: null,
-                              }
-                              const sideA = cm?.side_a ?? disabledState
-                              const sideB = cm?.side_b ?? {
-                                ...disabledState,
-                                side: 'B' as const,
-                                team_id: fallbackMatch.team2_id,
-                                team_display: fallbackMatch.team2_display,
-                              }
-                              const checkinEnabled = !!cm && !!cm.checkin_enabled
-
-                              const renderTeamCell = (side: 'A' | 'B', state: MatchCheckInSideState) => (
-                                <td style={{ padding: '6px 8px', fontSize: 12, verticalAlign: 'top' }}>
-                                  {(() => {
-                                    const teamParts = state.team_display
-                                      .split('/')
-                                      .map(v => v.trim())
-                                      .filter(Boolean)
-                                    const p1 = state.players[0]
-                                    const p2 = state.players[1]
-                                    const leftName = teamParts[0] || p1?.player_display || 'Player 1'
-                                    const rightName = teamParts[1] || p2?.player_display || 'Player 2'
-                                    return (
-                                      <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        gap: 6,
-                                        fontSize: 12,
-                                        color: '#455a64',
-                                        marginBottom: 3,
-                                        minWidth: 0,
-                                      }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
-                                          {cm && side === 'A' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'A')] && <BallDot />}
-                                          {renderInlinePlayerToggle(
-                                            !!(state.team_checked_in || p1?.checked_in),
-                                            (checkinEnabled && p1?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p1.player_id!, !(state.team_checked_in || p1.checked_in)) : undefined,
-                                            'left'
-                                          )}
-                                          {state.show_towels && (
-                                            <TowelColorPill colorName={p1?.towel_color || null} reportUrl={p1?.report_url || null} />
-                                          )}
-                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>{leftName}</span>
-                                          <span style={{ color: '#90a4ae', margin: '0 2px', flexShrink: 0 }}>/</span>
-                                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>{rightName}</span>
-                                          {state.show_towels && (
-                                            <TowelColorPill colorName={p2?.towel_color || null} reportUrl={p2?.report_url || null} />
-                                          )}
-                                          {cm && side === 'B' && ballIssuedBySide[getBallIssuedKey(cm.match_id, 'B')] && <BallDot />}
-                                        </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: 4 }}>
-                                          {renderInlinePlayerToggle(
-                                            !!(state.team_checked_in || p2?.checked_in),
-                                            (checkinEnabled && p2?.player_id != null) ? () => handlePlayerCheckIn(cm!, side, p2.player_id!, !(state.team_checked_in || p2.checked_in)) : undefined,
-                                            'right'
-                                          )}
-                                        </div>
-                                      </div>
-                                    )
-                                  })()}
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                                    <button
-                                      type="button"
-                                      disabled={!state.team_id}
-                                      onClick={() => cm && state.team_id && toggleBallIssued(cm.match_id, side)}
-                                      title="Mark tennis ball issued"
-                                      style={{
-                                        width: 24,
-                                        height: 24,
-                                        borderRadius: 999,
-                                        border: '1px solid #607d8b',
-                                        backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#e8f5e9' : '#fff',
-                                        color: '#f9a825',
-                                        cursor: state.team_id ? 'pointer' : 'default',
-                                        opacity: state.team_id ? 1 : 0.45,
-                                        lineHeight: 1,
-                                        fontSize: 0,
-                                        padding: 0,
-                                      }}
-                                    >
-                                      {(cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) && (
-                                        <span
-                                          style={{
-                                            display: 'inline-block',
-                                            width: 12,
-                                            height: 12,
-                                            borderRadius: 999,
-                                            backgroundColor: '#fdd835',
-                                            border: '1px solid #f9a825',
-                                          }}
-                                        />
-                                      )}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={!checkinEnabled}
-                                      onClick={() => checkinEnabled && handleTeamQuickCheckIn(cm!, side, state)}
-                                      style={{
-                                        padding: '2px 7px',
-                                        fontSize: 11,
-                                        fontWeight: 700,
-                                        borderRadius: 4,
-                                        border: '1px solid #607d8b',
-                                        backgroundColor: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#e8f5e9' : '#fff',
-                                        color: (state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)) ? '#2e7d32' : '#455a64',
-                                        cursor: checkinEnabled ? 'pointer' : 'default',
-                                        opacity: checkinEnabled ? 1 : 0.5,
-                                      }}
-                                    >
-                                      {(state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in))
-                                        ? 'Team Uncheck-In'
-                                        : 'Team Check-In'}
-                                    </button>
-                                  </div>
-                                </td>
-                              )
-
-                              rows.push(
-                                <tr key={`${section.key}-${fallbackMatch.match_id}-${cm?.match_id || 'row'}`} style={{ borderTop: '1px solid #f0f3f6' }}>
-                                  <td style={{ padding: '6px 8px', fontSize: 12, color: '#37474f', fontWeight: 700, verticalAlign: 'top' }}>
-                                    {cm ? formatCheckInMatchLabel(cm) : `${fallbackMatch.event_name} ${fallbackMatch.stage}`}
-                                  </td>
-                                  {renderTeamCell('A', sideA)}
-                                  {renderTeamCell('B', sideB)}
-                                </tr>
-                              )
-                              })
-                            })
-                            return rows
-                          })()}
-                        </tbody>
-                      </table>
-                    )}
+                    <div style={{ padding: 12 }}>
+                      {behindCourtRows.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#90a4ae' }}>No courts are still finishing an older slot.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+                          {behindCourtRows.map(renderCourtBoardCard)}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
-                    <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 700, color: '#1a237e' }}>
-                      On Deck
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
+                      Current Slot Courts
                     </div>
-                    {data.ready_queue.length === 0 ? (
-                      <div style={{ padding: 12, fontSize: 12, color: '#888' }}>No ready matches yet.</div>
-                    ) : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f8fafc' }}>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b' }}>Match</th>
-                            <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, color: '#607d8b' }}>Assign</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.ready_queue.map((rq) => {
+                    <div style={{ padding: 12 }}>
+                      {currentCourtRows.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#90a4ae' }}>No active courts in this view yet.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+                          {currentCourtRows.map(renderCourtBoardCard)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
+                      Open Courts
+                    </div>
+                    <div style={{ padding: 12 }}>
+                      {openCourtRows.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#90a4ae' }}>All courts currently have an assignment or are hidden by status.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+                          {openCourtRows.map(renderCourtBoardCard)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
+                      Ready To Go
+                    </div>
+                    <div style={{ padding: 12 }}>
+                      {filteredReadyQueue.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting right now.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10 }}>
+                          {filteredReadyQueue.map((rq) => {
                             const selectedSlot = readySlotChoice[rq.match_id] ?? 0
                             const resetting = readyResettingIds.has(rq.match_id)
+                            const slotLabel = slotKeyByMatchId.get(rq.match_id)
+                              ? slotLabelByKey.get(slotKeyByMatchId.get(rq.match_id)!) || null
+                              : null
                             return (
-                              <tr key={rq.match_id} style={{ borderTop: '1px solid #f0f3f6' }}>
-                                <td style={{ padding: '6px 8px', fontSize: 12, verticalAlign: 'top' }}>
-                                  <div style={{ fontWeight: 700, color: '#263238' }}>{formatReadyQueueLabel(rq)}</div>
-                                  <div style={{ color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                                    {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'A')] && <BallDot />}
-                                    <span>{rq.team1_display}</span>
-                                    <span>vs</span>
-                                    <span>{rq.team2_display}</span>
-                                    {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'B')] && <BallDot />}
+                              <div key={rq.match_id} style={{
+                                border: '1px solid #c8e6c9',
+                                borderRadius: 10,
+                                backgroundColor: '#f7fff7',
+                                padding: 12,
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                                  <div>
+                                    <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{formatReadyQueueLabel(rq)}</div>
+                                    <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
+                                      {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'A')] && <BallDot />}
+                                      <span>{rq.team1_display}</span>
+                                      <span>vs</span>
+                                      <span>{rq.team2_display}</span>
+                                      {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'B')] && <BallDot />}
+                                    </div>
                                   </div>
-                                  <div style={{ color: '#90a4ae', fontSize: 11 }}>{rq.day_label} {rq.scheduled_time || ''}</div>
-                                </td>
-                                <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                                  <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
+                                    <div>{slotLabel || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()}</div>
+                                    <div>{rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'}</div>
+                                  </div>
+                                </div>
+                                <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
                                   <select
                                     value={selectedSlot || ''}
                                     disabled={resetting}
@@ -9796,156 +10033,98 @@ export default function TournamentDeskPage() {
                                         [rq.match_id]: value ? parseInt(value, 10) : 0,
                                       }))
                                     }}
-                                    style={{ width: '100%', fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #ccc', marginBottom: 4 }}
+                                    style={{ width: '100%', fontSize: 12, padding: '7px 8px', borderRadius: 6, border: '1px solid #b0bec5' }}
                                   >
                                     <option value="">Choose Court</option>
-                                    {data.available_slots.map((s: AvailableCourtSlot) => (
+                                    {visibleReadyAssignSlots.map((s: AvailableCourtSlot) => (
                                       <option key={s.slot_id} value={s.slot_id}>
-                                        {s.court_name}
+                                        {s.court_name}{focusSlotKey ? '' : ` - ${s.day_label} ${s.scheduled_time || ''}`.trim()}
                                       </option>
                                     ))}
                                   </select>
-                                  <button
-                                    disabled={!selectedSlot || resetting}
-                                    onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
-                                    style={{
-                                      width: '100%',
-                                      padding: '4px 8px',
-                                      fontSize: 12,
-                                      fontWeight: 700,
-                                      borderRadius: 4,
-                                      border: 'none',
-                                      backgroundColor: '#2e7d32',
-                                      color: '#fff',
-                                      cursor: 'pointer',
-                                    }}
-                                  >
-                                    Assign Court
-                                  </button>
-                                  <button
-                                    disabled={resetting}
-                                    onClick={() => handleResetReadyMatch(rq.match_id)}
-                                    style={{
-                                      width: '100%',
-                                      marginTop: 4,
-                                      padding: '4px 8px',
-                                      fontSize: 12,
-                                      fontWeight: 700,
-                                      borderRadius: 4,
-                                      border: '1px solid #90a4ae',
-                                      backgroundColor: '#fff',
-                                      color: '#455a64',
-                                      cursor: resetting ? 'default' : 'pointer',
-                                      opacity: resetting ? 0.7 : 1,
-                                    }}
-                                  >
-                                    {resetting ? 'Returning...' : 'Return To Check-In'}
-                                  </button>
-                                </td>
-                              </tr>
+                                  <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                      disabled={!selectedSlot || resetting}
+                                      onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
+                                      style={{
+                                        flex: 1,
+                                        padding: '7px 10px',
+                                        fontSize: 12,
+                                        fontWeight: 800,
+                                        borderRadius: 6,
+                                        border: 'none',
+                                        backgroundColor: '#2e7d32',
+                                        color: '#fff',
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      Assign Court
+                                    </button>
+                                    <button
+                                      disabled={resetting}
+                                      onClick={() => handleResetReadyMatch(rq.match_id)}
+                                      style={{
+                                        flex: 1,
+                                        padding: '7px 10px',
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        borderRadius: 6,
+                                        border: '1px solid #90a4ae',
+                                        backgroundColor: '#fff',
+                                        color: '#455a64',
+                                        cursor: resetting ? 'default' : 'pointer',
+                                        opacity: resetting ? 0.7 : 1,
+                                      }}
+                                    >
+                                      {resetting ? 'Returning...' : 'Return To Check-In'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
                             )
                           })}
-                        </tbody>
-                      </table>
-                    )}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 6, backgroundColor: '#fff' }}>
-                    <div style={{ padding: '8px 8px', borderBottom: '1px solid #eef2f5', fontSize: 13, fontWeight: 700, color: '#1a237e' }}>
-                      Courts (Compact)
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
+                      Waiting For Check-In
                     </div>
-                    <div style={{ padding: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                      {visibleCourts.map((court) => {
-                        const now = data.now_playing_by_court[court]
-                        const upNext = data.up_next_by_court[court]
-                        const onDeck = data.on_deck_by_court[court]
-                        const courtLabel = court.replace(/^Court\s+/i, '')
-                        const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
-                        const displayMatch = now || upNext || onDeck
-                        const startAtLabel = formatStartedAtLabel(displayMatch?.started_at)
-                        const elapsedLabel = formatElapsedLabel(displayMatch?.started_at, displayMatch?.completed_at)
-                        return (
-                          <div key={court} style={{ border: '1px solid #eef2f5', borderRadius: 4, padding: '6px 7px', fontSize: 11 }}>
-                            <div style={{ fontWeight: 700, color: '#263238', marginBottom: 2 }}>{court}</div>
-                            <div style={{ color: '#607d8b', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                              {isClosed
-                                ? 'Closed'
-                                : now
-                                ? (
-                                  <>
-                                    <span>Playing:</span>
-                                    {ballIssuedBySide[getBallIssuedKey(now.match_id, 'A')] && <BallDot />}
-                                    <span>{now.team1_display}</span>
-                                    <span>vs</span>
-                                    <span>{now.team2_display}</span>
-                                    {ballIssuedBySide[getBallIssuedKey(now.match_id, 'B')] && <BallDot />}
-                                  </>
-                                )
-                                : upNext
-                                  ? (
-                                    <>
-                                      <span>Up Next:</span>
-                                      {ballIssuedBySide[getBallIssuedKey(upNext.match_id, 'A')] && <BallDot />}
-                                      <span>{upNext.team1_display}</span>
-                                      <span>vs</span>
-                                      <span>{upNext.team2_display}</span>
-                                      {ballIssuedBySide[getBallIssuedKey(upNext.match_id, 'B')] && <BallDot />}
-                                    </>
-                                  )
-                                  : onDeck
-                                    ? (
-                                      <>
-                                        <span>On Deck:</span>
-                                        {ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'A')] && <BallDot />}
-                                        <span>{onDeck.team1_display}</span>
-                                        <span>vs</span>
-                                        <span>{onDeck.team2_display}</span>
-                                        {ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'B')] && <BallDot />}
-                                      </>
-                                    )
-                                    : ''}
+                    <div style={{ padding: 12 }}>
+                      {waitingBoardEntries.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 12 }}>
+                          {waitingBoardEntries.map((entry) => (
+                            <div key={entry.key} style={{
+                              border: '1px solid #d7dee5',
+                              borderRadius: 10,
+                              padding: 12,
+                              backgroundColor: '#fff',
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+                                <div>
+                                  <div style={{ fontSize: 14, fontWeight: 800, color: '#263238' }}>
+                                    {entry.checkinMatch ? formatCheckInMatchLabel(entry.checkinMatch) : `${entry.match.event_name} ${entry.match.stage}`}
+                                  </div>
+                                  <div style={{ marginTop: 4, fontSize: 12, color: '#607d8b' }}>
+                                    #{entry.match.match_number} · {entry.slotLabel}
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                  <EventBadge name={entry.match.event_name} />
+                                  <Badge label={entry.match.stage} bg={STAGE_COLORS[entry.match.stage] || '#757575'} color="#fff" />
+                                  <Badge label={entry.checkinEnabled ? 'Check-In Open' : 'Waiting'} bg={entry.checkinEnabled ? '#e8f5e9' : '#eceff1'} color={entry.checkinEnabled ? '#2e7d32' : '#607d8b'} />
+                                </div>
+                              </div>
+                              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 10 }}>
+                                {renderCheckInTeamPanel(entry, 'A', entry.sideA)}
+                                {renderCheckInTeamPanel(entry, 'B', entry.sideB)}
+                              </div>
                             </div>
-                            {displayMatch && (
-                              <div style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-                                <EventBadge name={displayMatch.event_name} />
-                                <Badge label={displayMatch.stage} bg={STAGE_COLORS[displayMatch.stage] || '#757575'} color="#fff" />
-                              </div>
-                            )}
-                            {startAtLabel && (
-                              <div style={{ marginTop: 3, fontSize: 10, color: '#607d8b', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                <span>Start: {startAtLabel}</span>
-                                <span>
-                                  {displayMatch?.status === 'FINAL'
-                                    ? `Total: ${elapsedLabel || '0:00'}`
-                                    : `Running: ${elapsedLabel || '0:00'}`}
-                                </span>
-                              </div>
-                            )}
-                            {now && (
-                              <button
-                                type="button"
-                                onClick={() => setDrawerMatch(now)}
-                                style={{
-                                  marginTop: 6,
-                                  padding: '3px 7px',
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  borderRadius: 4,
-                                  border: 'none',
-                                  backgroundColor: '#1565c0',
-                                  color: '#fff',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                Score
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })}
-                      {visibleCourts.length === 0 && (
-                        <div style={{ color: '#888', fontSize: 12, fontStyle: 'italic' }}>
-                          No courts with matches right now
+                          ))}
                         </div>
                       )}
                     </div>
