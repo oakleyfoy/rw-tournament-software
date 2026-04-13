@@ -8215,6 +8215,12 @@ export default function TournamentDeskPage() {
     await loadTemporaryPlayerLookups()
   }, [draftVersionId, loadSnapshot, loadTemporaryPlayerLookups])
 
+  useEffect(() => {
+    if (activeTab === 'checkin' || activeTab === 'towels') {
+      refreshSnapshotAndLookups()
+    }
+  }, [activeTab, refreshSnapshotAndLookups])
+
   const handleAction = useCallback((match: DeskMatchItem, action: string) => {
     if (action === 'FINALIZE') {
       setDrawerMatch(match)
@@ -9922,172 +9928,175 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
 
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
-                      Ready To Go
-                    </div>
-                    <div style={{ padding: 12 }}>
-                      {filteredReadyQueue.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting right now.</div>
-                      ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 10 }}>
-                          {filteredReadyQueue.map((rq) => {
-                            const selectedSlot = readySlotChoice[rq.match_id] ?? 0
-                            const resetting = readyResettingIds.has(rq.match_id)
-                            const slotLabel = slotKeyByMatchId.get(rq.match_id)
-                              ? slotLabelByKey.get(slotKeyByMatchId.get(rq.match_id)!) || null
-                              : null
-                            return (
-                              <div key={rq.match_id} style={{
-                                border: '1px solid #c8e6c9',
-                                borderRadius: 10,
-                                backgroundColor: '#f7fff7',
-                                padding: 12,
-                              }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                                  <div>
-                                    <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{formatReadyQueueLabel(rq)}</div>
-                                    <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
-                                      <span>{rq.team1_display}</span>
-                                      <span>vs</span>
-                                      <span>{rq.team2_display}</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+                    <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                      <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
+                        Ready To Go
+                      </div>
+                      <div style={{ padding: 12 }}>
+                        {filteredReadyQueue.length === 0 ? (
+                          <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting right now.</div>
+                        ) : (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+                            {filteredReadyQueue.map((rq) => {
+                              const selectedSlot = readySlotChoice[rq.match_id] ?? 0
+                              const resetting = readyResettingIds.has(rq.match_id)
+                              const slotLabel = slotKeyByMatchId.get(rq.match_id)
+                                ? slotLabelByKey.get(slotKeyByMatchId.get(rq.match_id)!) || null
+                                : null
+                              return (
+                                <div key={rq.match_id} style={{
+                                  border: '1px solid #c8e6c9',
+                                  borderRadius: 10,
+                                  backgroundColor: '#f7fff7',
+                                  padding: 12,
+                                }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                                    <div>
+                                      <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{formatReadyQueueLabel(rq)}</div>
+                                      <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
+                                        <span>{rq.team1_display}</span>
+                                        <span>vs</span>
+                                        <span>{rq.team2_display}</span>
+                                      </div>
+                                    </div>
+                                    <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
+                                      <div>{slotLabel || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()}</div>
+                                      <div>{rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'}</div>
                                     </div>
                                   </div>
-                                  <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
-                                    <div>{slotLabel || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()}</div>
-                                    <div>{rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'}</div>
-                                  </div>
-                                </div>
-                                <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
-                                  <select
-                                    value={selectedSlot || ''}
-                                    disabled={resetting}
-                                    onChange={e => {
-                                      const value = e.target.value
-                                      setReadySlotChoice(prev => ({
-                                        ...prev,
-                                        [rq.match_id]: value ? parseInt(value, 10) : 0,
-                                      }))
-                                    }}
-                                    style={{ width: '100%', fontSize: 12, padding: '7px 8px', borderRadius: 6, border: '1px solid #b0bec5' }}
-                                  >
-                                    <option value="">Choose Court</option>
-                                    {visibleReadyAssignSlots.map((s: AvailableCourtSlot) => (
-                                      <option key={s.slot_id} value={s.slot_id}>
-                                        {s.court_name}{focusSlotKey ? '' : ` - ${s.day_label} ${s.scheduled_time || ''}`.trim()}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <button
-                                      disabled={!selectedSlot || resetting}
-                                      onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
-                                      style={{
-                                        flex: 1,
-                                        padding: '7px 10px',
-                                        fontSize: 12,
-                                        fontWeight: 800,
-                                        borderRadius: 6,
-                                        border: 'none',
-                                        backgroundColor: '#2e7d32',
-                                        color: '#fff',
-                                        cursor: 'pointer',
-                                      }}
-                                    >
-                                      Assign Court
-                                    </button>
-                                    <button
+                                  <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                                    <select
+                                      value={selectedSlot || ''}
                                       disabled={resetting}
-                                      onClick={() => handleResetReadyMatch(rq.match_id)}
-                                      style={{
-                                        flex: 1,
-                                        padding: '7px 10px',
-                                        fontSize: 12,
-                                        fontWeight: 700,
-                                        borderRadius: 6,
-                                        border: '1px solid #90a4ae',
-                                        backgroundColor: '#fff',
-                                        color: '#455a64',
-                                        cursor: resetting ? 'default' : 'pointer',
-                                        opacity: resetting ? 0.7 : 1,
+                                      onChange={e => {
+                                        const value = e.target.value
+                                        setReadySlotChoice(prev => ({
+                                          ...prev,
+                                          [rq.match_id]: value ? parseInt(value, 10) : 0,
+                                        }))
                                       }}
+                                      style={{ width: '100%', fontSize: 12, padding: '7px 8px', borderRadius: 6, border: '1px solid #b0bec5' }}
                                     >
-                                      {resetting ? 'Returning...' : 'Return To Check-In'}
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
-                      Waiting For Check-In
-                    </div>
-                    <div style={{ padding: 12 }}>
-                      {waitingBoardGroups.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
-                      ) : (
-                        <div style={{ display: 'grid', gap: 12 }}>
-                          {waitingBoardGroups.map((group) => (
-                            <div key={group.key} style={{
-                              border: '1px solid #d7dee5',
-                              borderRadius: 10,
-                              backgroundColor: '#fff',
-                              overflow: 'hidden',
-                            }}>
-                              <div style={{
-                                padding: '8px 10px',
-                                borderBottom: '1px solid #eef2f5',
-                                backgroundColor: '#f8fafc',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                gap: 10,
-                                flexWrap: 'wrap',
-                              }}>
-                                <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{group.label}</div>
-                                <div style={{ fontSize: 11, color: '#607d8b', fontWeight: 700 }}>
-                                  {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
-                                </div>
-                              </div>
-                              <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-                                {group.entries.map((entry) => (
-                                  <div key={entry.key} style={{
-                                    border: '1px solid #d7dee5',
-                                    borderRadius: 8,
-                                    padding: '6px 8px',
-                                    backgroundColor: '#fff',
-                                  }}>
-                                    <div style={{
-                                      display: 'grid',
-                                      gridTemplateColumns: 'auto auto auto',
-                                      gap: 10,
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                    }}>
-                                      <div>
-                                        {renderCheckInTeamInline(entry, 'A', entry.sideA)}
-                                      </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                                        <EventBadge name={entry.match.event_name} />
-                                        <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
-                                      </div>
-                                      <div>
-                                        {renderCheckInTeamInline(entry, 'B', entry.sideB)}
-                                      </div>
+                                      <option value="">Choose Court</option>
+                                      {visibleReadyAssignSlots.map((s: AvailableCourtSlot) => (
+                                        <option key={s.slot_id} value={s.slot_id}>
+                                          {s.court_name}{focusSlotKey ? '' : ` - ${s.day_label} ${s.scheduled_time || ''}`.trim()}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                      <button
+                                        disabled={!selectedSlot || resetting}
+                                        onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
+                                        style={{
+                                          flex: 1,
+                                          padding: '7px 10px',
+                                          fontSize: 12,
+                                          fontWeight: 800,
+                                          borderRadius: 6,
+                                          border: 'none',
+                                          backgroundColor: '#2e7d32',
+                                          color: '#fff',
+                                          cursor: 'pointer',
+                                        }}
+                                      >
+                                        Assign Court
+                                      </button>
+                                      <button
+                                        disabled={resetting}
+                                        onClick={() => handleResetReadyMatch(rq.match_id)}
+                                        style={{
+                                          flex: 1,
+                                          padding: '7px 10px',
+                                          fontSize: 12,
+                                          fontWeight: 700,
+                                          borderRadius: 6,
+                                          border: '1px solid #90a4ae',
+                                          backgroundColor: '#fff',
+                                          color: '#455a64',
+                                          cursor: resetting ? 'default' : 'pointer',
+                                          opacity: resetting ? 0.7 : 1,
+                                        }}
+                                      >
+                                        {resetting ? 'Returning...' : 'Return To Check-In'}
+                                      </button>
                                     </div>
                                   </div>
-                                ))}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                      <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
+                        Waiting For Check-In
+                      </div>
+                      <div style={{ padding: 12 }}>
+                        {waitingBoardGroups.length === 0 ? (
+                          <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
+                        ) : (
+                          <div style={{ display: 'grid', gap: 12 }}>
+                            {waitingBoardGroups.map((group) => (
+                              <div key={group.key} style={{
+                                border: '1px solid #d7dee5',
+                                borderRadius: 10,
+                                backgroundColor: '#fff',
+                                overflow: 'hidden',
+                              }}>
+                                <div style={{
+                                  padding: '8px 10px',
+                                  borderBottom: '1px solid #eef2f5',
+                                  backgroundColor: '#f8fafc',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: 10,
+                                  flexWrap: 'wrap',
+                                }}>
+                                  <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{group.label}</div>
+                                  <div style={{ fontSize: 11, color: '#607d8b', fontWeight: 700 }}>
+                                    {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
+                                  </div>
+                                </div>
+                                <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8, overflowX: 'auto' }}>
+                                  {group.entries.map((entry) => (
+                                    <div key={entry.key} style={{
+                                      border: '1px solid #d7dee5',
+                                      borderRadius: 8,
+                                      padding: '6px 8px',
+                                      backgroundColor: '#fff',
+                                      minWidth: 'fit-content',
+                                    }}>
+                                      <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'auto auto auto',
+                                        gap: 10,
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                      }}>
+                                        <div>
+                                          {renderCheckInTeamInline(entry, 'A', entry.sideA)}
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                          <EventBadge name={entry.match.event_name} />
+                                          <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
+                                        </div>
+                                        <div>
+                                          {renderCheckInTeamInline(entry, 'B', entry.sideB)}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
