@@ -2897,7 +2897,7 @@ def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, sessio
     assert player_state["report_url"] == "https://example.com/reports/alpha-1"
 
 
-def test_towels_only_show_on_team_first_tournament_checkin_match(client, session):
+def test_towels_show_on_all_team_checkin_matches(client, session):
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
     m1 = matches[0]
     alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
@@ -2961,7 +2961,7 @@ def test_towels_only_show_on_team_first_tournament_checkin_match(client, session
     first_player = next(p for p in first_match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
     assert first_player["towel_color"] == "Blue"
 
-    assert later_match_state["side_a"]["show_towels"] is False
+    assert later_match_state["side_a"]["show_towels"] is True
     later_player = next(p for p in later_match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
     assert later_player["towel_color"] == "Blue"
 
@@ -3281,6 +3281,45 @@ def test_temporary_player_lookup_enriches_linked_players_by_name_fallback(client
     side_b_player = next(p for p in match_state["side_b"]["players"] if p["player_display"] == "Kristin")
     assert side_b_player["towel_color"] == "Purple"
     assert side_b_player["report_url"] == "https://example.com/reports/kristin"
+
+
+def test_temporary_player_lookup_matches_unique_short_name_updates_checkin_snapshot(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    alpha_p1 = Player(tournament_id=t.id, full_name="Mayada Innenberg")
+    alpha_p2 = Player(tournament_id=t.id, full_name="Lisa Sample")
+    session.add_all([alpha_p1, alpha_p2])
+    session.flush()
+    session.add_all(
+        [
+            TeamPlayer(team_id=teams[0].id, player_id=alpha_p1.id, lineup_slot=1),
+            TeamPlayer(team_id=teams[0].id, player_id=alpha_p2.id, lineup_slot=2),
+        ]
+    )
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    create_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups",
+        json={
+            "source_name": "Mayada",
+            "towel_color": "Lime",
+            "report_url": "",
+        },
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    assert created["matched"] is True
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    side_a_player = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_p1.id)
+    assert side_a_player["towel_color"] == "Lime"
 
 
 def test_temporary_player_lookup_uses_lineup_slot_to_match_visible_short_names(client, session):

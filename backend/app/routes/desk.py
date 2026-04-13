@@ -190,6 +190,12 @@ def _lookup_name_keys(value: Optional[str]) -> set[str]:
     return {key for key in keys if key}
 
 
+def _lookup_short_name_key(value: Optional[str]) -> Optional[str]:
+    short_name = _short_team_player_name(value)
+    normalized = _normalize_lookup_name(short_name)
+    return normalized or None
+
+
 def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[str]:
     players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
     matched_names: set[str] = set()
@@ -197,6 +203,9 @@ def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[s
         for source in (player.display_name, player.full_name):
             for alias in _lookup_name_keys(source):
                 matched_names.add(alias)
+            short_alias = _lookup_short_name_key(source)
+            if short_alias:
+                matched_names.add(short_alias)
 
     teams = session.exec(
         select(Team)
@@ -208,6 +217,9 @@ def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[s
             for name in _split_team_player_names(field):
                 for alias in _lookup_name_keys(name):
                     matched_names.add(alias)
+                short_alias = _lookup_short_name_key(name)
+                if short_alias:
+                    matched_names.add(short_alias)
     return matched_names
 
 
@@ -333,12 +345,16 @@ def _resolve_lookup_player_ids(
     }
 
     players_by_name: Dict[str, List[int]] = {}
+    players_by_short_name: Dict[str, List[int]] = {}
     for player in players:
         if player.id is None:
             continue
         for source in (player.display_name, player.full_name):
             for player_name in _lookup_name_keys(source):
                 players_by_name.setdefault(player_name, []).append(player.id)
+            short_name = _lookup_short_name_key(source)
+            if short_name:
+                players_by_short_name.setdefault(short_name, []).append(player.id)
 
     teams = session.exec(
         select(Team)
@@ -352,6 +368,14 @@ def _resolve_lookup_player_ids(
         for name in _split_team_player_names(field)
         for alias in _lookup_name_keys(name)
     }
+    roster_short_names = {
+        short_alias
+        for team in teams
+        for field in (team.display_name, team.name)
+        for name in _split_team_player_names(field)
+        for short_alias in [_lookup_short_name_key(name)]
+        if short_alias
+    }
 
     resolved: List[Dict[str, Optional[str]]] = []
     for row in rows:
@@ -359,6 +383,7 @@ def _resolve_lookup_player_ids(
         normalized_phone = _normalize_lookup_phone(row.get("source_phone"))
         normalized_email = _normalize_lookup_email(row.get("source_email"))
         normalized_names = _lookup_name_keys(row.get("source_name"))
+        normalized_short_name = _lookup_short_name_key(row.get("source_name"))
         normalized_name = next(iter(normalized_names), "")
 
         if normalized_phone and normalized_phone in player_by_phone:
@@ -373,6 +398,13 @@ def _resolve_lookup_player_ids(
             }
             if len(matched_ids) == 1:
                 player_id = next(iter(matched_ids))
+            elif normalized_short_name:
+                short_name_matches = {
+                    player_id_match
+                    for player_id_match in players_by_short_name.get(normalized_short_name, [])
+                }
+                if len(short_name_matches) == 1:
+                    player_id = next(iter(short_name_matches))
 
         resolved.append(
             {
@@ -381,7 +413,11 @@ def _resolve_lookup_player_ids(
                 "normalized_name": normalized_name,
                 "normalized_phone": normalized_phone,
                 "normalized_email": normalized_email,
-                "matched_by_name": bool(player_id is not None or any(key in roster_names for key in normalized_names)),
+                "matched_by_name": bool(
+                    player_id is not None
+                    or any(key in roster_names for key in normalized_names)
+                    or (normalized_short_name in roster_short_names if normalized_short_name else False)
+                ),
             }
         )
     return resolved
@@ -883,19 +919,6 @@ def _build_checkin_snapshot(
             select(Event).where(Event.id.in_(list(event_ids)))  # type: ignore[arg-type]
         ).all()
     } if event_ids else {}
-    first_match_id_by_team: Dict[int, int] = {}
-    for m in all_matches:
-        slot_key = slot_sort_key_by_match_id.get(m.id)
-        if slot_key is None:
-            continue
-        for team_id in (m.team_a_id, m.team_b_id):
-            if not team_id:
-                continue
-            existing_match_id = first_match_id_by_team.get(team_id)
-            existing_key = slot_sort_key_by_match_id.get(existing_match_id) if existing_match_id is not None else None
-            if existing_key is None or slot_key < existing_key:
-                first_match_id_by_team[team_id] = m.id
-
     candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
     for m in all_matches:
         status = (m.runtime_status or "SCHEDULED").upper()
@@ -949,6 +972,16 @@ def _build_checkin_snapshot(
     for row in lookup_rows:
         for alias in _lookup_name_keys(row.source_name or row.normalized_name):
             lookup_by_name.setdefault(alias, row)
+    lookup_rows_by_short_name: Dict[str, List[TemporaryPlayerLookup]] = {}
+    for row in lookup_rows:
+        short_alias = _lookup_short_name_key(row.source_name or row.normalized_name)
+        if short_alias:
+            lookup_rows_by_short_name.setdefault(short_alias, []).append(row)
+    unique_lookup_by_short_name = {
+        short_alias: rows[0]
+        for short_alias, rows in lookup_rows_by_short_name.items()
+        if len({row.id for row in rows if row.id is not None}) == 1
+    }
 
     team_checkins = session.exec(
         select(MatchCheckIn).where(
@@ -990,10 +1023,7 @@ def _build_checkin_snapshot(
             team_row = team_checkin_map.get((m.id, side_key))
             team_checked = bool(team_row and team_row.team_checked_in)
             team_checked_at = team_row.checked_in_at if team_row else None
-            show_towels = bool(
-                team_id
-                and first_match_id_by_team.get(team_id) == m.id
-            )
+            show_towels = bool(team_id)
 
             player_states: List[PlayerCheckInState] = []
             team_obj = team_map.get(team_id) if team_id else None
@@ -1029,6 +1059,16 @@ def _build_checkin_snapshot(
                         ),
                         None,
                     )
+                if lookup_row is None and p is not None:
+                    lookup_row = next(
+                        (
+                            unique_lookup_by_short_name[short_alias]
+                            for source in (p.display_name, p.full_name)
+                            for short_alias in [_lookup_short_name_key(source)]
+                            if short_alias and short_alias in unique_lookup_by_short_name
+                        ),
+                        None,
+                    )
                 if lookup_row is None:
                     slot_index = len(player_states)
                     if slot_index < len(slot_name_candidates):
@@ -1038,6 +1078,18 @@ def _build_checkin_snapshot(
                                 for candidate in slot_name_candidates[slot_index]
                                 for alias in _lookup_name_keys(candidate)
                                 if alias in lookup_by_name
+                            ),
+                            None,
+                        )
+                if lookup_row is None:
+                    slot_index = len(player_states)
+                    if slot_index < len(slot_name_candidates):
+                        lookup_row = next(
+                            (
+                                unique_lookup_by_short_name[short_alias]
+                                for candidate in slot_name_candidates[slot_index]
+                                for short_alias in [_lookup_short_name_key(candidate)]
+                                if short_alias and short_alias in unique_lookup_by_short_name
                             ),
                             None,
                         )

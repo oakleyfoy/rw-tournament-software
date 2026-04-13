@@ -43,6 +43,7 @@ import {
   ConflictItem,
   CourtStateItem,
   CheckInMatchItem,
+  ReadyQueueResponse,
   ReadyQueueItem,
   AvailableCourtSlot,
   MatchCheckInSideState,
@@ -8126,6 +8127,23 @@ export default function TournamentDeskPage() {
   } | null>(null)
   const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
 
+  const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        version_id: resp.version_id,
+        management_mode: resp.management_mode,
+        checkin_matches: resp.checkin_matches,
+        ready_queue: resp.ready_queue,
+        available_courts: resp.available_courts,
+        available_slots: resp.available_slots,
+        checkin_slot_options: resp.checkin_slot_options,
+        checkin_slot_rows: resp.checkin_slot_rows,
+      }
+    })
+  }, [])
+
   const loadSnapshot = useCallback(async (versionId?: number) => {
     if (!tid) return
     setLoading(true)
@@ -8406,13 +8424,13 @@ export default function TournamentDeskPage() {
   const handlePlayerCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', playerId: number, checked: boolean) => {
     if (!tid || !data) return
     const applyCheckIn = async () => {
-      await deskCheckInPlayer(tid, match.match_id, {
+      const resp = await deskCheckInPlayer(tid, match.match_id, {
         version_id: data.version_id,
         side,
         player_id: playerId,
         checked_in: checked,
       })
-      await handleRefresh()
+      applyReadyQueueResponse(resp)
     }
     try {
       const note = side === 'A' ? (match as any).team1_notes : (match as any).team2_notes
@@ -8426,7 +8444,7 @@ export default function TournamentDeskPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed player check-in update')
     }
-  }, [tid, data, handleRefresh, runCheckInWithNotePrompt])
+  }, [tid, data, applyReadyQueueResponse, runCheckInWithNotePrompt])
 
   const syncCheckInSide = useCallback(async (
     match: CheckInMatchItem,
@@ -8438,7 +8456,7 @@ export default function TournamentDeskPage() {
     if (checkedIn) {
       const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in && p.player_id != null)
       if (uncheckedPlayers.length > 0) {
-        await Promise.all(
+        const playerResponses = await Promise.all(
           uncheckedPlayers.map((p: PlayerCheckInState) =>
             deskCheckInPlayer(tid, match.match_id, {
               version_id: data.version_id,
@@ -8448,18 +8466,21 @@ export default function TournamentDeskPage() {
             })
           )
         )
+        const latestPlayerResp = playerResponses[playerResponses.length - 1]
+        if (latestPlayerResp) applyReadyQueueResponse(latestPlayerResp)
       }
-      await deskCheckInTeam(tid, match.match_id, {
+      const teamResp = await deskCheckInTeam(tid, match.match_id, {
         version_id: data.version_id,
         side,
         checked_in: true,
       })
+      applyReadyQueueResponse(teamResp)
       return
     }
 
     const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
     if (checkedPlayers.length > 0) {
-      await Promise.all(
+      const playerResponses = await Promise.all(
         checkedPlayers.map((p: PlayerCheckInState) =>
           deskCheckInPlayer(tid, match.match_id, {
             version_id: data.version_id,
@@ -8469,13 +8490,16 @@ export default function TournamentDeskPage() {
           })
         )
       )
+      const latestPlayerResp = playerResponses[playerResponses.length - 1]
+      if (latestPlayerResp) applyReadyQueueResponse(latestPlayerResp)
     }
-    await deskCheckInTeam(tid, match.match_id, {
+    const teamResp = await deskCheckInTeam(tid, match.match_id, {
       version_id: data.version_id,
       side,
       checked_in: false,
     })
-  }, [tid, data])
+    applyReadyQueueResponse(teamResp)
+  }, [tid, data, applyReadyQueueResponse])
 
   const handleSideTeamCheckIn = useCallback(async (
     match: CheckInMatchItem,
@@ -8489,7 +8513,6 @@ export default function TournamentDeskPage() {
     const teamLabel = side === 'A' ? match.side_a.team_display : match.side_b.team_display
     const applyCheckIn = async () => {
       await syncCheckInSide(match, side, state, desiredChecked)
-      await handleRefresh()
     }
     try {
       if (desiredChecked) {
@@ -8500,7 +8523,7 @@ export default function TournamentDeskPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed team check-in')
     }
-  }, [tid, data, syncCheckInSide, handleRefresh, runCheckInWithNotePrompt])
+  }, [tid, data, syncCheckInSide, runCheckInWithNotePrompt])
 
   const handleImportTemporaryLookups = useCallback(async () => {
     if (!tid) return
@@ -10079,14 +10102,14 @@ export default function TournamentDeskPage() {
                                         justifyContent: 'space-between',
                                       }}>
                                         <div>
-                                          {renderCheckInTeamInline(entry, 'A', entry.sideA)}
+                                          {renderCheckInTeamInline(entry, 'B', entry.sideB)}
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
                                           <EventBadge name={entry.match.event_name} />
                                           <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
                                         </div>
                                         <div>
-                                          {renderCheckInTeamInline(entry, 'B', entry.sideB)}
+                                          {renderCheckInTeamInline(entry, 'A', entry.sideA)}
                                         </div>
                                       </div>
                                     </div>
