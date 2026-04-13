@@ -9299,7 +9299,7 @@ export default function TournamentDeskPage() {
       }}>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'auto auto minmax(0,1fr) auto auto',
+          gridTemplateColumns: 'auto auto auto auto auto',
           gap: 6,
           alignItems: 'center',
           minWidth: 0,
@@ -9310,9 +9310,7 @@ export default function TournamentDeskPage() {
           {renderCheckInPlayerCircle(leftPlayer.checked, leftPlayer.disabled, leftPlayer.onClick)}
           <span style={{
             minWidth: 0,
-            whiteSpace: 'normal',
-            overflowWrap: 'anywhere',
-            lineHeight: 1.15,
+            whiteSpace: 'nowrap',
             fontSize: 11,
             color: '#37474f',
             fontWeight: 700,
@@ -10057,7 +10055,7 @@ export default function TournamentDeskPage() {
                                   {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
                                 </div>
                               </div>
-                              <div style={{ padding: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 8 }}>
+                              <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
                                 {group.entries.map((entry) => (
                                   <div key={entry.key} style={{
                                     border: '1px solid #d7dee5',
@@ -10067,18 +10065,19 @@ export default function TournamentDeskPage() {
                                   }}>
                                     <div style={{
                                       display: 'grid',
-                                      gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+                                      gridTemplateColumns: 'auto auto auto',
                                       gap: 10,
                                       alignItems: 'center',
+                                      justifyContent: 'space-between',
                                     }}>
-                                      <div style={{ minWidth: 0 }}>
+                                      <div>
                                         {renderCheckInTeamInline(entry, 'A', entry.sideA)}
                                       </div>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
                                         <EventBadge name={entry.match.event_name} />
                                         <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
                                       </div>
-                                      <div style={{ minWidth: 0 }}>
+                                      <div>
                                         {renderCheckInTeamInline(entry, 'B', entry.sideB)}
                                       </div>
                                     </div>
