@@ -234,30 +234,42 @@ function getTowelPillStyles(colorName: string): { backgroundColor: string; color
   return presets[key] || { backgroundColor: '#eef2f7', color: '#334155', borderColor: '#cbd5e1' }
 }
 
-function TowelColorPill({ colorName, reportUrl }: { colorName: string | null; reportUrl?: string | null }) {
+function TowelColorPill({
+  colorName,
+  reportUrl,
+  labelMode = 'full',
+}: {
+  colorName: string | null
+  reportUrl?: string | null
+  labelMode?: 'full' | 'swatch'
+}) {
   if (!colorName) return null
   const styles = getTowelPillStyles(colorName)
   const clickable = !!reportUrl
   return (
     <span
-      title={clickable ? `Open report: ${reportUrl}` : undefined}
+      title={clickable ? `Open report: ${reportUrl}` : colorName}
       onClick={clickable ? () => window.open(reportUrl!, '_blank', 'noopener,noreferrer') : undefined}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        padding: '1px 7px',
+        justifyContent: 'center',
+        padding: labelMode === 'swatch' ? '0' : '1px 7px',
         borderRadius: 999,
         border: `1px solid ${styles.borderColor}`,
         backgroundColor: styles.backgroundColor,
         color: styles.color,
         fontSize: 10,
         fontWeight: 700,
-        lineHeight: '16px',
+        lineHeight: labelMode === 'swatch' ? '0' : '16px',
         cursor: clickable ? 'pointer' : 'default',
         whiteSpace: 'nowrap',
+        minWidth: labelMode === 'swatch' ? 24 : undefined,
+        width: labelMode === 'swatch' ? 24 : undefined,
+        height: labelMode === 'swatch' ? 14 : undefined,
       }}
     >
-      {colorName}
+      {labelMode === 'full' ? colorName : ''}
     </span>
   )
 }
@@ -518,8 +530,6 @@ function CourtCard({
   onMatchClick,
   onSmsTeamClick,
   onSmsMatchClick,
-  ballIssuedBySide,
-  getBallIssuedKey,
 }: {
   courtName: string
   nowPlaying?: DeskMatchItem
@@ -534,8 +544,6 @@ function CourtCard({
   onMatchClick?: (m: DeskMatchItem) => void
   onSmsTeamClick?: (teamId: number) => void
   onSmsMatchClick?: (matchId: number, phaseHint?: 'upcoming' | 'completed') => void
-  ballIssuedBySide?: Record<string, boolean>
-  getBallIssuedKey?: (matchId: number, side: 'A' | 'B') => string
 }) {
   const [editingNote, setEditingNote] = useState(false)
   const [noteText, setNoteText] = useState(courtState?.note || '')
@@ -712,8 +720,6 @@ function CourtCard({
               onMatchClick={onMatchClick}
               onSmsTeamClick={onSmsTeamClick}
               onSmsMatchClick={onSmsMatchClick}
-              ballIssuedBySide={ballIssuedBySide}
-              getBallIssuedKey={getBallIssuedKey}
             />
           </div>
         ) : (
@@ -735,8 +741,6 @@ function CourtCard({
               onMatchClick={onMatchClick}
               onSmsTeamClick={onSmsTeamClick}
               onSmsMatchClick={onSmsMatchClick}
-              ballIssuedBySide={ballIssuedBySide}
-              getBallIssuedKey={getBallIssuedKey}
             />
           </div>
         ) : (
@@ -787,7 +791,6 @@ function CourtCard({
                     </div>
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 10, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-                    {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'A')] && <BallDot />}
                     <span style={{ color: onDeck.team1_defaulted ? '#c62828' : '#555', textDecoration: onDeck.team1_defaulted ? 'line-through' : 'none' }}>
                       {onDeck.team1_display}
                     </span>
@@ -801,7 +804,6 @@ function CourtCard({
                     <span style={{ color: onDeck.team2_defaulted ? '#c62828' : '#555', textDecoration: onDeck.team2_defaulted ? 'line-through' : 'none' }}>
                       {onDeck.team2_display}
                     </span>
-                    {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(onDeck.match_id, 'B')] && <BallDot />}
                     {onSmsTeamClick && onDeck.team2_id && (
                       <SmsQuickActionButton
                         title={`Text ${onDeck.team2_display}`}
@@ -951,22 +953,6 @@ function SmsQuickActionButton({ title, onClick }: { title: string; onClick: () =
   )
 }
 
-function BallDot() {
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        width: 8,
-        height: 8,
-        borderRadius: '50%',
-        backgroundColor: '#d4ff4f',
-        border: '1px solid #a5d63a',
-        flexShrink: 0,
-      }}
-    />
-  )
-}
-
 function MiniMatchCard({
   match,
   isDraft,
@@ -976,8 +962,6 @@ function MiniMatchCard({
   onMatchClick,
   onSmsTeamClick,
   onSmsMatchClick,
-  ballIssuedBySide,
-  getBallIssuedKey,
 }: {
   match: DeskMatchItem
   isDraft: boolean
@@ -987,8 +971,6 @@ function MiniMatchCard({
   onMatchClick?: (m: DeskMatchItem) => void
   onSmsTeamClick?: (teamId: number) => void
   onSmsMatchClick?: (matchId: number, phaseHint?: 'upcoming' | 'completed') => void
-  ballIssuedBySide?: Record<string, boolean>
-  getBallIssuedKey?: (matchId: number, side: 'A' | 'B') => string
 }) {
   const sc = STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED
   const team1TBD = !match.team1_id && match.source_match_a_id
@@ -1038,7 +1020,6 @@ function MiniMatchCard({
         textDecoration: match.team1_defaulted ? 'line-through' : 'none',
         display: 'flex', alignItems: 'center', gap: 3,
       }}>
-        {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(match.match_id, 'A')] && <BallDot />}
         <span>{match.team1_display}</span>
         {match.team1_notes && <NoteIcon note={match.team1_notes} />}
         {onSmsTeamClick && match.team1_id && (
@@ -1061,7 +1042,6 @@ function MiniMatchCard({
         display: 'flex', alignItems: 'center', gap: 3,
       }}>
         <span>{match.team2_display}</span>
-        {ballIssuedBySide && getBallIssuedKey && ballIssuedBySide[getBallIssuedKey(match.match_id, 'B')] && <BallDot />}
         {match.team2_notes && <NoteIcon note={match.team2_notes} />}
         {onSmsTeamClick && match.team2_id && (
           <SmsQuickActionButton
@@ -8672,24 +8652,6 @@ export default function TournamentDeskPage() {
   const [clockNowMs, setClockNowMs] = useState(() => Date.now())
   const tournamentTimeZone = data?.tournament_timezone || undefined
 
-  const getBallIssuedKey = useCallback((matchId: number, side: 'A' | 'B') => `${matchId}:${side}`, [])
-  const toggleBallIssued = useCallback((matchId: number, side: 'A' | 'B') => {
-    const key = getBallIssuedKey(matchId, side)
-    const keyA = getBallIssuedKey(matchId, 'A')
-    const keyB = getBallIssuedKey(matchId, 'B')
-    setBallIssuedBySide(prev => {
-      const next = { ...prev }
-      const wasSelected = Boolean(prev[key])
-      if (wasSelected) {
-        next[key] = false
-        return next
-      }
-      next[keyA] = side === 'A'
-      next[keyB] = side === 'B'
-      return next
-    })
-  }, [getBallIssuedKey])
-
   const parseApiTimestampMs = useCallback((iso?: string | null): number | null => {
     if (!iso) return null
     const hasOffset = /(?:Z|[+-]\d{2}:\d{2})$/i.test(iso)
@@ -8749,7 +8711,6 @@ export default function TournamentDeskPage() {
   const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
   const [readyResettingIds, setReadyResettingIds] = useState<Set<number>>(new Set())
   const [selectedCheckInSlotKey, setSelectedCheckInSlotKey] = useState<string>('all')
-  const [ballIssuedBySide, setBallIssuedBySide] = useState<Record<string, boolean>>({})
 
   const handleResetReadyMatch = useCallback(async (matchId: number) => {
     if (!tid || !data) return
@@ -8832,29 +8793,6 @@ export default function TournamentDeskPage() {
     setStartAllExcluded(new Set())
     setStartAllOpen(true)
   }, [])
-
-  useEffect(() => {
-    if (!tid) return
-    try {
-      const raw = window.localStorage.getItem(`desk-ball-issued-${tid}`)
-      if (raw) {
-        setBallIssuedBySide(JSON.parse(raw) as Record<string, boolean>)
-      } else {
-        setBallIssuedBySide({})
-      }
-    } catch {
-      setBallIssuedBySide({})
-    }
-  }, [tid])
-
-  useEffect(() => {
-    if (!tid) return
-    try {
-      window.localStorage.setItem(`desk-ball-issued-${tid}`, JSON.stringify(ballIssuedBySide))
-    } catch {
-      // ignore local storage failures
-    }
-  }, [tid, ballIssuedBySide])
 
   useEffect(() => {
     const id = window.setInterval(() => setClockNowMs(Date.now()), 1000)
@@ -9335,32 +9273,13 @@ export default function TournamentDeskPage() {
                     key={`towel-${state.team_id || state.team_display}-${player.player_id || index}`}
                     colorName={player.towel_color || null}
                     reportUrl={player.report_url || null}
+                    labelMode="swatch"
                   />
                 ))}
               </div>
             )}
           </div>
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-            <button
-              type="button"
-              disabled={!state.team_id}
-              onClick={() => cm && state.team_id && toggleBallIssued(cm.match_id, side)}
-              title="Mark tennis ball issued"
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 999,
-                border: '1px solid #90a4ae',
-                backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#fff8e1' : '#fff',
-                cursor: state.team_id ? 'pointer' : 'default',
-                opacity: state.team_id ? 1 : 0.45,
-                padding: 0,
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              {(cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? 'B' : 'o'}
-            </button>
             <button
               type="button"
               disabled={!entry.checkinEnabled}
@@ -9432,9 +9351,6 @@ export default function TournamentDeskPage() {
                   <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: '#37474f', fontWeight: 600 }}>
                     {player.player_display || `Player ${index + 1}`}
                   </span>
-                  {player.towel_color && (
-                    <TowelColorPill colorName={player.towel_color || null} reportUrl={player.report_url || null} />
-                  )}
                 </button>
               )
             })
@@ -9844,8 +9760,6 @@ export default function TournamentDeskPage() {
                       onMatchClick={m => setDrawerMatch(m)}
                       onSmsTeamClick={handleQuickSmsTeam}
                       onSmsMatchClick={handleQuickSmsMatch}
-                      ballIssuedBySide={ballIssuedBySide}
-                      getBallIssuedKey={getBallIssuedKey}
                     />
                   )
                 })}
@@ -10029,11 +9943,9 @@ export default function TournamentDeskPage() {
                                   <div>
                                     <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{formatReadyQueueLabel(rq)}</div>
                                     <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
-                                      {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'A')] && <BallDot />}
                                       <span>{rq.team1_display}</span>
                                       <span>vs</span>
                                       <span>{rq.team2_display}</span>
-                                      {ballIssuedBySide[getBallIssuedKey(rq.match_id, 'B')] && <BallDot />}
                                     </div>
                                   </div>
                                   <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
