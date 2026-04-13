@@ -9209,7 +9209,7 @@ export default function TournamentDeskPage() {
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
   const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open')
 
-  const getCompactDivisionLabel = useCallback((matchCode?: string | null): string => {
+  const getCompactDivisionLabel = (matchCode?: string | null): string => {
     const code = (matchCode || '').toUpperCase()
     if (code.includes('BWW') || code.includes('POOLA')) return 'DIV I'
     if (code.includes('BWL') || code.includes('POOLB')) return 'DIV II'
@@ -9217,7 +9217,7 @@ export default function TournamentDeskPage() {
     if (code.includes('BLL') || code.includes('POOLD')) return 'DIV IV'
     if (code.includes('POOLE')) return 'DIV V'
     return 'DIV'
-  }, [])
+  }
 
   const renderCheckInPlayerCircle = (
     checked: boolean,
