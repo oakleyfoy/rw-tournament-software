@@ -9209,6 +9209,16 @@ export default function TournamentDeskPage() {
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
   const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open')
 
+  const getCompactDivisionLabel = useCallback((matchCode?: string | null): string => {
+    const code = (matchCode || '').toUpperCase()
+    if (code.includes('BWW') || code.includes('POOLA')) return 'DIV I'
+    if (code.includes('BWL') || code.includes('POOLB')) return 'DIV II'
+    if (code.includes('BLW') || code.includes('POOLC')) return 'DIV III'
+    if (code.includes('BLL') || code.includes('POOLD')) return 'DIV IV'
+    if (code.includes('POOLE')) return 'DIV V'
+    return 'DIV'
+  }, [])
+
   const renderCheckInPlayerCircle = (
     checked: boolean,
     disabled: boolean,
@@ -9247,16 +9257,11 @@ export default function TournamentDeskPage() {
     state: MatchCheckInSideState
   ) => {
     const cm = entry.checkinMatch
-    const anyChecked = state.team_checked_in || state.players.some((player) => player.checked_in)
-    const teamParts = (state.team_display || '')
-      .split('/')
-      .map((value) => value.trim())
-      .filter(Boolean)
+    const teamLabel = (state.team_display || 'TBD').trim()
     const playerSlots = [0, 1].map((index) => {
       const player = state.players[index]
       return {
         key: `${state.team_id || state.team_display}-${player?.player_id || index}`,
-        name: player?.player_display || teamParts[index] || `Player ${index + 1}`,
         towelColor: player?.towel_color || null,
         reportUrl: player?.report_url || null,
         checked: Boolean(state.team_checked_in || player?.checked_in),
@@ -9269,53 +9274,34 @@ export default function TournamentDeskPage() {
     const leftPlayer = playerSlots[0]
     const rightPlayer = playerSlots[1]
     return (
-      <>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-          gap: 10,
-          alignItems: 'center',
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'auto auto minmax(0,1fr) auto auto',
+        gap: 6,
+        alignItems: 'center',
+        minWidth: 0,
+      }}>
+        {leftPlayer.towelColor ? (
+          <TowelColorPill colorName={leftPlayer.towelColor} reportUrl={leftPlayer.reportUrl} labelMode="swatch" />
+        ) : <span style={{ width: 24, height: 14, display: 'inline-block' }} />}
+        {renderCheckInPlayerCircle(leftPlayer.checked, leftPlayer.disabled, leftPlayer.onClick)}
+        <span style={{
           minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontSize: 11,
+          color: '#37474f',
+          fontWeight: 700,
+          textAlign: 'center',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: '#37474f', fontWeight: 600 }}>
-              {leftPlayer.name}
-            </span>
-            {leftPlayer.towelColor && (
-              <TowelColorPill colorName={leftPlayer.towelColor} reportUrl={leftPlayer.reportUrl} labelMode="swatch" />
-            )}
-            {renderCheckInPlayerCircle(leftPlayer.checked, leftPlayer.disabled, leftPlayer.onClick)}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, minWidth: 0 }}>
-            {renderCheckInPlayerCircle(rightPlayer.checked, rightPlayer.disabled, rightPlayer.onClick)}
-            {rightPlayer.towelColor && (
-              <TowelColorPill colorName={rightPlayer.towelColor} reportUrl={rightPlayer.reportUrl} labelMode="swatch" />
-            )}
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: '#37474f', fontWeight: 600, textAlign: 'right' }}>
-              {rightPlayer.name}
-            </span>
-          </div>
-        </div>
-        <button
-          type="button"
-          disabled={!entry.checkinEnabled}
-          onClick={() => entry.checkinEnabled && cm && handleTeamQuickCheckIn(cm, side, state)}
-          style={{
-            padding: '4px 8px',
-            fontSize: 10,
-            fontWeight: 700,
-            borderRadius: 6,
-            border: '1px solid #90a4ae',
-            backgroundColor: anyChecked ? '#2e7d32' : '#fff',
-            color: anyChecked ? '#fff' : '#455a64',
-            cursor: entry.checkinEnabled ? 'pointer' : 'default',
-            opacity: entry.checkinEnabled ? 1 : 0.5,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {anyChecked ? 'Uncheck Team' : 'Check In Team'}
-        </button>
-      </>
+          {teamLabel}
+        </span>
+        {renderCheckInPlayerCircle(rightPlayer.checked, rightPlayer.disabled, rightPlayer.onClick)}
+        {rightPlayer.towelColor ? (
+          <TowelColorPill colorName={rightPlayer.towelColor} reportUrl={rightPlayer.reportUrl} labelMode="swatch" />
+        ) : <span style={{ width: 24, height: 14, display: 'inline-block' }} />}
+      </div>
     )
   }
 
@@ -10020,14 +10006,37 @@ export default function TournamentDeskPage() {
                                     <div style={{
                                       display: 'grid',
                                       gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
-                                      gap: 12,
+                                      gap: 10,
                                       alignItems: 'center',
                                     }}>
                                       <div style={{ minWidth: 0 }}>
                                         {renderCheckInTeamInline(entry, 'A', entry.sideA)}
                                       </div>
-                                      <div style={{ fontSize: 10, fontWeight: 700, color: '#607d8b', whiteSpace: 'nowrap' }}>
-                                        #{entry.match.match_number}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+                                        <button
+                                          type="button"
+                                          disabled={!entry.checkinEnabled}
+                                          onClick={() => entry.checkinEnabled && entry.checkinMatch && (
+                                            handleTeamQuickCheckIn(entry.checkinMatch, 'A', entry.sideA)
+                                          )}
+                                          style={{
+                                            padding: '4px 10px',
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            borderRadius: 6,
+                                            border: '1px solid #90a4ae',
+                                            backgroundColor: (entry.sideA.team_checked_in || entry.sideA.players.some((player) => player.checked_in) || entry.sideB.team_checked_in || entry.sideB.players.some((player) => player.checked_in)) ? '#2e7d32' : '#fff',
+                                            color: (entry.sideA.team_checked_in || entry.sideA.players.some((player) => player.checked_in) || entry.sideB.team_checked_in || entry.sideB.players.some((player) => player.checked_in)) ? '#fff' : '#455a64',
+                                            cursor: entry.checkinEnabled ? 'pointer' : 'default',
+                                            opacity: entry.checkinEnabled ? 1 : 0.5,
+                                          }}
+                                        >
+                                          CHECK-IN
+                                        </button>
+                                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                                          <EventBadge name={entry.match.event_name} />
+                                          <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
+                                        </div>
                                       </div>
                                       <div style={{ minWidth: 0 }}>
                                         {renderCheckInTeamInline(entry, 'B', entry.sideB)}
