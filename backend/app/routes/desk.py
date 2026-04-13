@@ -1197,9 +1197,6 @@ def _build_checkin_snapshot(
         status = (m.runtime_status or "SCHEDULED").upper()
         if status in ("IN_PROGRESS", "PAUSED", "FINAL"):
             continue
-        a = assignment_map.get(cm.match_id)
-        if a and (a.assigned_by or "").upper() == "CHECKIN_DESK":
-            continue
         ready_items.append(
             ReadyQueueItem(
                 match_id=cm.match_id,

@@ -213,6 +213,80 @@ function EventBadge({ name }: { name: string }) {
   return <Badge label={abbr} bg={bg} color="#fff" />
 }
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const normalized = hex.replace('#', '').trim()
+  if (!/^[0-9a-f]{3}([0-9a-f]{3})?$/i.test(normalized)) return null
+  const full = normalized.length === 3
+    ? normalized.split('').map((ch) => ch + ch).join('')
+    : normalized
+  return {
+    r: parseInt(full.slice(0, 2), 16),
+    g: parseInt(full.slice(2, 4), 16),
+    b: parseInt(full.slice(4, 6), 16),
+  }
+}
+
+function isLightRgb(r: number, g: number, b: number): boolean {
+  const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b)
+  return luminance >= 186
+}
+
+function deriveDynamicTowelStyles(rawColor: string): { backgroundColor: string; color: string; borderColor: string } | null {
+  const trimmed = rawColor.trim()
+  if (!trimmed) return null
+
+  const normalized = trimmed.toLowerCase()
+  const aliasMap: Record<string, string> = {
+    neonyellow: '#d4ff2a',
+    neonlime: '#c6ff00',
+    lightblue: '#64b5f6',
+    babyblue: '#81d4fa',
+    skyblue: '#4fc3f7',
+    darkblue: '#0d47a1',
+    huntergreen: '#355e3b',
+    forestgreen: '#2e7d32',
+    darkgreen: '#1b5e20',
+    lightgreen: '#8bc34a',
+    hotpink: '#ec407a',
+    maroon: '#800000',
+    tan: '#d2b48c',
+    gold: '#fbc02d',
+    silver: '#b0bec5',
+  }
+
+  const candidates = [
+    trimmed,
+    normalized,
+    normalized.replace(/\s+/g, ''),
+    normalized.replace(/[^a-z0-9#(),.%\s-]/g, '').trim(),
+  ].filter((value, index, arr) => value && arr.indexOf(value) === index)
+
+  for (const candidate of candidates) {
+    const alias = aliasMap[candidate.replace(/\s+/g, '')]
+    const resolved = alias || candidate
+    const rgb = hexToRgb(resolved)
+    if (rgb) {
+      const light = isLightRgb(rgb.r, rgb.g, rgb.b)
+      return {
+        backgroundColor: resolved,
+        color: light ? '#1f2937' : '#ffffff',
+        borderColor: light ? 'rgba(15, 23, 42, 0.28)' : 'rgba(255, 255, 255, 0.16)',
+      }
+    }
+    if (typeof window !== 'undefined' && typeof window.CSS !== 'undefined' && window.CSS.supports('color', resolved)) {
+      const lowerResolved = resolved.toLowerCase()
+      const lightKeyword = /(white|yellow|lime|mint|gold|silver|cream|ivory|tan|beige|khaki|sky|baby|light)/.test(lowerResolved)
+      return {
+        backgroundColor: resolved,
+        color: lightKeyword ? '#1f2937' : '#ffffff',
+        borderColor: lightKeyword ? 'rgba(15, 23, 42, 0.28)' : 'rgba(255, 255, 255, 0.16)',
+      }
+    }
+  }
+
+  return null
+}
+
 function getTowelPillStyles(colorName: string): { backgroundColor: string; color: string; borderColor: string } {
   const key = colorName.trim().toLowerCase()
   const presets: Record<string, { backgroundColor: string; color: string; borderColor: string }> = {
@@ -232,7 +306,7 @@ function getTowelPillStyles(colorName: string): { backgroundColor: string; color
     pink: { backgroundColor: '#d81b60', color: '#ffffff', borderColor: '#8e0038' },
     white: { backgroundColor: '#fafafa', color: '#455a64', borderColor: '#cfd8dc' },
   }
-  return presets[key] || { backgroundColor: '#eef2f7', color: '#334155', borderColor: '#cbd5e1' }
+  return presets[key] || deriveDynamicTowelStyles(colorName) || { backgroundColor: '#eef2f7', color: '#334155', borderColor: '#cbd5e1' }
 }
 
 function TowelColorPill({
@@ -9953,6 +10027,74 @@ export default function TournamentDeskPage() {
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
                     <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                      <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
+                        Waiting For Check-In
+                      </div>
+                      <div style={{ padding: 12 }}>
+                        {waitingBoardGroups.length === 0 ? (
+                          <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
+                        ) : (
+                          <div style={{ display: 'grid', gap: 12 }}>
+                            {waitingBoardGroups.map((group) => (
+                              <div key={group.key} style={{
+                                border: '1px solid #d7dee5',
+                                borderRadius: 10,
+                                backgroundColor: '#fff',
+                                overflow: 'hidden',
+                              }}>
+                                <div style={{
+                                  padding: '8px 10px',
+                                  borderBottom: '1px solid #eef2f5',
+                                  backgroundColor: '#f8fafc',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: 10,
+                                  flexWrap: 'wrap',
+                                }}>
+                                  <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{group.label}</div>
+                                  <div style={{ fontSize: 11, color: '#607d8b', fontWeight: 700 }}>
+                                    {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
+                                  </div>
+                                </div>
+                                <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8, overflowX: 'auto' }}>
+                                  {group.entries.map((entry) => (
+                                    <div key={entry.key} style={{
+                                      border: '1px solid #d7dee5',
+                                      borderRadius: 8,
+                                      padding: '6px 8px',
+                                      backgroundColor: '#fff',
+                                      minWidth: 'fit-content',
+                                    }}>
+                                      <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'auto auto auto',
+                                        gap: 10,
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                      }}>
+                                        <div>
+                                          {renderCheckInTeamInline(entry, 'B', entry.sideB)}
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                          <EventBadge name={entry.match.event_name} />
+                                          <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
+                                        </div>
+                                        <div>
+                                          {renderCheckInTeamInline(entry, 'A', entry.sideA)}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                       <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
                         Ready To Go
                       </div>
@@ -10049,74 +10191,6 @@ export default function TournamentDeskPage() {
                                 </div>
                               )
                             })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                      <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
-                        Waiting For Check-In
-                      </div>
-                      <div style={{ padding: 12 }}>
-                        {waitingBoardGroups.length === 0 ? (
-                          <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
-                        ) : (
-                          <div style={{ display: 'grid', gap: 12 }}>
-                            {waitingBoardGroups.map((group) => (
-                              <div key={group.key} style={{
-                                border: '1px solid #d7dee5',
-                                borderRadius: 10,
-                                backgroundColor: '#fff',
-                                overflow: 'hidden',
-                              }}>
-                                <div style={{
-                                  padding: '8px 10px',
-                                  borderBottom: '1px solid #eef2f5',
-                                  backgroundColor: '#f8fafc',
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  gap: 10,
-                                  flexWrap: 'wrap',
-                                }}>
-                                  <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{group.label}</div>
-                                  <div style={{ fontSize: 11, color: '#607d8b', fontWeight: 700 }}>
-                                    {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
-                                  </div>
-                                </div>
-                                <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8, overflowX: 'auto' }}>
-                                  {group.entries.map((entry) => (
-                                    <div key={entry.key} style={{
-                                      border: '1px solid #d7dee5',
-                                      borderRadius: 8,
-                                      padding: '6px 8px',
-                                      backgroundColor: '#fff',
-                                      minWidth: 'fit-content',
-                                    }}>
-                                      <div style={{
-                                        display: 'grid',
-                                        gridTemplateColumns: 'auto auto auto',
-                                        gap: 10,
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                      }}>
-                                        <div>
-                                          {renderCheckInTeamInline(entry, 'B', entry.sideB)}
-                                        </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                                          <EventBadge name={entry.match.event_name} />
-                                          <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
-                                        </div>
-                                        <div>
-                                          {renderCheckInTeamInline(entry, 'A', entry.sideA)}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
                           </div>
                         )}
                       </div>

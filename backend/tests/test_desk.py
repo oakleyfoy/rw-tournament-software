@@ -2811,6 +2811,51 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     assert all(cm["match_id"] != m1.id for cm in snap["checkin_matches"])
 
 
+def test_ready_queue_keeps_ready_match_visible_even_if_assignment_source_is_checkin_desk(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    delta_players = _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == v.id,
+            MatchAssignment.match_id == m1.id,
+        )
+    ).first()
+    assert assignment is not None
+    assignment.assigned_by = "CHECKIN_DESK"
+    session.add(assignment)
+    session.commit()
+
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[0].id, "checked_in": True},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[1].id, "checked_in": True},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[0].id, "checked_in": True},
+    )
+    ready_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[1].id, "checked_in": True},
+    )
+    assert ready_resp.status_code == 200
+    ready_ids = {r["match_id"] for r in ready_resp.json()["ready_queue"]}
+    assert m1.id in ready_ids
+
+
 def test_checkin_assign_accepts_noncanonical_slot_id_for_available_court(client, session):
     """Assign should accept a different slot id on the same available court."""
     t, v, _ev, teams, matches, slots = _setup_draft_for_move(session)
