@@ -9451,16 +9451,6 @@ export default function TournamentDeskPage() {
 
   const renderCourtBoardCard = (row: typeof courtBoardRows[number]) => {
     const match = row.displayMatch
-    const matchStatus = match ? STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED : null
-    const occupancyLabel = row.isClosed
-      ? 'Closed'
-      : row.now
-        ? 'Playing'
-        : row.upNext
-          ? 'Up Next'
-          : row.onDeck
-            ? 'On Deck'
-            : 'Open'
     if (!match && !row.isClosed) {
       return (
         <div key={row.court} style={{
@@ -9482,35 +9472,31 @@ export default function TournamentDeskPage() {
 
     return (
       <div key={row.court} style={{
-        border: '1px solid #d7dee5',
+        border: '1px solid #c8e6c9',
         borderRadius: 10,
-        backgroundColor: '#fff',
+        backgroundColor: '#f7fff7',
         padding: 12,
-        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#1f2937' }}>{row.court}</div>
-            <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <Badge label={occupancyLabel} bg={row.isClosed ? '#eceff1' : '#e3f2fd'} color={row.isClosed ? '#455a64' : '#1565c0'} />
-              <Badge label={row.slotStateLabel} bg={row.slotStateColor.bg} color={row.slotStateColor.color} />
-              {matchStatus && <Badge label={STATUS_LABEL[match!.status] || match!.status} bg={matchStatus.bg} color={matchStatus.text} />}
-            </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{row.court}</div>
+            {match && (
+              <>
+                <EventBadge name={match.event_name} />
+                <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
+              </>
+            )}
           </div>
-          {row.slotLabel && (
-            <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
-              {row.slotLabel}
-            </div>
-          )}
+          <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
+            {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
+          </div>
         </div>
         {match ? (
           <>
-            <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: '#263238' }}>
-              #{match.match_number} {match.team1_display} vs {match.team2_display}
-            </div>
-            <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <EventBadge name={match.event_name} />
-              <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
+            <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
+              <span>{match.team1_display}</span>
+              <span>vs</span>
+              <span>{match.team2_display}</span>
             </div>
             {(row.startAtLabel || row.elapsedLabel) && (
               <div style={{ marginTop: 8, fontSize: 11, color: '#607d8b', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -9524,13 +9510,14 @@ export default function TournamentDeskPage() {
                 onClick={() => setDrawerMatch(match)}
                 style={{
                   marginTop: 10,
-                  padding: '6px 10px',
+                  width: '100%',
+                  padding: '7px 10px',
                   border: 'none',
                   borderRadius: 6,
-                  backgroundColor: '#1565c0',
+                  backgroundColor: '#2e7d32',
                   color: '#fff',
                   fontSize: 12,
-                  fontWeight: 700,
+                  fontWeight: 800,
                   cursor: 'pointer',
                 }}
               >
