@@ -8422,64 +8422,68 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh, runCheckInWithNotePrompt])
 
-  const handleTeamQuickCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', state: MatchCheckInSideState) => {
+  const syncCheckInSide = useCallback(async (
+    match: CheckInMatchItem,
+    side: 'A' | 'B',
+    state: MatchCheckInSideState,
+    checkedIn: boolean
+  ) => {
     if (!tid || !data) return
-    const applyCheckIn = async () => {
-      const anyChecked = state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)
-      if (anyChecked) {
-        const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
-        if (checkedPlayers.length > 0) {
-          await Promise.all(
-            checkedPlayers.map((p: PlayerCheckInState) =>
-              deskCheckInPlayer(tid, match.match_id, {
-                version_id: data.version_id,
-                side,
-                player_id: p.player_id!,
-                checked_in: false,
-              })
-            )
+    if (checkedIn) {
+      const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in && p.player_id != null)
+      if (uncheckedPlayers.length > 0) {
+        await Promise.all(
+          uncheckedPlayers.map((p: PlayerCheckInState) =>
+            deskCheckInPlayer(tid, match.match_id, {
+              version_id: data.version_id,
+              side,
+              player_id: p.player_id!,
+              checked_in: true,
+            })
           )
-        }
-        await deskCheckInTeam(tid, match.match_id, {
-          version_id: data.version_id,
-          side,
-          checked_in: false,
-        })
-      } else {
-        const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in && p.player_id != null)
-        if (uncheckedPlayers.length > 0) {
-          await Promise.all(
-            uncheckedPlayers.map((p: PlayerCheckInState) =>
-              deskCheckInPlayer(tid, match.match_id, {
-                version_id: data.version_id,
-                side,
-                player_id: p.player_id!,
-                checked_in: true,
-              })
-            )
-          )
-        }
-        await deskCheckInTeam(tid, match.match_id, {
-          version_id: data.version_id,
-          side,
-          checked_in: true,
-        })
+        )
       }
-      await handleRefresh()
+      await deskCheckInTeam(tid, match.match_id, {
+        version_id: data.version_id,
+        side,
+        checked_in: true,
+      })
+      return
     }
+
+    const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
+    if (checkedPlayers.length > 0) {
+      await Promise.all(
+        checkedPlayers.map((p: PlayerCheckInState) =>
+          deskCheckInPlayer(tid, match.match_id, {
+            version_id: data.version_id,
+            side,
+            player_id: p.player_id!,
+            checked_in: false,
+          })
+        )
+      )
+    }
+    await deskCheckInTeam(tid, match.match_id, {
+      version_id: data.version_id,
+      side,
+      checked_in: false,
+    })
+  }, [tid, data])
+
+  const handleMatchCenterCheckIn = useCallback(async (match: CheckInMatchItem) => {
+    if (!tid || !data) return
+    const sideAAnyChecked = match.side_a.team_checked_in || match.side_a.players.some((p: PlayerCheckInState) => p.checked_in)
+    const sideBAnyChecked = match.side_b.team_checked_in || match.side_b.players.some((p: PlayerCheckInState) => p.checked_in)
+    const shouldCheckInBoth = !(sideAAnyChecked && sideBAnyChecked)
     try {
-      const anyChecked = state.team_checked_in || state.players.some((p: PlayerCheckInState) => p.checked_in)
-      const note = side === 'A' ? (match as any).team1_notes : (match as any).team2_notes
-      const teamLabel = side === 'A' ? match.side_a.team_display : match.side_b.team_display
-      if (!anyChecked) {
-        await runCheckInWithNotePrompt((match as any).event_id ?? null, state.team_id, teamLabel, note, applyCheckIn)
-      } else {
-        await applyCheckIn()
-      }
+      await syncCheckInSide(match, 'A', match.side_a, shouldCheckInBoth)
+      await syncCheckInSide(match, 'B', match.side_b, shouldCheckInBoth)
+      await handleRefresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed team quick check-in')
+      setError(e instanceof Error ? e.message : 'Failed match check-in')
     }
-  }, [tid, data, handleRefresh, runCheckInWithNotePrompt])
+  }, [tid, data, syncCheckInSide, handleRefresh])
 
   const handleImportTemporaryLookups = useCallback(async () => {
     if (!tid) return
@@ -9317,6 +9321,25 @@ export default function TournamentDeskPage() {
           : row.onDeck
             ? 'On Deck'
             : 'Open'
+    if (!match && !row.isClosed) {
+      return (
+        <div key={row.court} style={{
+          border: '1px solid #cfd8dc',
+          borderRadius: 8,
+          backgroundColor: '#fff',
+          minHeight: 92,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+        }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#37474f', textAlign: 'center' }}>
+            {row.court}
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div key={row.court} style={{
         border: '1px solid #d7dee5',
@@ -10017,7 +10040,7 @@ export default function TournamentDeskPage() {
                                           type="button"
                                           disabled={!entry.checkinEnabled}
                                           onClick={() => entry.checkinEnabled && entry.checkinMatch && (
-                                            handleTeamQuickCheckIn(entry.checkinMatch, 'A', entry.sideA)
+                                            handleMatchCenterCheckIn(entry.checkinMatch)
                                           )}
                                           style={{
                                             padding: '4px 10px',
