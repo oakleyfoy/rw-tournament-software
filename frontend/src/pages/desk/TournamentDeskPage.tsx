@@ -9228,6 +9228,13 @@ export default function TournamentDeskPage() {
       sideB: MatchCheckInSideState
     } => entry !== null)
   })
+  const waitingBoardGroups = filteredSlotSections
+    .map((section) => ({
+      key: section.key,
+      label: section.label,
+      entries: waitingBoardEntries.filter((entry) => entry.slotKey === section.key),
+    }))
+    .filter((group) => group.entries.length > 0)
 
   const filteredReadyQueue = data.ready_queue.filter((rq) => (
     effectiveSelectedCheckInSlotKey === 'all' ||
@@ -9305,38 +9312,50 @@ export default function TournamentDeskPage() {
     const anyChecked = state.team_checked_in || state.players.some((player) => player.checked_in)
     const totalPlayers = Math.max(state.players_total || 0, state.players.length)
     const checkedPlayers = state.players.filter((player) => state.team_checked_in || player.checked_in).length
+    const showAnyTowels = state.players.some((player) => !!(player.towel_color || '').trim())
     return (
       <div style={{
         border: `1px solid ${anyChecked ? '#a5d6a7' : '#d7dee5'}`,
         borderRadius: 8,
-        padding: 10,
+        padding: 8,
         backgroundColor: anyChecked ? '#f1f8e9' : '#fff',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#263238', wordBreak: 'break-word' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#263238', wordBreak: 'break-word', lineHeight: 1.2 }}>
               {state.team_display || 'TBD'}
             </div>
-            <div style={{ marginTop: 3, fontSize: 11, color: '#607d8b' }}>
+            <div style={{ marginTop: 2, fontSize: 10, color: '#607d8b' }}>
               {totalPlayers > 0 ? `${checkedPlayers}/${totalPlayers} players checked in` : 'Roster not loaded yet'}
             </div>
+            {showAnyTowels && (
+              <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {state.players.map((player, index) => (
+                  <TowelColorPill
+                    key={`towel-${state.team_id || state.team_display}-${player.player_id || index}`}
+                    colorName={player.towel_color || null}
+                    reportUrl={player.report_url || null}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
             <button
               type="button"
               disabled={!state.team_id}
               onClick={() => cm && state.team_id && toggleBallIssued(cm.match_id, side)}
               title="Mark tennis ball issued"
               style={{
-                width: 28,
-                height: 28,
+                width: 24,
+                height: 24,
                 borderRadius: 999,
                 border: '1px solid #90a4ae',
                 backgroundColor: (cm && ballIssuedBySide[getBallIssuedKey(cm.match_id, side)]) ? '#fff8e1' : '#fff',
                 cursor: state.team_id ? 'pointer' : 'default',
                 opacity: state.team_id ? 1 : 0.45,
                 padding: 0,
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: 700,
               }}
             >
@@ -9347,8 +9366,8 @@ export default function TournamentDeskPage() {
               disabled={!entry.checkinEnabled}
               onClick={() => entry.checkinEnabled && cm && handleTeamQuickCheckIn(cm, side, state)}
               style={{
-                padding: '6px 10px',
-                fontSize: 11,
+                padding: '4px 8px',
+                fontSize: 10,
                 fontWeight: 700,
                 borderRadius: 6,
                 border: '1px solid #90a4ae',
@@ -9358,18 +9377,18 @@ export default function TournamentDeskPage() {
                 opacity: entry.checkinEnabled ? 1 : 0.5,
               }}
             >
-              {anyChecked ? 'Uncheck Team' : 'Check In Team'}
+              {anyChecked ? 'Uncheck' : 'Check In'}
             </button>
           </div>
         </div>
-        <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+        <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
           {state.players.length === 0 ? (
             <div style={{
-              padding: '8px 10px',
+              padding: '6px 8px',
               borderRadius: 6,
               border: '1px dashed #cfd8dc',
               color: '#90a4ae',
-              fontSize: 11,
+              fontSize: 10,
             }}>
               Player rows not available yet.
             </div>
@@ -9385,9 +9404,9 @@ export default function TournamentDeskPage() {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     width: '100%',
-                    padding: '7px 9px',
+                    padding: '5px 7px',
                     borderRadius: 6,
                     border: `1px solid ${isChecked ? '#81c784' : '#cfd8dc'}`,
                     backgroundColor: isChecked ? '#e8f5e9' : '#fff',
@@ -9397,23 +9416,23 @@ export default function TournamentDeskPage() {
                   }}
                 >
                   <span style={{
-                    width: 18,
-                    height: 18,
+                    width: 14,
+                    height: 14,
                     borderRadius: 999,
                     border: `1px solid ${isChecked ? '#2e7d32' : '#90a4ae'}`,
                     backgroundColor: isChecked ? '#2e7d32' : '#fff',
                     color: '#fff',
-                    fontSize: 11,
-                    lineHeight: '16px',
+                    fontSize: 9,
+                    lineHeight: '12px',
                     textAlign: 'center',
                     flexShrink: 0,
                   }}>
                     {isChecked ? '✓' : ''}
                   </span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#37474f', fontWeight: 600 }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: '#37474f', fontWeight: 600 }}>
                     {player.player_display || `Player ${index + 1}`}
                   </span>
-                  {state.show_towels && (
+                  {player.towel_color && (
                     <TowelColorPill colorName={player.towel_color || null} reportUrl={player.report_url || null} />
                   )}
                 </button>
@@ -10093,35 +10112,61 @@ export default function TournamentDeskPage() {
                       Waiting For Check-In
                     </div>
                     <div style={{ padding: 12 }}>
-                      {waitingBoardEntries.length === 0 ? (
+                      {waitingBoardGroups.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
                       ) : (
                         <div style={{ display: 'grid', gap: 12 }}>
-                          {waitingBoardEntries.map((entry) => (
-                            <div key={entry.key} style={{
+                          {waitingBoardGroups.map((group) => (
+                            <div key={group.key} style={{
                               border: '1px solid #d7dee5',
                               borderRadius: 10,
-                              padding: 12,
                               backgroundColor: '#fff',
+                              overflow: 'hidden',
                             }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
-                                <div>
-                                  <div style={{ fontSize: 14, fontWeight: 800, color: '#263238' }}>
-                                    {entry.checkinMatch ? formatCheckInMatchLabel(entry.checkinMatch) : `${entry.match.event_name} ${entry.match.stage}`}
-                                  </div>
-                                  <div style={{ marginTop: 4, fontSize: 12, color: '#607d8b' }}>
-                                    #{entry.match.match_number} · {entry.slotLabel}
-                                  </div>
-                                </div>
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                  <EventBadge name={entry.match.event_name} />
-                                  <Badge label={entry.match.stage} bg={STAGE_COLORS[entry.match.stage] || '#757575'} color="#fff" />
-                                  <Badge label={entry.checkinEnabled ? 'Check-In Open' : 'Waiting'} bg={entry.checkinEnabled ? '#e8f5e9' : '#eceff1'} color={entry.checkinEnabled ? '#2e7d32' : '#607d8b'} />
+                              <div style={{
+                                padding: '8px 10px',
+                                borderBottom: '1px solid #eef2f5',
+                                backgroundColor: '#f8fafc',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: 10,
+                                flexWrap: 'wrap',
+                              }}>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{group.label}</div>
+                                <div style={{ fontSize: 11, color: '#607d8b', fontWeight: 700 }}>
+                                  {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
                                 </div>
                               </div>
-                              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 10 }}>
-                                {renderCheckInTeamPanel(entry, 'A', entry.sideA)}
-                                {renderCheckInTeamPanel(entry, 'B', entry.sideB)}
+                              <div style={{ padding: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 8 }}>
+                                {group.entries.map((entry) => (
+                                  <div key={entry.key} style={{
+                                    border: '1px solid #d7dee5',
+                                    borderRadius: 8,
+                                    padding: 8,
+                                    backgroundColor: '#fff',
+                                  }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                                      <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontSize: 12, fontWeight: 800, color: '#263238' }}>
+                                          {entry.checkinMatch ? formatCheckInMatchLabel(entry.checkinMatch) : `${entry.match.event_name} ${entry.match.stage}`}
+                                        </div>
+                                        <div style={{ marginTop: 2, fontSize: 10, color: '#607d8b' }}>
+                                          #{entry.match.match_number}
+                                        </div>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                        <EventBadge name={entry.match.event_name} />
+                                        <Badge label={entry.match.stage} bg={STAGE_COLORS[entry.match.stage] || '#757575'} color="#fff" />
+                                        <Badge label={entry.checkinEnabled ? 'Check-In Open' : 'Waiting'} bg={entry.checkinEnabled ? '#e8f5e9' : '#eceff1'} color={entry.checkinEnabled ? '#2e7d32' : '#607d8b'} />
+                                      </div>
+                                    </div>
+                                    <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                                      {renderCheckInTeamPanel(entry, 'A', entry.sideA)}
+                                      {renderCheckInTeamPanel(entry, 'B', entry.sideB)}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           ))}
