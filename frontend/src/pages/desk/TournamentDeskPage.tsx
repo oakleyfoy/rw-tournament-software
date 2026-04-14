@@ -8161,6 +8161,253 @@ function SmsAdminTab({
   )
 }
 
+type CheckInCourtBoardRowData = {
+  court: string
+  now?: DeskMatchItem
+  upNext?: DeskMatchItem
+  onDeck?: DeskMatchItem
+  displayMatch: DeskMatchItem | null
+  isClosed: boolean
+  lane: 'behind' | 'current' | 'open'
+  slotLabel: string | null
+  startAtLabel: string | null
+  elapsedLabel: string | null
+  availableSlotsForCourt: AvailableCourtSlot[]
+}
+
+function CheckInCourtBoardCard({
+  row,
+  focusSlotLabel,
+  onOpenMatch,
+}: {
+  row: CheckInCourtBoardRowData
+  focusSlotLabel: string | null
+  onOpenMatch: (m: DeskMatchItem) => void
+}) {
+  const match = row.displayMatch
+  const canReceiveReady =
+    row.lane === 'open' &&
+    !match &&
+    !row.isClosed &&
+    row.availableSlotsForCourt.length > 0
+
+  const { setNodeRef, isOver } = useDroppable({
+    id: `checkin-open-court-${encodeURIComponent(row.court)}`,
+    disabled: !canReceiveReady,
+    data: { type: 'checkinOpenCourt', court: row.court },
+  })
+
+  if (!match && !row.isClosed) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={{
+          border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
+          borderRadius: 10,
+          backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fff',
+          minHeight: 160,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: canReceiveReady && isOver ? '0 2px 12px rgba(21, 101, 192, 0.2)' : '0 1px 3px rgba(15, 23, 42, 0.06)',
+          transition: 'background-color 0.15s, border-color 0.15s, box-shadow 0.15s',
+        }}
+      >
+        <div style={{ fontSize: 22, fontWeight: 800, color: '#37474f', textAlign: 'center', padding: '0 8px' }}>
+          {row.court}
+          {canReceiveReady && (
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#1565c0', marginTop: 8 }}>
+              Drop ready match here
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      border: '1px solid #c8e6c9',
+      borderRadius: 10,
+      backgroundColor: '#f7fff7',
+      padding: 12,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{row.court}</div>
+          {match && (
+            <>
+              <EventBadge name={match.event_name} />
+              <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
+            </>
+          )}
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20', textAlign: 'right' }}>
+          {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
+        </div>
+      </div>
+      {match ? (
+        <>
+          <div style={{ marginTop: 4, color: '#37474f', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 15, fontWeight: 700 }}>
+            <span>{match.team1_display}</span>
+            <span>vs</span>
+            <span>{match.team2_display}</span>
+          </div>
+          {(row.startAtLabel || row.elapsedLabel) && (
+            <div style={{ marginTop: 8, fontSize: 11, color: '#607d8b', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {row.startAtLabel && <span>Start: {row.startAtLabel}</span>}
+              {row.elapsedLabel && <span>{match.status === 'FINAL' ? `Total: ${row.elapsedLabel}` : `Running: ${row.elapsedLabel}`}</span>}
+            </div>
+          )}
+          {(row.now || row.upNext || row.onDeck) && (
+            <button
+              type="button"
+              onClick={() => onOpenMatch(match)}
+              style={{
+                marginTop: 10,
+                width: '100%',
+                padding: '7px 10px',
+                border: 'none',
+                borderRadius: 6,
+                backgroundColor: '#2e7d32',
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Open Match
+            </button>
+          )}
+        </>
+      ) : (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: row.isClosed ? '#607d8b' : '#2e7d32' }}>
+            {row.isClosed ? 'Court closed right now.' : 'Open court.'}
+          </div>
+          <div style={{ marginTop: 4, fontSize: 11, color: '#607d8b' }}>
+            {row.availableSlotsForCourt.length > 0
+              ? `Ready for ${focusSlotLabel || 'the selected slot'}`
+              : (focusSlotLabel ? `No open ${focusSlotLabel} slot on this court.` : 'No open assignment slot at the moment.')}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CheckInReadyQueueCard({
+  rq,
+  titleLabel,
+  headerRightTop,
+  headerRightBottom,
+  deskMatch,
+  returning,
+  onReturnToCheckIn,
+}: {
+  rq: ReadyQueueItem
+  titleLabel: string
+  headerRightTop: string
+  headerRightBottom: string
+  deskMatch?: DeskMatchItem
+  returning: boolean
+  onReturnToCheckIn: () => void
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `checkin-ready-${rq.match_id}`,
+    data: { type: 'checkinReady', matchId: rq.match_id },
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      style={{
+        border: '1px solid #90caf9',
+        borderRadius: 10,
+        backgroundColor: '#e3f2fd',
+        padding: 12,
+        cursor: 'grab',
+        opacity: isDragging ? 0.45 : 1,
+        touchAction: 'none',
+        userSelect: 'none',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0d47a1' }}>{titleLabel}</div>
+          <EventBadge name={rq.event_name} />
+          {deskMatch && (
+            <Badge label={deskMatch.stage} bg={STAGE_COLORS[deskMatch.stage] || '#757575'} color="#fff" />
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!returning) onReturnToCheckIn()
+            }}
+            disabled={returning}
+            title="Return to check-in"
+            aria-label="Return to check-in"
+            style={{
+              flexShrink: 0,
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              border: '1px solid #f57c00',
+              backgroundColor: '#fff3e0',
+              color: '#e65100',
+              cursor: returning ? 'wait' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              opacity: returning ? 0.55 : 1,
+            }}
+          >
+            {returning ? (
+              <span style={{ fontSize: 14, fontWeight: 700 }}>...</span>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
+                <path
+                  d="M9 14 4 9l5-5"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M4 9h11a5 5 0 0 1 0 10h-3"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
+          </button>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#0d47a1' }}>{headerRightTop}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#607d8b', marginTop: 2 }}>{headerRightBottom}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 4, color: '#37474f', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 15, fontWeight: 700 }}>
+        <span>{rq.team1_display}</span>
+        <span>vs</span>
+        <span>{rq.team2_display}</span>
+      </div>
+      <div style={{ marginTop: 10, fontSize: 11, color: '#607d8b' }}>
+        Drag onto an open court above. Open courts show: Drop ready match here.
+      </div>
+    </div>
+  )
+}
+
 
 export default function TournamentDeskPage() {
   const { tournamentId } = useParams<{ tournamentId: string }>()
@@ -8792,15 +9039,6 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data])
 
-  const isDraft = data?.version_status === 'draft'
-
-  const [startAllOpen, setStartAllOpen] = useState(false)
-  const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
-  const [startingAll, setStartingAll] = useState(false)
-  const [readySlotChoice, setReadySlotChoice] = useState<Record<number, number>>({})
-  const [readyResettingIds, setReadyResettingIds] = useState<Set<number>>(new Set())
-  const [selectedCheckInSlotKey, setSelectedCheckInSlotKey] = useState<string>('all')
-
   const handleResetReadyMatch = useCallback(async (matchId: number) => {
     if (!tid || !data) return
     const match = (data.checkin_matches || []).find((cm) => cm.match_id === matchId)
@@ -8833,11 +9071,6 @@ export default function TournamentDeskPage() {
     try {
       await clearSide('A', match.side_a)
       await clearSide('B', match.side_b)
-      setReadySlotChoice((prev) => {
-        const next = { ...prev }
-        delete next[matchId]
-        return next
-      })
       await handleRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to return on-deck match to check-in')
@@ -8849,6 +9082,13 @@ export default function TournamentDeskPage() {
       })
     }
   }, [tid, data, handleRefresh])
+
+  const isDraft = data?.version_status === 'draft'
+
+  const [startAllOpen, setStartAllOpen] = useState(false)
+  const [startAllExcluded, setStartAllExcluded] = useState<Set<string>>(new Set())
+  const [startingAll, setStartingAll] = useState(false)
+  const [readyResettingIds, setReadyResettingIds] = useState<Set<number>>(new Set())
 
   const startableCourts = useMemo(() => {
     if (!data) return []
@@ -8921,6 +9161,8 @@ export default function TournamentDeskPage() {
       return false
     })
   }, [data, searchText])
+
+  const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   if (loading && !data) {
     return (
@@ -9054,10 +9296,7 @@ export default function TournamentDeskPage() {
 
   const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
   slotSections.forEach(s => s.matches.sort((a, b) => (a.match_number - b.match_number)))
-  const availableCheckInSlotKeys = slotSections.map(s => s.key)
-  const effectiveSelectedCheckInSlotKey = selectedCheckInSlotKey === 'all'
-    ? 'all'
-    : (availableCheckInSlotKeys.includes(selectedCheckInSlotKey) ? selectedCheckInSlotKey : 'all')
+  const effectiveSelectedCheckInSlotKey = 'all'
   const filteredSlotSections = effectiveSelectedCheckInSlotKey === 'all'
     ? slotSections
     : slotSections.filter(s => s.key === effectiveSelectedCheckInSlotKey)
@@ -9323,7 +9562,6 @@ export default function TournamentDeskPage() {
     }
   })
 
-  const behindCourtRows = courtBoardRows.filter((row) => row.lane === 'behind')
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
   const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open')
 
@@ -9449,96 +9687,20 @@ export default function TournamentDeskPage() {
     )
   }
 
-  const renderCourtBoardCard = (row: typeof courtBoardRows[number]) => {
-    const match = row.displayMatch
-    if (!match && !row.isClosed) {
-      return (
-        <div key={row.court} style={{
-          border: '1px solid #d7dee5',
-          borderRadius: 10,
-          backgroundColor: '#fff',
-          minHeight: 160,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-        }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#37474f', textAlign: 'center' }}>
-            {row.court}
-          </div>
-        </div>
-      )
+  const handleCheckInBoardDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over) return
+    const activeData = active.data.current as { type?: string; matchId?: number } | undefined
+    const overData = over.data.current as { type?: string; court?: string } | undefined
+    if (activeData?.type !== 'checkinReady' || typeof activeData.matchId !== 'number') return
+    if (overData?.type !== 'checkinOpenCourt' || !overData.court) return
+    const targetRow = courtBoardRows.find((r) => r.court === overData.court)
+    const slotId = targetRow?.availableSlotsForCourt[0]?.slot_id
+    if (!slotId) {
+      setError('No open assignment slot on that court.')
+      return
     }
-
-    return (
-      <div key={row.court} style={{
-        border: '1px solid #c8e6c9',
-        borderRadius: 10,
-        backgroundColor: '#f7fff7',
-        padding: 12,
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{row.court}</div>
-            {match && (
-              <>
-                <EventBadge name={match.event_name} />
-                <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
-              </>
-            )}
-          </div>
-          <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
-            {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
-          </div>
-        </div>
-        {match ? (
-          <>
-            <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
-              <span>{match.team1_display}</span>
-              <span>vs</span>
-              <span>{match.team2_display}</span>
-            </div>
-            {(row.startAtLabel || row.elapsedLabel) && (
-              <div style={{ marginTop: 8, fontSize: 11, color: '#607d8b', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                {row.startAtLabel && <span>Start: {row.startAtLabel}</span>}
-                {row.elapsedLabel && <span>{match.status === 'FINAL' ? `Total: ${row.elapsedLabel}` : `Running: ${row.elapsedLabel}`}</span>}
-              </div>
-            )}
-            {(row.now || row.upNext || row.onDeck) && (
-              <button
-                type="button"
-                onClick={() => setDrawerMatch(match)}
-                style={{
-                  marginTop: 10,
-                  width: '100%',
-                  padding: '7px 10px',
-                  border: 'none',
-                  borderRadius: 6,
-                  backgroundColor: '#2e7d32',
-                  color: '#fff',
-                  fontSize: 12,
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                }}
-              >
-                Open Match
-              </button>
-            )}
-          </>
-        ) : (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: row.isClosed ? '#607d8b' : '#2e7d32' }}>
-              {row.isClosed ? 'Court closed right now.' : 'Open court.'}
-            </div>
-            <div style={{ marginTop: 4, fontSize: 11, color: '#607d8b' }}>
-              {row.availableSlotsForCourt.length > 0
-                ? `Ready for ${focusSlotLabel || 'the selected slot'}`
-                : (focusSlotLabel ? `No open ${focusSlotLabel} slot on this court.` : 'No open assignment slot at the moment.')}
-            </div>
-          </div>
-        )}
-      </div>
-    )
+    await handleAssignReadyMatch(activeData.matchId, slotId)
   }
 
   return (
@@ -9923,65 +10085,8 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 10, fontSize: 13, color: '#546e7a', fontWeight: 700 }}>
-                  Court-first check-in board
-                </div>
-                <div style={{ marginBottom: 12, fontSize: 12, color: '#607d8b' }}>
-                  First pass: keep current check-in buttons and ready assignment, but organize the page by slot and court so you can work top to bottom.
-                </div>
-                <div style={{ marginBottom: 14, padding: 10, backgroundColor: '#fff', border: '1px solid #dfe4ea', borderRadius: 8 }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: '#334155' }}>Focus Slot</div>
-                    <select
-                      value={effectiveSelectedCheckInSlotKey}
-                      onChange={e => setSelectedCheckInSlotKey(e.target.value)}
-                      style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid #b0bec5', minWidth: 280 }}
-                    >
-                      <option value="all">Auto / All Time Slots</option>
-                      {slotSections.map((s) => (
-                        <option key={s.key} value={s.key}>{s.label}</option>
-                      ))}
-                    </select>
-                    <div style={{ fontSize: 11, color: '#607d8b' }}>
-                      Board focus: <strong>{focusSlotLabel || 'No slot selected'}</strong>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#fff3e0', border: '1px solid #ffe0b2' }}>
-                      <div style={{ fontSize: 11, color: '#e65100', fontWeight: 800 }}>Behind Courts</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#bf360c' }}>{behindCourtRows.length}</div>
-                    </div>
-                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#e3f2fd', border: '1px solid #bbdefb' }}>
-                      <div style={{ fontSize: 11, color: '#1565c0', fontWeight: 800 }}>Current Courts</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#0d47a1' }}>{currentCourtRows.length}</div>
-                    </div>
-                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#e8f5e9', border: '1px solid #c8e6c9' }}>
-                      <div style={{ fontSize: 11, color: '#2e7d32', fontWeight: 800 }}>Ready To Go</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#1b5e20' }}>{filteredReadyQueue.length}</div>
-                    </div>
-                    <div style={{ padding: '8px 10px', borderRadius: 8, backgroundColor: '#fff', border: '1px solid #dfe4ea' }}>
-                      <div style={{ fontSize: 11, color: '#455a64', fontWeight: 800 }}>Waiting For Check-In</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: '#263238' }}>{waitingBoardEntries.length}</div>
-                    </div>
-                  </div>
-                </div>
-
+                <DndContext sensors={checkInBoardSensors} onDragEnd={handleCheckInBoardDragEnd}>
                 <div style={{ display: 'grid', gap: 14 }}>
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#e65100', backgroundColor: '#fff8f1' }}>
-                      Courts Still Finishing Previous Slot
-                    </div>
-                    <div style={{ padding: 12 }}>
-                      {behindCourtRows.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#90a4ae' }}>No courts are still finishing an older slot.</div>
-                      ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
-                          {behindCourtRows.map(renderCourtBoardCard)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
                       Current Slot Courts
@@ -9991,7 +10096,14 @@ export default function TournamentDeskPage() {
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>No active courts in this view yet.</div>
                       ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
-                          {currentCourtRows.map(renderCourtBoardCard)}
+                          {currentCourtRows.map((row) => (
+                            <CheckInCourtBoardCard
+                              key={row.court}
+                              row={row}
+                              focusSlotLabel={focusSlotLabel}
+                              onOpenMatch={setDrawerMatch}
+                            />
+                          ))}
                         </div>
                       )}
                     </div>
@@ -10006,7 +10118,14 @@ export default function TournamentDeskPage() {
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>All courts currently have an assignment or are hidden by status.</div>
                       ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-                          {openCourtRows.map(renderCourtBoardCard)}
+                          {openCourtRows.map((row) => (
+                            <CheckInCourtBoardCard
+                              key={row.court}
+                              row={row}
+                              focusSlotLabel={focusSlotLabel}
+                              onOpenMatch={setDrawerMatch}
+                            />
+                          ))}
                         </div>
                       )}
                     </div>
@@ -10091,91 +10210,22 @@ export default function TournamentDeskPage() {
                         ) : (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
                             {filteredReadyQueue.map((rq) => {
-                              const selectedSlot = readySlotChoice[rq.match_id] ?? 0
-                              const resetting = readyResettingIds.has(rq.match_id)
-                              const slotLabel = slotKeyByMatchId.get(rq.match_id)
+                              const slotLabelResolved = slotKeyByMatchId.get(rq.match_id)
                                 ? slotLabelByKey.get(slotKeyByMatchId.get(rq.match_id)!) || null
                                 : null
+                              const headerTop = (slotLabelResolved || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()) || '—'
+                              const headerBottom = rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'
                               return (
-                                <div key={rq.match_id} style={{
-                                  border: '1px solid #c8e6c9',
-                                  borderRadius: 10,
-                                  backgroundColor: '#f7fff7',
-                                  padding: 12,
-                                }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                                    <div>
-                                      <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{formatReadyQueueLabel(rq)}</div>
-                                      <div style={{ marginTop: 4, color: '#455a64', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 12 }}>
-                                        <span>{rq.team1_display}</span>
-                                        <span>vs</span>
-                                        <span>{rq.team2_display}</span>
-                                      </div>
-                                    </div>
-                                    <div style={{ fontSize: 11, color: '#607d8b', textAlign: 'right' }}>
-                                      <div>{slotLabel || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()}</div>
-                                      <div>{rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'}</div>
-                                    </div>
-                                  </div>
-                                  <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
-                                    <select
-                                      value={selectedSlot || ''}
-                                      disabled={resetting}
-                                      onChange={e => {
-                                        const value = e.target.value
-                                        setReadySlotChoice(prev => ({
-                                          ...prev,
-                                          [rq.match_id]: value ? parseInt(value, 10) : 0,
-                                        }))
-                                      }}
-                                      style={{ width: '100%', fontSize: 12, padding: '7px 8px', borderRadius: 6, border: '1px solid #b0bec5' }}
-                                    >
-                                      <option value="">Choose Court</option>
-                                      {visibleReadyAssignSlots.map((s: AvailableCourtSlot) => (
-                                        <option key={s.slot_id} value={s.slot_id}>
-                                          {s.court_name}{focusSlotKey ? '' : ` - ${s.day_label} ${s.scheduled_time || ''}`.trim()}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <div style={{ display: 'flex', gap: 8 }}>
-                                      <button
-                                        disabled={!selectedSlot || resetting}
-                                        onClick={() => selectedSlot && handleAssignReadyMatch(rq.match_id, selectedSlot)}
-                                        style={{
-                                          flex: 1,
-                                          padding: '7px 10px',
-                                          fontSize: 12,
-                                          fontWeight: 800,
-                                          borderRadius: 6,
-                                          border: 'none',
-                                          backgroundColor: '#2e7d32',
-                                          color: '#fff',
-                                          cursor: 'pointer',
-                                        }}
-                                      >
-                                        Assign Court
-                                      </button>
-                                      <button
-                                        disabled={resetting}
-                                        onClick={() => handleResetReadyMatch(rq.match_id)}
-                                        style={{
-                                          flex: 1,
-                                          padding: '7px 10px',
-                                          fontSize: 12,
-                                          fontWeight: 700,
-                                          borderRadius: 6,
-                                          border: '1px solid #90a4ae',
-                                          backgroundColor: '#fff',
-                                          color: '#455a64',
-                                          cursor: resetting ? 'default' : 'pointer',
-                                          opacity: resetting ? 0.7 : 1,
-                                        }}
-                                      >
-                                        {resetting ? 'Returning...' : 'Return To Check-In'}
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
+                                <CheckInReadyQueueCard
+                                  key={rq.match_id}
+                                  rq={rq}
+                                  titleLabel={formatReadyQueueLabel(rq)}
+                                  headerRightTop={headerTop}
+                                  headerRightBottom={headerBottom}
+                                  deskMatch={matchById.get(rq.match_id)}
+                                  returning={readyResettingIds.has(rq.match_id)}
+                                  onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
+                                />
                               )
                             })}
                           </div>
@@ -10184,6 +10234,7 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
                 </div>
+                </DndContext>
               </>
             )}
           </div>

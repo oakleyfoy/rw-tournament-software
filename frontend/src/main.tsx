@@ -5,6 +5,12 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./index.css";
 
+// #region agent log
+if (typeof window !== "undefined") {
+  fetch('http://127.0.0.1:7242/ingest/3aa7eda4-e97a-402c-ac3d-b6b632d2544d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId:'pre-fix',hypothesisId:'H9',location:'main.tsx:boot',message:'frontend app boot',data:{href:window.location.href,origin:window.location.origin,pathname:window.location.pathname,host:window.location.host,isSecure:window.isSecureContext,swController:!!navigator.serviceWorker?.controller,apiBase:(import.meta as any)?.env?.VITE_API_BASE_URL||'/api'},timestamp:Date.now()})}).catch(()=>{});
+}
+// #endregion
+
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
