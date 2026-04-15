@@ -117,6 +117,17 @@ import {
   useDraggable,
 } from '@dnd-kit/core'
 
+const SLOT_TINT_PALETTE = [
+  { bg: '#f7fff7', border: '#c8e6c9', accent: '#1b5e20' },
+  { bg: '#e3f2fd', border: '#90caf9', accent: '#0d47a1' },
+  { bg: '#fce4ec', border: '#f8bbd0', accent: '#880e4f' },
+  { bg: '#fff3e0', border: '#ffcc80', accent: '#e65100' },
+  { bg: '#f3e5f5', border: '#ce93d8', accent: '#6a1b9a' },
+]
+
+const getSlotTint = (index: number | null) =>
+  index != null ? SLOT_TINT_PALETTE[index % SLOT_TINT_PALETTE.length] : null
+
 const STAGE_COLORS: Record<string, string> = {
   WF: '#1a237e',
   RR: '#2e7d32',
@@ -8168,7 +8179,7 @@ type CheckInCourtBoardRowData = {
   onDeck?: DeskMatchItem
   displayMatch: DeskMatchItem | null
   isClosed: boolean
-  lane: 'behind' | 'current' | 'open'
+  lane: 'current' | 'open'
   slotLabel: string | null
   startAtLabel: string | null
   elapsedLabel: string | null
@@ -8179,12 +8190,15 @@ function CheckInCourtBoardCard({
   row,
   focusSlotLabel,
   onOpenMatch,
+  slotTintIndex,
 }: {
   row: CheckInCourtBoardRowData
   focusSlotLabel: string | null
   onOpenMatch: (m: DeskMatchItem) => void
+  slotTintIndex: number | null
 }) {
   const match = row.displayMatch
+  const tint = getSlotTint(slotTintIndex)
   const canReceiveReady =
     row.lane === 'open' &&
     !match &&
@@ -8205,7 +8219,7 @@ function CheckInCourtBoardCard({
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
           borderRadius: 10,
           backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fff',
-          minHeight: 160,
+          padding: 12,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -8213,11 +8227,11 @@ function CheckInCourtBoardCard({
           transition: 'background-color 0.15s, border-color 0.15s, box-shadow 0.15s',
         }}
       >
-        <div style={{ fontSize: 22, fontWeight: 800, color: '#37474f', textAlign: 'center', padding: '0 8px' }}>
-          {row.court}
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#37474f' }}>{row.court}</div>
           {canReceiveReady && (
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#1565c0', marginTop: 8 }}>
-              Drop ready match here
+            <div style={{ fontSize: 10, fontWeight: 600, color: '#1565c0', marginTop: 4 }}>
+              Drop here
             </div>
           )}
         </div>
@@ -8227,14 +8241,14 @@ function CheckInCourtBoardCard({
 
   return (
     <div style={{
-      border: '1px solid #c8e6c9',
+      border: `1px solid ${tint?.border || '#c8e6c9'}`,
       borderRadius: 10,
-      backgroundColor: '#f7fff7',
+      backgroundColor: tint?.bg || '#f7fff7',
       padding: 12,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20' }}>{row.court}</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#1b5e20' }}>{row.court}</div>
           {match && (
             <>
               <EventBadge name={match.event_name} />
@@ -8242,7 +8256,7 @@ function CheckInCourtBoardCard({
             </>
           )}
         </div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#1b5e20', textAlign: 'right' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#1b5e20', textAlign: 'right' }}>
           {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
         </div>
       </div>
@@ -8304,6 +8318,7 @@ function CheckInReadyQueueCard({
   deskMatch,
   returning,
   onReturnToCheckIn,
+  slotTintIndex,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -8312,11 +8327,13 @@ function CheckInReadyQueueCard({
   deskMatch?: DeskMatchItem
   returning: boolean
   onReturnToCheckIn: () => void
+  slotTintIndex: number | null
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `checkin-ready-${rq.match_id}`,
     data: { type: 'checkinReady', matchId: rq.match_id },
   })
+  const tint = getSlotTint(slotTintIndex)
 
   return (
     <div
@@ -8324,9 +8341,9 @@ function CheckInReadyQueueCard({
       {...listeners}
       {...attributes}
       style={{
-        border: '1px solid #90caf9',
+        border: `1px solid ${tint?.border || '#90caf9'}`,
         borderRadius: 10,
-        backgroundColor: '#e3f2fd',
+        backgroundColor: tint?.bg || '#e3f2fd',
         padding: 12,
         cursor: 'grab',
         opacity: isDragging ? 0.45 : 1,
@@ -8336,7 +8353,7 @@ function CheckInReadyQueueCard({
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0d47a1' }}>{titleLabel}</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#0d47a1' }}>{titleLabel}</div>
           <EventBadge name={rq.event_name} />
           {deskMatch && (
             <Badge label={deskMatch.stage} bg={STAGE_COLORS[deskMatch.stage] || '#757575'} color="#fff" />
@@ -8355,9 +8372,9 @@ function CheckInReadyQueueCard({
             aria-label="Return to check-in"
             style={{
               flexShrink: 0,
-              width: 36,
-              height: 36,
-              borderRadius: 8,
+              width: 28,
+              height: 28,
+              borderRadius: 6,
               border: '1px solid #f57c00',
               backgroundColor: '#fff3e0',
               color: '#e65100',
@@ -8370,20 +8387,20 @@ function CheckInReadyQueueCard({
             }}
           >
             {returning ? (
-              <span style={{ fontSize: 14, fontWeight: 700 }}>...</span>
+              <span style={{ fontSize: 11, fontWeight: 700 }}>...</span>
             ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
                 <path
                   d="M9 14 4 9l5-5"
                   stroke="currentColor"
-                  strokeWidth="2.2"
+                  strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
                 <path
                   d="M4 9h11a5 5 0 0 1 0 10h-3"
                   stroke="currentColor"
-                  strokeWidth="2.2"
+                  strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
@@ -8391,7 +8408,7 @@ function CheckInReadyQueueCard({
             )}
           </button>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: '#0d47a1' }}>{headerRightTop}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#0d47a1' }}>{headerRightTop}</div>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#607d8b', marginTop: 2 }}>{headerRightBottom}</div>
           </div>
         </div>
@@ -8400,9 +8417,6 @@ function CheckInReadyQueueCard({
         <span>{rq.team1_display}</span>
         <span>vs</span>
         <span>{rq.team2_display}</span>
-      </div>
-      <div style={{ marginTop: 10, fontSize: 11, color: '#607d8b' }}>
-        Drag onto an open court above. Open courts show: Drop ready match here.
       </div>
     </div>
   )
@@ -9391,7 +9405,6 @@ export default function TournamentDeskPage() {
   })?.key ?? slotSections[0]?.key ?? null
   const focusSlotKey = effectiveSelectedCheckInSlotKey === 'all' ? autoFocusSlotKey : effectiveSelectedCheckInSlotKey
   const focusSlotLabel = focusSlotKey ? (slotLabelByKey.get(focusSlotKey) || focusSlotKey) : null
-  const focusSlotIndex = focusSlotKey != null ? (slotOrderByKey.get(focusSlotKey) ?? null) : null
   const preferredAvailableSlots = focusSlotKey
     ? data.available_slots.filter((slot) => slotKeyBySlotId.get(slot.slot_id) === focusSlotKey)
     : data.available_slots
@@ -9517,7 +9530,7 @@ export default function TournamentDeskPage() {
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
     const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === court)
-    let lane: 'behind' | 'current' | 'open' = 'open'
+    let lane: 'current' | 'open' = 'open'
     let slotStateLabel = isClosed ? 'Closed' : 'Open'
     let slotStateColor = isClosed
       ? { bg: '#eceff1', color: '#455a64' }
@@ -9525,14 +9538,7 @@ export default function TournamentDeskPage() {
 
     if (displayMatch) {
       lane = 'current'
-      if (focusSlotIndex != null && matchSlotIndex != null && matchSlotIndex < focusSlotIndex) {
-        lane = 'behind'
-        slotStateLabel = 'Previous Slot'
-        slotStateColor = { bg: '#fff3e0', color: '#e65100' }
-      } else if (focusSlotIndex != null && matchSlotIndex != null && matchSlotIndex > focusSlotIndex) {
-        slotStateLabel = 'Future Slot'
-        slotStateColor = { bg: '#e3f2fd', color: '#1565c0' }
-      } else if (matchSlotKey) {
+      if (matchSlotKey) {
         slotStateLabel = 'Current Slot'
         slotStateColor = { bg: '#e8f5e9', color: '#2e7d32' }
       } else {
@@ -9540,7 +9546,7 @@ export default function TournamentDeskPage() {
         slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
       }
     } else if (!isClosed && availableSlotsForCourt.length > 0) {
-      slotStateLabel = focusSlotKey ? 'Ready For Assignment' : 'Open'
+      slotStateLabel = 'Open'
       slotStateColor = { bg: '#e8f5e9', color: '#2e7d32' }
     }
 
@@ -9554,6 +9560,7 @@ export default function TournamentDeskPage() {
       lane,
       slotKey: matchSlotKey,
       slotLabel: matchSlotKey ? (slotLabelByKey.get(matchSlotKey) || null) : null,
+      slotTintIndex: matchSlotIndex,
       slotStateLabel,
       slotStateColor,
       startAtLabel: formatStartedAtLabel(displayMatch?.started_at),
@@ -9695,6 +9702,10 @@ export default function TournamentDeskPage() {
     if (activeData?.type !== 'checkinReady' || typeof activeData.matchId !== 'number') return
     if (overData?.type !== 'checkinOpenCourt' || !overData.court) return
     const targetRow = courtBoardRows.find((r) => r.court === overData.court)
+    if (targetRow?.displayMatch) {
+      setError('That court already has a match assigned.')
+      return
+    }
     const slotId = targetRow?.availableSlotsForCourt[0]?.slot_id
     if (!slotId) {
       setError('No open assignment slot on that court.')
@@ -10102,6 +10113,7 @@ export default function TournamentDeskPage() {
                               row={row}
                               focusSlotLabel={focusSlotLabel}
                               onOpenMatch={setDrawerMatch}
+                              slotTintIndex={row.slotTintIndex}
                             />
                           ))}
                         </div>
@@ -10124,6 +10136,7 @@ export default function TournamentDeskPage() {
                               row={row}
                               focusSlotLabel={focusSlotLabel}
                               onOpenMatch={setDrawerMatch}
+                              slotTintIndex={null}
                             />
                           ))}
                         </div>
@@ -10210,9 +10223,11 @@ export default function TournamentDeskPage() {
                         ) : (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
                             {filteredReadyQueue.map((rq) => {
-                              const slotLabelResolved = slotKeyByMatchId.get(rq.match_id)
-                                ? slotLabelByKey.get(slotKeyByMatchId.get(rq.match_id)!) || null
+                              const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
+                              const slotLabelResolved = rqSlotKey
+                                ? slotLabelByKey.get(rqSlotKey) || null
                                 : null
+                              const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
                               const headerTop = (slotLabelResolved || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()) || '—'
                               const headerBottom = rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'
                               return (
@@ -10225,6 +10240,7 @@ export default function TournamentDeskPage() {
                                   deskMatch={matchById.get(rq.match_id)}
                                   returning={readyResettingIds.has(rq.match_id)}
                                   onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
+                                  slotTintIndex={rqSlotIndex}
                                 />
                               )
                             })}
