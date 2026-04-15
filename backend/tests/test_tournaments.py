@@ -469,6 +469,53 @@ def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: 
     assert len({t.name.casefold() for t in cloned_teams}) == 2
 
 
+def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient, session: Session):
+    source = Tournament(
+        name="Dup Phone Source",
+        location="Nowhere",
+        timezone="America/New_York",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 2),
+    )
+    session.add(source)
+    session.flush()
+
+    # Source rows can contain whitespace-only phone variants that normalize
+    # to the same phone when cloning.
+    session.add(
+        Player(
+            tournament_id=source.id,
+            full_name="Player A",
+            phone_e164="+14024025437",
+            email="a@example.com",
+            sms_consent_status="unknown",
+        )
+    )
+    session.add(
+        Player(
+            tournament_id=source.id,
+            full_name="Player B",
+            phone_e164="+14024025437 ",
+            email="b@example.com",
+            sms_consent_status="unknown",
+        )
+    )
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201
+    duplicated_id = resp.json()["id"]
+
+    cloned_players = session.exec(
+        select(Player).where(Player.tournament_id == duplicated_id)
+    ).all()
+    assert len(cloned_players) == 2
+    phones = [p.phone_e164 for p in cloned_players]
+    assert "+14024025437" in phones
+    # One duplicate contact must be nulled to satisfy unique phone constraint.
+    assert phones.count(None) == 1
+
+
 def test_print_packet_pdf_downloads_for_womens_and_mixed(client: TestClient, session: Session):
     tournament = Tournament(
         name="Print Packet Test",

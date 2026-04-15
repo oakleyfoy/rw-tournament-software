@@ -1223,25 +1223,50 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
 
         # 4) Copy player/contact graph used by SMS/player targeting.
         player_id_map: dict[int, int] = {}
+        used_player_phones: set[str] = set()
         for player in source_players:
             if player.id is None:
                 continue
-            cloned = Player(
-                tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                full_name=player.full_name,
-                display_name=player.display_name,
-                phone_e164=player.phone_e164,
-                email=player.email,
-                sms_consent_status=player.sms_consent_status,
-                sms_consent_source=player.sms_consent_source,
-                sms_consent_updated_at=player.sms_consent_updated_at,
-                sms_consented_at=player.sms_consented_at,
-                sms_opted_out_at=player.sms_opted_out_at,
-                created_at=player.created_at,
-                updated_at=player.updated_at,
-            )
-            session.add(cloned)
-            session.flush()
+            candidate_phone = (player.phone_e164 or "").strip() or None
+            if candidate_phone and candidate_phone in used_player_phones:
+                candidate_phone = None
+
+            cloned: Optional[Player] = None
+            while True:
+                trial = Player(
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    full_name=player.full_name,
+                    display_name=player.display_name,
+                    phone_e164=candidate_phone,
+                    email=player.email,
+                    sms_consent_status=player.sms_consent_status,
+                    sms_consent_source=player.sms_consent_source,
+                    sms_consent_updated_at=player.sms_consent_updated_at,
+                    sms_consented_at=player.sms_consented_at,
+                    sms_opted_out_at=player.sms_opted_out_at,
+                    created_at=player.created_at,
+                    updated_at=player.updated_at,
+                )
+                try:
+                    with session.begin_nested():
+                        session.add(trial)
+                        session.flush()
+                    cloned = trial
+                    break
+                except IntegrityError as e:
+                    msg = str(e).lower()
+                    if (
+                        "player.tournament_id, player.phone_e164" in msg
+                        or "uq_player_tournament_phone" in msg
+                    ) and candidate_phone is not None:
+                        candidate_phone = None
+                        continue
+                    raise
+
+            if cloned is None:
+                raise HTTPException(status_code=500, detail="Failed to clone player row")
+            if candidate_phone:
+                used_player_phones.add(candidate_phone)
             player_id_map[player.id] = cloned.id  # type: ignore[index]
 
         for link in source_team_players:
