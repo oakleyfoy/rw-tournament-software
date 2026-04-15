@@ -2811,6 +2811,41 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     assert all(cm["match_id"] != m1.id for cm in snap["checkin_matches"])
 
 
+def test_checkin_available_slots_are_scoped_to_active_board_block(client, session):
+    t, v, _ev, _teams, _matches, _slots = _setup_draft_for_move(session)
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    body = snap.json()
+    assert len(body["available_slots"]) > 0
+    assert all(slot["scheduled_time"] == "9:00 AM" for slot in body["available_slots"])
+
+
+def test_checkin_available_slots_exclude_currently_playing_courts(client, session):
+    t, v, _ev, _teams, matches, _slots = _setup_draft_for_move(session)
+
+    matches[0].runtime_status = "IN_PROGRESS"
+    session.add(matches[0])
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    available_courts = {slot["court_name"] for slot in snap.json()["available_slots"]}
+    assert "Court 1" not in available_courts
+
+
 def test_ready_queue_keeps_ready_match_visible_even_if_assignment_source_is_checkin_desk(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     m1 = matches[0]
@@ -3511,6 +3546,21 @@ def test_move_match_to_occupied_slot_returns_409(client, session):
     assert detail["occupant_match_id"] == matches[1].id
 
 
+def test_move_match_rejects_currently_playing_match(client, session):
+    t, v, _ev, _teams, matches, slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+    m1.runtime_status = "IN_PROGRESS"
+    session.add(m1)
+    session.commit()
+
+    resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/move",
+        json={"version_id": v.id, "target_slot_id": slots[2].id},
+    )
+    assert resp.status_code == 409
+    assert "cannot be moved" in resp.json()["detail"]
+
+
 def test_move_rejected_on_final_version(client, session):
     """Move is rejected on a FINAL version."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
@@ -3552,6 +3602,21 @@ def test_swap_two_matches(client, session):
     ).first()
     assert a1.slot_id == slots[1].id  # m1 now on court 2
     assert a2.slot_id == slots[0].id  # m2 now on court 1
+
+
+def test_swap_matches_rejects_currently_playing_match(client, session):
+    t, v, _ev, _teams, matches, _slots = _setup_draft_for_move(session)
+    m1, m2 = matches
+    m1.runtime_status = "PAUSED"
+    session.add(m1)
+    session.commit()
+
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/matches/swap",
+        json={"version_id": v.id, "match_a_id": m1.id, "match_b_id": m2.id},
+    )
+    assert resp.status_code == 409
+    assert "cannot be swapped" in resp.json()["detail"]
 
 
 def test_add_time_slot(client, session):

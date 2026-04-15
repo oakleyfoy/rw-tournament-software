@@ -889,6 +889,12 @@ def _build_checkin_snapshot(
         select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
     ).all()
     slot_map = {s.id: s for s in slots}
+    sorted_slots = sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id))
+
+    def _slot_key_for_slot(slot: ScheduleSlot) -> str:
+        slot_time = slot.start_time.strftime("%H:%M") if hasattr(slot.start_time, "strftime") else str(slot.start_time)[:5]
+        return f"{slot.day_date.isoformat()}|{slot_time}"
+
     slot_sort_key_by_match_id: Dict[int, tuple] = {}
     for match_id, assignment in assignment_map.items():
         slot = slot_map.get(assignment.slot_id)
@@ -1231,10 +1237,50 @@ def _build_checkin_snapshot(
     if not all_courts:
         all_courts = sorted({m.court_name for m in items if m.court_name})
 
+    # Keep Open Courts aligned to the same active board block used operationally.
+    slot_key_by_match_id: Dict[int, str] = {}
+    for match_id, assignment in assignment_map.items():
+        slot = slot_map.get(assignment.slot_id)
+        if not slot:
+            continue
+        slot_key_by_match_id[match_id] = _slot_key_for_slot(slot)
+
+    waiting_slot_keys = {
+        _slot_key_for_slot(slot_map[cm.slot_id])
+        for cm in checkin_matches
+        if not cm.match_ready and cm.slot_id is not None and cm.slot_id in slot_map
+    }
+    ready_slot_keys = {
+        slot_key_by_match_id[r.match_id]
+        for r in ready_items
+        if r.match_id in slot_key_by_match_id
+    }
+    playing_slot_keys = {
+        slot_key_by_match_id[m.match_id]
+        for m in items
+        if m.match_id in slot_key_by_match_id and m.status in ("IN_PROGRESS", "PAUSED")
+    }
+    ordered_slot_keys: List[str] = []
+    seen_slot_keys: set[str] = set()
+    for s in sorted_slots:
+        key = _slot_key_for_slot(s)
+        if key in seen_slot_keys:
+            continue
+        ordered_slot_keys.append(key)
+        seen_slot_keys.add(key)
+    active_slot_key = next(
+        (
+            key
+            for key in ordered_slot_keys
+            if key in waiting_slot_keys or key in ready_slot_keys or key in playing_slot_keys
+        ),
+        ordered_slot_keys[0] if ordered_slot_keys else None,
+    )
+
     checkin_match_map = {cm.match_id: cm for cm in checkin_matches}
     slot_options_by_key: Dict[str, CheckInSlotOption] = {}
     slot_match_ids_by_key: Dict[str, List[int]] = {}
-    for s in sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id)):
+    for s in sorted_slots:
         key = f"{s.day_date.isoformat()}|{s.start_time.strftime('%H:%M')}"
         if key not in slot_options_by_key:
             day_label = _to_day_label(s.day_date)
@@ -1261,7 +1307,9 @@ def _build_checkin_snapshot(
 
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
-    for s in sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id)):
+    for s in sorted_slots:
+        if active_slot_key and _slot_key_for_slot(s) != active_slot_key:
+            continue
         court_label = s.court_label or str(s.court_number)
         court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
         if court_name in used_court:
@@ -4603,6 +4651,11 @@ def move_match(
     match = session.get(Match, match_id)
     if not match or match.schedule_version_id != payload.version_id:
         raise HTTPException(status_code=404, detail="Match not found in version")
+    if (match.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED"):
+        raise HTTPException(
+            status_code=409,
+            detail="Currently playing matches cannot be moved until score/winner is entered.",
+        )
 
     target_slot = session.get(ScheduleSlot, payload.target_slot_id)
     if not target_slot or target_slot.schedule_version_id != payload.version_id:
@@ -4717,6 +4770,16 @@ def swap_matches(
         raise HTTPException(status_code=404, detail="Match A not found in version")
     if not match_b or match_b.schedule_version_id != payload.version_id:
         raise HTTPException(status_code=404, detail="Match B not found in version")
+    if (match_a.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED"):
+        raise HTTPException(
+            status_code=409,
+            detail="Currently playing matches cannot be swapped until score/winner is entered.",
+        )
+    if (match_b.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED"):
+        raise HTTPException(
+            status_code=409,
+            detail="Currently playing matches cannot be swapped until score/winner is entered.",
+        )
 
     assign_a = session.exec(
         select(MatchAssignment).where(

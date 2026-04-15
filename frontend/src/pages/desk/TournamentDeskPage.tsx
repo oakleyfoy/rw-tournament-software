@@ -9451,6 +9451,16 @@ export default function TournamentDeskPage() {
     ? data.available_slots.filter((slot) => slotKeyBySlotId.get(slot.slot_id) === focusSlotKey)
     : data.available_slots
   const visibleReadyAssignSlots = preferredAvailableSlots.length > 0 ? preferredAvailableSlots : data.available_slots
+  const rawOccupiedByCourt = new Map<string, number>()
+  data.courts.forEach((court) => {
+    const nowRaw = data.now_playing_by_court[court]
+    const upNextRaw = data.up_next_by_court[court]
+    const onDeckRaw = data.on_deck_by_court[court]
+    rawOccupiedByCourt.set(
+      court,
+      [nowRaw, upNextRaw, onDeckRaw].filter((m): m is DeskMatchItem => !!m).length
+    )
+  })
 
   const buildFallbackDeskMatch = (cm: CheckInMatchItem): DeskMatchItem => ({
     match_id: cm.match_id,
@@ -9753,6 +9763,11 @@ export default function TournamentDeskPage() {
     if (activeData?.type !== 'checkinReady' || typeof activeData.matchId !== 'number') return
     if (overData?.type !== 'checkinOpenCourt' || !overData.court) return
     const targetRow = courtBoardRows.find((r) => r.court === overData.court)
+    const rawOccupancyCount = rawOccupiedByCourt.get(overData.court) || 0
+    if (rawOccupancyCount > 0) {
+      setError('That court is occupied right now.')
+      return
+    }
     if (targetRow?.displayMatch) {
       setError('That court already has a match assigned.')
       return
@@ -10151,7 +10166,7 @@ export default function TournamentDeskPage() {
                 <div style={{ display: 'grid', gap: 14 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
-                      Current Slot Courts
+                      Currently Playing
                     </div>
                     <div style={{ padding: 12 }}>
                       {currentCourtRows.length === 0 ? (
