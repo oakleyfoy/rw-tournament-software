@@ -9451,15 +9451,9 @@ export default function TournamentDeskPage() {
     ? data.available_slots.filter((slot) => slotKeyBySlotId.get(slot.slot_id) === focusSlotKey)
     : data.available_slots
   const visibleReadyAssignSlots = preferredAvailableSlots.length > 0 ? preferredAvailableSlots : data.available_slots
-  const rawOccupiedByCourt = new Map<string, number>()
+  const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
   data.courts.forEach((court) => {
-    const nowRaw = data.now_playing_by_court[court]
-    const upNextRaw = data.up_next_by_court[court]
-    const onDeckRaw = data.on_deck_by_court[court]
-    rawOccupiedByCourt.set(
-      court,
-      [nowRaw, upNextRaw, onDeckRaw].filter((m): m is DeskMatchItem => !!m).length
-    )
+    rawNowPlayingByCourt.set(court, data.now_playing_by_court[court])
   })
 
   const buildFallbackDeskMatch = (cm: CheckInMatchItem): DeskMatchItem => ({
@@ -9763,8 +9757,8 @@ export default function TournamentDeskPage() {
     if (activeData?.type !== 'checkinReady' || typeof activeData.matchId !== 'number') return
     if (overData?.type !== 'checkinOpenCourt' || !overData.court) return
     const targetRow = courtBoardRows.find((r) => r.court === overData.court)
-    const rawOccupancyCount = rawOccupiedByCourt.get(overData.court) || 0
-    if (rawOccupancyCount > 0) {
+    const rawNowPlaying = rawNowPlayingByCourt.get(overData.court)
+    if (rawNowPlaying) {
       setError('That court is occupied right now.')
       return
     }
