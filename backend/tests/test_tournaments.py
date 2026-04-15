@@ -424,6 +424,51 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
     assert cloned_templates[0].template_body == "Custom on deck"
 
 
+def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: TestClient, session: Session):
+    source = Tournament(
+        name="Dup Name Source",
+        location="Nowhere",
+        timezone="America/New_York",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 2),
+    )
+    session.add(source)
+    session.flush()
+
+    event = Event(
+        tournament_id=source.id,
+        category="mixed",
+        name="Mixed A",
+        team_count=2,
+    )
+    session.add(event)
+    session.flush()
+
+    # Two source names that differ only by trailing spaces are valid source data
+    # but normalize to the same base display name during clone.
+    session.add(Team(event_id=event.id, name="Dee Dee / Dennis", seed=1))
+    session.add(Team(event_id=event.id, name="Dee Dee / Dennis  ", seed=2))
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201
+    duplicated_id = resp.json()["id"]
+
+    cloned_event = session.exec(
+        select(Event).where(Event.tournament_id == duplicated_id, Event.name == "Mixed A")
+    ).first()
+    assert cloned_event is not None
+
+    cloned_teams = session.exec(
+        select(Team).where(Team.event_id == cloned_event.id)
+    ).all()
+    assert len(cloned_teams) == 2
+    names = sorted(t.name for t in cloned_teams)
+    assert names[0] == "Dee Dee / Dennis"
+    assert names[1].startswith("Dee Dee / Dennis (")
+    assert len({t.name.casefold() for t in cloned_teams}) == 2
+
+
 def test_print_packet_pdf_downloads_for_womens_and_mixed(client: TestClient, session: Session):
     tournament = Tournament(
         name="Print Packet Test",

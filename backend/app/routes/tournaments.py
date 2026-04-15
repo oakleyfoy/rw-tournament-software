@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select, text
 
 from app.database import get_session
@@ -1136,35 +1137,72 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             event_id_map[event.id] = cloned.id  # type: ignore[index]
 
         team_id_map: dict[int, int] = {}
+        used_team_name_keys_by_event: dict[int, set[str]] = {}
+        used_team_seeds_by_event: dict[int, set[int]] = {}
         for team in source_teams:
             if team.id is None:
                 continue
             mapped_event_id = event_id_map.get(team.event_id)
             if mapped_event_id is None:
                 continue
-            cloned = Team(
-                event_id=mapped_event_id,
-                name=team.name,
-                seed=team.seed,
-                rating=team.rating,
-                registration_timestamp=team.registration_timestamp,
-                wf_group_index=team.wf_group_index,
-                avoid_group=team.avoid_group,
-                display_name=team.display_name,
-                player1_cellphone=team.player1_cellphone,
-                player1_email=team.player1_email,
-                player2_cellphone=team.player2_cellphone,
-                player2_email=team.player2_email,
-                p1_cell=team.p1_cell,
-                p1_email=team.p1_email,
-                p2_cell=team.p2_cell,
-                p2_email=team.p2_email,
-                is_defaulted=team.is_defaulted,
-                notes=team.notes,
-                created_at=team.created_at,
-            )
-            session.add(cloned)
-            session.flush()
+            used_name_keys = used_team_name_keys_by_event.setdefault(mapped_event_id, set())
+            used_seeds = used_team_seeds_by_event.setdefault(mapped_event_id, set())
+            base_name = (team.name or "").strip() or f"Team {team.id}"
+            suffix = 2
+            candidate_name = base_name
+            while candidate_name.casefold() in used_name_keys:
+                candidate_name = f"{base_name} ({suffix})"
+                suffix += 1
+            candidate_seed = team.seed if team.seed is not None and team.seed not in used_seeds else None
+
+            cloned: Optional[Team] = None
+            while True:
+                trial = Team(
+                    event_id=mapped_event_id,
+                    name=candidate_name,
+                    seed=candidate_seed,
+                    rating=team.rating,
+                    registration_timestamp=team.registration_timestamp,
+                    wf_group_index=team.wf_group_index,
+                    avoid_group=team.avoid_group,
+                    display_name=team.display_name,
+                    player1_cellphone=team.player1_cellphone,
+                    player1_email=team.player1_email,
+                    player2_cellphone=team.player2_cellphone,
+                    player2_email=team.player2_email,
+                    p1_cell=team.p1_cell,
+                    p1_email=team.p1_email,
+                    p2_cell=team.p2_cell,
+                    p2_email=team.p2_email,
+                    is_defaulted=team.is_defaulted,
+                    notes=team.notes,
+                    created_at=team.created_at,
+                )
+                try:
+                    with session.begin_nested():
+                        session.add(trial)
+                        session.flush()
+                    cloned = trial
+                    break
+                except IntegrityError as e:
+                    msg = str(e).lower()
+                    if "team.event_id, team.name" in msg or "uq_event_team_name" in msg:
+                        candidate_name = f"{base_name} ({suffix})"
+                        suffix += 1
+                        continue
+                    if (
+                        "team.event_id, team.seed" in msg
+                        or "uq_event_seed" in msg
+                    ) and candidate_seed is not None:
+                        candidate_seed = None
+                        continue
+                    raise
+
+            if cloned is None:
+                raise HTTPException(status_code=500, detail="Failed to clone team row")
+            used_name_keys.add(candidate_name.casefold())
+            if candidate_seed is not None:
+                used_seeds.add(candidate_seed)
             team_id_map[team.id] = cloned.id  # type: ignore[index]
 
         for edge in source_avoid_edges:
