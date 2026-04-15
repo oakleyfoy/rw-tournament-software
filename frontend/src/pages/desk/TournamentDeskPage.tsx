@@ -4699,7 +4699,15 @@ function timeTo12Hour(t: string) {
   return `${h12}:${mm.toString().padStart(2, '0')} ${ampm}`
 }
 
-function DroppableCell({ slotId, children }: { slotId: number; children: React.ReactNode }) {
+function DroppableCell({
+  slotId,
+  children,
+  baseBackgroundColor = '#fff',
+}: {
+  slotId: number
+  children: React.ReactNode
+  baseBackgroundColor?: string
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: `slot-${slotId}` })
   return (
     <td
@@ -4708,7 +4716,7 @@ function DroppableCell({ slotId, children }: { slotId: number; children: React.R
         padding: 3,
         borderBottom: '1px solid #eee',
         borderRight: '1px solid #f0f0f0',
-        backgroundColor: isOver ? '#e8f5e9' : '#fff',
+        backgroundColor: isOver ? '#e8f5e9' : baseBackgroundColor,
         verticalAlign: 'top',
         minWidth: 130,
         transition: 'background-color 0.15s',
@@ -5301,18 +5309,23 @@ function DeskGridTab({
               </tr>
             </thead>
             <tbody>
-              {timeRows.map(row => (
+              {timeRows.map((row, rowIndex) => {
+                const rowTint = getSlotTint(rowIndex)
+                const rowHeaderBg = rowTint?.accent || '#546e7a'
+                const rowCellBg = rowTint?.bg || '#fff'
+                return (
                 <tr key={row.time}>
                   <td style={{
                     position: 'sticky',
                     left: 0,
-                    background: '#fff',
+                    background: rowHeaderBg,
                     padding: '6px',
                     borderBottom: '1px solid #eee',
                     fontWeight: 600,
                     whiteSpace: 'nowrap',
                     zIndex: 1,
                     fontSize: 11,
+                    color: '#fff',
                   }}>
                     {timeTo12Hour(row.time)}
                   </td>
@@ -5327,6 +5340,7 @@ function DeskGridTab({
                           textAlign: 'center',
                           color: '#ccc',
                           fontSize: 10,
+                          backgroundColor: rowCellBg,
                         }}>
                           —
                         </td>
@@ -5352,7 +5366,7 @@ function DeskGridTab({
                     }
 
                     return (
-                      <DroppableCell key={cn} slotId={slot.slot_id}>
+                      <DroppableCell key={cn} slotId={slot.slot_id} baseBackgroundColor={rowCellBg}>
                         {match ? (
                           <DraggableMatch match={match} isDraft={isDraft} onMatchClick={onMatchClick} highlighted={highlightedMatchIds?.has(match.match_id)} allMatches={data.matches} />
                         ) : (
@@ -5372,7 +5386,7 @@ function DeskGridTab({
                     )
                   })}
                 </tr>
-              ))}
+              )})}
               {timeRows.length === 0 && (
                 <tr>
                   <td colSpan={courtNumbers.length + 1} style={{ padding: 20, textAlign: 'center', color: '#999', fontSize: 12 }}>
