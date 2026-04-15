@@ -8377,7 +8377,7 @@ function CheckInReadyQueueCard({
   onReturnToCheckIn: () => void
   slotTintIndex: number | null
 }) {
-  const { attributes, listeners, setNodeRef, isDragging, transform, transition } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({
     id: `checkin-ready-${rq.match_id}`,
     data: { type: 'checkinReady', matchId: rq.match_id },
   })
@@ -8400,7 +8400,6 @@ function CheckInReadyQueueCard({
         userSelect: 'none',
         boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
-        transition,
         position: isDragging ? 'relative' : undefined,
         zIndex: isDragging ? 30 : undefined,
       }}
