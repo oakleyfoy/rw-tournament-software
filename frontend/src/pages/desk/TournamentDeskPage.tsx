@@ -8228,28 +8228,34 @@ function CheckInCourtBoardCard({
         <div style={{
           backgroundColor: canReceiveReady && isOver ? '#1565c0' : '#546e7a',
           color: '#fff',
-          padding: '5px 10px',
+          padding: '5px 8px',
           fontSize: 12,
           fontWeight: 700,
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
+          gap: 4,
+          minWidth: 0,
         }}>
-          <span>{row.court}</span>
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.court.replace(/^Court\s+/i, 'Ct ')}</span>
           {canReceiveReady && (
-            <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.85 }}>Drop here</span>
+            <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, whiteSpace: 'nowrap', flexShrink: 0 }}>Drop</span>
           )}
         </div>
-        {/* body */}
+        {/* body — same minHeight as playing card */}
         <div style={{
           backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fafcfe',
-          padding: '5px 8px 6px',
+          padding: '5px 7px 6px',
+          minHeight: 88,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           textAlign: 'center',
           fontSize: 10,
           color: '#90a4ae',
           fontStyle: 'italic',
         }}>
-          {canReceiveReady ? 'Drop here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
+          {canReceiveReady ? 'Drag a ready match here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
         </div>
       </div>
     )
@@ -8266,15 +8272,17 @@ function CheckInCourtBoardCard({
       <div style={{
         backgroundColor: headerBg,
         color: '#fff',
-        padding: '5px 10px',
+        padding: '5px 8px',
         fontSize: 12,
         fontWeight: 700,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        gap: 4,
+        minWidth: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span>{row.court}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', minWidth: 0, overflow: 'hidden' }}>
+          <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{row.court.replace(/^Court\s+/i, 'Ct ')}</span>
           {match && (
             <>
               <EventBadge name={match.event_name} />
@@ -8282,42 +8290,52 @@ function CheckInCourtBoardCard({
             </>
           )}
         </div>
-        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>
-          {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
+        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join('\u00a0') : ''}
         </span>
       </div>
-      {/* body */}
-      <div style={{ backgroundColor: '#fff', padding: '6px 8px 8px' }}>
+      {/* body — fixed min-height so all cards stay the same size */}
+      <div style={{ backgroundColor: '#fff', padding: '5px 7px 6px', minHeight: 88, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         {match ? (
           <>
-            <div style={{ color: '#1a1a1a', fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>
-              {match.team1_display}
-            </div>
-            <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
-            <div style={{ color: '#1a1a1a', fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>
-              {match.team2_display}
+            <div>
+              <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {match.team1_display}
+              </div>
+              <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
+              <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {match.team2_display}
+              </div>
+              {(row.startAtLabel || row.elapsedLabel) && (
+                <div style={{ marginTop: 3, fontSize: 9, color: '#607d8b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {row.startAtLabel && <span>▶ {row.startAtLabel}</span>}
+                  {row.startAtLabel && row.elapsedLabel && <span style={{ margin: '0 3px' }}>·</span>}
+                  {row.elapsedLabel && <span>{row.elapsedLabel}</span>}
+                </div>
+              )}
             </div>
             <button
               type="button"
               onClick={() => onOpenMatch(match)}
               style={{
-                marginTop: 6,
+                marginTop: 5,
                 width: '100%',
-                padding: '4px 8px',
+                padding: '3px 6px',
                 border: 'none',
-                borderRadius: 5,
+                borderRadius: 4,
                 backgroundColor: '#2e7d32',
                 color: '#fff',
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: 800,
                 cursor: 'pointer',
+                whiteSpace: 'nowrap',
               }}
             >
               Open Match
             </button>
           </>
         ) : (
-          <div style={{ fontSize: 11, color: '#607d8b', fontStyle: 'italic' }}>
+          <div style={{ fontSize: 10, color: '#607d8b', fontStyle: 'italic' }}>
             {row.isClosed ? 'Court closed.' : 'Open — no active match.'}
           </div>
         )}
@@ -8373,15 +8391,17 @@ function CheckInReadyQueueCard({
       <div style={{
         backgroundColor: accentColor,
         color: '#fff',
-        padding: '5px 10px',
+        padding: '5px 8px',
         fontSize: 12,
         fontWeight: 700,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        gap: 4,
+        minWidth: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span>{titleLabel}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', minWidth: 0, overflow: 'hidden' }}>
+          <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{titleLabel}</span>
           <EventBadge name={rq.event_name} />
           {deskMatch && (
             <Badge label={deskMatch.stage} bg={STAGE_COLORS[deskMatch.stage] || '#757575'} color="#fff" />
@@ -8400,9 +8420,9 @@ function CheckInReadyQueueCard({
           aria-label="Return to check-in"
           style={{
             flexShrink: 0,
-            width: 24,
-            height: 24,
-            borderRadius: 5,
+            width: 22,
+            height: 22,
+            borderRadius: 4,
             border: '1px solid rgba(255,255,255,0.5)',
             backgroundColor: 'rgba(255,255,255,0.15)',
             color: '#fff',
@@ -8417,26 +8437,28 @@ function CheckInReadyQueueCard({
           {returning ? (
             <span style={{ fontSize: 10, fontWeight: 700 }}>...</span>
           ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
               <path d="M9 14 4 9l5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           )}
         </button>
       </div>
-      {/* body */}
-      <div style={{ backgroundColor: '#fff', padding: '8px 10px 10px' }}>
-        <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
-          {headerRightTop}
+      {/* body — same minHeight as court card so both card types are identical height */}
+      <div style={{ backgroundColor: '#fff', padding: '5px 7px 6px', minHeight: 88, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {headerRightTop}
+          </div>
+          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {rq.team1_display}
+          </div>
+          <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
+          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {rq.team2_display}
+          </div>
         </div>
-        <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
-          {rq.team1_display}
-        </div>
-        <div style={{ color: '#999', fontSize: 10, margin: '2px 0' }}>vs</div>
-        <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
-          {rq.team2_display}
-        </div>
-        <div style={{ marginTop: 4, fontSize: 10, color: '#607d8b' }}>{headerRightBottom}</div>
+        <div style={{ fontSize: 9, color: '#607d8b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{headerRightBottom}</div>
       </div>
     </div>
   )
