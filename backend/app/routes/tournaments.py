@@ -1458,22 +1458,40 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             )
 
         if source_sms_settings:
-            session.add(
-                TournamentSmsSettings(
-                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                    auto_first_match=source_sms_settings.auto_first_match,
-                    auto_post_match_next=source_sms_settings.auto_post_match_next,
-                    auto_on_deck=source_sms_settings.auto_on_deck,
-                    auto_up_next=source_sms_settings.auto_up_next,
-                    auto_court_change=source_sms_settings.auto_court_change,
-                    texts_enabled=getattr(source_sms_settings, "texts_enabled", True),
-                    test_mode=source_sms_settings.test_mode,
-                    test_allowlist=source_sms_settings.test_allowlist,
-                    player_contacts_only=source_sms_settings.player_contacts_only,
-                    created_at=source_sms_settings.created_at,
-                    updated_at=source_sms_settings.updated_at,
+            existing_sms_settings = session.exec(
+                select(TournamentSmsSettings).where(
+                    TournamentSmsSettings.tournament_id == new_tournament.id  # type: ignore[arg-type]
                 )
-            )
+            ).first()
+            if existing_sms_settings:
+                existing_sms_settings.auto_first_match = source_sms_settings.auto_first_match
+                existing_sms_settings.auto_post_match_next = source_sms_settings.auto_post_match_next
+                existing_sms_settings.auto_on_deck = source_sms_settings.auto_on_deck
+                existing_sms_settings.auto_up_next = source_sms_settings.auto_up_next
+                existing_sms_settings.auto_court_change = source_sms_settings.auto_court_change
+                existing_sms_settings.texts_enabled = getattr(source_sms_settings, "texts_enabled", True)
+                existing_sms_settings.test_mode = source_sms_settings.test_mode
+                existing_sms_settings.test_allowlist = source_sms_settings.test_allowlist
+                existing_sms_settings.player_contacts_only = source_sms_settings.player_contacts_only
+                existing_sms_settings.updated_at = source_sms_settings.updated_at
+                session.add(existing_sms_settings)
+            else:
+                session.add(
+                    TournamentSmsSettings(
+                        tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                        auto_first_match=source_sms_settings.auto_first_match,
+                        auto_post_match_next=source_sms_settings.auto_post_match_next,
+                        auto_on_deck=source_sms_settings.auto_on_deck,
+                        auto_up_next=source_sms_settings.auto_up_next,
+                        auto_court_change=source_sms_settings.auto_court_change,
+                        texts_enabled=getattr(source_sms_settings, "texts_enabled", True),
+                        test_mode=source_sms_settings.test_mode,
+                        test_allowlist=source_sms_settings.test_allowlist,
+                        player_contacts_only=source_sms_settings.player_contacts_only,
+                        created_at=source_sms_settings.created_at,
+                        updated_at=source_sms_settings.updated_at,
+                    )
+                )
 
         # Source data may contain historical duplicate message types; keep the
         # latest template per type and upsert into the destination tournament.
