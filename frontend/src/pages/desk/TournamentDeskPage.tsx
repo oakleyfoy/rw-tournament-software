@@ -10195,7 +10195,7 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)', gap: 14, alignItems: 'start' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
                     <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                       <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
                         Waiting For Check-In
