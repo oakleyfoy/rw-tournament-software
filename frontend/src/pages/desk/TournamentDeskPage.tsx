@@ -9529,7 +9529,9 @@ export default function TournamentDeskPage() {
     const displayMatch = now || upNext || onDeck || null
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
-    const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === court)
+    const availableSlotsForCourt = visibleReadyAssignSlots.filter(
+      (slot) => slot.court_name === court && slot.currently_assigned_match_id === null
+    )
     let lane: 'current' | 'open' = 'open'
     let slotStateLabel = isClosed ? 'Closed' : 'Open'
     let slotStateColor = isClosed
@@ -10106,7 +10108,7 @@ export default function TournamentDeskPage() {
                       {currentCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>No active courts in this view yet.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
                           {currentCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
@@ -10129,7 +10131,7 @@ export default function TournamentDeskPage() {
                       {openCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>All courts currently have an assignment or are hidden by status.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
                           {openCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
@@ -10144,7 +10146,7 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)', gap: 14, alignItems: 'start' }}>
                     <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                       <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
                         Waiting For Check-In
@@ -10221,7 +10223,7 @@ export default function TournamentDeskPage() {
                         {filteredReadyQueue.length === 0 ? (
                           <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting right now.</div>
                         ) : (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
                             {filteredReadyQueue.map((rq) => {
                               const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
                               const slotLabelResolved = rqSlotKey
