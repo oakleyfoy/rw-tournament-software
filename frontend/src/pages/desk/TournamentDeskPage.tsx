@@ -9551,10 +9551,17 @@ export default function TournamentDeskPage() {
     slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
   ))
 
+  // Matches in the ready queue are waiting for court assignment; they should
+  // not count as occupying a court on the board (which would make that court
+  // appear "current" and then pop to "open" when dragged away).
+  const readyMatchIds = new Set((data.ready_queue || []).map((rq) => rq.match_id))
+
   const courtBoardRows = data.courts.map((court) => {
     const now = data.now_playing_by_court[court]
-    const upNext = data.up_next_by_court[court]
-    const onDeck = data.on_deck_by_court[court]
+    const upNextRaw = data.up_next_by_court[court]
+    const onDeckRaw = data.on_deck_by_court[court]
+    const upNext = upNextRaw && !readyMatchIds.has(upNextRaw.match_id) ? upNextRaw : undefined
+    const onDeck = onDeckRaw && !readyMatchIds.has(onDeckRaw.match_id) ? onDeckRaw : undefined
     const courtLabel = court.replace(/^Court\s+/i, '')
     const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
     const displayMatch = now || upNext || onDeck || null

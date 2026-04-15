@@ -2396,6 +2396,13 @@ def assign_ready_match_to_slot(
 
     assigned_slot_id = effective_slot_id
     if target_assignment and target_assignment.match_id != payload.match_id:
+        # Refuse to displace a match that is actively in progress or paused.
+        occupant_match = session.get(Match, target_assignment.match_id)
+        if occupant_match and (occupant_match.runtime_status or "").upper() in ("IN_PROGRESS", "PAUSED"):
+            raise HTTPException(
+                status_code=409,
+                detail="That court already has an active match in progress; cannot assign here.",
+            )
         # In check-in mode, chosen courts may still carry preplanned assignments.
         # Park the occupant into any currently unoccupied slot so this court can
         # be used immediately by the ready match.
