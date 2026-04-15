@@ -8243,13 +8243,13 @@ function CheckInCourtBoardCard({
         {/* body */}
         <div style={{
           backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fafcfe',
-          padding: '10px 10px 12px',
+          padding: '5px 8px 6px',
           textAlign: 'center',
-          fontSize: 11,
+          fontSize: 10,
           color: '#90a4ae',
           fontStyle: 'italic',
         }}>
-          {canReceiveReady ? 'Drag a ready match here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
+          {canReceiveReady ? 'Drop here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
         </div>
       </div>
     )
@@ -8282,53 +8282,27 @@ function CheckInCourtBoardCard({
             </>
           )}
         </div>
-        <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.85 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>
           {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
         </span>
       </div>
       {/* body */}
-      <div style={{ backgroundColor: '#fff', padding: '8px 10px 10px' }}>
+      <div
+        style={{ backgroundColor: '#fff', padding: '5px 8px 6px', cursor: match ? 'pointer' : 'default' }}
+        onClick={() => match && onOpenMatch(match)}
+      >
         {match ? (
           <>
-            <div style={{ fontSize: 9, fontWeight: 700, color: '#e65100', textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.5 }}>
-              Now Playing
-            </div>
-            <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
+            <div style={{ color: '#1a1a1a', fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>
               {match.team1_display}
             </div>
-            <div style={{ color: '#999', fontSize: 10, margin: '2px 0' }}>vs</div>
-            <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
+            <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
+            <div style={{ color: '#1a1a1a', fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>
               {match.team2_display}
             </div>
-            {(row.startAtLabel || row.elapsedLabel) && (
-              <div style={{ marginTop: 6, fontSize: 10, color: '#607d8b', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {row.startAtLabel && <span>Start: {row.startAtLabel}</span>}
-                {row.elapsedLabel && <span>{match.status === 'FINAL' ? `Total: ${row.elapsedLabel}` : `Running: ${row.elapsedLabel}`}</span>}
-              </div>
-            )}
-            {(row.now || row.upNext || row.onDeck) && (
-              <button
-                type="button"
-                onClick={() => onOpenMatch(match)}
-                style={{
-                  marginTop: 8,
-                  width: '100%',
-                  padding: '6px 10px',
-                  border: 'none',
-                  borderRadius: 6,
-                  backgroundColor: '#2e7d32',
-                  color: '#fff',
-                  fontSize: 12,
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                }}
-              >
-                Open Match
-              </button>
-            )}
           </>
         ) : (
-          <div style={{ fontSize: 12, color: '#607d8b', fontStyle: 'italic' }}>
+          <div style={{ fontSize: 11, color: '#607d8b', fontStyle: 'italic' }}>
             {row.isClosed ? 'Court closed.' : 'Open — no active match.'}
           </div>
         )}
@@ -10146,7 +10120,7 @@ export default function TournamentDeskPage() {
                       {currentCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>No active courts in this view yet.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 8 }}>
                           {currentCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
@@ -10169,7 +10143,7 @@ export default function TournamentDeskPage() {
                       {openCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>All courts currently have an assignment or are hidden by status.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: 8 }}>
                           {openCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
