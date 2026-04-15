@@ -1307,29 +1307,39 @@ def _build_checkin_snapshot(
 
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
-    for s in sorted_slots:
-        if active_slot_key and _slot_key_for_slot(s) != active_slot_key:
-            continue
-        court_label = s.court_label or str(s.court_number)
+
+    def _append_available_slot(slot: ScheduleSlot) -> None:
+        court_label = slot.court_label or str(slot.court_number)
         court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
         if court_name in used_court:
-            continue
+            return
         if court_name in active_courts or court_name in closed_courts:
-            continue
-        a = assignment_by_slot.get(s.id)
+            return
+        a = assignment_by_slot.get(slot.id)
         # A court is considered unavailable only when it is actively in use
         # (handled by active_courts above) or manually closed.
         # Pre-assigned future matches should not block immediate assignment.
         available_slots.append(
             AvailableCourtSlot(
-                slot_id=s.id,
+                slot_id=slot.id,
                 court_name=court_name,
-                day_label=_to_day_label(s.day_date),
-                scheduled_time=_to_sched_label(s.start_time),
+                day_label=_to_day_label(slot.day_date),
+                scheduled_time=_to_sched_label(slot.start_time),
                 currently_assigned_match_id=a.match_id if a else None,
             )
         )
         used_court.add(court_name)
+
+    # Primary pass: use the active board block.
+    if active_slot_key:
+        for s in sorted_slots:
+            if _slot_key_for_slot(s) == active_slot_key:
+                _append_available_slot(s)
+
+    # Fallback: if a non-active/non-closed court has no slot in the active block,
+    # keep it assignable by exposing the earliest slot for that court.
+    for s in sorted_slots:
+        _append_available_slot(s)
 
     available_courts = [s.court_name for s in available_slots]
     # region agent log
