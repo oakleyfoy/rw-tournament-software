@@ -8188,12 +8188,11 @@ type CheckInCourtBoardRowData = {
 
 function CheckInCourtBoardCard({
   row,
-  focusSlotLabel,
   onOpenMatch,
   slotTintIndex,
 }: {
   row: CheckInCourtBoardRowData
-  focusSlotLabel: string | null
+  focusSlotLabel?: string | null
   onOpenMatch: (m: DeskMatchItem) => void
   slotTintIndex: number | null
 }) {
@@ -8211,29 +8210,46 @@ function CheckInCourtBoardCard({
     data: { type: 'checkinOpenCourt', court: row.court },
   })
 
+  const headerBg = tint?.accent || '#1a237e'
+
   if (!match && !row.isClosed) {
     return (
       <div
         ref={setNodeRef}
         style={{
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
-          borderRadius: 10,
-          backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fff',
-          padding: 12,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          borderRadius: 8,
+          overflow: 'hidden',
           boxShadow: canReceiveReady && isOver ? '0 2px 12px rgba(21, 101, 192, 0.2)' : '0 1px 3px rgba(15, 23, 42, 0.06)',
           transition: 'background-color 0.15s, border-color 0.15s, box-shadow 0.15s',
         }}
       >
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#37474f' }}>{row.court}</div>
+        {/* dark header */}
+        <div style={{
+          backgroundColor: canReceiveReady && isOver ? '#1565c0' : '#546e7a',
+          color: '#fff',
+          padding: '5px 10px',
+          fontSize: 12,
+          fontWeight: 700,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <span>{row.court}</span>
           {canReceiveReady && (
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#1565c0', marginTop: 4 }}>
-              Drop here
-            </div>
+            <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.85 }}>Drop here</span>
           )}
+        </div>
+        {/* body */}
+        <div style={{
+          backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fafcfe',
+          padding: '10px 10px 12px',
+          textAlign: 'center',
+          fontSize: 11,
+          color: '#90a4ae',
+          fontStyle: 'italic',
+        }}>
+          {canReceiveReady ? 'Drag a ready match here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
         </div>
       </div>
     )
@@ -8242,13 +8258,23 @@ function CheckInCourtBoardCard({
   return (
     <div style={{
       border: `1px solid ${tint?.border || '#c8e6c9'}`,
-      borderRadius: 10,
-      backgroundColor: tint?.bg || '#f7fff7',
-      padding: 12,
+      borderRadius: 8,
+      overflow: 'hidden',
+      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+      {/* dark header bar */}
+      <div style={{
+        backgroundColor: headerBg,
+        color: '#fff',
+        padding: '5px 10px',
+        fontSize: 12,
+        fontWeight: 700,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#1b5e20' }}>{row.court}</div>
+          <span>{row.court}</span>
           {match && (
             <>
               <EventBadge name={match.event_name} />
@@ -8256,56 +8282,57 @@ function CheckInCourtBoardCard({
             </>
           )}
         </div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#1b5e20', textAlign: 'right' }}>
+        <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.85 }}>
           {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join(' ') : ''}
-        </div>
+        </span>
       </div>
-      {match ? (
-        <>
-          <div style={{ marginTop: 4, color: '#37474f', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 15, fontWeight: 700 }}>
-            <span>{match.team1_display}</span>
-            <span>vs</span>
-            <span>{match.team2_display}</span>
-          </div>
-          {(row.startAtLabel || row.elapsedLabel) && (
-            <div style={{ marginTop: 8, fontSize: 11, color: '#607d8b', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {row.startAtLabel && <span>Start: {row.startAtLabel}</span>}
-              {row.elapsedLabel && <span>{match.status === 'FINAL' ? `Total: ${row.elapsedLabel}` : `Running: ${row.elapsedLabel}`}</span>}
+      {/* body */}
+      <div style={{ backgroundColor: '#fff', padding: '8px 10px 10px' }}>
+        {match ? (
+          <>
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#e65100', textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.5 }}>
+              Now Playing
             </div>
-          )}
-          {(row.now || row.upNext || row.onDeck) && (
-            <button
-              type="button"
-              onClick={() => onOpenMatch(match)}
-              style={{
-                marginTop: 10,
-                width: '100%',
-                padding: '7px 10px',
-                border: 'none',
-                borderRadius: 6,
-                backgroundColor: '#2e7d32',
-                color: '#fff',
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: 'pointer',
-              }}
-            >
-              Open Match
-            </button>
-          )}
-        </>
-      ) : (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: row.isClosed ? '#607d8b' : '#2e7d32' }}>
-            {row.isClosed ? 'Court closed right now.' : 'Open court.'}
+            <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
+              {match.team1_display}
+            </div>
+            <div style={{ color: '#999', fontSize: 10, margin: '2px 0' }}>vs</div>
+            <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
+              {match.team2_display}
+            </div>
+            {(row.startAtLabel || row.elapsedLabel) && (
+              <div style={{ marginTop: 6, fontSize: 10, color: '#607d8b', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {row.startAtLabel && <span>Start: {row.startAtLabel}</span>}
+                {row.elapsedLabel && <span>{match.status === 'FINAL' ? `Total: ${row.elapsedLabel}` : `Running: ${row.elapsedLabel}`}</span>}
+              </div>
+            )}
+            {(row.now || row.upNext || row.onDeck) && (
+              <button
+                type="button"
+                onClick={() => onOpenMatch(match)}
+                style={{
+                  marginTop: 8,
+                  width: '100%',
+                  padding: '6px 10px',
+                  border: 'none',
+                  borderRadius: 6,
+                  backgroundColor: '#2e7d32',
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Open Match
+              </button>
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: '#607d8b', fontStyle: 'italic' }}>
+            {row.isClosed ? 'Court closed.' : 'Open — no active match.'}
           </div>
-          <div style={{ marginTop: 4, fontSize: 11, color: '#607d8b' }}>
-            {row.availableSlotsForCourt.length > 0
-              ? `Ready for ${focusSlotLabel || 'the selected slot'}`
-              : (focusSlotLabel ? `No open ${focusSlotLabel} slot on this court.` : 'No open assignment slot at the moment.')}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
@@ -8335,6 +8362,8 @@ function CheckInReadyQueueCard({
   })
   const tint = getSlotTint(slotTintIndex)
 
+  const accentColor = tint?.accent || '#0d47a1'
+
   return (
     <div
       ref={setNodeRef}
@@ -8342,81 +8371,83 @@ function CheckInReadyQueueCard({
       {...attributes}
       style={{
         border: `1px solid ${tint?.border || '#90caf9'}`,
-        borderRadius: 10,
-        backgroundColor: tint?.bg || '#e3f2fd',
-        padding: 12,
+        borderRadius: 8,
+        overflow: 'hidden',
         cursor: 'grab',
         opacity: isDragging ? 0.45 : 1,
         touchAction: 'none',
         userSelect: 'none',
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+      {/* dark header bar */}
+      <div style={{
+        backgroundColor: accentColor,
+        color: '#fff',
+        padding: '5px 10px',
+        fontSize: 12,
+        fontWeight: 700,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#0d47a1' }}>{titleLabel}</div>
+          <span>{titleLabel}</span>
           <EventBadge name={rq.event_name} />
           {deskMatch && (
             <Badge label={deskMatch.stage} bg={STAGE_COLORS[deskMatch.stage] || '#757575'} color="#fff" />
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!returning) onReturnToCheckIn()
-            }}
-            disabled={returning}
-            title="Return to check-in"
-            aria-label="Return to check-in"
-            style={{
-              flexShrink: 0,
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              border: '1px solid #f57c00',
-              backgroundColor: '#fff3e0',
-              color: '#e65100',
-              cursor: returning ? 'wait' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 0,
-              opacity: returning ? 0.55 : 1,
-            }}
-          >
-            {returning ? (
-              <span style={{ fontSize: 11, fontWeight: 700 }}>...</span>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
-                <path
-                  d="M9 14 4 9l5-5"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M4 9h11a5 5 0 0 1 0 10h-3"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-          </button>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: tint?.accent || '#0d47a1' }}>{headerRightTop}</div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#607d8b', marginTop: 2 }}>{headerRightBottom}</div>
-          </div>
-        </div>
+        {/* return-to-check-in button lives in header */}
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (!returning) onReturnToCheckIn()
+          }}
+          disabled={returning}
+          title="Return to check-in"
+          aria-label="Return to check-in"
+          style={{
+            flexShrink: 0,
+            width: 24,
+            height: 24,
+            borderRadius: 5,
+            border: '1px solid rgba(255,255,255,0.5)',
+            backgroundColor: 'rgba(255,255,255,0.15)',
+            color: '#fff',
+            cursor: returning ? 'wait' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            opacity: returning ? 0.55 : 1,
+          }}
+        >
+          {returning ? (
+            <span style={{ fontSize: 10, fontWeight: 700 }}>...</span>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
+              <path d="M9 14 4 9l5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
       </div>
-      <div style={{ marginTop: 4, color: '#37474f', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: 15, fontWeight: 700 }}>
-        <span>{rq.team1_display}</span>
-        <span>vs</span>
-        <span>{rq.team2_display}</span>
+      {/* body */}
+      <div style={{ backgroundColor: '#fff', padding: '8px 10px 10px' }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+          {headerRightTop}
+        </div>
+        <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
+          {rq.team1_display}
+        </div>
+        <div style={{ color: '#999', fontSize: 10, margin: '2px 0' }}>vs</div>
+        <div style={{ color: '#1a1a1a', fontSize: 14, fontWeight: 700, lineHeight: 1.35 }}>
+          {rq.team2_display}
+        </div>
+        <div style={{ marginTop: 4, fontSize: 10, color: '#607d8b' }}>{headerRightBottom}</div>
       </div>
     </div>
   )
