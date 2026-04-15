@@ -9461,10 +9461,7 @@ export default function TournamentDeskPage() {
   })?.key ?? slotSections[0]?.key ?? null
   const focusSlotKey = effectiveSelectedCheckInSlotKey === 'all' ? autoFocusSlotKey : effectiveSelectedCheckInSlotKey
   const focusSlotLabel = focusSlotKey ? (slotLabelByKey.get(focusSlotKey) || focusSlotKey) : null
-  const preferredAvailableSlots = focusSlotKey
-    ? data.available_slots.filter((slot) => slotKeyBySlotId.get(slot.slot_id) === focusSlotKey)
-    : data.available_slots
-  const visibleReadyAssignSlots = preferredAvailableSlots.length > 0 ? preferredAvailableSlots : data.available_slots
+  const visibleReadyAssignSlots = data.available_slots
   const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
   data.courts.forEach((court) => {
     rawNowPlayingByCourt.set(court, data.now_playing_by_court[court])
