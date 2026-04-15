@@ -8299,15 +8299,15 @@ function CheckInCourtBoardCard({
         {match ? (
           <>
             <div>
-              <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
                 {match.team1_display}
               </div>
               <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
-              <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
                 {match.team2_display}
               </div>
               {(row.startAtLabel || row.elapsedLabel) && (
-                <div style={{ marginTop: 3, fontSize: 9, color: '#607d8b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div style={{ marginTop: 3, fontSize: 9, color: '#607d8b' }}>
                   {row.startAtLabel && <span>▶ {row.startAtLabel}</span>}
                   {row.startAtLabel && row.elapsedLabel && <span style={{ margin: '0 3px' }}>·</span>}
                   {row.elapsedLabel && <span>{row.elapsedLabel}</span>}
@@ -8447,18 +8447,18 @@ function CheckInReadyQueueCard({
       {/* body — same minHeight as court card so both card types are identical height */}
       <div style={{ backgroundColor: '#fff', padding: '5px 7px 6px', minHeight: 88, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3 }}>
             {headerRightTop}
           </div>
-          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
             {rq.team1_display}
           </div>
           <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
-          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
             {rq.team2_display}
           </div>
         </div>
-        <div style={{ fontSize: 9, color: '#607d8b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{headerRightBottom}</div>
+        <div style={{ fontSize: 9, color: '#607d8b' }}>{headerRightBottom}</div>
       </div>
     </div>
   )
