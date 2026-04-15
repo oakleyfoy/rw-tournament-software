@@ -9597,7 +9597,7 @@ export default function TournamentDeskPage() {
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
     const availableSlotsForCourt = visibleReadyAssignSlots.filter(
-      (slot) => slot.court_name === court && slot.currently_assigned_match_id === null
+      (slot) => slot.court_name === court
     )
     let lane: 'current' | 'open' = 'open'
     let slotStateLabel = isClosed ? 'Closed' : 'Open'
