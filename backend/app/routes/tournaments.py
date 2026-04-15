@@ -1475,17 +1475,55 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 )
             )
 
+        # Source data may contain historical duplicate message types; keep the
+        # latest template per type and upsert into the destination tournament.
+        source_templates_by_type: Dict[str, SmsTemplate] = {}
         for template in source_sms_templates:
-            session.add(
-                SmsTemplate(
-                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                    message_type=template.message_type,
-                    template_body=template.template_body,
-                    is_active=template.is_active,
-                    created_at=template.created_at,
-                    updated_at=template.updated_at,
-                )
-            )
+            message_type_key = (template.message_type or "").strip()
+            if not message_type_key:
+                continue
+            existing = source_templates_by_type.get(message_type_key)
+            if existing is None:
+                source_templates_by_type[message_type_key] = template
+                continue
+            existing_sort = existing.updated_at or existing.created_at or datetime.min
+            candidate_sort = template.updated_at or template.created_at or datetime.min
+            if candidate_sort >= existing_sort:
+                source_templates_by_type[message_type_key] = template
+
+        for message_type, template in source_templates_by_type.items():
+            try:
+                with session.begin_nested():
+                    session.add(
+                        SmsTemplate(
+                            tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                            message_type=message_type,
+                            template_body=template.template_body,
+                            is_active=template.is_active,
+                            created_at=template.created_at,
+                            updated_at=template.updated_at,
+                        )
+                    )
+                    session.flush()
+            except IntegrityError as e:
+                msg = str(e).lower()
+                if (
+                    "sms_template.tournament_id, sms_template.message_type" not in msg
+                    and "uq_sms_template_tournament_message_type" not in msg
+                ):
+                    raise
+                existing_template = session.exec(
+                    select(SmsTemplate).where(
+                        SmsTemplate.tournament_id == new_tournament.id,  # type: ignore[arg-type]
+                        SmsTemplate.message_type == message_type,
+                    )
+                ).first()
+                if not existing_template:
+                    raise
+                existing_template.template_body = template.template_body
+                existing_template.is_active = template.is_active
+                existing_template.updated_at = template.updated_at
+                session.add(existing_template)
 
         # Preserve the source tournament's public version pointer if possible.
         source_public_version_id = source_tournament.public_schedule_version_id

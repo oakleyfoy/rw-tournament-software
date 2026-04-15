@@ -516,6 +516,48 @@ def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient
     assert phones.count(None) == 1
 
 
+def test_duplicate_tournament_handles_duplicate_sms_template_types(client: TestClient, session: Session):
+    source = Tournament(
+        name="Dup SMS Source",
+        location="Nowhere",
+        timezone="America/New_York",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 2),
+    )
+    session.add(source)
+    session.flush()
+
+    session.add(
+        SmsTemplate(
+            tournament_id=source.id,
+            message_type="post_match_next",
+            template_body="Old body",
+            is_active=True,
+        )
+    )
+    # Whitespace variant can collapse to same normalized message_type on clone.
+    session.add(
+        SmsTemplate(
+            tournament_id=source.id,
+            message_type="post_match_next ",
+            template_body="New body",
+            is_active=True,
+        )
+    )
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201
+    duplicated_id = resp.json()["id"]
+
+    cloned_templates = session.exec(
+        select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)
+    ).all()
+    post_match_templates = [t for t in cloned_templates if t.message_type == "post_match_next"]
+    assert len(post_match_templates) == 1
+    assert post_match_templates[0].template_body == "New body"
+
+
 def test_print_packet_pdf_downloads_for_womens_and_mixed(client: TestClient, session: Session):
     tournament = Tournament(
         name="Print Packet Test",
