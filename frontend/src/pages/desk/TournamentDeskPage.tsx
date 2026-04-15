@@ -9639,7 +9639,9 @@ export default function TournamentDeskPage() {
   })
 
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
-  const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open')
+  const openCourtRows = courtBoardRows.filter(
+    (row) => row.lane === 'open' && !row.isClosed && row.availableSlotsForCourt.length > 0
+  )
 
   const getCompactDivisionLabel = (matchCode?: string | null): string => {
     const code = (matchCode || '').toUpperCase()
