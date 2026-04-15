@@ -8377,7 +8377,7 @@ function CheckInReadyQueueCard({
   onReturnToCheckIn: () => void
   slotTintIndex: number | null
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging, transform, transition } = useDraggable({
     id: `checkin-ready-${rq.match_id}`,
     data: { type: 'checkinReady', matchId: rq.match_id },
   })
@@ -8394,11 +8394,15 @@ function CheckInReadyQueueCard({
         border: `1px solid ${tint?.border || '#90caf9'}`,
         borderRadius: 8,
         overflow: 'hidden',
-        cursor: 'grab',
+        cursor: isDragging ? 'grabbing' : 'grab',
         opacity: isDragging ? 0.45 : 1,
         touchAction: 'none',
         userSelect: 'none',
         boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        transition,
+        position: isDragging ? 'relative' : undefined,
+        zIndex: isDragging ? 30 : undefined,
       }}
     >
       {/* dark header bar */}
@@ -9232,7 +9236,7 @@ export default function TournamentDeskPage() {
     })
   }, [data, searchText])
 
-  const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 2 } }))
 
   if (loading && !data) {
     return (
