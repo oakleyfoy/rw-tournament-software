@@ -8225,6 +8225,8 @@ function CheckInCourtBoardCard({
   })
 
   const headerBg = tint?.accent || '#1a237e'
+  const footerBg = tint?.bg || '#eef4ff'
+  const footerText = tint?.accent || '#1a237e'
 
   if (!match && !row.isClosed) {
     return (
@@ -8337,7 +8339,7 @@ function CheckInCourtBoardCard({
                 padding: '3px 6px',
                 border: 'none',
                 borderRadius: 4,
-                backgroundColor: '#2e7d32',
+                backgroundColor: tint?.accent || '#2e7d32',
                 color: '#fff',
                 fontSize: 10,
                 fontWeight: 800,
@@ -8354,6 +8356,28 @@ function CheckInCourtBoardCard({
           </div>
         )}
       </div>
+      {match && (
+        <div
+          style={{
+            backgroundColor: footerBg,
+            color: footerText,
+            padding: '3px 8px',
+            fontSize: 10,
+            fontWeight: 700,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {row.slotLabel || 'Scheduled slot'}
+          </span>
+          <span style={{ whiteSpace: 'nowrap', opacity: 0.92 }}>
+            {match.scheduled_time || ''}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -8384,6 +8408,8 @@ function CheckInReadyQueueCard({
   const tint = getSlotTint(slotTintIndex)
 
   const accentColor = tint?.accent || '#0d47a1'
+  const footerBg = tint?.bg || '#eef4ff'
+  const footerText = tint?.accent || '#0d47a1'
 
   return (
     <div
@@ -8475,7 +8501,26 @@ function CheckInReadyQueueCard({
             {rq.team2_display}
           </div>
         </div>
-        <div style={{ fontSize: 9, color: '#607d8b' }}>{headerRightBottom}</div>
+      </div>
+      <div
+        style={{
+          backgroundColor: footerBg,
+          color: footerText,
+          padding: '3px 8px',
+          fontSize: 10,
+          fontWeight: 700,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {headerRightTop || 'Scheduled slot'}
+        </span>
+        <span style={{ whiteSpace: 'nowrap', opacity: 0.92 }}>
+          {headerRightBottom}
+        </span>
       </div>
     </div>
   )
