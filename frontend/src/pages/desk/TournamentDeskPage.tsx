@@ -1417,6 +1417,39 @@ function MatchDrawer({
     }
   }, [tournamentId, match.match_id, versionId, onRefreshAndClose])
 
+  const moveBackToReady = useCallback(async () => {
+    setError(null)
+    setStatusMsg(null)
+    try {
+      await deskSetMatchStatus(tournamentId, match.match_id, {
+        version_id: versionId,
+        status: 'SCHEDULED',
+        reset_started_at: true,
+      })
+      setStatusMsg('Moved back to Ready To Go')
+      onRefreshAndClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to move match back to ready queue')
+    }
+  }, [tournamentId, match.match_id, versionId, onRefreshAndClose])
+
+  const reopenToCurrentlyPlaying = useCallback(async () => {
+    setError(null)
+    setStatusMsg(null)
+    try {
+      await deskSetMatchStatus(tournamentId, match.match_id, {
+        version_id: versionId,
+        status: 'IN_PROGRESS',
+        allow_reopen_final: true,
+        reset_started_at: true,
+      })
+      setStatusMsg('Reopened match to Currently Playing')
+      onRefreshAndClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to reopen completed match')
+    }
+  }, [tournamentId, match.match_id, versionId, onRefreshAndClose])
+
   const handleSetStatus = useCallback((status: string) => {
     if (status === 'IN_PROGRESS') {
       runWithConflictCheck('SET_IN_PROGRESS', 'Set In Progress', () => doSetStatus(status))
@@ -1493,7 +1526,7 @@ function MatchDrawer({
     effectiveMatch.team2_display,
   ])
 
-  const actionsPanel = isDraft && !finalized && match.status !== 'FINAL' ? (
+  const actionsPanel = isDraft ? (
     <div style={{ marginBottom: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
         Actions
@@ -1537,7 +1570,46 @@ function MatchDrawer({
           Resume Match
         </button>
       )}
+      {(match.status === 'IN_PROGRESS' || match.status === 'PAUSED') && (
+        <button
+          onClick={moveBackToReady}
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            fontSize: 13,
+            fontWeight: 600,
+            backgroundColor: '#455a64',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            marginBottom: 12,
+          }}
+        >
+          Back To Ready To Go
+        </button>
+      )}
+      {match.status === 'FINAL' && (
+        <button
+          onClick={reopenToCurrentlyPlaying}
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            fontSize: 13,
+            fontWeight: 700,
+            backgroundColor: '#1565c0',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            marginBottom: 12,
+          }}
+        >
+          Reopen To Currently Playing
+        </button>
+      )}
 
+      {match.status !== 'FINAL' && (
       <div style={{
         border: '1px solid #e0e0e0',
         borderRadius: 6,
@@ -1689,6 +1761,7 @@ function MatchDrawer({
           )}
         </div>
       </div>
+      )}
     </div>
   ) : null
 
@@ -1740,7 +1813,6 @@ function MatchDrawer({
           matchStatus={effectiveStatus}
           stage={effectiveMatch.stage}
           matchItem={effectiveMatch}
-          allMatches={allMatches}
           onSwitchToImpact={undefined}
         />
 
@@ -2391,7 +2463,6 @@ function DrawerImpact({
   matchStatus,
   stage,
   matchItem,
-  allMatches,
   onSwitchToImpact,
 }: {
   tournamentId: number
@@ -2400,12 +2471,10 @@ function DrawerImpact({
   matchStatus: string
   stage: string
   matchItem: DeskMatchItem
-  allMatches: DeskMatchItem[]
   onSwitchToImpact: (() => void) | undefined
 }) {
   const [impact, setImpact] = useState<MatchImpactItem | null>(null)
   const [loading, setLoading] = useState(true)
-  const [rrStandings, setRrStandings] = useState<StandingsResponse | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -2416,16 +2485,6 @@ function DrawerImpact({
       .catch(() => setImpact(null))
       .finally(() => setLoading(false))
   }, [tournamentId, versionId, matchId])
-
-  useEffect(() => {
-    if (stage !== 'RR') {
-      setRrStandings(null)
-      return
-    }
-    getDeskStandings(tournamentId, versionId, matchItem.event_id)
-      .then(resp => setRrStandings(resp))
-      .catch(() => setRrStandings(null))
-  }, [tournamentId, versionId, stage, matchItem.event_id])
 
   if (loading) return null
 
@@ -2486,92 +2545,7 @@ function DrawerImpact({
     )
   }
 
-  if (stage === 'RR') {
-    const relevantStandings = (rrStandings?.events || []).find(
-      e =>
-        e.event_id === matchItem.event_id &&
-        (matchItem.division_name ? e.division_name === matchItem.division_name : true)
-    )
-    const rrRows = relevantStandings?.rows || []
-    const rankByTeam = new Map<number, number>()
-    rrRows.forEach(r => rankByTeam.set(r.team_id, r.rank))
-
-    const pendingPoolMatches = allMatches
-      .filter(m =>
-        m.stage === 'RR' &&
-        m.event_id === matchItem.event_id &&
-        m.division_name === matchItem.division_name &&
-        m.status !== 'FINAL' &&
-        m.status !== 'CANCELLED'
-      )
-      .filter(m => !(m.match_id === matchId && isFinal))
-      .sort((a, b) =>
-        (a.day_index - b.day_index) ||
-        (a.sort_time || '').localeCompare(b.sort_time || '') ||
-        (a.court_name || '').localeCompare(b.court_name || '')
-      )
-
-    const placementLabel = (rank?: number | null) => {
-      if (!rank) return 'Unranked'
-      if (rank === 1) return '#1 in pool'
-      if (rank === 2) return '#2 in pool'
-      if (rank === 3) return '#3 in pool'
-      if (rank === 4) return '#4 in pool'
-      return `#${rank} in pool`
-    }
-
-    return (
-      <div style={{
-        marginTop: 12,
-        padding: '10px 14px',
-        backgroundColor: '#f8f9ff',
-        borderRadius: 6,
-        border: '1px solid #e0e4f0',
-      }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: '#1a237e', marginBottom: 6 }}>
-          Pool Placement Outlook
-        </div>
-
-        {[{
-          teamId: matchItem.team1_id,
-          teamName: matchItem.team1_display,
-        }, {
-          teamId: matchItem.team2_id,
-          teamName: matchItem.team2_display,
-        }].map((t, idx) => {
-          const rank = t.teamId ? rankByTeam.get(t.teamId) : null
-          return (
-            <div key={`${t.teamId ?? idx}`} style={{ marginBottom: 6, fontSize: 12 }}>
-              <span style={{ fontWeight: 700, color: '#333' }}>{t.teamName}:</span>{' '}
-              <span style={{ color: pendingPoolMatches.length === 0 ? '#2e7d32' : '#555', fontWeight: pendingPoolMatches.length === 0 ? 700 : 600 }}>
-                {pendingPoolMatches.length === 0 ? `Final ${placementLabel(rank)}` : `Current ${placementLabel(rank)}`}
-              </span>
-            </div>
-          )
-        })}
-
-        {pendingPoolMatches.length > 0 ? (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#e65100', marginBottom: 4 }}>
-              Waiting on these matches to lock final pool places:
-            </div>
-            {pendingPoolMatches.slice(0, 5).map(pm => (
-              <div key={pm.match_id} style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>
-                Match #{pm.match_number} {pm.team1_display} vs {pm.team2_display}
-                {pm.day_label ? ` \u2014 ${pm.day_label}` : ''}
-                {pm.scheduled_time ? ` \u00b7 ${pm.scheduled_time}` : ''}
-                {pm.court_name ? ` \u00b7 ${pm.court_name}` : ''}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ marginTop: 8, fontSize: 11, color: '#2e7d32', fontWeight: 600 }}>
-            Pool ranking is locked.
-          </div>
-        )}
-      </div>
-    )
-  }
+  if (stage === 'RR') return null
 
   if (!hasDownstream) {
     return (
@@ -9837,7 +9811,9 @@ export default function TournamentDeskPage() {
   ) => {
     const cm = entry.checkinMatch
     const teamLabel = (state.team_display || 'TBD').trim()
-    const anyChecked = state.team_checked_in || state.players.some((player) => player.checked_in)
+    const fullTeamChecked = state.team_checked_in || (
+      state.players_total > 0 && state.players_checked_in >= state.players_total
+    )
     const playerSlots = [0, 1].map((index) => {
       const player = state.players[index]
       return {
@@ -9897,8 +9873,8 @@ export default function TournamentDeskPage() {
             fontWeight: 700,
             borderRadius: 6,
             border: '1px solid #90a4ae',
-            backgroundColor: anyChecked ? '#2e7d32' : '#fff',
-            color: anyChecked ? '#fff' : '#455a64',
+            backgroundColor: fullTeamChecked ? '#2e7d32' : '#fff',
+            color: fullTeamChecked ? '#fff' : '#455a64',
             cursor: entry.checkinEnabled ? 'pointer' : 'default',
             opacity: entry.checkinEnabled ? 1 : 0.5,
             whiteSpace: 'nowrap',

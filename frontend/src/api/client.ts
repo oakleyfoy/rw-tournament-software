@@ -2452,7 +2452,7 @@ export async function deskRepairAdvancement(
 export async function deskSetMatchStatus(
   tournamentId: number,
   matchId: number,
-  payload: { version_id: number; status: string }
+  payload: { version_id: number; status: string; allow_reopen_final?: boolean; reset_started_at?: boolean }
 ): Promise<{ match_id: number; status: string }> {
   return fetchJson<{ match_id: number; status: string }>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/status`,

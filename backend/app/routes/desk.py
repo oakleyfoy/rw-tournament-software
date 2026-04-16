@@ -697,6 +697,8 @@ class FinalizeResponse(BaseModel):
 class StatusRequest(BaseModel):
     version_id: int
     status: str
+    allow_reopen_final: bool = False
+    reset_started_at: bool = False
 
 
 class StatusResponse(BaseModel):
@@ -3220,15 +3222,53 @@ def set_match_status(
         raise HTTPException(status_code=400, detail="Match does not belong to this version")
 
     if match.runtime_status == "FINAL":
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot change status of a FINAL match",
-        )
+        if not payload.allow_reopen_final:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change status of a FINAL match",
+            )
+        if payload.status not in ("IN_PROGRESS", "SCHEDULED", "PAUSED", "DELAYED"):
+            raise HTTPException(
+                status_code=400,
+                detail="FINAL matches can only be reopened to SCHEDULED, IN_PROGRESS, PAUSED, or DELAYED",
+            )
+
+        # Reopen accidental completion: clear final result fields.
+        match.winner_team_id = None
+        match.score_json = None
+        match.completed_at = None
+
+        # If downstream teams were auto-advanced from this match, clear them for
+        # non-final downstream matches so advancement can be recalculated.
+        downstream_a = session.exec(
+            select(Match).where(
+                Match.schedule_version_id == payload.version_id,
+                Match.source_match_a_id == match_id,
+            )
+        ).all()
+        downstream_b = session.exec(
+            select(Match).where(
+                Match.schedule_version_id == payload.version_id,
+                Match.source_match_b_id == match_id,
+            )
+        ).all()
+        for down in downstream_a:
+            if (down.runtime_status or "SCHEDULED").upper() != "FINAL":
+                down.team_a_id = None
+                session.add(down)
+        for down in downstream_b:
+            if (down.runtime_status or "SCHEDULED").upper() != "FINAL":
+                down.team_b_id = None
+                session.add(down)
 
     previous_status = (match.runtime_status or "SCHEDULED").upper()
     match.runtime_status = payload.status
-    if payload.status == "IN_PROGRESS" and match.started_at is None:
+    if payload.reset_started_at:
+        match.started_at = None
+    if payload.status == "IN_PROGRESS" and (match.started_at is None or payload.reset_started_at):
         match.started_at = datetime.utcnow()
+    if payload.status != "FINAL":
+        match.completed_at = None
 
     session.add(match)
     session.commit()

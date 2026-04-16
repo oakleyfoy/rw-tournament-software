@@ -574,6 +574,26 @@ export default function PublicWaterfallPage() {
           maxWidth: 1900,
           margin: '0 auto',
         }}>
+          <div style={{
+            marginBottom: 12,
+            padding: '10px 12px',
+            border: '1px solid #dce775',
+            borderRadius: 6,
+            backgroundColor: '#f9fbe7',
+            color: '#455a64',
+            fontSize: 11,
+          }}>
+            <div style={{ fontWeight: 700, color: '#33691e', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+              WF Pool Tiebreaker Rules
+            </div>
+            <ol style={{ margin: '0 0 0 18px', padding: 0, lineHeight: 1.5 }}>
+              <li>Most match wins (W)</li>
+              <li>Best set differential</li>
+              <li>Best game differential</li>
+              <li>Head-to-head (for exact two-team ties)</li>
+            </ol>
+          </div>
+
           {/* Column headers */}
           <div data-col-headers style={{
             display: 'flex',
