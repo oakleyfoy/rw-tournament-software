@@ -8326,18 +8326,18 @@ function CheckInCourtBoardCard({
   onOpenMatch,
   slotTintIndex,
   nativeDragOverCourt,
-  onReadyDragOver,
-  onReadyDragLeave,
-  onReadyDrop,
+  onReadyPointerEnter,
+  onReadyPointerLeave,
+  onReadyPointerUp,
 }: {
   row: CheckInCourtBoardRowData
   focusSlotLabel?: string | null
   onOpenMatch: (m: DeskMatchItem) => void
   slotTintIndex: number | null
   nativeDragOverCourt: string | null
-  onReadyDragOver: (court: string) => void
-  onReadyDragLeave: (court: string) => void
-  onReadyDrop: (event: React.DragEvent<HTMLDivElement>, court: string) => void
+  onReadyPointerEnter: (court: string) => void
+  onReadyPointerLeave: (court: string) => void
+  onReadyPointerUp: (court: string) => void
 }) {
   const match = row.displayMatch
   const tint = getSlotTint(slotTintIndex)
@@ -8354,25 +8354,17 @@ function CheckInCourtBoardCard({
   if (!match && !row.isClosed) {
     return (
       <div
-        onDragOver={(event) => {
+        onPointerEnter={() => {
           if (!canReceiveReady) return
-          event.preventDefault()
-          event.dataTransfer.dropEffect = 'move'
-          onReadyDragOver(row.court)
+          onReadyPointerEnter(row.court)
         }}
-        onDragEnter={(event) => {
+        onPointerLeave={() => {
           if (!canReceiveReady) return
-          event.preventDefault()
-          onReadyDragOver(row.court)
+          onReadyPointerLeave(row.court)
         }}
-        onDragLeave={() => {
+        onPointerUp={() => {
           if (!canReceiveReady) return
-          onReadyDragLeave(row.court)
-        }}
-        onDrop={(event) => {
-          if (!canReceiveReady) return
-          event.preventDefault()
-          onReadyDrop(event, row.court)
+          onReadyPointerUp(row.court)
         }}
         style={{
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
@@ -8520,8 +8512,7 @@ function CheckInReadyQueueCard({
   onReturnToCheckIn,
   slotTintIndex,
   nativeDragging,
-  onNativeDragStart,
-  onNativeDragEnd,
+  onPointerDragStart,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -8532,8 +8523,7 @@ function CheckInReadyQueueCard({
   onReturnToCheckIn: () => void
   slotTintIndex: number | null
   nativeDragging: boolean
-  onNativeDragStart: (event: React.DragEvent<HTMLDivElement>, matchId: number) => void
-  onNativeDragEnd: () => void
+  onPointerDragStart: (event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => void
 }) {
   const tint = getSlotTint(slotTintIndex)
 
@@ -8542,9 +8532,7 @@ function CheckInReadyQueueCard({
 
   return (
     <div
-      draggable
-      onDragStart={(event) => onNativeDragStart(event, rq.match_id)}
-      onDragEnd={onNativeDragEnd}
+      onPointerDown={(event) => onPointerDragStart(event, rq)}
       style={{
         border: `1px solid ${tint?.border || '#90caf9'}`,
         borderRadius: 8,
@@ -9501,6 +9489,15 @@ export default function TournamentDeskPage() {
 
   const [nativeDraggedReadyMatchId, setNativeDraggedReadyMatchId] = useState<number | null>(null)
   const [nativeDragOverCourt, setNativeDragOverCourt] = useState<string | null>(null)
+  const [pointerDragGhost, setPointerDragGhost] = useState<{
+    matchId: number
+    eventName: string
+    matchNumber: number
+    team1: string
+    team2: string
+    x: number
+    y: number
+  } | null>(null)
   const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
     if (!data) return
 
@@ -9673,31 +9670,80 @@ export default function TournamentDeskPage() {
     await handleAssignReadyMatch(matchId, slotId)
   }, [data, courtStates, handleAssignReadyMatch])
 
-  const handleNativeReadyDragStart = useCallback((event: React.DragEvent<HTMLDivElement>, matchId: number) => {
+  const handlePointerDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
     setError(null)
-    setNativeDraggedReadyMatchId(matchId)
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', String(matchId))
-    event.dataTransfer.setData('application/x-rw-ready-match', String(matchId))
+    setNativeDraggedReadyMatchId(rq.match_id)
+    setPointerDragGhost({
+      matchId: rq.match_id,
+      eventName: rq.event_name,
+      matchNumber: rq.match_number,
+      team1: rq.team1_display,
+      team2: rq.team2_display,
+      x: event.clientX,
+      y: event.clientY,
+    })
+    ;(event.currentTarget as HTMLDivElement).setPointerCapture?.(event.pointerId)
   }, [])
 
   const handleNativeReadyDragEnd = useCallback(() => {
     setNativeDraggedReadyMatchId(null)
     setNativeDragOverCourt(null)
+    setPointerDragGhost(null)
   }, [])
 
-  const handleNativeReadyDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>, court: string) => {
-    const rawMatchId = event.dataTransfer.getData('application/x-rw-ready-match') || event.dataTransfer.getData('text/plain')
-    const matchId = Number(rawMatchId)
-    setNativeDragOverCourt(null)
-    if (!Number.isFinite(matchId) || matchId <= 0) {
-      setNativeDraggedReadyMatchId(null)
-      setError('Could not determine which ready match was dropped.')
-      return
+  useEffect(() => {
+    if (!pointerDragGhost) return
+
+    const handlePointerMove = (event: PointerEvent) => {
+      setPointerDragGhost((prev) => prev ? { ...prev, x: event.clientX, y: event.clientY } : null)
     }
-    setNativeDraggedReadyMatchId(null)
-    await handleAssignReadyMatchToCourt(matchId, court)
-  }, [handleAssignReadyMatchToCourt])
+
+    const handlePointerUp = () => {
+      const matchId = nativeDraggedReadyMatchId
+      const court = nativeDragOverCourt
+      void (async () => {
+        handleNativeReadyDragEnd()
+        if (matchId != null && court) {
+          await handleAssignReadyMatchToCourt(matchId, court)
+        }
+      })()
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp, { once: true })
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [pointerDragGhost, nativeDraggedReadyMatchId, nativeDragOverCourt, handleNativeReadyDragEnd, handleAssignReadyMatchToCourt])
+
+  const handleReadyPointerUp = useCallback((court: string) => {
+    if (nativeDraggedReadyMatchId == null) return
+    void (async () => {
+      handleNativeReadyDragEnd()
+      await handleAssignReadyMatchToCourt(nativeDraggedReadyMatchId, court)
+    })()
+  }, [nativeDraggedReadyMatchId, handleNativeReadyDragEnd, handleAssignReadyMatchToCourt])
+
+  const handleReadyPointerLeave = useCallback((court: string) => {
+    setNativeDragOverCourt((prev) => prev === court ? null : prev)
+  }, [])
+
+  const handleReadyPointerEnter = useCallback((court: string) => {
+    if (nativeDraggedReadyMatchId == null) return
+    setNativeDragOverCourt(court)
+  }, [nativeDraggedReadyMatchId])
+
+  useEffect(() => {
+    if (nativeDraggedReadyMatchId != null) {
+      document.body.style.userSelect = 'none'
+      return () => {
+        document.body.style.userSelect = ''
+      }
+    }
+    return
+  }, [nativeDraggedReadyMatchId])
 
   if (loading && !data) {
     return (
@@ -10666,11 +10712,9 @@ export default function TournamentDeskPage() {
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={row.slotTintIndex}
                               nativeDragOverCourt={nativeDragOverCourt}
-                              onReadyDragOver={setNativeDragOverCourt}
-                              onReadyDragLeave={(court) => {
-                                setNativeDragOverCourt((prev) => prev === court ? null : prev)
-                              }}
-                              onReadyDrop={(event, court) => { void handleNativeReadyDrop(event, court) }}
+                              onReadyPointerEnter={handleReadyPointerEnter}
+                              onReadyPointerLeave={handleReadyPointerLeave}
+                              onReadyPointerUp={handleReadyPointerUp}
                             />
                           ))}
                         </div>
@@ -10695,11 +10739,9 @@ export default function TournamentDeskPage() {
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={null}
                               nativeDragOverCourt={nativeDragOverCourt}
-                              onReadyDragOver={setNativeDragOverCourt}
-                              onReadyDragLeave={(court) => {
-                                setNativeDragOverCourt((prev) => prev === court ? null : prev)
-                              }}
-                              onReadyDrop={(event, court) => { void handleNativeReadyDrop(event, court) }}
+                              onReadyPointerEnter={handleReadyPointerEnter}
+                              onReadyPointerLeave={handleReadyPointerLeave}
+                              onReadyPointerUp={handleReadyPointerUp}
                             />
                           ))}
                         </div>
@@ -10805,8 +10847,7 @@ export default function TournamentDeskPage() {
                                   onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
                                   slotTintIndex={rqSlotIndex}
                                   nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
-                                  onNativeDragStart={handleNativeReadyDragStart}
-                                  onNativeDragEnd={handleNativeReadyDragEnd}
+                                  onPointerDragStart={handlePointerDragStart}
                                 />
                               )
                             })}
@@ -10816,6 +10857,50 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
                 </div>
+                {pointerDragGhost && (
+                  <div
+                    style={{
+                      position: 'fixed',
+                      left: pointerDragGhost.x + 12,
+                      top: pointerDragGhost.y + 12,
+                      width: 220,
+                      pointerEvents: 'none',
+                      zIndex: 9999,
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
+                      border: '2px solid #1a237e',
+                      background: '#fff',
+                    }}
+                  >
+                    <div style={{
+                      background: '#1a237e',
+                      color: '#fff',
+                      padding: '6px 10px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}>
+                      <span>#{pointerDragGhost.matchNumber}</span>
+                      <span style={{ fontSize: 10, opacity: 0.85 }}>{pointerDragGhost.eventName}</span>
+                    </div>
+                    <div style={{
+                      background: '#e8eaf6',
+                      padding: '8px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#1a237e',
+                      lineHeight: 1.5,
+                    }}>
+                      <div>{pointerDragGhost.team1}</div>
+                      <div style={{ color: '#90a4ae', fontSize: 10, margin: '1px 0' }}>vs</div>
+                      <div>{pointerDragGhost.team2}</div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
