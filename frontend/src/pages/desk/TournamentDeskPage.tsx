@@ -115,6 +115,8 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
+  useDraggable,
 } from '@dnd-kit/core'
 
 const SLOT_TINT_PALETTE = [
