@@ -261,6 +261,55 @@ def test_fallback_when_preferred_day_not_available(session: Session, setup_day_t
     assert result["preferred_day_metrics"]["preferred_day_misses"] == 4
 
 
+def test_womens_non_wf_preferred_day_is_hard_locked(session: Session, setup_day_targeting_test: dict):
+    """
+    Women's non-WF matches should stay on their generated preferred day.
+    If that day lacks capacity, they remain unassigned instead of falling back
+    to an earlier day.
+    """
+    schedule_version_id = setup_day_targeting_test["schedule_version_id"]
+    tournament_id = setup_day_targeting_test["tournament_id"]
+    event_id = setup_day_targeting_test["event_id"]
+    matches = setup_day_targeting_test["matches"]
+    slots = setup_day_targeting_test["slots"]
+
+    event = session.get(Event, event_id)
+    assert event is not None
+    event.category = "womens"
+    session.add(event)
+
+    # Give every match a Tuesday preference, but leave only two Tuesday slots.
+    for match in matches:
+        match.preferred_day = 1  # Tuesday
+        session.add(match)
+
+    for slot in slots:
+        if slot.day_date.weekday() != 1:
+            session.delete(slot)
+
+    session.commit()
+
+    result = auto_assign_with_rest(session, schedule_version_id, clear_existing=True)
+
+    assert result["assigned_count"] == 2
+    assert result["unassigned_count"] == 2
+    assert result["preferred_day_metrics"]["preferred_day_hits"] == 2
+    assert result["preferred_day_metrics"]["preferred_day_misses"] == 0
+
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.match_id.in_([m.id for m in matches]))).all()
+    assigned_match_ids = {assignment.match_id for assignment in assignments}
+    assert len(assigned_match_ids) == 2
+
+    for assignment in assignments:
+        assigned_slot = session.get(ScheduleSlot, assignment.slot_id)
+        assert assigned_slot is not None
+        assert assigned_slot.day_date.weekday() == 1
+
+    unassigned_matches = [m for m in matches if m.id not in assigned_match_ids]
+    assert len(unassigned_matches) == 2
+    assert all(m.tournament_id == tournament_id for m in unassigned_matches)
+
+
 def test_rest_overrides_preference(session: Session, setup_day_targeting_test: dict):
     """
     Test that rest rules are mandatory and override day preference.

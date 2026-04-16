@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from sqlalchemy import case
 from sqlmodel import Session, select
 
+from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
@@ -30,6 +31,22 @@ from app.models.schedule_slot import ScheduleSlot
 # ============================================================================
 
 STAGE_PRECEDENCE = {"WF": 1, "MAIN": 2, "CONSOLATION": 3, "PLACEMENT": 4}
+
+
+def _requires_hard_preferred_day(match: Match, event_by_id: Dict[int, Event]) -> bool:
+    """
+    Treat generated women's non-WF matches as day-locked.
+
+    Women's pool/division matches are intended to stay on their generated day
+    rather than falling back to an earlier day when a preferred-day slot is
+    unavailable.
+    """
+    if match.preferred_day is None or match.match_type == "WF":
+        return False
+    event = event_by_id.get(match.event_id)
+    if not event:
+        return False
+    return event.category == EventCategory.womens
 
 
 # ============================================================================
@@ -430,6 +447,14 @@ def auto_assign_with_rest(
         )
     ).all()
 
+    event_ids = {m.event_id for m in all_matches}
+    event_by_id = {}
+    if event_ids:
+        event_by_id = {
+            event.id: event
+            for event in session.exec(select(Event).where(Event.id.in_(event_ids))).all()
+        }
+
     # Filter to only unassigned matches when not clearing
     if clear_existing:
         matches = all_matches
@@ -649,6 +674,10 @@ def auto_assign_with_rest(
             # Phase D3: Derive slot weekday from day_date (0=Monday, 6=Sunday)
             slot_date = datetime.fromisoformat(str(slot.day_date)).date()
             slot_weekday = slot_date.weekday()  # 0=Monday, 6=Sunday
+
+            if _requires_hard_preferred_day(match, event_by_id) and slot_weekday != match.preferred_day:
+                reject_counts["day_not_allowed"] += 1
+                continue
 
             # Phase D4: Calculate preference score
             if match.preferred_day is None:
