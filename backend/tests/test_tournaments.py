@@ -16,6 +16,7 @@ from app.models.schedule_version import ScheduleVersion
 from app.models.slot_lock import SlotLock
 from app.models.sms_log import SmsLog
 from app.models.sms_template import SmsTemplate
+from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
@@ -396,6 +397,19 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
         )
     ).all()
     assert len(cloned_assignments) == 2
+    baseline_rows = session.exec(
+        select(StartOverBaselineAssignment).where(
+            StartOverBaselineAssignment.tournament_id == duplicated_id
+        )
+    ).all()
+    assert len(baseline_rows) == 2
+    assert {
+        (b.schedule_version_id, b.match_id, b.slot_id)
+        for b in baseline_rows
+    } == {
+        (a.schedule_version_id, a.match_id, a.slot_id)
+        for a in cloned_assignments
+    }
 
     cloned_players = session.exec(
         select(Player).where(Player.tournament_id == duplicated_id)
@@ -1042,3 +1056,130 @@ def test_start_over_wf_events_only_keep_wf_round_one_seeded_and_clear_checkin_de
     # Start-over keeps schedule graph but removes CHECKIN_DESK provenance.
     assert asg_a.assigned_by is None
     assert asg_b.assigned_by is None
+
+
+def test_start_over_restores_copy_baseline_assignments_after_runtime_moves(
+    client: TestClient, session: Session
+):
+    source = Tournament(
+        name="Baseline Restore Source",
+        location="Austin",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 3),
+        court_names=["1", "2"],
+    )
+    session.add(source)
+    session.flush()
+
+    event = Event(tournament_id=source.id, category="mixed", name="Mixed A", team_count=2)
+    session.add(event)
+    session.flush()
+
+    team_a = Team(event_id=event.id, name="Alpha", seed=1, display_name="Alpha")
+    team_b = Team(event_id=event.id, name="Bravo", seed=2, display_name="Bravo")
+    session.add_all([team_a, team_b])
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=source.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+
+    # Friday slot
+    slot_early = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 7, 1),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    # Sunday slot
+    slot_late = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 7, 3),
+        start_time=time(15, 0),
+        end_time=time(16, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add_all([slot_early, slot_late])
+    session.flush()
+
+    match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_FINAL_M01",
+        match_type="MAIN",
+        round_number=3,
+        round_index=3,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_2",
+        runtime_status="SCHEDULED",
+    )
+    session.add(match)
+    session.flush()
+    # Baseline copied schedule says this match belongs on Sunday
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=match.id,
+            slot_id=slot_late.id,
+            assigned_by="AUTO_ASSIGN_V2",
+        )
+    )
+    session.commit()
+
+    dup_resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert dup_resp.status_code == 201
+    duplicated_id = dup_resp.json()["id"]
+
+    duplicated_version = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
+    ).first()
+    assert duplicated_version is not None
+    dup_match = session.exec(
+        select(Match).where(
+            Match.tournament_id == duplicated_id,
+            Match.match_code == "MIX_FINAL_M01",
+        )
+    ).first()
+    assert dup_match is not None
+    dup_slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == duplicated_version.id)
+    ).all()
+    assert len(dup_slots) == 2
+    dup_slot_by_day = {s.day_date: s for s in dup_slots}
+    assert date(2026, 7, 1) in dup_slot_by_day
+    assert date(2026, 7, 3) in dup_slot_by_day
+    dup_assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == duplicated_version.id,
+            MatchAssignment.match_id == dup_match.id,
+        )
+    ).first()
+    assert dup_assignment is not None
+    # sanity baseline at duplicate time: Sunday slot
+    assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 7, 3)].id
+
+    # simulate runtime desk move to Friday
+    dup_assignment.slot_id = dup_slot_by_day[date(2026, 7, 1)].id  # type: ignore[index]
+    dup_assignment.assigned_by = "CHECKIN_DESK"
+    session.add(dup_assignment)
+    session.commit()
+
+    restart_resp = client.post(f"/api/tournaments/{duplicated_id}/start-over")
+    assert restart_resp.status_code == 200
+
+    session.refresh(dup_assignment)
+    # start-over restores copied baseline (Sunday), not latest runtime move (Friday)
+    assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 7, 3)].id

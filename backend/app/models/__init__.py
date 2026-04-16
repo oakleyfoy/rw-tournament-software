@@ -9,6 +9,7 @@ from app.models.policy_run import PolicyRun
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.slot_lock import SlotLock
+from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
@@ -39,6 +40,7 @@ __all__ = [
     "MatchLock",
     "MatchPlayerCheckIn",
     "SlotLock",
+    "StartOverBaselineAssignment",
     "Team",
     "TeamAvoidEdge",
     "PolicyRun",

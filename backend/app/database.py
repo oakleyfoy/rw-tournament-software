@@ -45,6 +45,9 @@ def init_db() -> None:
     from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.player import Player  # noqa: F401
     from app.models.slot_lock import SlotLock  # noqa: F401
+    from app.models.start_over_baseline_assignment import (  # noqa: F401
+        StartOverBaselineAssignment,
+    )
     from app.models.schedule_slot import ScheduleSlot  # noqa: F401
     from app.models.schedule_version import ScheduleVersion  # noqa: F401
     from app.models.sms_consent_event import SmsConsentEvent  # noqa: F401

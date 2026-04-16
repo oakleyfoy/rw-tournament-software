@@ -474,3 +474,23 @@ def ensure_temporary_player_lookup_columns(engine: Engine) -> None:
         logger.warning(
             f"Failed to ensure temporary_player_lookup columns (this is OK if table doesn't exist yet): {e}"
         )
+
+
+def ensure_start_over_baseline_assignment_table(engine: Engine) -> None:
+    """
+    Ensure start_over_baseline_assignment table exists.
+    Safe to run at every startup.
+    """
+    try:
+        from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
+
+        table = StartOverBaselineAssignment.__table__
+        with engine.begin() as conn:
+            table.create(conn, checkfirst=True)
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure start_over_baseline_assignment table (this is OK if table doesn't exist yet): {e}"
+        )

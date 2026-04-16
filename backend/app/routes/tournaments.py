@@ -23,6 +23,7 @@ from app.models.schedule_version import ScheduleVersion
 from app.models.sms_log import SmsLog
 from app.models.slot_lock import SlotLock
 from app.models.sms_template import SmsTemplate
+from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
@@ -39,6 +40,38 @@ _PRINT_CATEGORY_LABEL = {
     "womens": "Women's",
     "mixed": "Mixed",
 }
+
+
+def _record_start_over_baseline_assignments(
+    session: Session,
+    *,
+    tournament_id: int,
+    assignments: List[MatchAssignment],
+) -> None:
+    if not assignments:
+        return
+    version_ids = sorted({a.schedule_version_id for a in assignments})
+    existing = session.exec(
+        select(StartOverBaselineAssignment).where(
+            StartOverBaselineAssignment.tournament_id == tournament_id,
+            StartOverBaselineAssignment.schedule_version_id.in_(version_ids),  # type: ignore[arg-type]
+        )
+    ).all()
+    for row in existing:
+        session.delete(row)
+    session.flush()
+    for assignment in assignments:
+        session.add(
+            StartOverBaselineAssignment(
+                tournament_id=tournament_id,
+                schedule_version_id=assignment.schedule_version_id,
+                match_id=assignment.match_id,
+                slot_id=assignment.slot_id,
+                assigned_at=assignment.assigned_at,
+                assigned_by=assignment.assigned_by,
+                locked=assignment.locked,
+            )
+        )
 
 
 class TournamentCreate(BaseModel):
@@ -1393,6 +1426,17 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 )
             )
 
+        cloned_assignments = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id.in_(list(version_id_map.values()))  # type: ignore[arg-type]
+            )
+        ).all()
+        _record_start_over_baseline_assignments(
+            session,
+            tournament_id=new_tournament.id,  # type: ignore[arg-type]
+            assignments=cloned_assignments,
+        )
+
         for lock in source_match_locks:
             mapped_version_id = version_id_map.get(lock.schedule_version_id)
             mapped_match_id = match_id_map.get(lock.match_id)
@@ -1685,11 +1729,49 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                 MatchAssignment.schedule_version_id.in_(version_ids)  # type: ignore[arg-type]
             )
         ).all()
-        for row in assignments:
-            # Baseline reset: preserve slot graph, but remove runtime check-in desk
-            # assignment provenance so courts are not treated as actively occupied.
-            row.assigned_by = None
-            session.add(row)
+        baseline_rows = session.exec(
+            select(StartOverBaselineAssignment).where(
+                StartOverBaselineAssignment.tournament_id == tournament_id,
+                StartOverBaselineAssignment.schedule_version_id.in_(version_ids),  # type: ignore[arg-type]
+            )
+        ).all()
+        if not baseline_rows:
+            # Backward-compatibility: tournaments created before baseline snapshots
+            # existed should keep their assignment map on start-over.
+            for row in assignments:
+                row.assigned_by = None if (row.assigned_by or "").upper() == "CHECKIN_DESK" else row.assigned_by
+                session.add(row)
+        else:
+            baseline_by_version_match = {
+                (row.schedule_version_id, row.match_id): row for row in baseline_rows
+            }
+            current_by_version_match = {
+                (row.schedule_version_id, row.match_id): row for row in assignments
+            }
+            for key, current_row in current_by_version_match.items():
+                baseline = baseline_by_version_match.get(key)
+                if baseline is None:
+                    # No baseline for this row means it was introduced by runtime desk operations.
+                    session.delete(current_row)
+                    continue
+                current_row.slot_id = baseline.slot_id
+                current_row.assigned_at = baseline.assigned_at
+                current_row.assigned_by = baseline.assigned_by
+                current_row.locked = baseline.locked
+                session.add(current_row)
+            for key, baseline in baseline_by_version_match.items():
+                if key in current_by_version_match:
+                    continue
+                session.add(
+                    MatchAssignment(
+                        schedule_version_id=baseline.schedule_version_id,
+                        match_id=baseline.match_id,
+                        slot_id=baseline.slot_id,
+                        assigned_at=baseline.assigned_at,
+                        assigned_by=baseline.assigned_by,
+                        locked=baseline.locked,
+                    )
+                )
 
     match_locks: List[MatchLock] = []
     slot_locks: List[SlotLock] = []
