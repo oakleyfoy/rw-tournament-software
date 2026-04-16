@@ -4892,6 +4892,17 @@ function DeskGridTab({
     }
   }, [days, selectedDay])
 
+  // Global court list for modals (all configured courts across all days)
+  const courtNumbers = useMemo(
+    () => allCourtLabels.map((_, idx) => idx + 1),
+    [allCourtLabels]
+  )
+  const courtLabels = useMemo(() => {
+    const labels: Record<number, string> = {}
+    allCourtLabels.forEach((label, idx) => { labels[idx + 1] = label })
+    return labels
+  }, [allCourtLabels])
+
   const formatErrMsg = (raw: any, fallback: string) => {
     const detail = raw?.detail ?? raw?.message
     if (typeof detail === 'string') return detail
