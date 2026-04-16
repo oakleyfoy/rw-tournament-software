@@ -793,6 +793,8 @@ def test_start_over_tournament_clears_runtime_and_checkins(client: TestClient, s
             trigger="manual",
         )
     )
+    tournament.desk_management_mode = "court_management"
+    session.add(tournament)
     session.commit()
 
     resp = client.post(f"/api/tournaments/{tournament.id}/start-over")
@@ -804,6 +806,8 @@ def test_start_over_tournament_clears_runtime_and_checkins(client: TestClient, s
     assert body["match_locks_cleared"] == 1
     assert body["slot_locks_cleared"] == 1
     assert body["sms_logs_cleared"] == 1
+    session.refresh(tournament)
+    assert tournament.desk_management_mode == "checkin_management"
 
     session.refresh(match)
     assert match.runtime_status == "SCHEDULED"

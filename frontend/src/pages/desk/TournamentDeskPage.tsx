@@ -8506,7 +8506,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('courts')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('checkin')
   const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
@@ -8722,11 +8722,11 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh])
 
-  const managementMode = (data?.management_mode || 'court_management') as 'court_management' | 'checkin_management'
+  const managementMode = (data?.management_mode || 'checkin_management') as 'court_management' | 'checkin_management'
   const isCheckInManagement = managementMode === 'checkin_management'
   const visibleTabs = useMemo(
     () => ([
-      'courts',
+      ...(isCheckInManagement ? ([] as const) : (['courts'] as const)),
       ...(isCheckInManagement ? (['checkin'] as const) : []),
       ...(isCheckInManagement ? (['towels'] as const) : []),
       'schedule',
@@ -8745,6 +8745,9 @@ export default function TournamentDeskPage() {
   useEffect(() => {
     if (!isCheckInManagement && (activeTab === 'checkin' || activeTab === 'towels')) {
       setActiveTab('courts')
+    }
+    if (isCheckInManagement && activeTab === 'courts') {
+      setActiveTab('checkin')
     }
   }, [isCheckInManagement, activeTab])
 
@@ -9932,6 +9935,51 @@ export default function TournamentDeskPage() {
             {tab === 'sms' ? 'SMS' : tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab}
           </button>
         ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0 6px 14px' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#455a64' }}>Actions:</span>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 2,
+            padding: 3,
+            borderRadius: 999,
+            border: '1px solid #90a4ae',
+            backgroundColor: '#f8fbff',
+          }}>
+            <button
+              onClick={() => { if (managementMode !== 'checkin_management') void handleSetManagementMode('checkin_management') }}
+              style={{
+                padding: '7px 14px',
+                fontSize: 12,
+                fontWeight: 700,
+                border: 'none',
+                borderRadius: 999,
+                backgroundColor: managementMode === 'checkin_management' ? '#1a237e' : 'transparent',
+                color: managementMode === 'checkin_management' ? '#fff' : '#455a64',
+                cursor: managementMode === 'checkin_management' ? 'default' : 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Check-In Management
+            </button>
+            <button
+              onClick={() => { if (managementMode !== 'court_management') void handleSetManagementMode('court_management') }}
+              style={{
+                padding: '7px 14px',
+                fontSize: 12,
+                fontWeight: 700,
+                border: 'none',
+                borderRadius: 999,
+                backgroundColor: managementMode === 'court_management' ? '#1a237e' : 'transparent',
+                color: managementMode === 'court_management' ? '#fff' : '#455a64',
+                cursor: managementMode === 'court_management' ? 'default' : 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Court Management
+            </button>
+          </div>
+        </div>
       </div>
 
       <div style={{ padding: '16px 24px' }}>
@@ -9943,25 +9991,6 @@ export default function TournamentDeskPage() {
                 <h2 style={{ fontSize: 16, fontWeight: 700, color: '#333', margin: 0 }}>
                   Courts
                 </h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#455a64' }}>Actions:</span>
-                  <select
-                    value={managementMode}
-                    onChange={e => handleSetManagementMode(e.target.value as 'court_management' | 'checkin_management')}
-                    style={{
-                      padding: '4px 8px',
-                      fontSize: 12,
-                      borderRadius: 4,
-                      border: '1px solid #90a4ae',
-                      backgroundColor: '#fff',
-                      color: '#263238',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <option value="court_management">Court Management</option>
-                    <option value="checkin_management">Check-In Management</option>
-                  </select>
-                </div>
                 {isDraft && startableCourts.length > 0 && !isCheckInManagement && (
                   <button
                     onClick={handleStartAllOpen}

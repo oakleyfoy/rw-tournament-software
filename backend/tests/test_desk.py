@@ -2647,7 +2647,7 @@ def test_management_mode_toggle_defaults_and_persists(client, session):
 
     mode_resp = client.get(f"/api/desk/tournaments/{t.id}/management-mode", params={"version_id": v.id})
     assert mode_resp.status_code == 200
-    assert mode_resp.json()["management_mode"] == "court_management"
+    assert mode_resp.json()["management_mode"] == "checkin_management"
 
     set_resp = client.patch(
         f"/api/desk/tournaments/{t.id}/management-mode",

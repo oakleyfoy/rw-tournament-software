@@ -193,7 +193,7 @@ def ensure_tournament_columns(engine: Engine) -> None:
                     if name == "public_schedule_version_id":
                         default = "DEFAULT NULL"
                     elif name == "desk_management_mode":
-                        default = "DEFAULT 'court_management'"
+                        default = "DEFAULT 'checkin_management'"
                     else:
                         default = "DEFAULT 0"
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} {default};"))
@@ -219,7 +219,7 @@ def ensure_tournament_columns(engine: Engine) -> None:
                     if name == "public_schedule_version_id":
                         default = "DEFAULT NULL"
                     elif name == "desk_management_mode":
-                        default = "DEFAULT 'court_management'"
+                        default = "DEFAULT 'checkin_management'"
                     else:
                         default = "DEFAULT FALSE"
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} {default};"))

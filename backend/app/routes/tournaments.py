@@ -1631,6 +1631,8 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    tournament.desk_management_mode = "checkin_management"
+    session.add(tournament)
 
     versions = session.exec(
         select(ScheduleVersion.id).where(ScheduleVersion.tournament_id == tournament_id)

@@ -564,7 +564,7 @@ class DeskSnapshotResponse(BaseModel):
     on_deck_by_court: Dict[str, DeskMatchItem]
     board_by_court: List[BoardCourtSlot]
     slots: List[SnapshotSlot] = []
-    management_mode: str = MODE_COURT_MANAGEMENT
+    management_mode: str = MODE_CHECKIN_MANAGEMENT
     checkin_matches: List[CheckInMatchItem] = []
     ready_queue: List[ReadyQueueItem] = []
     available_courts: List[str] = []
@@ -801,9 +801,9 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 def _normalize_management_mode(value: Optional[str]) -> str:
-    mode = (value or MODE_COURT_MANAGEMENT).strip().lower()
+    mode = (value or MODE_CHECKIN_MANAGEMENT).strip().lower()
     if mode not in ALLOWED_DESK_MODES:
-        return MODE_COURT_MANAGEMENT
+        return MODE_CHECKIN_MANAGEMENT
     return mode
 
 
@@ -1455,7 +1455,7 @@ def _build_match_items(
     session: Session,
     tournament: Tournament,
     version: ScheduleVersion,
-    management_mode: str = MODE_COURT_MANAGEMENT,
+    management_mode: str = MODE_CHECKIN_MANAGEMENT,
 ) -> tuple:
     """Build flat match list and court set. Returns (items, courts_set)."""
     all_matches = session.exec(
