@@ -9333,13 +9333,20 @@ export default function TournamentDeskPage() {
 
   if (hasBackendSlotContract) {
     ;(data.checkin_slot_options || []).forEach((opt) => {
+      const assignedMatchIds = new Set<number>()
+      ;(opt.slot_ids || []).forEach((slotId) => {
+        const snapshotSlot = slotById.get(slotId)
+        if (snapshotSlot?.assigned_match_id != null) {
+          assignedMatchIds.add(snapshotSlot.assigned_match_id)
+        }
+      })
       slotSectionMap.set(opt.slot_key, {
         key: opt.slot_key,
         label: opt.label,
         order: opt.slot_key,
         matches: [],
         checkinRows: (data.checkin_slot_rows?.[opt.slot_key] || []).slice().sort((a, b) => a.match_number - b.match_number),
-        assignedMatchIds: new Set<number>(),
+        assignedMatchIds,
         slotIds: new Set<number>(opt.slot_ids || []),
       })
     })
