@@ -1784,8 +1784,16 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                     for s in all_version_slots
                     if s.id is not None
                 }
+                slot_by_version_timekey: Dict[Tuple[int, date, time, time], List[ScheduleSlot]] = {}
+                for s in all_version_slots:
+                    if s.id is None:
+                        continue
+                    tk = (s.schedule_version_id, s.day_date, s.start_time, s.end_time)
+                    slot_by_version_timekey.setdefault(tk, []).append(s)
+                for arr in slot_by_version_timekey.values():
+                    arr.sort(key=lambda sl: (sl.court_number, sl.court_label or "", sl.id or 0))
                 slot_by_id = {s.id: s for s in all_version_slots if s.id is not None}
-                desired_by_version_match: Dict[Tuple[int, int], Tuple[int, datetime, Optional[str], bool]] = {}
+                desired_by_version_match: Dict[Tuple[int, int], Tuple[int, datetime, bool]] = {}
                 for assignment in canonical_assignments:
                     canonical_match = next(
                         (
@@ -1799,17 +1807,34 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                     if not canonical_match or not canonical_match.match_code or not canonical_slot:
                         continue
                     canonical_slot_key = _slot_key(canonical_slot)
+                    canonical_time_key = (
+                        canonical_slot.day_date,
+                        canonical_slot.start_time,
+                        canonical_slot.end_time,
+                    )
                     for draft_version_id in draft_version_ids:
                         draft_match = match_by_version_code.get(
                             (draft_version_id, canonical_match.match_code)
                         )
                         draft_slot = slot_by_version_key.get((draft_version_id, canonical_slot_key))
+                        if not draft_slot:
+                            same_time_slots = slot_by_version_timekey.get(
+                                (draft_version_id, *canonical_time_key)
+                            ) or []
+                            preferred = next(
+                                (
+                                    sl
+                                    for sl in same_time_slots
+                                    if sl.court_number == canonical_slot.court_number
+                                ),
+                                None,
+                            )
+                            draft_slot = preferred or (same_time_slots[0] if same_time_slots else None)
                         if not draft_match or not draft_slot:
                             continue
                         desired_by_version_match[(draft_version_id, draft_match.id)] = (
                             draft_slot.id,
                             assignment.assigned_at,
-                            assignment.assigned_by,
                             assignment.locked,
                         )
 
@@ -1825,24 +1850,24 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                         if desired is None:
                             session.delete(current_row)
                             continue
-                        desired_slot_id, desired_at, desired_by, desired_locked = desired
+                        desired_slot_id, desired_at, desired_locked = desired
                         current_row.slot_id = desired_slot_id
                         current_row.assigned_at = desired_at
-                        current_row.assigned_by = desired_by
+                        current_row.assigned_by = None
                         current_row.locked = desired_locked
                         session.add(current_row)
                     for key, desired in desired_by_version_match.items():
                         if key in current_by_version_match:
                             continue
                         draft_version_id, draft_match_id = key
-                        desired_slot_id, desired_at, desired_by, desired_locked = desired
+                        desired_slot_id, desired_at, desired_locked = desired
                         session.add(
                             MatchAssignment(
                                 schedule_version_id=draft_version_id,
                                 match_id=draft_match_id,
                                 slot_id=desired_slot_id,
                                 assigned_at=desired_at,
-                                assigned_by=desired_by,
+                                assigned_by=None,
                                 locked=desired_locked,
                             )
                         )
@@ -1876,7 +1901,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                         continue
                     current_row.slot_id = baseline.slot_id
                     current_row.assigned_at = baseline.assigned_at
-                    current_row.assigned_by = baseline.assigned_by
+                    current_row.assigned_by = None
                     current_row.locked = baseline.locked
                     session.add(current_row)
                 for key, baseline in baseline_by_version_match.items():
@@ -1888,7 +1913,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                             match_id=baseline.match_id,
                             slot_id=baseline.slot_id,
                             assigned_at=baseline.assigned_at,
-                            assigned_by=baseline.assigned_by,
+                            assigned_by=None,
                             locked=baseline.locked,
                         )
                     )
