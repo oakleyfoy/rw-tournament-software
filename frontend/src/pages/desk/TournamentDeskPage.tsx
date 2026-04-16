@@ -8507,7 +8507,7 @@ function CheckInReadyQueueCard({
   onReturnToCheckIn: () => void
   slotTintIndex: number | null
 }) {
-  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `checkin-ready-${rq.match_id}`,
     data: { type: 'checkinReady', matchId: rq.match_id },
   })
@@ -8526,13 +8526,10 @@ function CheckInReadyQueueCard({
         borderRadius: 8,
         overflow: 'hidden',
         cursor: isDragging ? 'grabbing' : 'grab',
-        opacity: isDragging ? 0.45 : 1,
+        opacity: isDragging ? 0.3 : 1,
         touchAction: 'none',
         userSelect: 'none',
         boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
-        position: isDragging ? 'relative' : undefined,
-        zIndex: isDragging ? 30 : undefined,
       }}
     >
       {/* dark header bar */}
@@ -9478,6 +9475,14 @@ export default function TournamentDeskPage() {
   }, [data, searchText])
 
   const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 2 } }))
+  const [dragReadyMatchId, setDragReadyMatchId] = useState<number | null>(null)
+
+  const handleCheckInBoardDragStart = (event: DragStartEvent) => {
+    const d = event.active.data.current as { type?: string; matchId?: number } | undefined
+    if (d?.type === 'checkinReady' && typeof d.matchId === 'number') {
+      setDragReadyMatchId(d.matchId)
+    }
+  }
 
   if (loading && !data) {
     return (
@@ -10021,6 +10026,7 @@ export default function TournamentDeskPage() {
   }
 
   const handleCheckInBoardDragEnd = async (event: DragEndEvent) => {
+    setDragReadyMatchId(null)
     const { active, over } = event
     if (!over) return
     const activeData = active.data.current as { type?: string; matchId?: number } | undefined
@@ -10463,7 +10469,7 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <DndContext sensors={checkInBoardSensors} onDragEnd={handleCheckInBoardDragEnd}>
+                <DndContext sensors={checkInBoardSensors} onDragStart={handleCheckInBoardDragStart} onDragEnd={handleCheckInBoardDragEnd}>
                 <div style={{ display: 'grid', gap: 14 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
@@ -10617,6 +10623,34 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
                 </div>
+
+                <DragOverlay dropAnimation={null}>
+                  {dragReadyMatchId && (() => {
+                    const rq = (data.ready_queue || []).find(r => r.match_id === dragReadyMatchId)
+                    if (!rq) return null
+                    return (
+                      <div style={{
+                        background: '#1a237e',
+                        color: '#fff',
+                        borderRadius: 8,
+                        padding: '8px 12px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        boxShadow: '0 6px 20px rgba(0,0,0,0.30)',
+                        minWidth: 160,
+                        cursor: 'grabbing',
+                        pointerEvents: 'none',
+                        lineHeight: 1.4,
+                      }}>
+                        <div style={{ fontSize: 10, opacity: 0.8, marginBottom: 2 }}>{rq.event_name}</div>
+                        <div>{rq.team1_display}</div>
+                        <div style={{ color: '#90caf9', fontSize: 9 }}>vs</div>
+                        <div>{rq.team2_display}</div>
+                      </div>
+                    )
+                  })()}
+                </DragOverlay>
+
                 </DndContext>
               </>
             )}
