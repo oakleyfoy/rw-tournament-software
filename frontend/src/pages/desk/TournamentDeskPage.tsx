@@ -4838,8 +4838,8 @@ function DeskGridTab({
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  // Build grid data from slots and matches
-  const { days, courtNumbers, courtLabels, timeRows, matchBySlot } = useMemo(() => {
+  // Build grid data from slots and matches – one section per day, each with its own courts
+  const { days, matchBySlot, dayDataList } = useMemo(() => {
     const slots = data.slots || []
     const matchMap = new Map<number, DeskMatchItem>()
     for (const m of data.matches) {
@@ -4847,48 +4847,44 @@ function DeskGridTab({
     }
 
     const daySet = new Set<string>()
-    const courtNumSet = new Set<number>()
-    const courtLabelMap = new Map<number, string>()
+    for (const s of slots) daySet.add(s.day_date)
+    const sortedDays = [...daySet].sort()
 
-    // Include configured tournament courts even when they have no slots yet.
-    allCourtLabels.forEach((label, idx) => {
-      const cn = idx + 1
-      courtNumSet.add(cn)
-      courtLabelMap.set(cn, label)
+    const dayDataList = sortedDays.map(day => {
+      // Courts for this specific day (from actual slots)
+      const courtNumMap = new Map<number, string>()
+      for (const s of slots) {
+        if (s.day_date === day) courtNumMap.set(s.court_number, s.court_label)
+      }
+      // Augment with configured courts that have no slots yet on this day
+      if (courtNumMap.size > 0) {
+        allCourtLabels.forEach((label, idx) => {
+          const cn = idx + 1
+          if (!courtNumMap.has(cn)) courtNumMap.set(cn, label)
+        })
+      }
+
+      const courtNumbers = [...courtNumMap.keys()].sort((a, b) => a - b)
+      const courtLabels: Record<number, string> = {}
+      for (const [cn, lbl] of courtNumMap) courtLabels[cn] = lbl
+
+      // Time rows for this day
+      const timeRowMap = new Map<string, Map<number, SnapshotSlot>>()
+      for (const s of slots) {
+        if (s.day_date !== day) continue
+        if (!timeRowMap.has(s.start_time)) timeRowMap.set(s.start_time, new Map())
+        timeRowMap.get(s.start_time)!.set(s.court_number, s)
+      }
+      const timeRows = [...timeRowMap.keys()].sort().map(t => ({
+        time: t,
+        slotsByCourt: timeRowMap.get(t)!,
+      }))
+
+      return { day, courtNumbers, courtLabels, timeRows }
     })
 
-    for (const s of slots) {
-      daySet.add(s.day_date)
-      courtNumSet.add(s.court_number)
-      courtLabelMap.set(s.court_number, s.court_label)
-    }
-
-    const sortedDays = [...daySet].sort()
-    const sortedCourts = [...courtNumSet].sort((a, b) => a - b)
-    const labels: Record<number, string> = {}
-    for (const [cn, lbl] of courtLabelMap) labels[cn] = lbl
-
-    const timeRowMap = new Map<string, Map<number, SnapshotSlot>>()
-    for (const s of slots) {
-      if (s.day_date !== (selectedDay || sortedDays[0])) continue
-      if (!timeRowMap.has(s.start_time)) timeRowMap.set(s.start_time, new Map())
-      timeRowMap.get(s.start_time)!.set(s.court_number, s)
-    }
-
-    const sortedTimes = [...timeRowMap.keys()].sort()
-    const rows = sortedTimes.map(t => ({
-      time: t,
-      slotsByCourt: timeRowMap.get(t)!,
-    }))
-
-    return {
-      days: sortedDays,
-      courtNumbers: sortedCourts,
-      courtLabels: labels,
-      timeRows: rows,
-      matchBySlot: matchMap,
-    }
-  }, [data.slots, data.matches, selectedDay, allCourtLabels])
+    return { days: sortedDays, matchBySlot: matchMap, dayDataList }
+  }, [data.slots, data.matches, allCourtLabels])
 
   useEffect(() => {
     if (days.length > 0 && !selectedDay) {
@@ -5174,15 +5170,18 @@ function DeskGridTab({
           {days.map(d => (
             <button
               key={d}
-              onClick={() => setSelectedDay(d)}
+              onClick={() => {
+                setSelectedDay(d)
+                document.getElementById(`desk-grid-day-${d}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }}
               style={{
                 padding: '5px 14px',
                 fontSize: 12,
                 fontWeight: 600,
                 border: '1px solid #c5cae9',
                 borderRadius: 4,
-                backgroundColor: (selectedDay || days[0]) === d ? '#1a237e' : '#fff',
-                color: (selectedDay || days[0]) === d ? '#fff' : '#333',
+                backgroundColor: '#fff',
+                color: '#1a237e',
                 cursor: 'pointer',
               }}
             >
@@ -5256,137 +5255,151 @@ function DeskGridTab({
         )}
       </div>
 
-      {/* Grid */}
+      {/* Grid – all days stacked, drag across days within one DndContext */}
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{
-                  position: 'sticky',
-                  left: 0,
-                  top: 0,
-                  background: '#1a237e',
-                  color: '#fff',
-                  padding: '6px 8px',
-                  textAlign: 'left',
-                  borderBottom: '2px solid #1a237e',
-                  minWidth: 70,
-                  zIndex: 3,
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}>
-                  Time
-                </th>
-                {courtNumbers.map(cn => (
-                  <th key={cn} style={{
-                    padding: '6px 8px',
-                    textAlign: 'center',
-                    borderBottom: '2px solid #1a237e',
-                    background: '#1a237e',
-                    color: '#fff',
-                    minWidth: 130,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    letterSpacing: 0.5,
-                    position: 'sticky',
-                    top: 0,
-                    zIndex: 2,
-                  }}>
-                    Court {courtLabels[cn] || cn}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {timeRows.map((row, rowIndex) => {
-                const rowTint = getSlotTint(rowIndex)
-                const rowHeaderBg = rowTint?.accent || '#546e7a'
-                const rowCellBg = rowTint?.bg || '#fff'
-                return (
-                <tr key={row.time}>
-                  <td style={{
-                    position: 'sticky',
-                    left: 0,
-                    background: rowHeaderBg,
-                    padding: '6px',
-                    borderBottom: '1px solid #eee',
-                    fontWeight: 600,
-                    whiteSpace: 'nowrap',
-                    zIndex: 1,
-                    fontSize: 11,
-                    color: '#fff',
-                  }}>
-                    {timeTo12Hour(row.time)}
-                  </td>
-                  {courtNumbers.map(cn => {
-                    const slot = row.slotsByCourt.get(cn)
-                    if (!slot) {
-                      return (
-                        <td key={cn} style={{
-                          padding: 3,
-                          borderBottom: '1px solid #eee',
-                          borderRight: '1px solid #f0f0f0',
-                          textAlign: 'center',
-                          color: '#ccc',
-                          fontSize: 10,
-                          backgroundColor: rowCellBg,
-                        }}>
-                          —
-                        </td>
-                      )
-                    }
+        {dayDataList.map(({ day, courtNumbers, courtLabels, timeRows }) => (
+          <div key={day} id={`desk-grid-day-${day}`} style={{ marginBottom: 32 }}>
+            {/* Day header */}
+            <div style={{
+              padding: '8px 16px',
+              background: '#1a237e',
+              color: '#fff',
+              borderRadius: '6px 6px 0 0',
+              fontWeight: 700,
+              fontSize: 13,
+              letterSpacing: 0.4,
+            }}>
+              {dayLabel(day)}
+            </div>
 
-                    const match = matchBySlot.get(slot.slot_id)
-                    if (!slot.is_active) {
-                      return (
-                        <td key={cn} style={{
-                          padding: 3,
-                          borderBottom: '1px solid #eee',
-                          borderRight: '1px solid #f0f0f0',
-                          textAlign: 'center',
-                          backgroundColor: '#fce4e4',
-                          color: '#c62828',
-                          fontSize: 9,
-                          fontWeight: 600,
-                        }}>
-                          BLOCKED
-                        </td>
-                      )
-                    }
-
+            <div style={{ overflowX: 'auto', border: '1px solid #c5cae9', borderTop: 'none', borderRadius: '0 0 6px 6px' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{
+                      position: 'sticky',
+                      left: 0,
+                      background: '#1a237e',
+                      color: '#fff',
+                      padding: '6px 8px',
+                      textAlign: 'left',
+                      borderBottom: '2px solid #1a237e',
+                      minWidth: 70,
+                      zIndex: 2,
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}>
+                      Time
+                    </th>
+                    {courtNumbers.map(cn => (
+                      <th key={cn} style={{
+                        padding: '6px 8px',
+                        textAlign: 'center',
+                        borderBottom: '2px solid #1a237e',
+                        background: '#1a237e',
+                        color: '#fff',
+                        minWidth: 130,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        letterSpacing: 0.5,
+                      }}>
+                        Court {courtLabels[cn] || cn}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {timeRows.map((row, rowIndex) => {
+                    const rowTint = getSlotTint(rowIndex)
+                    const rowHeaderBg = rowTint?.accent || '#546e7a'
+                    const rowCellBg = rowTint?.bg || '#fff'
                     return (
-                      <DroppableCell key={cn} slotId={slot.slot_id} baseBackgroundColor={rowCellBg}>
-                        {match ? (
-                          <DraggableMatch match={match} isDraft={isDraft} onMatchClick={onMatchClick} highlighted={highlightedMatchIds?.has(match.match_id)} allMatches={data.matches} />
-                        ) : (
-                          <div style={{
-                            minHeight: 36,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: '#bbb',
-                            fontSize: 10,
-                            fontStyle: 'italic',
-                          }}>
-                            Open
-                          </div>
-                        )}
-                      </DroppableCell>
+                      <tr key={row.time}>
+                        <td style={{
+                          position: 'sticky',
+                          left: 0,
+                          background: rowHeaderBg,
+                          padding: '6px',
+                          borderBottom: '1px solid #eee',
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          zIndex: 1,
+                          fontSize: 11,
+                          color: '#fff',
+                        }}>
+                          {timeTo12Hour(row.time)}
+                        </td>
+                        {courtNumbers.map(cn => {
+                          const slot = row.slotsByCourt.get(cn)
+                          if (!slot) {
+                            return (
+                              <td key={cn} style={{
+                                padding: 3,
+                                borderBottom: '1px solid #eee',
+                                borderRight: '1px solid #f0f0f0',
+                                textAlign: 'center',
+                                color: '#ccc',
+                                fontSize: 10,
+                                backgroundColor: rowCellBg,
+                              }}>
+                                —
+                              </td>
+                            )
+                          }
+
+                          const match = matchBySlot.get(slot.slot_id)
+                          if (!slot.is_active) {
+                            return (
+                              <td key={cn} style={{
+                                padding: 3,
+                                borderBottom: '1px solid #eee',
+                                borderRight: '1px solid #f0f0f0',
+                                textAlign: 'center',
+                                backgroundColor: '#fce4e4',
+                                color: '#c62828',
+                                fontSize: 9,
+                                fontWeight: 600,
+                              }}>
+                                BLOCKED
+                              </td>
+                            )
+                          }
+
+                          return (
+                            <DroppableCell key={cn} slotId={slot.slot_id} baseBackgroundColor={rowCellBg}>
+                              {match ? (
+                                <DraggableMatch match={match} isDraft={isDraft} onMatchClick={onMatchClick} highlighted={highlightedMatchIds?.has(match.match_id)} allMatches={data.matches} />
+                              ) : (
+                                <div style={{
+                                  minHeight: 36,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  color: '#bbb',
+                                  fontSize: 10,
+                                  fontStyle: 'italic',
+                                }}>
+                                  Open
+                                </div>
+                              )}
+                            </DroppableCell>
+                          )
+                        })}
+                      </tr>
                     )
                   })}
-                </tr>
-              )})}
-              {timeRows.length === 0 && (
-                <tr>
-                  <td colSpan={courtNumbers.length + 1} style={{ padding: 20, textAlign: 'center', color: '#999', fontSize: 12 }}>
-                    No time slots for this day
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  {timeRows.length === 0 && (
+                    <tr>
+                      <td colSpan={courtNumbers.length + 1} style={{ padding: 20, textAlign: 'center', color: '#999', fontSize: 12 }}>
+                        No time slots for this day
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
 
         <DragOverlay>
           {draggedMatch && (
