@@ -1984,9 +1984,6 @@ function MatchDrawer({
           </div>
         )}
 
-        {/* Match History Timeline */}
-        <MatchTimeline match={effectiveMatch} />
-
         {!isDraft && (
           <div style={{
             padding: '12px 16px',
@@ -2166,6 +2163,9 @@ function MatchDrawer({
             ))}
           </div>
         )}
+
+        {/* Match History Timeline */}
+        <MatchTimeline match={effectiveMatch} />
       </div>
 
       {/* Conflict warnings modal */}
@@ -8387,6 +8387,7 @@ function CheckInReadyQueueCard({
   rq,
   titleLabel,
   headerRightTop,
+  queueElapsedLabel,
   deskMatch,
   returning,
   onReturnToCheckIn,
@@ -8395,6 +8396,7 @@ function CheckInReadyQueueCard({
   rq: ReadyQueueItem
   titleLabel: string
   headerRightTop: string
+  queueElapsedLabel: string | null
   deskMatch?: DeskMatchItem
   returning: boolean
   onReturnToCheckIn: () => void
@@ -8491,6 +8493,11 @@ function CheckInReadyQueueCard({
           <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3 }}>
             {headerRightTop}
           </div>
+          {queueElapsedLabel && (
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginBottom: 3 }}>
+              Queue: {queueElapsedLabel}
+            </div>
+          )}
           <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
             {rq.team1_display}
           </div>
@@ -10479,12 +10486,14 @@ export default function TournamentDeskPage() {
                                 : null
                               const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
                               const headerTop = (slotLabelResolved || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()) || '—'
+                              const queueElapsedLabel = formatElapsedLabel(rq.ready_at, null)
                               return (
                                 <CheckInReadyQueueCard
                                   key={rq.match_id}
                                   rq={rq}
                                   titleLabel={formatReadyQueueLabel(rq)}
                                   headerRightTop={headerTop}
+                                  queueElapsedLabel={queueElapsedLabel}
                                   deskMatch={matchById.get(rq.match_id)}
                                   returning={readyResettingIds.has(rq.match_id)}
                                   onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
