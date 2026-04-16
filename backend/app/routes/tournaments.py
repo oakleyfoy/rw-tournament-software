@@ -1649,6 +1649,12 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
         m.winner_team_id = None
         m.started_at = None
         m.completed_at = None
+        # Reset any downstream slots that were auto-populated from prior results.
+        # Source-fed sides should be unknown again until feeder matches are replayed.
+        if m.source_match_a_id is not None:
+            m.team_a_id = None
+        if m.source_match_b_id is not None:
+            m.team_b_id = None
         session.add(m)
 
     match_checkins = session.exec(

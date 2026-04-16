@@ -821,3 +821,93 @@ def test_start_over_tournament_clears_runtime_and_checkins(client: TestClient, s
     assert session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)).all() == []
     assert session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all() == []
     assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []
+
+
+def test_start_over_clears_source_fed_downstream_teams(client: TestClient, session: Session):
+    tournament = Tournament(
+        name="Restart Source Wiring",
+        location="Austin",
+        timezone="America/Chicago",
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 1),
+    )
+    session.add(tournament)
+    session.flush()
+
+    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed A", team_count=4)
+    session.add(event)
+    session.flush()
+
+    teams = [
+        Team(event_id=event.id, name="Alpha", seed=1, display_name="Alpha"),
+        Team(event_id=event.id, name="Bravo", seed=2, display_name="Bravo"),
+        Team(event_id=event.id, name="Charlie", seed=3, display_name="Charlie"),
+        Team(event_id=event.id, name="Delta", seed=4, display_name="Delta"),
+    ]
+    session.add_all(teams)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+
+    wf_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_R1_M1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_4",
+        runtime_status="FINAL",
+        winner_team_id=teams[0].id,
+        score_json={"display": "21-12, 21-11"},
+    )
+    session.add(wf_match)
+    session.flush()
+
+    downstream = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MAIN_QF_M1",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="W(WF_R1_M1)",
+        placeholder_side_b="SEED_2",
+        source_match_a_id=wf_match.id,
+        source_match_b_id=None,
+        source_a_role="WINNER",
+        source_b_role=None,
+        runtime_status="SCHEDULED",
+    )
+    session.add(downstream)
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{tournament.id}/start-over")
+    assert resp.status_code == 200
+
+    session.refresh(wf_match)
+    session.refresh(downstream)
+
+    # First playable waterfall match remains seeded and ready for check-in.
+    assert wf_match.team_a_id == teams[0].id
+    assert wf_match.team_b_id == teams[3].id
+    assert wf_match.runtime_status == "SCHEDULED"
+
+    # Downstream source-fed side is reset so bracket stays unresolved until WF is replayed.
+    assert downstream.team_a_id is None
+    assert downstream.team_b_id == teams[1].id
+    assert downstream.runtime_status == "SCHEDULED"
+    assert downstream.winner_team_id is None
