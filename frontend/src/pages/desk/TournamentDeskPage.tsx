@@ -9501,6 +9501,204 @@ export default function TournamentDeskPage() {
 
   const [nativeDraggedReadyMatchId, setNativeDraggedReadyMatchId] = useState<number | null>(null)
   const [nativeDragOverCourt, setNativeDragOverCourt] = useState<string | null>(null)
+  const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
+    if (!data) return
+
+    const slotSectionMap = new Map<
+      string,
+      {
+        key: string
+        label: string
+        order: string
+        matches: DeskMatchItem[]
+        checkinRows: CheckInMatchItem[]
+        assignedMatchIds: Set<number>
+        slotIds: Set<number>
+      }
+    >()
+    const formatTimeLabel = (t: string): string => {
+      const hhmm = (t || '').slice(0, 5)
+      const [hhRaw, mmRaw] = hhmm.split(':')
+      const hh = parseInt(hhRaw || '0', 10)
+      const mm = parseInt(mmRaw || '0', 10)
+      const ampm = hh < 12 ? 'AM' : 'PM'
+      const h12 = hh % 12 || 12
+      return `${h12}:${String(mm).padStart(2, '0')} ${ampm}`
+    }
+    const slotById = new Map<number, SnapshotSlot>((data.slots || []).map((s) => [s.slot_id, s]))
+    const hasBackendSlotContract = (data.checkin_slot_options || []).length > 0
+    if (hasBackendSlotContract) {
+      ;(data.checkin_slot_options || []).forEach((opt) => {
+        const assignedMatchIds = new Set<number>()
+        ;(opt.slot_ids || []).forEach((slotId) => {
+          const snapshotSlot = slotById.get(slotId)
+          if (snapshotSlot?.assigned_match_id != null) {
+            assignedMatchIds.add(snapshotSlot.assigned_match_id)
+          }
+        })
+        slotSectionMap.set(opt.slot_key, {
+          key: opt.slot_key,
+          label: opt.label,
+          order: opt.slot_key,
+          matches: [],
+          checkinRows: (data.checkin_slot_rows?.[opt.slot_key] || []).slice().sort((a, b) => a.match_number - b.match_number),
+          assignedMatchIds,
+          slotIds: new Set<number>(opt.slot_ids || []),
+        })
+      })
+    } else {
+      ;(data.slots || [])
+        .slice()
+        .sort((a, b) => {
+          const ka = `${a.day_date}|${a.start_time}`
+          const kb = `${b.day_date}|${b.start_time}`
+          return ka.localeCompare(kb)
+        })
+        .forEach((s) => {
+          const key = `${s.day_date}|${(s.start_time || '').slice(0, 5)}`
+          if (!slotSectionMap.has(key)) {
+            slotSectionMap.set(key, {
+              key,
+              label: `${s.day_date} ${formatTimeLabel(s.start_time || '00:00')}`,
+              order: key,
+              matches: [],
+              checkinRows: [],
+              assignedMatchIds: new Set<number>(),
+              slotIds: new Set<number>(),
+            })
+          }
+          if (s.slot_id != null) {
+            slotSectionMap.get(key)!.slotIds.add(s.slot_id)
+          }
+          if (s.assigned_match_id != null) {
+            slotSectionMap.get(key)!.assignedMatchIds.add(s.assigned_match_id)
+          }
+        })
+
+      ;(data.checkin_matches || []).forEach((cm) => {
+        let key = ''
+        let label = ''
+        if (cm.slot_id != null && slotById.has(cm.slot_id)) {
+          const s = slotById.get(cm.slot_id)!
+          key = `${s.day_date}|${(s.start_time || '').slice(0, 5)}`
+          label = `${s.day_date} ${formatTimeLabel(s.start_time || '00:00')}`
+        } else {
+          key = `checkin|${cm.day_label}|${(cm.sort_time || '').slice(0, 5)}`
+          label = `${cm.day_label} ${cm.scheduled_time || ''}`.trim()
+        }
+        if (!slotSectionMap.has(key)) {
+          slotSectionMap.set(key, {
+            key,
+            label,
+            order: key,
+            matches: [],
+            checkinRows: [],
+            assignedMatchIds: new Set<number>(),
+            slotIds: new Set<number>(),
+          })
+        }
+        if (cm.slot_id != null) {
+          slotSectionMap.get(key)!.slotIds.add(cm.slot_id)
+        }
+        slotSectionMap.get(key)!.assignedMatchIds.add(cm.match_id)
+      })
+    }
+
+    const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
+    const slotOrderByKey = new Map<string, number>()
+    const slotKeyBySlotId = new Map<number, string>()
+    const slotKeyByMatchId = new Map<number, string>()
+    slotSections.forEach((section, index) => {
+      slotOrderByKey.set(section.key, index)
+      section.slotIds.forEach((slotId) => {
+        slotKeyBySlotId.set(slotId, section.key)
+      })
+      section.assignedMatchIds.forEach((assignedMatchId) => {
+        if (!slotKeyByMatchId.has(assignedMatchId)) {
+          slotKeyByMatchId.set(assignedMatchId, section.key)
+        }
+      })
+    })
+    ;(data.checkin_matches || []).forEach((cm) => {
+      if (cm.slot_id != null) {
+        const slotKey = slotKeyBySlotId.get(cm.slot_id)
+        if (slotKey) {
+          slotKeyByMatchId.set(cm.match_id, slotKey)
+        }
+      }
+    })
+
+    const readyMatchIds = new Set((data.ready_queue || []).map((rq) => rq.match_id))
+    const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
+    data.courts.forEach((court) => {
+      rawNowPlayingByCourt.set(court, data.now_playing_by_court[court])
+    })
+    const courtBoardRows = data.courts.map((court) => {
+      const now = data.now_playing_by_court[court]
+      const courtLabel = court.replace(/^Court\s+/i, '')
+      const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
+      const visibleReadyAssignSlots = data.available_slots
+      const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === court)
+      return {
+        court,
+        now,
+        isClosed,
+        availableSlotsForCourt,
+      }
+    })
+
+    const targetRow = courtBoardRows.find((r) => r.court === court)
+    const rawNowPlaying = rawNowPlayingByCourt.get(court)
+    if (rawNowPlaying) {
+      setError('That court is occupied right now.')
+      return
+    }
+    if (targetRow?.now) {
+      setError('That court already has a match assigned.')
+      return
+    }
+    const slotId = targetRow?.availableSlotsForCourt[0]?.slot_id
+    if (!slotId) {
+      setError('No open assignment slot on that court.')
+      return
+    }
+    const readySlotKey = slotKeyByMatchId.get(matchId) || null
+    const readySlotIndex = readySlotKey != null ? (slotOrderByKey.get(readySlotKey) ?? null) : null
+    if (readySlotIndex != null) {
+      setPersistedSlotTintByMatchId((prev) =>
+        prev[matchId] == null
+          ? { ...prev, [matchId]: readySlotIndex }
+          : prev
+      )
+    }
+    await handleAssignReadyMatch(matchId, slotId)
+  }, [data, courtStates, handleAssignReadyMatch])
+
+  const handleNativeReadyDragStart = useCallback((event: React.DragEvent<HTMLDivElement>, matchId: number) => {
+    setError(null)
+    setNativeDraggedReadyMatchId(matchId)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(matchId))
+    event.dataTransfer.setData('application/x-rw-ready-match', String(matchId))
+  }, [])
+
+  const handleNativeReadyDragEnd = useCallback(() => {
+    setNativeDraggedReadyMatchId(null)
+    setNativeDragOverCourt(null)
+  }, [])
+
+  const handleNativeReadyDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>, court: string) => {
+    const rawMatchId = event.dataTransfer.getData('application/x-rw-ready-match') || event.dataTransfer.getData('text/plain')
+    const matchId = Number(rawMatchId)
+    setNativeDragOverCourt(null)
+    if (!Number.isFinite(matchId) || matchId <= 0) {
+      setNativeDraggedReadyMatchId(null)
+      setError('Could not determine which ready match was dropped.')
+      return
+    }
+    setNativeDraggedReadyMatchId(null)
+    await handleAssignReadyMatchToCourt(matchId, court)
+  }, [handleAssignReadyMatchToCourt])
 
   if (loading && !data) {
     return (
@@ -10042,60 +10240,6 @@ export default function TournamentDeskPage() {
       </div>
     )
   }
-
-  const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
-    const targetRow = courtBoardRows.find((r) => r.court === court)
-    const rawNowPlaying = rawNowPlayingByCourt.get(court)
-    if (rawNowPlaying) {
-      setError('That court is occupied right now.')
-      return
-    }
-    if (targetRow?.now) {
-      setError('That court already has a match assigned.')
-      return
-    }
-    const slotId = targetRow?.availableSlotsForCourt[0]?.slot_id
-    if (!slotId) {
-      setError('No open assignment slot on that court.')
-      return
-    }
-    const readySlotKey = slotKeyByMatchId.get(matchId) || null
-    const readySlotIndex = readySlotKey != null ? (slotOrderByKey.get(readySlotKey) ?? null) : null
-    if (readySlotIndex != null) {
-      setPersistedSlotTintByMatchId((prev) =>
-        prev[matchId] == null
-          ? { ...prev, [matchId]: readySlotIndex }
-          : prev
-      )
-    }
-    await handleAssignReadyMatch(matchId, slotId)
-  }, [courtBoardRows, rawNowPlayingByCourt, slotKeyByMatchId, slotOrderByKey, handleAssignReadyMatch])
-
-  const handleNativeReadyDragStart = useCallback((event: React.DragEvent<HTMLDivElement>, matchId: number) => {
-    setError(null)
-    setNativeDraggedReadyMatchId(matchId)
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', String(matchId))
-    event.dataTransfer.setData('application/x-rw-ready-match', String(matchId))
-  }, [])
-
-  const handleNativeReadyDragEnd = useCallback(() => {
-    setNativeDraggedReadyMatchId(null)
-    setNativeDragOverCourt(null)
-  }, [])
-
-  const handleNativeReadyDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>, court: string) => {
-    const rawMatchId = event.dataTransfer.getData('application/x-rw-ready-match') || event.dataTransfer.getData('text/plain')
-    const matchId = Number(rawMatchId)
-    setNativeDragOverCourt(null)
-    if (!Number.isFinite(matchId) || matchId <= 0) {
-      setNativeDraggedReadyMatchId(null)
-      setError('Could not determine which ready match was dropped.')
-      return
-    }
-    setNativeDraggedReadyMatchId(null)
-    await handleAssignReadyMatchToCourt(matchId, court)
-  }, [handleAssignReadyMatchToCourt])
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
