@@ -1733,17 +1733,29 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
         # when available, so start-over returns to the intended event schedule
         # chronology (e.g. finals on Sunday) even if desk runtime moved matches.
         restored_from_public = False
-        public_version_id = (
+        latest_final_version_id = next(
+            (
+                v.id
+                for v in sorted(
+                    [v for v in versions if v.id is not None],
+                    key=lambda it: (it.version_number, it.id or 0),
+                    reverse=True,
+                )
+                if (v.status or "").lower() == "final"
+            ),
+            None,
+        )
+        canonical_version_id = (
             tournament.public_schedule_version_id
             if tournament.public_schedule_version_id in version_ids
-            else None
+            else latest_final_version_id
         )
         draft_version_ids = {
             v.id for v in versions if v.id is not None and (v.status or "").lower() == "draft"
         }
-        if public_version_id and draft_version_ids:
+        if canonical_version_id and draft_version_ids:
             canonical_assignments = [
-                a for a in assignments if a.schedule_version_id == public_version_id
+                a for a in assignments if a.schedule_version_id == canonical_version_id
             ]
             if canonical_assignments:
                 all_version_matches = session.exec(
@@ -1779,7 +1791,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                         (
                             m
                             for m in all_version_matches
-                            if m.id == assignment.match_id and m.schedule_version_id == public_version_id
+                            if m.id == assignment.match_id and m.schedule_version_id == canonical_version_id
                         ),
                         None,
                     )
