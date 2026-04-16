@@ -104,6 +104,8 @@ import {
   SmsPlayerLookupItem,
   SmsPlayerSyncResponse,
   TemporaryPlayerLookupItem,
+  getPublicRoundRobin,
+  RoundRobinResponse,
 } from '../../api/client'
 import {
   DndContext,
@@ -3074,6 +3076,7 @@ function PoolProjectionPanel({
   const [toast, setToast] = useState<string | null>(null)
   const [confirmEvt, setConfirmEvt] = useState<EventProjection | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [rrSchedules, setRrSchedules] = useState<Record<number, RoundRobinResponse>>({})
 
   const fetchProjection = useCallback(async () => {
     setLoading(true)
@@ -3121,6 +3124,31 @@ function PoolProjectionPanel({
     const t = setTimeout(() => setToast(null), 3000)
     return () => clearTimeout(t)
   }, [toast])
+
+  // Fetch RR match schedule for each event whenever projection data loads/refreshes
+  useEffect(() => {
+    if (!data) return
+    let cancelled = false
+    const fetchAll = async () => {
+      const results = await Promise.allSettled(
+        data.events.map(evt =>
+          getPublicRoundRobin(tournamentId, evt.event_id)
+            .then(rr => [evt.event_id, rr] as [number, RoundRobinResponse])
+        )
+      )
+      if (cancelled) return
+      const map: Record<number, RoundRobinResponse> = {}
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          const [evtId, rr] = r.value
+          map[evtId] = rr
+        }
+      }
+      setRrSchedules(map)
+    }
+    fetchAll()
+    return () => { cancelled = true }
+  }, [data, tournamentId])
 
   const handleConfirmPlacement = async (evt: EventProjection) => {
     setPlacing(true)
@@ -3231,6 +3259,85 @@ function PoolProjectionPanel({
                 </div>
               ))}
             </div>
+
+            {/* Pool Match Schedule */}
+            {(() => {
+              const rr = rrSchedules[evt.event_id]
+              if (!rr) return null
+              const poolMatchRows = rr.pools.flatMap(pool =>
+                pool.matches.map(m => ({ ...m, pool_label: pool.pool_label, pool_code: pool.pool_code }))
+              )
+              const scheduled = poolMatchRows.filter(m => m.day_display || m.time_display || m.court_label)
+              if (scheduled.length === 0) return null
+              return (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginBottom: 4 }}>
+                    Pool Match Schedule
+                  </div>
+                  <div style={{ overflowX: 'auto', border: '1px solid #e0e0e0', borderRadius: 4 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                      <thead>
+                        <tr style={{ background: '#e8eaf6' }}>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700, whiteSpace: 'nowrap' }}>Pool</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700, whiteSpace: 'nowrap' }}>Match</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700, whiteSpace: 'nowrap' }}>Day</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700, whiteSpace: 'nowrap' }}>Time</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700, whiteSpace: 'nowrap' }}>Court</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700 }}>Team A</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'center', borderBottom: '1px solid #c5cae9', color: '#999', fontWeight: 400 }}>vs</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700 }}>Team B</th>
+                          <th style={{ padding: '4px 8px', textAlign: 'center', borderBottom: '1px solid #c5cae9', color: '#333', fontWeight: 700, whiteSpace: 'nowrap' }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scheduled.map((m, i) => {
+                          const isEven = i % 2 === 0
+                          const isCompleted = m.status === 'FINAL'
+                          return (
+                            <tr key={m.match_id} style={{ background: isEven ? '#fff' : '#f9f9ff' }}>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', fontWeight: 700, color: '#1a237e' }}>
+                                {m.pool_label}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#555', fontFamily: 'monospace', fontSize: 9 }}>
+                                {m.match_code}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#333', whiteSpace: 'nowrap' }}>
+                                {m.day_display || '—'}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#333', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                                {m.time_display || '—'}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#555', whiteSpace: 'nowrap' }}>
+                                {m.court_label || '—'}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#333', fontWeight: 500 }}>
+                                {m.line1}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#bbb', textAlign: 'center', fontSize: 9 }}>
+                                vs
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', color: '#333', fontWeight: 500 }}>
+                                {m.line2}
+                              </td>
+                              <td style={{ padding: '3px 8px', borderBottom: '1px solid #eee', textAlign: 'center' }}>
+                                <span style={{
+                                  fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                                  background: isCompleted ? '#e8f5e9' : m.status === 'IN_PROGRESS' ? '#fff3e0' : '#f5f5f5',
+                                  color: isCompleted ? '#2e7d32' : m.status === 'IN_PROGRESS' ? '#e65100' : '#666',
+                                  textTransform: 'uppercase',
+                                }}>
+                                  {isCompleted ? 'Final' : m.status === 'IN_PROGRESS' ? 'Live' : 'Sched'}
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Confirm placement button */}
             {evt.wf_complete && isDraft && (
