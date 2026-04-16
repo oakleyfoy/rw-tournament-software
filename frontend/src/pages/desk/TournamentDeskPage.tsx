@@ -8226,7 +8226,6 @@ function CheckInCourtBoardCard({
 
   const headerBg = tint?.accent || '#1a237e'
   const footerBg = tint?.bg || '#eef4ff'
-  const footerText = tint?.accent || '#1a237e'
 
   if (!match && !row.isClosed) {
     return (
@@ -8372,7 +8371,6 @@ function CheckInReadyQueueCard({
   rq,
   titleLabel,
   headerRightTop,
-  headerRightBottom,
   deskMatch,
   returning,
   onReturnToCheckIn,
@@ -8381,7 +8379,6 @@ function CheckInReadyQueueCard({
   rq: ReadyQueueItem
   titleLabel: string
   headerRightTop: string
-  headerRightBottom: string
   deskMatch?: DeskMatchItem
   returning: boolean
   onReturnToCheckIn: () => void
@@ -8395,7 +8392,6 @@ function CheckInReadyQueueCard({
 
   const accentColor = tint?.accent || '#0d47a1'
   const footerBg = tint?.bg || '#eef4ff'
-  const footerText = tint?.accent || '#0d47a1'
 
   return (
     <div
@@ -9832,6 +9828,7 @@ export default function TournamentDeskPage() {
     const activeData = active.data.current as { type?: string; matchId?: number } | undefined
     const overData = over.data.current as { type?: string; court?: string } | undefined
     if (activeData?.type !== 'checkinReady' || typeof activeData.matchId !== 'number') return
+    const matchId = activeData.matchId
     if (overData?.type !== 'checkinOpenCourt' || !overData.court) return
     const targetRow = courtBoardRows.find((r) => r.court === overData.court)
     const rawNowPlaying = rawNowPlayingByCourt.get(overData.court)
@@ -9848,16 +9845,16 @@ export default function TournamentDeskPage() {
       setError('No open assignment slot on that court.')
       return
     }
-    const readySlotKey = slotKeyByMatchId.get(activeData.matchId) || null
+    const readySlotKey = slotKeyByMatchId.get(matchId) || null
     const readySlotIndex = readySlotKey != null ? (slotOrderByKey.get(readySlotKey) ?? null) : null
     if (readySlotIndex != null) {
       setPersistedSlotTintByMatchId((prev) =>
-        prev[activeData.matchId] == null
-          ? { ...prev, [activeData.matchId]: readySlotIndex }
+        prev[matchId] == null
+          ? { ...prev, [matchId]: readySlotIndex }
           : prev
       )
     }
-    await handleAssignReadyMatch(activeData.matchId, slotId)
+    await handleAssignReadyMatch(matchId, slotId)
   }
 
   return (
@@ -10401,14 +10398,12 @@ export default function TournamentDeskPage() {
                                 : null
                               const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
                               const headerTop = (slotLabelResolved || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()) || '—'
-                              const headerBottom = rq.ready_at ? `Ready ${formatStartedAtLabel(rq.ready_at) || ''}`.trim() : 'Ready now'
                               return (
                                 <CheckInReadyQueueCard
                                   key={rq.match_id}
                                   rq={rq}
                                   titleLabel={formatReadyQueueLabel(rq)}
                                   headerRightTop={headerTop}
-                                  headerRightBottom={headerBottom}
                                   deskMatch={matchById.get(rq.match_id)}
                                   returning={readyResettingIds.has(rq.match_id)}
                                   onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
