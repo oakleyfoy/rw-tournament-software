@@ -1493,6 +1493,192 @@ function MatchDrawer({
     effectiveMatch.team2_display,
   ])
 
+  const actionsPanel = isDraft && !finalized && match.status !== 'FINAL' ? (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
+        Actions
+      </div>
+
+      {(match.status === 'SCHEDULED' || match.status === 'DELAYED') && (
+        <button
+          onClick={() => handleSetStatus('IN_PROGRESS')}
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            fontSize: 13,
+            fontWeight: 600,
+            backgroundColor: '#e65100',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            marginBottom: 12,
+          }}
+        >
+          Set In Progress
+        </button>
+      )}
+      {match.status === 'PAUSED' && (
+        <button
+          onClick={() => handleSetStatus('IN_PROGRESS')}
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            fontSize: 13,
+            fontWeight: 600,
+            backgroundColor: '#e65100',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            marginBottom: 12,
+          }}
+        >
+          Resume Match
+        </button>
+      )}
+
+      <div style={{
+        border: '1px solid #e0e0e0',
+        borderRadius: 6,
+        padding: 14,
+        backgroundColor: '#fafafa',
+      }}>
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: '#333' }}>
+          Finalize Match
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
+          <input
+            type="text"
+            placeholder="e.g. 8-4"
+            value={score}
+            onChange={e => setScore(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '6px 10px',
+              fontSize: 13,
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              marginTop: 4,
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Winner</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+            {match.team1_id && (
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+                cursor: 'pointer',
+                padding: '6px 10px',
+                borderRadius: 4,
+                border: winnerId === match.team1_id ? '2px solid #1a237e' : '1px solid #ddd',
+                backgroundColor: winnerId === match.team1_id ? '#e8eaf6' : '#fff',
+              }}>
+                <input
+                  type="radio"
+                  name="winner"
+                  checked={winnerId === match.team1_id}
+                  onChange={() => setWinnerId(match.team1_id)}
+                />
+                {match.team1_display}
+              </label>
+            )}
+            {match.team2_id && (
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+                cursor: 'pointer',
+                padding: '6px 10px',
+                borderRadius: 4,
+                border: winnerId === match.team2_id ? '2px solid #1a237e' : '1px solid #ddd',
+                backgroundColor: winnerId === match.team2_id ? '#e8eaf6' : '#fff',
+              }}>
+                <input
+                  type="radio"
+                  name="winner"
+                  checked={winnerId === match.team2_id}
+                  onChange={() => setWinnerId(match.team2_id)}
+                />
+                {match.team2_display}
+              </label>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={handleFinalize}
+            disabled={!winnerId || !score.trim() || submitting}
+            style={{
+              flex: 1,
+              padding: '8px 16px',
+              fontSize: 13,
+              fontWeight: 600,
+              backgroundColor: winnerId && score.trim() ? '#2e7d32' : '#ccc',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: winnerId && score.trim() ? 'pointer' : 'default',
+            }}
+          >
+            {submitting ? 'Submitting...' : 'Finalize Match'}
+          </button>
+          {match.team1_id && match.team2_id && (
+            <button
+              onClick={handleDefault}
+              disabled={!winnerId || submitting}
+              style={{
+                flex: 1,
+                padding: '8px 16px',
+                fontSize: 13,
+                fontWeight: 600,
+                backgroundColor: winnerId ? '#e65100' : '#ccc',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                cursor: winnerId ? 'pointer' : 'default',
+              }}
+            >
+              {submitting ? 'Submitting...' : match.stage === 'WF' ? 'Default (WF)' : 'Default Win'}
+            </button>
+          )}
+          {match.team1_id && match.team2_id && (
+            <button
+              onClick={handleRetired}
+              disabled={!winnerId || !score.trim() || submitting}
+              title="Enter the score at point of retirement, select the winning team, then click Retired"
+              style={{
+                flex: 1,
+                padding: '8px 16px',
+                fontSize: 13,
+                fontWeight: 600,
+                backgroundColor: winnerId && score.trim() ? '#6a1b9a' : '#ccc',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                cursor: winnerId && score.trim() ? 'pointer' : 'default',
+              }}
+            >
+              {submitting ? 'Submitting...' : 'Retired'}
+            </button>
+          )}
+          {match.stage === 'WF' && match.team1_id && match.team2_id && (
+            <div style={{ fontSize: 11, color: '#e65100', fontStyle: 'italic', marginTop: 4 }}>
+              Waterfall: select which team gets the win or loss, then click Default (WF)
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null
+
   return (
     <div style={{
       position: 'fixed',
@@ -1531,6 +1717,8 @@ function MatchDrawer({
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
+        {actionsPanel}
+
         {/* Downstream Impact */}
         <DrawerImpact
           tournamentId={tournamentId}
@@ -1796,192 +1984,6 @@ function MatchDrawer({
             marginTop: 16,
           }}>
             Viewing published schedule (read-only). Open Desk Draft to make updates.
-          </div>
-        )}
-
-        {isDraft && !finalized && match.status !== 'FINAL' && (
-          <div style={{ marginTop: 16, borderTop: '1px solid #e0e0e0', paddingTop: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
-              Actions
-            </div>
-
-            {(match.status === 'SCHEDULED' || match.status === 'DELAYED') && (
-              <button
-                onClick={() => handleSetStatus('IN_PROGRESS')}
-                style={{
-                  width: '100%',
-                  padding: '8px 16px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  backgroundColor: '#e65100',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  marginBottom: 12,
-                }}
-              >
-                Set In Progress
-              </button>
-            )}
-            {match.status === 'PAUSED' && (
-              <button
-                onClick={() => handleSetStatus('IN_PROGRESS')}
-                style={{
-                  width: '100%',
-                  padding: '8px 16px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  backgroundColor: '#e65100',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  marginBottom: 12,
-                }}
-              >
-                Resume Match
-              </button>
-            )}
-
-            <div style={{
-              border: '1px solid #e0e0e0',
-              borderRadius: 6,
-              padding: 14,
-              backgroundColor: '#fafafa',
-            }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: '#333' }}>
-                Finalize Match
-              </div>
-              <div style={{ marginBottom: 8 }}>
-                <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 8-4"
-                  value={score}
-                  onChange={e => setScore(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '6px 10px',
-                    fontSize: 13,
-                    border: '1px solid #ccc',
-                    borderRadius: 4,
-                    marginTop: 4,
-                    boxSizing: 'border-box',
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Winner</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                  {match.team1_id && (
-                    <label style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      padding: '6px 10px',
-                      borderRadius: 4,
-                      border: winnerId === match.team1_id ? '2px solid #1a237e' : '1px solid #ddd',
-                      backgroundColor: winnerId === match.team1_id ? '#e8eaf6' : '#fff',
-                    }}>
-                      <input
-                        type="radio"
-                        name="winner"
-                        checked={winnerId === match.team1_id}
-                        onChange={() => setWinnerId(match.team1_id)}
-                      />
-                      {match.team1_display}
-                    </label>
-                  )}
-                  {match.team2_id && (
-                    <label style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      padding: '6px 10px',
-                      borderRadius: 4,
-                      border: winnerId === match.team2_id ? '2px solid #1a237e' : '1px solid #ddd',
-                      backgroundColor: winnerId === match.team2_id ? '#e8eaf6' : '#fff',
-                    }}>
-                      <input
-                        type="radio"
-                        name="winner"
-                        checked={winnerId === match.team2_id}
-                        onChange={() => setWinnerId(match.team2_id)}
-                      />
-                      {match.team2_display}
-                    </label>
-                  )}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={handleFinalize}
-                  disabled={!winnerId || !score.trim() || submitting}
-                  style={{
-                    flex: 1,
-                    padding: '8px 16px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    backgroundColor: winnerId && score.trim() ? '#2e7d32' : '#ccc',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 4,
-                    cursor: winnerId && score.trim() ? 'pointer' : 'default',
-                  }}
-                >
-                  {submitting ? 'Submitting...' : 'Finalize Match'}
-                </button>
-                {match.team1_id && match.team2_id && (
-                  <button
-                    onClick={handleDefault}
-                    disabled={!winnerId || submitting}
-                    style={{
-                      flex: 1,
-                      padding: '8px 16px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      backgroundColor: winnerId ? '#e65100' : '#ccc',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 4,
-                      cursor: winnerId ? 'pointer' : 'default',
-                    }}
-                  >
-                    {submitting ? 'Submitting...' : match.stage === 'WF' ? 'Default (WF)' : 'Default Win'}
-                  </button>
-                )}
-                {match.team1_id && match.team2_id && (
-                  <button
-                    onClick={handleRetired}
-                    disabled={!winnerId || !score.trim() || submitting}
-                    title="Enter the score at point of retirement, select the winning team, then click Retired"
-                    style={{
-                      flex: 1,
-                      padding: '8px 16px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      backgroundColor: winnerId && score.trim() ? '#6a1b9a' : '#ccc',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 4,
-                      cursor: winnerId && score.trim() ? 'pointer' : 'default',
-                    }}
-                  >
-                    {submitting ? 'Submitting...' : 'Retired'}
-                  </button>
-                )}
-                {match.stage === 'WF' && match.team1_id && match.team2_id && (
-                  <div style={{ fontSize: 11, color: '#e65100', fontStyle: 'italic', marginTop: 4 }}>
-                    Waterfall: select which team gets the win or loss, then click Default (WF)
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         )}
 
