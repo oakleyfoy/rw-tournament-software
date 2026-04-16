@@ -8507,7 +8507,7 @@ function CheckInReadyQueueCard({
   onReturnToCheckIn: () => void
   slotTintIndex: number | null
 }) {
-  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `checkin-ready-${rq.match_id}`,
     data: { type: 'checkinReady', matchId: rq.match_id },
   })
@@ -8526,14 +8526,10 @@ function CheckInReadyQueueCard({
         borderRadius: 8,
         overflow: 'hidden',
         cursor: isDragging ? 'grabbing' : 'grab',
-        opacity: isDragging ? 0.45 : 1,
+        opacity: isDragging ? 0.25 : 1,
         touchAction: 'none',
         userSelect: 'none',
-        boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,0.18)' : '0 1px 3px rgba(15, 23, 42, 0.06)',
-        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
-        position: 'relative',
-        zIndex: isDragging ? 9999 : undefined,
-        pointerEvents: isDragging ? 'none' : undefined,
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       }}
     >
       {/* dark header bar */}
@@ -9479,6 +9475,15 @@ export default function TournamentDeskPage() {
   }, [data, searchText])
 
   const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 2 } }))
+  const [dragActiveRQ, setDragActiveRQ] = useState<ReadyQueueItem | null>(null)
+
+  const handleCheckInBoardDragStart = (event: DragStartEvent) => {
+    const d = event.active.data.current as { type?: string; matchId?: number } | undefined
+    if (d?.type === 'checkinReady' && typeof d.matchId === 'number') {
+      const rq = (data?.ready_queue || []).find(r => r.match_id === d.matchId) || null
+      setDragActiveRQ(rq)
+    }
+  }
 
   if (loading && !data) {
     return (
@@ -10022,6 +10027,7 @@ export default function TournamentDeskPage() {
   }
 
   const handleCheckInBoardDragEnd = async (event: DragEndEvent) => {
+    setDragActiveRQ(null)
     const { active, over } = event
     if (!over) return
     const activeData = active.data.current as { type?: string; matchId?: number } | undefined
@@ -10464,7 +10470,7 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <DndContext sensors={checkInBoardSensors} onDragEnd={handleCheckInBoardDragEnd}>
+                <DndContext sensors={checkInBoardSensors} onDragStart={handleCheckInBoardDragStart} onDragEnd={handleCheckInBoardDragEnd}>
                 <div style={{ display: 'grid', gap: 14 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
@@ -10618,6 +10624,52 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
                 </div>
+
+                <DragOverlay dropAnimation={null}>
+                  {dragActiveRQ && (
+                    <div style={{
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
+                      cursor: 'grabbing',
+                      width: 200,
+                      pointerEvents: 'none',
+                      border: '2px solid #1a237e',
+                    }}>
+                      <div style={{
+                        background: '#1a237e',
+                        color: '#fff',
+                        padding: '6px 10px',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}>
+                        <span>#{dragActiveRQ.match_number}</span>
+                        <span style={{ fontSize: 10, opacity: 0.8 }}>{dragActiveRQ.event_name}</span>
+                      </div>
+                      <div style={{
+                        background: '#e8eaf6',
+                        padding: '8px 10px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#1a237e',
+                        lineHeight: 1.5,
+                      }}>
+                        <div>{dragActiveRQ.team1_display}</div>
+                        <div style={{ color: '#90a4ae', fontSize: 10, margin: '1px 0' }}>vs</div>
+                        <div>{dragActiveRQ.team2_display}</div>
+                        {dragActiveRQ.scheduled_time && (
+                          <div style={{ fontSize: 9, color: '#78909c', marginTop: 4, fontWeight: 400 }}>
+                            {dragActiveRQ.day_label} {dragActiveRQ.scheduled_time}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </DragOverlay>
 
                 </DndContext>
               </>
