@@ -1642,18 +1642,29 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     matches = session.exec(
         select(Match).where(Match.tournament_id == tournament_id)
     ).all()
+    event_has_wf: Dict[int, bool] = {}
+    for m in matches:
+        event_has_wf[m.event_id] = event_has_wf.get(m.event_id, False) or ((m.match_type or "").upper() == "WF")
     for m in matches:
         m.runtime_status = "SCHEDULED"
         m.score_json = None
         m.winner_team_id = None
         m.started_at = None
         m.completed_at = None
-        # Reset any downstream slots that were auto-populated from prior results.
-        # Source-fed sides should be unknown again until feeder matches are replayed.
-        if m.source_match_a_id is not None:
+        has_wf_in_event = event_has_wf.get(m.event_id, False)
+        is_wf_round_one = (m.match_type or "").upper() == "WF" and (m.round_index or 1) == 1
+        if has_wf_in_event and not is_wf_round_one:
+            # WF events restart from first-wave WF matches only; all downstream
+            # (including RR/main/placement) team slots must be unresolved again.
             m.team_a_id = None
-        if m.source_match_b_id is not None:
             m.team_b_id = None
+        else:
+            # For non-WF events, still reset any source-fed slots that may have
+            # been auto-populated from prior finalized feeder results.
+            if m.source_match_a_id is not None:
+                m.team_a_id = None
+            if m.source_match_b_id is not None:
+                m.team_b_id = None
         session.add(m)
 
     match_checkins = session.exec(
@@ -1667,6 +1678,18 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     ).all()
     for row in player_checkins:
         session.delete(row)
+
+    if version_ids:
+        assignments = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id.in_(version_ids)  # type: ignore[arg-type]
+            )
+        ).all()
+        for row in assignments:
+            # Baseline reset: preserve slot graph, but remove runtime check-in desk
+            # assignment provenance so courts are not treated as actively occupied.
+            row.assigned_by = None
+            session.add(row)
 
     match_locks: List[MatchLock] = []
     slot_locks: List[SlotLock] = []

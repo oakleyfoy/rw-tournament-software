@@ -910,8 +910,135 @@ def test_start_over_clears_source_fed_downstream_teams(client: TestClient, sessi
     assert wf_match.team_b_id == teams[3].id
     assert wf_match.runtime_status == "SCHEDULED"
 
-    # Downstream source-fed side is reset so bracket stays unresolved until WF is replayed.
+    # In WF events, downstream matches are fully unresolved until WF is replayed.
     assert downstream.team_a_id is None
-    assert downstream.team_b_id == teams[1].id
+    assert downstream.team_b_id is None
     assert downstream.runtime_status == "SCHEDULED"
     assert downstream.winner_team_id is None
+
+
+def test_start_over_wf_events_only_keep_wf_round_one_seeded_and_clear_checkin_desk_assignment_source(
+    client: TestClient, session: Session
+):
+    tournament = Tournament(
+        name="Restart WF Baseline",
+        location="Austin",
+        timezone="America/Chicago",
+        start_date=date(2026, 6, 2),
+        end_date=date(2026, 6, 2),
+    )
+    session.add(tournament)
+    session.flush()
+
+    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed WF", team_count=4)
+    session.add(event)
+    session.flush()
+
+    teams = [
+        Team(event_id=event.id, name="Alpha", seed=1, display_name="Alpha"),
+        Team(event_id=event.id, name="Bravo", seed=2, display_name="Bravo"),
+        Team(event_id=event.id, name="Charlie", seed=3, display_name="Charlie"),
+        Team(event_id=event.id, name="Delta", seed=4, display_name="Delta"),
+    ]
+    session.add_all(teams)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+
+    slot_a = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 6, 2),
+        start_time=time(8, 0),
+        end_time=time(9, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    slot_b = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 6, 2),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add_all([slot_a, slot_b])
+    session.flush()
+
+    wf_r1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_R1_M1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_4",
+        runtime_status="FINAL",
+        winner_team_id=teams[0].id,
+    )
+    rr = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="RR_POOlA_R1_M1",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
+        runtime_status="SCHEDULED",
+    )
+    session.add_all([wf_r1, rr])
+    session.flush()
+
+    asg_a = MatchAssignment(
+        schedule_version_id=version.id,
+        match_id=wf_r1.id,
+        slot_id=slot_a.id,
+        assigned_by="CHECKIN_DESK",
+    )
+    asg_b = MatchAssignment(
+        schedule_version_id=version.id,
+        match_id=rr.id,
+        slot_id=slot_b.id,
+        assigned_by="CHECKIN_DESK",
+    )
+    session.add_all([asg_a, asg_b])
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{tournament.id}/start-over")
+    assert resp.status_code == 200
+
+    session.refresh(wf_r1)
+    session.refresh(rr)
+    session.refresh(asg_a)
+    session.refresh(asg_b)
+
+    # WF round one stays seeded and ready to be checked in.
+    assert wf_r1.team_a_id == teams[0].id
+    assert wf_r1.team_b_id == teams[3].id
+    assert wf_r1.runtime_status == "SCHEDULED"
+
+    # Non-WF matches in WF event are reset to unresolved.
+    assert rr.team_a_id is None
+    assert rr.team_b_id is None
+    assert rr.runtime_status == "SCHEDULED"
+
+    # Start-over keeps schedule graph but removes CHECKIN_DESK provenance.
+    assert asg_a.assigned_by is None
+    assert asg_b.assigned_by is None

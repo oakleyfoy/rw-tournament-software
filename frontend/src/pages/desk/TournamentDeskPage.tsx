@@ -9608,7 +9608,7 @@ export default function TournamentDeskPage() {
       ? { bg: '#eceff1', color: '#455a64' }
       : { bg: '#e8f5e9', color: '#2e7d32' }
 
-    if (displayMatch) {
+    if (now) {
       lane = 'current'
       if (matchSlotKey) {
         slotStateLabel = 'Current Slot'
@@ -9781,7 +9781,7 @@ export default function TournamentDeskPage() {
       setError('That court is occupied right now.')
       return
     }
-    if (targetRow?.displayMatch) {
+    if (targetRow?.now) {
       setError('That court already has a match assigned.')
       return
     }
