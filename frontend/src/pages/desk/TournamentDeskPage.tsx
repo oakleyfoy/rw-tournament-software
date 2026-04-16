@@ -8360,23 +8360,9 @@ function CheckInCourtBoardCard({
         <div
           style={{
             backgroundColor: footerBg,
-            color: footerText,
-            padding: '3px 8px',
-            fontSize: 10,
-            fontWeight: 700,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 8,
+            height: 4,
           }}
-        >
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {row.slotLabel || 'Scheduled slot'}
-          </span>
-          <span style={{ whiteSpace: 'nowrap', opacity: 0.92 }}>
-            {match.scheduled_time || ''}
-          </span>
-        </div>
+        />
       )}
     </div>
   )
@@ -8505,23 +8491,9 @@ function CheckInReadyQueueCard({
       <div
         style={{
           backgroundColor: footerBg,
-          color: footerText,
-          padding: '3px 8px',
-          fontSize: 10,
-          fontWeight: 700,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 8,
+          height: 4,
         }}
-      >
-        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {headerRightTop || 'Scheduled slot'}
-        </span>
-        <span style={{ whiteSpace: 'nowrap', opacity: 0.92 }}>
-          {headerRightBottom}
-        </span>
-      </div>
+      />
     </div>
   )
 }
@@ -8565,6 +8537,39 @@ export default function TournamentDeskPage() {
     proceed: () => Promise<void>
   } | null>(null)
   const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
+  // Preserve original slot tint for a match after it's moved to a court.
+  const [persistedSlotTintByMatchId, setPersistedSlotTintByMatchId] = useState<Record<number, number>>({})
+
+  useEffect(() => {
+    if (!data) return
+    const slotOrderByKey = new Map<string, number>()
+    ;(data.checkin_slot_options || []).forEach((opt, index) => {
+      slotOrderByKey.set(opt.slot_key, index)
+    })
+    if (!slotOrderByKey.size) return
+    const discovered = new Map<number, number>()
+    Object.entries(data.checkin_slot_rows || {}).forEach(([slotKey, rows]) => {
+      const tintIndex = slotOrderByKey.get(slotKey)
+      if (tintIndex == null) return
+      ;(rows || []).forEach((row) => {
+        if (!discovered.has(row.match_id)) {
+          discovered.set(row.match_id, tintIndex)
+        }
+      })
+    })
+    if (!discovered.size) return
+    setPersistedSlotTintByMatchId((prev) => {
+      let changed = false
+      const next = { ...prev }
+      discovered.forEach((tintIndex, matchId) => {
+        if (next[matchId] == null) {
+          next[matchId] = tintIndex
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [data])
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -9651,6 +9656,7 @@ export default function TournamentDeskPage() {
     const displayMatch = now || upNext || onDeck || null
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
+    const persistedMatchTintIndex = displayMatch ? (persistedSlotTintByMatchId[displayMatch.match_id] ?? null) : null
     const availableSlotsForCourt = visibleReadyAssignSlots.filter(
       (slot) => slot.court_name === court
     )
@@ -9684,7 +9690,7 @@ export default function TournamentDeskPage() {
       lane,
       slotKey: matchSlotKey,
       slotLabel: matchSlotKey ? (slotLabelByKey.get(matchSlotKey) || null) : null,
-      slotTintIndex: matchSlotIndex,
+      slotTintIndex: persistedMatchTintIndex ?? matchSlotIndex,
       slotStateLabel,
       slotStateColor,
       startAtLabel: formatStartedAtLabel(displayMatch?.started_at),
@@ -9841,6 +9847,15 @@ export default function TournamentDeskPage() {
     if (!slotId) {
       setError('No open assignment slot on that court.')
       return
+    }
+    const readySlotKey = slotKeyByMatchId.get(activeData.matchId) || null
+    const readySlotIndex = readySlotKey != null ? (slotOrderByKey.get(readySlotKey) ?? null) : null
+    if (readySlotIndex != null) {
+      setPersistedSlotTintByMatchId((prev) =>
+        prev[activeData.matchId] == null
+          ? { ...prev, [activeData.matchId]: readySlotIndex }
+          : prev
+      )
     }
     await handleAssignReadyMatch(activeData.matchId, slotId)
   }
