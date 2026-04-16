@@ -1183,3 +1183,172 @@ def test_start_over_restores_copy_baseline_assignments_after_runtime_moves(
     session.refresh(dup_assignment)
     # start-over restores copied baseline (Sunday), not latest runtime move (Friday)
     assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 7, 3)].id
+
+
+def test_start_over_prefers_public_version_layout_for_draft_restore(
+    client: TestClient, session: Session
+):
+    source = Tournament(
+        name="Public Layout Source",
+        location="Austin",
+        timezone="America/Chicago",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 3),
+        court_names=["1", "2"],
+    )
+    session.add(source)
+    session.flush()
+
+    event = Event(tournament_id=source.id, category="mixed", name="Mixed A", team_count=2)
+    session.add(event)
+    session.flush()
+    team_a = Team(event_id=event.id, name="Alpha", seed=1, display_name="Alpha")
+    team_b = Team(event_id=event.id, name="Bravo", seed=2, display_name="Bravo")
+    session.add_all([team_a, team_b])
+    session.flush()
+
+    final_v = ScheduleVersion(tournament_id=source.id, version_number=1, status="final")
+    draft_v = ScheduleVersion(tournament_id=source.id, version_number=2, status="draft")
+    session.add_all([final_v, draft_v])
+    session.flush()
+
+    # identical slot signatures across versions
+    final_friday = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=final_v.id,
+        day_date=date(2026, 8, 1),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    final_sunday = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=final_v.id,
+        day_date=date(2026, 8, 3),
+        start_time=time(15, 0),
+        end_time=time(16, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    draft_friday = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=draft_v.id,
+        day_date=date(2026, 8, 1),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    draft_sunday = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=draft_v.id,
+        day_date=date(2026, 8, 3),
+        start_time=time(15, 0),
+        end_time=time(16, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add_all([final_friday, final_sunday, draft_friday, draft_sunday])
+    session.flush()
+
+    final_match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=final_v.id,
+        match_code="MIX_FINAL_M01",
+        match_type="MAIN",
+        round_number=3,
+        round_index=3,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_2",
+        runtime_status="SCHEDULED",
+    )
+    draft_match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=draft_v.id,
+        match_code="MIX_FINAL_M01",
+        match_type="MAIN",
+        round_number=3,
+        round_index=3,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_2",
+        runtime_status="SCHEDULED",
+    )
+    session.add_all([final_match, draft_match])
+    session.flush()
+
+    # Public/final layout says Sunday, runtime draft says Friday.
+    session.add(
+        MatchAssignment(
+            schedule_version_id=final_v.id,
+            match_id=final_match.id,
+            slot_id=final_sunday.id,
+            assigned_by="AUTO_ASSIGN_V2",
+        )
+    )
+    session.add(
+        MatchAssignment(
+            schedule_version_id=draft_v.id,
+            match_id=draft_match.id,
+            slot_id=draft_friday.id,
+            assigned_by="CHECKIN_DESK",
+        )
+    )
+    source.public_schedule_version_id = final_v.id
+    session.add(source)
+    session.commit()
+
+    dup_resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert dup_resp.status_code == 201
+    duplicated_id = dup_resp.json()["id"]
+
+    dup_tournament = session.get(Tournament, duplicated_id)
+    assert dup_tournament is not None
+    assert dup_tournament.public_schedule_version_id is not None
+    dup_versions = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
+    ).all()
+    dup_draft = next(v for v in dup_versions if (v.status or "").lower() == "draft")
+    dup_match = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == dup_draft.id,
+            Match.match_code == "MIX_FINAL_M01",
+        )
+    ).first()
+    assert dup_match is not None
+    dup_slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == dup_draft.id)
+    ).all()
+    dup_slot_by_day = {s.day_date: s for s in dup_slots}
+    assert date(2026, 8, 1) in dup_slot_by_day
+    assert date(2026, 8, 3) in dup_slot_by_day
+    dup_assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == dup_draft.id,
+            MatchAssignment.match_id == dup_match.id,
+        )
+    ).first()
+    assert dup_assignment is not None
+    # Starts on Friday because source draft was runtime-moved.
+    assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 8, 1)].id
+
+    restart_resp = client.post(f"/api/tournaments/{duplicated_id}/start-over")
+    assert restart_resp.status_code == 200
+
+    session.refresh(dup_assignment)
+    # Restored from public/final schedule layout => Sunday.
+    assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 8, 3)].id

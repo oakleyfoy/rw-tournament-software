@@ -1679,9 +1679,9 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     session.add(tournament)
 
     versions = session.exec(
-        select(ScheduleVersion.id).where(ScheduleVersion.tournament_id == tournament_id)
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament_id)
     ).all()
-    version_ids = [vid for vid in versions]
+    version_ids = [v.id for v in versions if v.id is not None]
 
     matches = session.exec(
         select(Match).where(Match.tournament_id == tournament_id)
@@ -1729,49 +1729,157 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                 MatchAssignment.schedule_version_id.in_(version_ids)  # type: ignore[arg-type]
             )
         ).all()
-        baseline_rows = session.exec(
-            select(StartOverBaselineAssignment).where(
-                StartOverBaselineAssignment.tournament_id == tournament_id,
-                StartOverBaselineAssignment.schedule_version_id.in_(version_ids),  # type: ignore[arg-type]
-            )
-        ).all()
-        if not baseline_rows:
-            # Backward-compatibility: tournaments created before baseline snapshots
-            # existed should keep their assignment map on start-over.
-            for row in assignments:
-                row.assigned_by = None if (row.assigned_by or "").upper() == "CHECKIN_DESK" else row.assigned_by
-                session.add(row)
-        else:
-            baseline_by_version_match = {
-                (row.schedule_version_id, row.match_id): row for row in baseline_rows
-            }
-            current_by_version_match = {
-                (row.schedule_version_id, row.match_id): row for row in assignments
-            }
-            for key, current_row in current_by_version_match.items():
-                baseline = baseline_by_version_match.get(key)
-                if baseline is None:
-                    # No baseline for this row means it was introduced by runtime desk operations.
-                    session.delete(current_row)
-                    continue
-                current_row.slot_id = baseline.slot_id
-                current_row.assigned_at = baseline.assigned_at
-                current_row.assigned_by = baseline.assigned_by
-                current_row.locked = baseline.locked
-                session.add(current_row)
-            for key, baseline in baseline_by_version_match.items():
-                if key in current_by_version_match:
-                    continue
-                session.add(
-                    MatchAssignment(
-                        schedule_version_id=baseline.schedule_version_id,
-                        match_id=baseline.match_id,
-                        slot_id=baseline.slot_id,
-                        assigned_at=baseline.assigned_at,
-                        assigned_by=baseline.assigned_by,
-                        locked=baseline.locked,
+        # Prefer restoring draft versions from the tournament's published layout
+        # when available, so start-over returns to the intended event schedule
+        # chronology (e.g. finals on Sunday) even if desk runtime moved matches.
+        restored_from_public = False
+        public_version_id = (
+            tournament.public_schedule_version_id
+            if tournament.public_schedule_version_id in version_ids
+            else None
+        )
+        draft_version_ids = {
+            v.id for v in versions if v.id is not None and (v.status or "").lower() == "draft"
+        }
+        if public_version_id and draft_version_ids:
+            canonical_assignments = [
+                a for a in assignments if a.schedule_version_id == public_version_id
+            ]
+            if canonical_assignments:
+                all_version_matches = session.exec(
+                    select(Match).where(Match.schedule_version_id.in_(version_ids))  # type: ignore[arg-type]
+                ).all()
+                all_version_slots = session.exec(
+                    select(ScheduleSlot).where(ScheduleSlot.schedule_version_id.in_(version_ids))  # type: ignore[arg-type]
+                ).all()
+                match_by_version_code = {
+                    (m.schedule_version_id, m.match_code): m
+                    for m in all_version_matches
+                    if m.id is not None and m.match_code
+                }
+
+                def _slot_key(slot: ScheduleSlot) -> Tuple[date, time, time, int, str]:
+                    return (
+                        slot.day_date,
+                        slot.start_time,
+                        slot.end_time,
+                        slot.court_number,
+                        slot.court_label or str(slot.court_number),
                     )
+
+                slot_by_version_key = {
+                    (s.schedule_version_id, _slot_key(s)): s
+                    for s in all_version_slots
+                    if s.id is not None
+                }
+                slot_by_id = {s.id: s for s in all_version_slots if s.id is not None}
+                desired_by_version_match: Dict[Tuple[int, int], Tuple[int, datetime, Optional[str], bool]] = {}
+                for assignment in canonical_assignments:
+                    canonical_match = next(
+                        (
+                            m
+                            for m in all_version_matches
+                            if m.id == assignment.match_id and m.schedule_version_id == public_version_id
+                        ),
+                        None,
+                    )
+                    canonical_slot = slot_by_id.get(assignment.slot_id)
+                    if not canonical_match or not canonical_match.match_code or not canonical_slot:
+                        continue
+                    canonical_slot_key = _slot_key(canonical_slot)
+                    for draft_version_id in draft_version_ids:
+                        draft_match = match_by_version_code.get(
+                            (draft_version_id, canonical_match.match_code)
+                        )
+                        draft_slot = slot_by_version_key.get((draft_version_id, canonical_slot_key))
+                        if not draft_match or not draft_slot:
+                            continue
+                        desired_by_version_match[(draft_version_id, draft_match.id)] = (
+                            draft_slot.id,
+                            assignment.assigned_at,
+                            assignment.assigned_by,
+                            assignment.locked,
+                        )
+
+                if desired_by_version_match:
+                    current_draft_assignments = [
+                        a for a in assignments if a.schedule_version_id in draft_version_ids
+                    ]
+                    current_by_version_match = {
+                        (a.schedule_version_id, a.match_id): a for a in current_draft_assignments
+                    }
+                    for key, current_row in current_by_version_match.items():
+                        desired = desired_by_version_match.get(key)
+                        if desired is None:
+                            session.delete(current_row)
+                            continue
+                        desired_slot_id, desired_at, desired_by, desired_locked = desired
+                        current_row.slot_id = desired_slot_id
+                        current_row.assigned_at = desired_at
+                        current_row.assigned_by = desired_by
+                        current_row.locked = desired_locked
+                        session.add(current_row)
+                    for key, desired in desired_by_version_match.items():
+                        if key in current_by_version_match:
+                            continue
+                        draft_version_id, draft_match_id = key
+                        desired_slot_id, desired_at, desired_by, desired_locked = desired
+                        session.add(
+                            MatchAssignment(
+                                schedule_version_id=draft_version_id,
+                                match_id=draft_match_id,
+                                slot_id=desired_slot_id,
+                                assigned_at=desired_at,
+                                assigned_by=desired_by,
+                                locked=desired_locked,
+                            )
+                        )
+                    restored_from_public = True
+
+        if not restored_from_public:
+            baseline_rows = session.exec(
+                select(StartOverBaselineAssignment).where(
+                    StartOverBaselineAssignment.tournament_id == tournament_id,
+                    StartOverBaselineAssignment.schedule_version_id.in_(version_ids),  # type: ignore[arg-type]
                 )
+            ).all()
+            if not baseline_rows:
+                # Backward-compatibility: tournaments created before baseline snapshots
+                # existed should keep their assignment map on start-over.
+                for row in assignments:
+                    row.assigned_by = None if (row.assigned_by or "").upper() == "CHECKIN_DESK" else row.assigned_by
+                    session.add(row)
+            else:
+                baseline_by_version_match = {
+                    (row.schedule_version_id, row.match_id): row for row in baseline_rows
+                }
+                current_by_version_match = {
+                    (row.schedule_version_id, row.match_id): row for row in assignments
+                }
+                for key, current_row in current_by_version_match.items():
+                    baseline = baseline_by_version_match.get(key)
+                    if baseline is None:
+                        # No baseline for this row means it was introduced by runtime desk operations.
+                        session.delete(current_row)
+                        continue
+                    current_row.slot_id = baseline.slot_id
+                    current_row.assigned_at = baseline.assigned_at
+                    current_row.assigned_by = baseline.assigned_by
+                    current_row.locked = baseline.locked
+                    session.add(current_row)
+                for key, baseline in baseline_by_version_match.items():
+                    if key in current_by_version_match:
+                        continue
+                    session.add(
+                        MatchAssignment(
+                            schedule_version_id=baseline.schedule_version_id,
+                            match_id=baseline.match_id,
+                            slot_id=baseline.slot_id,
+                            assigned_at=baseline.assigned_at,
+                            assigned_by=baseline.assigned_by,
+                            locked=baseline.locked,
+                        )
+                    )
 
     match_locks: List[MatchLock] = []
     slot_locks: List[SlotLock] = []
