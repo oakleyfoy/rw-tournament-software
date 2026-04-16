@@ -801,6 +801,7 @@ def test_start_over_tournament_clears_runtime_and_checkins(client: TestClient, s
     assert resp.status_code == 200
     body = resp.json()
     assert body["matches_reset"] == 1
+    assert body["assignments_cleared"] == 1
     assert body["match_checkins_cleared"] == 1
     assert body["player_checkins_cleared"] == 1
     assert body["match_locks_cleared"] == 1
@@ -818,4 +819,5 @@ def test_start_over_tournament_clears_runtime_and_checkins(client: TestClient, s
 
     assert session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament.id)).all() == []
     assert session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)).all() == []
+    assert session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all() == []
     assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []

@@ -113,6 +113,7 @@ class TournamentResponse(BaseModel):
 class TournamentStartOverResponse(BaseModel):
     tournament_id: int
     matches_reset: int
+    assignments_cleared: int
     match_checkins_cleared: int
     player_checkins_cleared: int
     match_locks_cleared: int
@@ -1626,7 +1627,7 @@ def delete_tournament(tournament_id: int, session: Session = Depends(get_session
 def start_over_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """
     Clear runtime results/state so staff can restart tournament play without
-    deleting setup, teams, draws, slots, or assignments.
+    deleting setup, teams, draws, or slots.
     """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -1662,6 +1663,16 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     for row in player_checkins:
         session.delete(row)
 
+    assignments: List[MatchAssignment] = []
+    if version_ids:
+        assignments = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id.in_(version_ids)  # type: ignore[arg-type]
+            )
+        ).all()
+        for row in assignments:
+            session.delete(row)
+
     match_locks: List[MatchLock] = []
     slot_locks: List[SlotLock] = []
     if version_ids:
@@ -1687,6 +1698,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     return TournamentStartOverResponse(
         tournament_id=tournament_id,
         matches_reset=len(matches),
+        assignments_cleared=len(assignments),
         match_checkins_cleared=len(match_checkins),
         player_checkins_cleared=len(player_checkins),
         match_locks_cleared=len(match_locks),
