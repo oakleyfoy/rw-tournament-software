@@ -8335,7 +8335,7 @@ function CheckInCourtBoardCard({
   nativeDragOverCourt: string | null
   onReadyDragOver: (court: string) => void
   onReadyDragLeave: (court: string) => void
-  onReadyDrop: (court: string) => void
+  onReadyDrop: (event: React.DragEvent<HTMLDivElement>, court: string) => void
 }) {
   const match = row.displayMatch
   const tint = getSlotTint(slotTintIndex)
@@ -8370,7 +8370,7 @@ function CheckInCourtBoardCard({
         onDrop={(event) => {
           if (!canReceiveReady) return
           event.preventDefault()
-          onReadyDrop(row.court)
+          onReadyDrop(event, row.court)
         }}
         style={{
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
@@ -10074,6 +10074,7 @@ export default function TournamentDeskPage() {
     setNativeDraggedReadyMatchId(matchId)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', String(matchId))
+    event.dataTransfer.setData('application/x-rw-ready-match', String(matchId))
   }, [])
 
   const handleNativeReadyDragEnd = useCallback(() => {
@@ -10081,13 +10082,18 @@ export default function TournamentDeskPage() {
     setNativeDragOverCourt(null)
   }, [])
 
-  const handleNativeReadyDrop = useCallback(async (court: string) => {
-    const matchId = nativeDraggedReadyMatchId
+  const handleNativeReadyDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>, court: string) => {
+    const rawMatchId = event.dataTransfer.getData('application/x-rw-ready-match') || event.dataTransfer.getData('text/plain')
+    const matchId = Number(rawMatchId)
     setNativeDragOverCourt(null)
-    if (matchId == null) return
+    if (!Number.isFinite(matchId) || matchId <= 0) {
+      setNativeDraggedReadyMatchId(null)
+      setError('Could not determine which ready match was dropped.')
+      return
+    }
     setNativeDraggedReadyMatchId(null)
     await handleAssignReadyMatchToCourt(matchId, court)
-  }, [nativeDraggedReadyMatchId, handleAssignReadyMatchToCourt])
+  }, [handleAssignReadyMatchToCourt])
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
@@ -10519,7 +10525,7 @@ export default function TournamentDeskPage() {
                               onReadyDragLeave={(court) => {
                                 setNativeDragOverCourt((prev) => prev === court ? null : prev)
                               }}
-                              onReadyDrop={(court) => { void handleNativeReadyDrop(court) }}
+                              onReadyDrop={(event, court) => { void handleNativeReadyDrop(event, court) }}
                             />
                           ))}
                         </div>
@@ -10548,7 +10554,7 @@ export default function TournamentDeskPage() {
                               onReadyDragLeave={(court) => {
                                 setNativeDragOverCourt((prev) => prev === court ? null : prev)
                               }}
-                              onReadyDrop={(court) => { void handleNativeReadyDrop(court) }}
+                              onReadyDrop={(event, court) => { void handleNativeReadyDrop(event, court) }}
                             />
                           ))}
                         </div>
