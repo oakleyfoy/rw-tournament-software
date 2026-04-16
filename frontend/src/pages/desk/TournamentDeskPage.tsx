@@ -9475,13 +9475,12 @@ export default function TournamentDeskPage() {
   }, [data, searchText])
 
   const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 2 } }))
-  const [dragActiveRQ, setDragActiveRQ] = useState<ReadyQueueItem | null>(null)
+  const [dragActiveMatchId, setDragActiveMatchId] = useState<number | null>(null)
 
   const handleCheckInBoardDragStart = (event: DragStartEvent) => {
     const d = event.active.data.current as { type?: string; matchId?: number } | undefined
     if (d?.type === 'checkinReady' && typeof d.matchId === 'number') {
-      const rq = (data?.ready_queue || []).find(r => r.match_id === d.matchId) || null
-      setDragActiveRQ(rq)
+      setDragActiveMatchId(d.matchId)
     }
   }
 
@@ -10027,7 +10026,7 @@ export default function TournamentDeskPage() {
   }
 
   const handleCheckInBoardDragEnd = async (event: DragEndEvent) => {
-    setDragActiveRQ(null)
+    setDragActiveMatchId(null)
     const { active, over } = event
     if (!over) return
     const activeData = active.data.current as { type?: string; matchId?: number } | undefined
@@ -10626,49 +10625,55 @@ export default function TournamentDeskPage() {
                 </div>
 
                 <DragOverlay dropAnimation={null}>
-                  {dragActiveRQ && (
-                    <div style={{
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                      boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
-                      cursor: 'grabbing',
-                      width: 200,
-                      pointerEvents: 'none',
-                      border: '2px solid #1a237e',
-                    }}>
+                  {(() => {
+                    const dragActiveRQ = dragActiveMatchId != null
+                      ? (data?.ready_queue || []).find(r => r.match_id === dragActiveMatchId) ?? null
+                      : null
+                    if (!dragActiveRQ) return null
+                    return (
                       <div style={{
-                        background: '#1a237e',
-                        color: '#fff',
-                        padding: '6px 10px',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: 6,
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
+                        cursor: 'grabbing',
+                        width: 200,
+                        pointerEvents: 'none',
+                        border: '2px solid #1a237e',
                       }}>
-                        <span>#{dragActiveRQ.match_number}</span>
-                        <span style={{ fontSize: 10, opacity: 0.8 }}>{dragActiveRQ.event_name}</span>
+                        <div style={{
+                          background: '#1a237e',
+                          color: '#fff',
+                          padding: '6px 10px',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}>
+                          <span>#{dragActiveRQ.match_number}</span>
+                          <span style={{ fontSize: 10, opacity: 0.8 }}>{dragActiveRQ.event_name}</span>
+                        </div>
+                        <div style={{
+                          background: '#e8eaf6',
+                          padding: '8px 10px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: '#1a237e',
+                          lineHeight: 1.5,
+                        }}>
+                          <div>{dragActiveRQ.team1_display}</div>
+                          <div style={{ color: '#90a4ae', fontSize: 10, margin: '1px 0' }}>vs</div>
+                          <div>{dragActiveRQ.team2_display}</div>
+                          {dragActiveRQ.scheduled_time && (
+                            <div style={{ fontSize: 9, color: '#78909c', marginTop: 4, fontWeight: 400 }}>
+                              {dragActiveRQ.day_label} {dragActiveRQ.scheduled_time}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div style={{
-                        background: '#e8eaf6',
-                        padding: '8px 10px',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: '#1a237e',
-                        lineHeight: 1.5,
-                      }}>
-                        <div>{dragActiveRQ.team1_display}</div>
-                        <div style={{ color: '#90a4ae', fontSize: 10, margin: '1px 0' }}>vs</div>
-                        <div>{dragActiveRQ.team2_display}</div>
-                        {dragActiveRQ.scheduled_time && (
-                          <div style={{ fontSize: 9, color: '#78909c', marginTop: 4, fontWeight: 400 }}>
-                            {dragActiveRQ.day_label} {dragActiveRQ.scheduled_time}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                    )
+                  })()}
                 </DragOverlay>
 
                 </DndContext>
