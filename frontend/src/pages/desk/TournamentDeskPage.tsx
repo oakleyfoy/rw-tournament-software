@@ -9628,7 +9628,6 @@ export default function TournamentDeskPage() {
       }
     })
 
-    const readyMatchIds = new Set((data.ready_queue || []).map((rq) => rq.match_id))
     const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
     data.courts.forEach((court) => {
       rawNowPlayingByCourt.set(court, data.now_playing_by_court[court])
