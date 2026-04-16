@@ -9711,7 +9711,10 @@ export default function TournamentDeskPage() {
     const onDeck = onDeckRaw && !readyMatchIds.has(onDeckRaw.match_id) ? onDeckRaw : undefined
     const courtLabel = court.replace(/^Court\s+/i, '')
     const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
-    const displayMatch = now || upNext || onDeck || null
+    // In check-in management we only render a court card as occupied when the
+    // match is actively playing/paused. Scheduled up-next/on-deck matches should
+    // remain in waiting/ready lanes and not duplicate onto courts.
+    const displayMatch = now || null
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
     const persistedMatchTintIndex = displayMatch ? (persistedSlotTintByMatchId[displayMatch.match_id] ?? null) : null
