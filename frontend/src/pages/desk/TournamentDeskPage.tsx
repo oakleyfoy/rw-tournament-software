@@ -1618,14 +1618,20 @@ function MatchDrawer({
             disabled={!winnerId || !score.trim() || submitting}
             style={{
               flex: 1,
-              padding: '8px 16px',
-              fontSize: 13,
+              aspectRatio: '1 / 1',
+              minHeight: 56,
+              padding: '6px',
+              fontSize: 12,
               fontWeight: 600,
               backgroundColor: winnerId && score.trim() ? '#2e7d32' : '#ccc',
               color: '#fff',
               border: 'none',
               borderRadius: 4,
               cursor: winnerId && score.trim() ? 'pointer' : 'default',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
             }}
           >
             {submitting ? 'Submitting...' : 'Finalize Match'}
@@ -1636,14 +1642,20 @@ function MatchDrawer({
               disabled={!winnerId || submitting}
               style={{
                 flex: 1,
-                padding: '8px 16px',
-                fontSize: 13,
+                aspectRatio: '1 / 1',
+                minHeight: 56,
+                padding: '6px',
+                fontSize: 12,
                 fontWeight: 600,
                 backgroundColor: winnerId ? '#e65100' : '#ccc',
                 color: '#fff',
                 border: 'none',
                 borderRadius: 4,
                 cursor: winnerId ? 'pointer' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
               }}
             >
               {submitting ? 'Submitting...' : match.stage === 'WF' ? 'Default (WF)' : 'Default Win'}
@@ -1656,23 +1668,24 @@ function MatchDrawer({
               title="Enter the score at point of retirement, select the winning team, then click Retired"
               style={{
                 flex: 1,
-                padding: '8px 16px',
-                fontSize: 13,
+                aspectRatio: '1 / 1',
+                minHeight: 56,
+                padding: '6px',
+                fontSize: 12,
                 fontWeight: 600,
                 backgroundColor: winnerId && score.trim() ? '#6a1b9a' : '#ccc',
                 color: '#fff',
                 border: 'none',
                 borderRadius: 4,
                 cursor: winnerId && score.trim() ? 'pointer' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
               }}
             >
               {submitting ? 'Submitting...' : 'Retired'}
             </button>
-          )}
-          {match.stage === 'WF' && match.team1_id && match.team2_id && (
-            <div style={{ fontSize: 11, color: '#e65100', fontStyle: 'italic', marginTop: 4 }}>
-              Waterfall: select which team gets the win or loss, then click Default (WF)
-            </div>
           )}
         </div>
       </div>
@@ -2592,52 +2605,53 @@ function DrawerImpact({
   return (
     <div style={{
       marginTop: 12,
-      padding: '10px 14px',
-      backgroundColor: '#f8f9ff',
+      padding: '12px 16px',
+      backgroundColor: '#e8f5e9',
       borderRadius: 6,
-      border: '1px solid #e0e4f0',
+      border: '1px solid #c8e6c9',
     }}>
-      <div style={{ fontWeight: 700, fontSize: 13, color: '#1a237e', marginBottom: 6 }}>
-        Placement / What Happens Next
+      <div style={{ fontWeight: 700, fontSize: 14, color: '#2e7d32', marginBottom: 8 }}>
+        Next Matches
       </div>
-
-      {isFinal && winnerTeamName && loserTeamName && (winnerTerminal || loserTerminal) && (
-        <div style={{
-          marginBottom: 8,
-          padding: '8px 10px',
-          border: '1px solid #d7ebd9',
-          backgroundColor: '#f1f8f2',
-          borderRadius: 4,
-        }}>
-          {winnerTerminal && (
-            <div style={{ fontSize: 12, color: '#1b5e20', fontWeight: 700 }}>
-              {winnerTeamName}: {winnerTerminal}
-            </div>
-          )}
-          {loserTerminal && (
-            <div style={{ fontSize: 12, color: '#555', marginTop: 2 }}>
-              {loserTeamName}: {loserTerminal}
-            </div>
-          )}
-        </div>
-      )}
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-        <div style={{ padding: '8px 10px', backgroundColor: '#fff', borderRadius: 4, border: '1px solid #e2e6f3' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-            If {matchItem.team1_display} wins
+        <div style={{ padding: '8px 0', borderBottom: '1px solid #c8e6c9' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: '#fff',
+              backgroundColor: '#2e7d32',
+              padding: '1px 6px',
+              borderRadius: 3,
+              textTransform: 'uppercase',
+            }}>
+              Winner
+            </span>
+            <span style={{ fontWeight: 600, fontSize: 14, color: '#0d47a1' }}>
+              {isFinal && winnerTeamName ? winnerTeamName : 'Winner Path'}
+            </span>
           </div>
           {renderOutcome(impact?.winner_target || null, winnerTerminal)}
         </div>
-        <div style={{ padding: '8px 10px', backgroundColor: '#fff', borderRadius: 4, border: '1px solid #e2e6f3' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-            If {matchItem.team1_display} loses
+        <div style={{ padding: '8px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: '#fff',
+              backgroundColor: '#e65100',
+              padding: '1px 6px',
+              borderRadius: 3,
+              textTransform: 'uppercase',
+            }}>
+              Loser
+            </span>
+            <span style={{ fontWeight: 600, fontSize: 14, color: '#0d47a1' }}>
+              {isFinal && loserTeamName ? loserTeamName : 'Loser Path'}
+            </span>
           </div>
           {renderOutcome(impact?.loser_target || null, loserTerminal)}
         </div>
-      </div>
-      <div style={{ marginTop: 6, fontSize: 11, color: '#666' }}>
-        The same winner/loser paths apply to {matchItem.team2_display}: if they win, they take the winner path; if they lose, they take the loser path.
       </div>
 
       {onSwitchToImpact && (
@@ -8537,15 +8551,54 @@ export default function TournamentDeskPage() {
   const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
   // Preserve original slot tint for a match after it's moved to a court.
   const [persistedSlotTintByMatchId, setPersistedSlotTintByMatchId] = useState<Record<number, number>>({})
+  const slotTintStorageKey = tid ? `desk-slot-tints-${tid}` : null
+
+  useEffect(() => {
+    if (!slotTintStorageKey) {
+      setPersistedSlotTintByMatchId({})
+      return
+    }
+    try {
+      const raw = window.localStorage.getItem(slotTintStorageKey)
+      if (!raw) {
+        setPersistedSlotTintByMatchId({})
+        return
+      }
+      const parsed = JSON.parse(raw) as Record<string, number>
+      const normalized: Record<number, number> = {}
+      Object.entries(parsed || {}).forEach(([k, v]) => {
+        const matchId = Number(k)
+        if (!Number.isFinite(matchId) || !Number.isFinite(v)) return
+        normalized[matchId] = Number(v)
+      })
+      setPersistedSlotTintByMatchId(normalized)
+    } catch {
+      setPersistedSlotTintByMatchId({})
+    }
+  }, [slotTintStorageKey])
+
+  useEffect(() => {
+    if (!slotTintStorageKey) return
+    try {
+      window.localStorage.setItem(slotTintStorageKey, JSON.stringify(persistedSlotTintByMatchId))
+    } catch {
+      // ignore storage write errors
+    }
+  }, [slotTintStorageKey, persistedSlotTintByMatchId])
 
   useEffect(() => {
     if (!data) return
     const slotOrderByKey = new Map<string, number>()
+    const slotTintBySlotId = new Map<number, number>()
     ;(data.checkin_slot_options || []).forEach((opt, index) => {
       slotOrderByKey.set(opt.slot_key, index)
+      ;(opt.slot_ids || []).forEach((slotId) => {
+        slotTintBySlotId.set(slotId, index)
+      })
     })
-    if (!slotOrderByKey.size) return
+    if (!slotOrderByKey.size || !slotTintBySlotId.size) return
     const discovered = new Map<number, number>()
+
     Object.entries(data.checkin_slot_rows || {}).forEach(([slotKey, rows]) => {
       const tintIndex = slotOrderByKey.get(slotKey)
       if (tintIndex == null) return
@@ -8555,6 +8608,32 @@ export default function TournamentDeskPage() {
         }
       })
     })
+
+    ;(data.checkin_matches || []).forEach((cm) => {
+      if (cm.slot_id == null || discovered.has(cm.match_id)) return
+      const tintIndex = slotTintBySlotId.get(cm.slot_id)
+      if (tintIndex == null) return
+      discovered.set(cm.match_id, tintIndex)
+    })
+
+    ;(data.slots || []).forEach((slot) => {
+      if (slot.assigned_match_id == null || discovered.has(slot.assigned_match_id)) return
+      const tintIndex = slotTintBySlotId.get(slot.slot_id)
+      if (tintIndex == null) return
+      discovered.set(slot.assigned_match_id, tintIndex)
+    })
+
+    ;[
+      ...Object.values(data.now_playing_by_court || {}),
+      ...Object.values(data.up_next_by_court || {}),
+      ...Object.values(data.on_deck_by_court || {}),
+    ].forEach((m) => {
+      if (!m || discovered.has(m.match_id) || m.slot_id == null) return
+      const tintIndex = slotTintBySlotId.get(m.slot_id)
+      if (tintIndex == null) return
+      discovered.set(m.match_id, tintIndex)
+    })
+
     if (!discovered.size) return
     setPersistedSlotTintByMatchId((prev) => {
       let changed = false
