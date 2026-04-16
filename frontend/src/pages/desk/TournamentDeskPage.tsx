@@ -115,9 +115,6 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  useDroppable,
-  useDraggable,
-  useDndContext,
 } from '@dnd-kit/core'
 
 const SLOT_TINT_PALETTE = [
@@ -8322,66 +8319,23 @@ type CheckInCourtBoardRowData = {
   availableSlotsForCourt: AvailableCourtSlot[]
 }
 
-function ReadyQueueDragOverlayCard({ readyQueue }: { readyQueue: ReadyQueueItem[] }) {
-  const { active } = useDndContext()
-  const d = active?.data.current as { type?: string; matchId?: number } | undefined
-  if (d?.type !== 'checkinReady' || d.matchId == null) return null
-  const rq = readyQueue.find(r => r.match_id === d.matchId)
-  if (!rq) return null
-  return (
-    <div style={{
-      borderRadius: 8,
-      overflow: 'hidden',
-      boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
-      cursor: 'grabbing',
-      width: 200,
-      pointerEvents: 'none',
-      border: '2px solid #1a237e',
-    }}>
-      <div style={{
-        background: '#1a237e',
-        color: '#fff',
-        padding: '6px 10px',
-        fontSize: 12,
-        fontWeight: 700,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 6,
-      }}>
-        <span>#{rq.match_number}</span>
-        <span style={{ fontSize: 10, opacity: 0.8 }}>{rq.event_name}</span>
-      </div>
-      <div style={{
-        background: '#e8eaf6',
-        padding: '8px 10px',
-        fontSize: 11,
-        fontWeight: 600,
-        color: '#1a237e',
-        lineHeight: 1.5,
-      }}>
-        <div>{rq.team1_display}</div>
-        <div style={{ color: '#90a4ae', fontSize: 10, margin: '1px 0' }}>vs</div>
-        <div>{rq.team2_display}</div>
-        {rq.scheduled_time && (
-          <div style={{ fontSize: 9, color: '#78909c', marginTop: 4, fontWeight: 400 }}>
-            {rq.day_label} {rq.scheduled_time}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 function CheckInCourtBoardCard({
   row,
   onOpenMatch,
   slotTintIndex,
+  nativeDragOverCourt,
+  onReadyDragOver,
+  onReadyDragLeave,
+  onReadyDrop,
 }: {
   row: CheckInCourtBoardRowData
   focusSlotLabel?: string | null
   onOpenMatch: (m: DeskMatchItem) => void
   slotTintIndex: number | null
+  nativeDragOverCourt: string | null
+  onReadyDragOver: (court: string) => void
+  onReadyDragLeave: (court: string) => void
+  onReadyDrop: (court: string) => void
 }) {
   const match = row.displayMatch
   const tint = getSlotTint(slotTintIndex)
@@ -8390,12 +8344,7 @@ function CheckInCourtBoardCard({
     !match &&
     !row.isClosed &&
     row.availableSlotsForCourt.length > 0
-
-  const { setNodeRef, isOver } = useDroppable({
-    id: `checkin-open-court-${encodeURIComponent(row.court)}`,
-    disabled: !canReceiveReady,
-    data: { type: 'checkinOpenCourt', court: row.court },
-  })
+  const isOver = canReceiveReady && nativeDragOverCourt === row.court
 
   const headerBg = tint?.accent || '#1a237e'
   const footerBg = tint?.bg || '#eef4ff'
@@ -8403,7 +8352,26 @@ function CheckInCourtBoardCard({
   if (!match && !row.isClosed) {
     return (
       <div
-        ref={setNodeRef}
+        onDragOver={(event) => {
+          if (!canReceiveReady) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'move'
+          onReadyDragOver(row.court)
+        }}
+        onDragEnter={(event) => {
+          if (!canReceiveReady) return
+          event.preventDefault()
+          onReadyDragOver(row.court)
+        }}
+        onDragLeave={() => {
+          if (!canReceiveReady) return
+          onReadyDragLeave(row.court)
+        }}
+        onDrop={(event) => {
+          if (!canReceiveReady) return
+          event.preventDefault()
+          onReadyDrop(row.court)
+        }}
         style={{
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
           borderRadius: 8,
@@ -8549,6 +8517,9 @@ function CheckInReadyQueueCard({
   returning,
   onReturnToCheckIn,
   slotTintIndex,
+  nativeDragging,
+  onNativeDragStart,
+  onNativeDragEnd,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -8558,11 +8529,10 @@ function CheckInReadyQueueCard({
   returning: boolean
   onReturnToCheckIn: () => void
   slotTintIndex: number | null
+  nativeDragging: boolean
+  onNativeDragStart: (event: React.DragEvent<HTMLDivElement>, matchId: number) => void
+  onNativeDragEnd: () => void
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `checkin-ready-${rq.match_id}`,
-    data: { type: 'checkinReady', matchId: rq.match_id },
-  })
   const tint = getSlotTint(slotTintIndex)
 
   const accentColor = tint?.accent || '#0d47a1'
@@ -8570,15 +8540,15 @@ function CheckInReadyQueueCard({
 
   return (
     <div
-      ref={setNodeRef}
-      {...listeners}
-      {...attributes}
+      draggable
+      onDragStart={(event) => onNativeDragStart(event, rq.match_id)}
+      onDragEnd={onNativeDragEnd}
       style={{
         border: `1px solid ${tint?.border || '#90caf9'}`,
         borderRadius: 8,
         overflow: 'hidden',
-        cursor: isDragging ? 'grabbing' : 'grab',
-        opacity: isDragging ? 0.25 : 1,
+        cursor: nativeDragging ? 'grabbing' : 'grab',
+        opacity: nativeDragging ? 0.25 : 1,
         touchAction: 'none',
         userSelect: 'none',
         boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
@@ -8607,6 +8577,7 @@ function CheckInReadyQueueCard({
         {/* return-to-check-in button lives in header */}
         <button
           type="button"
+          draggable={false}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation()
@@ -9526,7 +9497,8 @@ export default function TournamentDeskPage() {
     })
   }, [data, searchText])
 
-  const checkInBoardSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 2 } }))
+  const [nativeDraggedReadyMatchId, setNativeDraggedReadyMatchId] = useState<number | null>(null)
+  const [nativeDragOverCourt, setNativeDragOverCourt] = useState<string | null>(null)
 
   if (loading && !data) {
     return (
@@ -10069,16 +10041,9 @@ export default function TournamentDeskPage() {
     )
   }
 
-  const handleCheckInBoardDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over) return
-    const activeData = active.data.current as { type?: string; matchId?: number } | undefined
-    const overData = over.data.current as { type?: string; court?: string } | undefined
-    if (activeData?.type !== 'checkinReady' || typeof activeData.matchId !== 'number') return
-    const matchId = activeData.matchId
-    if (overData?.type !== 'checkinOpenCourt' || !overData.court) return
-    const targetRow = courtBoardRows.find((r) => r.court === overData.court)
-    const rawNowPlaying = rawNowPlayingByCourt.get(overData.court)
+  const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
+    const targetRow = courtBoardRows.find((r) => r.court === court)
+    const rawNowPlaying = rawNowPlayingByCourt.get(court)
     if (rawNowPlaying) {
       setError('That court is occupied right now.')
       return
@@ -10102,7 +10067,27 @@ export default function TournamentDeskPage() {
       )
     }
     await handleAssignReadyMatch(matchId, slotId)
-  }
+  }, [courtBoardRows, rawNowPlayingByCourt, slotKeyByMatchId, slotOrderByKey, handleAssignReadyMatch])
+
+  const handleNativeReadyDragStart = useCallback((event: React.DragEvent<HTMLDivElement>, matchId: number) => {
+    setError(null)
+    setNativeDraggedReadyMatchId(matchId)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(matchId))
+  }, [])
+
+  const handleNativeReadyDragEnd = useCallback(() => {
+    setNativeDraggedReadyMatchId(null)
+    setNativeDragOverCourt(null)
+  }, [])
+
+  const handleNativeReadyDrop = useCallback(async (court: string) => {
+    const matchId = nativeDraggedReadyMatchId
+    setNativeDragOverCourt(null)
+    if (matchId == null) return
+    setNativeDraggedReadyMatchId(null)
+    await handleAssignReadyMatchToCourt(matchId, court)
+  }, [nativeDraggedReadyMatchId, handleAssignReadyMatchToCourt])
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
@@ -10512,7 +10497,6 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <DndContext sensors={checkInBoardSensors} onDragEnd={handleCheckInBoardDragEnd}>
                 <div style={{ display: 'grid', gap: 14 }}>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
@@ -10530,6 +10514,12 @@ export default function TournamentDeskPage() {
                               focusSlotLabel={focusSlotLabel}
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={row.slotTintIndex}
+                              nativeDragOverCourt={nativeDragOverCourt}
+                              onReadyDragOver={setNativeDragOverCourt}
+                              onReadyDragLeave={(court) => {
+                                setNativeDragOverCourt((prev) => prev === court ? null : prev)
+                              }}
+                              onReadyDrop={(court) => { void handleNativeReadyDrop(court) }}
                             />
                           ))}
                         </div>
@@ -10553,6 +10543,12 @@ export default function TournamentDeskPage() {
                               focusSlotLabel={focusSlotLabel}
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={null}
+                              nativeDragOverCourt={nativeDragOverCourt}
+                              onReadyDragOver={setNativeDragOverCourt}
+                              onReadyDragLeave={(court) => {
+                                setNativeDragOverCourt((prev) => prev === court ? null : prev)
+                              }}
+                              onReadyDrop={(court) => { void handleNativeReadyDrop(court) }}
                             />
                           ))}
                         </div>
@@ -10657,6 +10653,9 @@ export default function TournamentDeskPage() {
                                   returning={readyResettingIds.has(rq.match_id)}
                                   onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
                                   slotTintIndex={rqSlotIndex}
+                                  nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
+                                  onNativeDragStart={handleNativeReadyDragStart}
+                                  onNativeDragEnd={handleNativeReadyDragEnd}
                                 />
                               )
                             })}
@@ -10666,12 +10665,6 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
                 </div>
-
-                <DragOverlay dropAnimation={null}>
-                  <ReadyQueueDragOverlayCard readyQueue={data.ready_queue} />
-                </DragOverlay>
-
-                </DndContext>
               </>
             )}
           </div>
