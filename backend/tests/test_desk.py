@@ -508,8 +508,8 @@ def test_sms_automation_status_triggers_up_next_on_deck_and_first_match(client, 
     assert by_type.get("on_deck", 0) == 2
 
 
-def test_sms_automation_finalize_triggers_post_match_next(client, session):
-    """Finalizing a match triggers post_match_next for teams with upcoming matches."""
+def test_finalize_preview_suppresses_auto_post_match_sms_until_approved(client, session):
+    """Finalize can return a preview without auto-sending post-match texts."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
     _set_team_test_phones(session, teams)
 
@@ -523,10 +523,11 @@ def test_sms_automation_finalize_triggers_post_match_next(client, session):
         TournamentSmsSettings(
             tournament_id=t.id,
             auto_first_match=False,
-            auto_post_match_next=True,
+            auto_post_match_next=False,
             auto_on_deck=False,
             auto_up_next=False,
             auto_court_change=False,
+            auto_checkin_post_match_next=True,
             test_mode=False,
         )
     )
@@ -538,15 +539,82 @@ def test_sms_automation_finalize_triggers_post_match_next(client, session):
             "version_id": draft_id,
             "score": "8-4",
             "winner_team_id": draft_m1["team1_id"],
+            "send_automation_texts": False,
+            "include_sms_preview": True,
         },
     )
     assert fin_resp.status_code == 200
+    body = fin_resp.json()
+    assert body["sms_preview"] is not None
+    assert body["sms_preview"]["message_type"] == "checkin_post_match_next"
+    assert body["sms_preview"]["total_messages"] >= 1
+    assert len(body["sms_preview"]["recipients"]) >= 1
+    assert all(
+        not (recipient["message"] or "").rstrip().endswith(")")
+        for recipient in body["sms_preview"]["recipients"]
+    )
 
     post_logs = session.exec(
         select(SmsLog).where(
             SmsLog.tournament_id == t.id,
-            SmsLog.trigger == "auto",
-            SmsLog.message_type == "post_match_next",
+            SmsLog.message_type == "checkin_post_match_next",
+        )
+    ).all()
+    assert len(post_logs) == 0
+
+
+def test_finalize_sms_approval_endpoint_sends_post_match_next(client, session):
+    """Approved finalize SMS send writes post-match logs after the match is finalized."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    _set_team_test_phones(session, teams)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=t.id,
+            auto_first_match=False,
+            auto_post_match_next=False,
+            auto_on_deck=False,
+            auto_up_next=False,
+            auto_court_change=False,
+            auto_checkin_post_match_next=True,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    fin_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize",
+        json={
+            "version_id": draft_id,
+            "score": "8-4",
+            "winner_team_id": draft_m1["team1_id"],
+            "send_automation_texts": False,
+            "include_sms_preview": True,
+        },
+    )
+    assert fin_resp.status_code == 200
+    assert fin_resp.json()["sms_preview"]["total_messages"] >= 1
+
+    send_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize-sms",
+        json={"version_id": draft_id},
+    )
+    assert send_resp.status_code == 200
+    send_body = send_resp.json()
+    assert send_body["message_type"] == "checkin_post_match_next"
+    assert send_body["sent"] >= 1
+
+    post_logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == t.id,
+            SmsLog.trigger == "finalize_approved",
+            SmsLog.message_type == "checkin_post_match_next",
         )
     ).all()
     assert len(post_logs) >= 1

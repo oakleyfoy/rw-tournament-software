@@ -11,6 +11,7 @@ import {
   checkDeskConflicts,
   createWorkingDraft,
   deskFinalizeMatch,
+  deskSendFinalizeSms,
   deskCorrectMatch,
   deskSetMatchStatus,
   deskMoveMatch,
@@ -48,6 +49,7 @@ import {
   MatchCheckInSideState,
   PlayerCheckInState,
   FinalizeResponse,
+  FinalizeSmsPreview,
   PoolProjectionResponse,
   EventProjection,
   StandingsResponse,
@@ -1250,6 +1252,8 @@ function MatchDrawer({
   const [error, setError] = useState<string | null>(null)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
   const [finalized, setFinalized] = useState(match.status === 'FINAL')
+  const [finalizeSmsPreview, setFinalizeSmsPreview] = useState<FinalizeSmsPreview | null>(null)
+  const [sendingFinalizeSms, setSendingFinalizeSms] = useState(false)
   const [pendingConflicts, setPendingConflicts] = useState<ConflictItem[] | null>(null)
   const [pendingAction, setPendingAction] = useState<{ label: string; fn: () => void } | null>(null)
 
@@ -1307,20 +1311,28 @@ function MatchDrawer({
     actionFn()
   }, [tournamentId, versionId, match.match_id])
 
-  const doFinalize = useCallback(async () => {
+  const finalizeWithPreview = useCallback(async (options?: { score?: string; is_default?: boolean; is_retired?: boolean }) => {
     if (!winnerId) return
-    if (!score.trim()) return
+    if (!options?.is_default && !options?.is_retired && !score.trim()) return
+    if (options?.is_retired && !score.trim()) return
     setSubmitting(true)
     setError(null)
     setResult(null)
+    setStatusMsg(null)
+    setFinalizeSmsPreview(null)
     try {
       const resp = await deskFinalizeMatch(tournamentId, match.match_id, {
         version_id: versionId,
-        score: score || undefined,
+        score: options?.is_default ? undefined : (options?.score ?? score || undefined),
         winner_team_id: winnerId,
+        is_default: options?.is_default,
+        is_retired: options?.is_retired,
+        send_automation_texts: false,
+        include_sms_preview: true,
       })
       setResult(resp)
       setFinalized(true)
+      setFinalizeSmsPreview(resp.sms_preview ?? null)
       onRefreshKeepOpen()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to finalize')
@@ -1329,31 +1341,18 @@ function MatchDrawer({
     }
   }, [tournamentId, match.match_id, versionId, score, winnerId, onRefreshKeepOpen])
 
+  const doFinalize = useCallback(async () => {
+    await finalizeWithPreview()
+  }, [finalizeWithPreview])
+
   const handleFinalize = useCallback(() => {
     if (!winnerId) return
     runWithConflictCheck('FINALIZE', 'Finalize Match', doFinalize)
   }, [winnerId, runWithConflictCheck, doFinalize])
 
   const doDefault = useCallback(async () => {
-    if (!winnerId) return
-    setSubmitting(true)
-    setError(null)
-    setResult(null)
-    try {
-      const resp = await deskFinalizeMatch(tournamentId, match.match_id, {
-        version_id: versionId,
-        winner_team_id: winnerId,
-        is_default: true,
-      })
-      setResult(resp)
-      setFinalized(true)
-      onRefreshKeepOpen()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to default')
-    } finally {
-      setSubmitting(false)
-    }
-  }, [tournamentId, match.match_id, versionId, winnerId, onRefreshKeepOpen])
+    await finalizeWithPreview({ is_default: true })
+  }, [finalizeWithPreview])
 
   const handleDefault = useCallback(() => {
     if (!winnerId) return
@@ -1361,27 +1360,8 @@ function MatchDrawer({
   }, [winnerId, runWithConflictCheck, doDefault])
 
   const doRetired = useCallback(async () => {
-    if (!winnerId) return
-    if (!score.trim()) return
-    setSubmitting(true)
-    setError(null)
-    setResult(null)
-    try {
-      const resp = await deskFinalizeMatch(tournamentId, match.match_id, {
-        version_id: versionId,
-        score: score,
-        winner_team_id: winnerId,
-        is_retired: true,
-      })
-      setResult(resp)
-      setFinalized(true)
-      onRefreshKeepOpen()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to finalize (retired)')
-    } finally {
-      setSubmitting(false)
-    }
-  }, [tournamentId, match.match_id, versionId, score, winnerId, onRefreshKeepOpen])
+    await finalizeWithPreview({ score, is_retired: true })
+  }, [finalizeWithPreview, score])
 
   const handleRetired = useCallback(() => {
     if (!winnerId || !score.trim()) return
@@ -1539,6 +1519,37 @@ function MatchDrawer({
     effectiveMatch.team1_display,
     effectiveMatch.team2_display,
   ])
+
+  const sendFinalizeTexts = useCallback(async () => {
+    if (!finalizeSmsPreview) {
+      setStatusMsg('Match finalized without sending texts.')
+      return
+    }
+    setSendingFinalizeSms(true)
+    setError(null)
+    setStatusMsg(null)
+    try {
+      const resp = await deskSendFinalizeSms(tournamentId, match.match_id, {
+        version_id: versionId,
+      })
+      const sentCount = resp.sent
+      const blockedCount =
+        resp.skipped_no_phone +
+        resp.skipped_consent +
+        resp.skipped_dedupe +
+        resp.skipped_test_mode
+      setStatusMsg(
+        sentCount > 0 || blockedCount > 0
+          ? `Finalize texts processed: ${sentCount} sent${blockedCount > 0 ? `, ${blockedCount} skipped` : ''}.`
+          : 'No finalize texts were sent.'
+      )
+      setFinalizeSmsPreview(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to send finalize texts')
+    } finally {
+      setSendingFinalizeSms(false)
+    }
+  }, [finalizeSmsPreview, tournamentId, match.match_id, versionId])
 
   const actionsPanel = isDraft ? (
     <div style={{ marginBottom: 16 }}>
@@ -2259,6 +2270,147 @@ function MatchDrawer({
             setPendingAction(null)
           }}
         />
+      )}
+      {finalizeSmsPreview && (
+        <>
+          <div
+            onClick={() => {
+              if (sendingFinalizeSms) return
+              setFinalizeSmsPreview(null)
+              setStatusMsg('Match finalized without sending texts.')
+            }}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              width: '100vw',
+              height: '100vh',
+              backgroundColor: 'rgba(0,0,0,0.45)',
+              zIndex: 2000,
+            }}
+          />
+          <div style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 560,
+            maxWidth: 'calc(100vw - 24px)',
+            maxHeight: '80vh',
+            backgroundColor: '#fff',
+            borderRadius: 10,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+            zIndex: 2001,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid #e0e0e0',
+              backgroundColor: '#e8f5e9',
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: '#2e7d32' }}>
+                Finalize Match SMS Preview
+              </div>
+              <div style={{ fontSize: 12, color: '#2e7d32', marginTop: 2 }}>
+                Match finalized. Review recipients and message text before sending.
+              </div>
+            </div>
+            <div style={{ padding: '14px 20px', overflow: 'auto', flex: 1 }}>
+              {finalizeSmsPreview.recipients.length === 0 ? (
+                <div style={{
+                  padding: '12px 14px',
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: 6,
+                  color: '#666',
+                  fontSize: 13,
+                }}>
+                  No post-match texts are queued for this result.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {finalizeSmsPreview.recipients.map((recipient, index) => (
+                    <div key={`${recipient.phone}-${index}`} style={{
+                      border: '1px solid #e0e0e0',
+                      borderRadius: 6,
+                      padding: '10px 12px',
+                      backgroundColor: '#fafafa',
+                    }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#333' }}>
+                        {recipient.player_name || recipient.team_name || 'Recipient'}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+                        {recipient.team_name ? `${recipient.team_name} · ` : ''}{recipient.phone}
+                      </div>
+                      <div style={{
+                        marginTop: 8,
+                        padding: '10px 12px',
+                        borderRadius: 6,
+                        backgroundColor: '#fff',
+                        border: '1px solid #eee',
+                        fontSize: 13,
+                        color: '#222',
+                        whiteSpace: 'pre-wrap',
+                      }}>
+                        {recipient.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid #e0e0e0',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 10,
+            }}>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                {finalizeSmsPreview.total_messages} text{finalizeSmsPreview.total_messages === 1 ? '' : 's'} ready
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => {
+                    if (sendingFinalizeSms) return
+                    setFinalizeSmsPreview(null)
+                    setStatusMsg('Match finalized without sending texts.')
+                  }}
+                  style={{
+                    padding: '8px 18px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    backgroundColor: '#f5f5f5',
+                    color: '#555',
+                    border: '1px solid #ddd',
+                    borderRadius: 4,
+                    cursor: sendingFinalizeSms ? 'default' : 'pointer',
+                  }}
+                >
+                  Finalize Without Sending
+                </button>
+                <button
+                  onClick={sendFinalizeTexts}
+                  disabled={sendingFinalizeSms || finalizeSmsPreview.recipients.length === 0}
+                  style={{
+                    padding: '8px 18px',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    backgroundColor: finalizeSmsPreview.recipients.length > 0 ? '#2e7d32' : '#ccc',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    cursor: sendingFinalizeSms || finalizeSmsPreview.recipients.length === 0 ? 'default' : 'pointer',
+                  }}
+                >
+                  {sendingFinalizeSms ? 'Sending...' : 'Send Text And Finalize'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   )

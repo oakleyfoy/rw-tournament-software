@@ -72,46 +72,67 @@ class SmsAutomationEngine:
 
     def handle_match_finalized(self, match: Match) -> None:
         """Run post-final automations for active desk management mode."""
-        if (match.runtime_status or "").upper() != "FINAL":
-            return
-        is_checkin_mode = self._is_checkin_management()
-        toggle_name = (
-            "auto_checkin_post_match_next"
-            if is_checkin_mode
-            else "auto_post_match_next"
-        )
-        message_type = (
-            "checkin_post_match_next"
-            if is_checkin_mode
-            else "post_match_next"
-        )
-        if not self._is_enabled(toggle_name, default=False):
-            return
+        self.send_match_finalized_texts(match)
 
-        current_slot = self._slot_for_match(match.id)
-        for team in self._teams_for_match(match):
-            next_pair = self._next_match_for_team(
-                team_id=team.id,  # type: ignore[arg-type]
-                exclude_match_id=match.id,
-                after_slot=current_slot,
+    def preview_match_finalized_texts(self, match: Match) -> Dict[str, Any]:
+        jobs = self._match_finalized_sms_jobs(match)
+        recipients: list[dict[str, Any]] = []
+        for job in jobs:
+            recipients.extend(
+                self._preview_template_to_phone_targets(
+                    team=job["team"],
+                    message=job["message"],
+                    message_type=job["message_type"],
+                    dedupe_key=job["dedupe_key"],
+                )
             )
-            if not next_pair:
-                continue
-            next_match, next_slot = next_pair
-            dedupe_key = self._dedupe_key(
-                message_type,
-                f"v{self.version_id}",
-                f"t{team.id}",
-                f"m{next_match.id}",
+        message_type = jobs[0]["message_type"] if jobs else (
+            "checkin_post_match_next" if self._is_checkin_management() else "post_match_next"
+        )
+        return {
+            "message_type": message_type,
+            "total_messages": len(recipients),
+            "recipients": recipients,
+        }
+
+    def send_match_finalized_texts(
+        self,
+        match: Match,
+        *,
+        trigger: str = "auto",
+    ) -> Dict[str, Any]:
+        jobs = self._match_finalized_sms_jobs(match)
+        message_type = jobs[0]["message_type"] if jobs else (
+            "checkin_post_match_next" if self._is_checkin_management() else "post_match_next"
+        )
+        aggregate: Dict[str, Any] = {
+            "total": 0,
+            "sent": 0,
+            "failed": 0,
+            "skipped_no_phone": 0,
+            "skipped_consent": 0,
+            "skipped_dedupe": 0,
+            "skipped_test_mode": 0,
+            "message_type": message_type,
+            "results": [],
+        }
+        for job in jobs:
+            resp = self._send_message_to_team(
+                team=job["team"],
+                message=job["message"],
+                message_type=job["message_type"],
+                dedupe_key=job["dedupe_key"],
+                trigger=trigger,
             )
-            self._send_template_to_team(
-                team=team,
-                message_type=message_type,
-                dedupe_key=dedupe_key,
-                match=next_match,
-                slot=next_slot,
-                opponent=self._opponent_display(next_match, team.id),
-            )
+            aggregate["total"] += int(resp.total)
+            aggregate["sent"] += int(resp.sent)
+            aggregate["failed"] += int(resp.failed)
+            aggregate["skipped_no_phone"] += int(resp.skipped_no_phone)
+            aggregate["skipped_consent"] += int(resp.skipped_consent)
+            aggregate["skipped_dedupe"] += int(resp.skipped_dedupe)
+            aggregate["skipped_test_mode"] += int(resp.skipped_test_mode)
+            aggregate["results"].extend(resp.results)
+        return aggregate
 
     def handle_court_change(
         self,
@@ -600,7 +621,52 @@ class SmsAutomationEngine:
         if not active:
             return None
 
-        from app.routes.sms import _render_template, _send_to_teams
+        message = self._render_template_message(
+            team=team,
+            template_body=template_body,
+            match=match,
+            slot=slot,
+            opponent=opponent,
+        )
+        return self._send_message_to_team(
+            team=team,
+            message=message,
+            message_type=message_type,
+            dedupe_key=dedupe_key,
+            trigger="auto",
+        )
+
+    def _send_message_to_team(
+        self,
+        *,
+        team: Team,
+        message: str,
+        message_type: str,
+        dedupe_key: str,
+        trigger: str,
+    ) -> Any:
+        from app.routes.sms import _send_to_teams
+
+        return _send_to_teams(
+            session=self.session,
+            tournament_id=self.tournament.id,  # type: ignore[arg-type]
+            teams=[team],
+            message=message,
+            message_type=message_type,
+            trigger=trigger,
+            dedupe_key=dedupe_key,
+        )
+
+    def _render_template_message(
+        self,
+        *,
+        team: Team,
+        template_body: str,
+        match: Optional[Match],
+        slot: Optional[ScheduleSlot],
+        opponent: Optional[str],
+    ) -> str:
+        from app.routes.sms import _normalize_sms_message, _render_template
 
         message = _render_template(
             template_body,
@@ -613,21 +679,12 @@ class SmsAutomationEngine:
             opponent=opponent,
             day_number=self._day_number(slot.day_date) if slot else None,
         )
-        # Remove legacy trailing "(MATCH_CODE)" suffixes from automation texts.
         if match and match.match_code:
             suffix = f"({match.match_code})"
             trimmed = message.rstrip()
             if trimmed.endswith(suffix):
                 message = trimmed[:-len(suffix)].rstrip()
-        return _send_to_teams(
-            session=self.session,
-            tournament_id=self.tournament.id,  # type: ignore[arg-type]
-            teams=[team],
-            message=message,
-            message_type=message_type,
-            trigger="auto",
-            dedupe_key=dedupe_key,
-        )
+        return _normalize_sms_message(message)
 
     def _template_for(self, message_type: str) -> Tuple[bool, str]:
         cached = self._template_cache.get(message_type)
@@ -751,6 +808,138 @@ class SmsAutomationEngine:
                 continue
             projected["sent"] += 1
         return projected
+
+    def _preview_template_to_phone_targets(
+        self,
+        *,
+        team: Team,
+        message: str,
+        message_type: str,
+        dedupe_key: str,
+    ) -> list[dict[str, Any]]:
+        from app.models.sms_log import SmsLog
+        from app.routes.sms import (
+            _allowlist_set,
+            _is_phone_send_allowed,
+            _player_contacts_only_enabled,
+            _team_sms_targets,
+        )
+
+        if self._settings is None:
+            self._settings = self.session.exec(
+                select(TournamentSmsSettings).where(
+                    TournamentSmsSettings.tournament_id == self.tournament.id
+                )
+            ).first()
+
+        player_contacts_only = _player_contacts_only_enabled(
+            self.session, self.tournament.id  # type: ignore[arg-type]
+        )
+        targets = _team_sms_targets(
+            session=self.session,
+            tournament_id=self.tournament.id,  # type: ignore[arg-type]
+            team=team,
+            player_contacts_only=player_contacts_only,
+        )
+        test_mode_enabled = bool(
+            self._settings and getattr(self._settings, "test_mode", False)
+        )
+        allowlist = _allowlist_set(
+            getattr(self._settings, "test_allowlist", None)
+            if self._settings
+            else None
+        )
+
+        preview_rows: list[dict[str, Any]] = []
+        for target in targets:
+            phone = str(target.get("phone") or "").strip()
+            if not phone:
+                continue
+            existing = self.session.exec(
+                select(SmsLog.id).where(
+                    SmsLog.tournament_id == self.tournament.id,
+                    SmsLog.phone_number == phone,
+                    SmsLog.message_type == message_type,
+                    SmsLog.dedupe_key == dedupe_key,
+                )
+            ).first()
+            if existing:
+                continue
+            if test_mode_enabled and phone not in allowlist:
+                continue
+            is_allowed, _consent = _is_phone_send_allowed(
+                session=self.session,
+                tournament_id=self.tournament.id,  # type: ignore[arg-type]
+                phone_e164=phone,
+            )
+            if not is_allowed:
+                continue
+            preview_rows.append(
+                {
+                    "team_id": target.get("team_id"),
+                    "team_name": target.get("team_name"),
+                    "player_id": target.get("player_id"),
+                    "player_name": target.get("player_name"),
+                    "phone": phone,
+                    "message": message,
+                }
+            )
+        return preview_rows
+
+    def _match_finalized_sms_jobs(self, match: Match) -> list[dict[str, Any]]:
+        if (match.runtime_status or "").upper() != "FINAL":
+            return []
+        is_checkin_mode = self._is_checkin_management()
+        toggle_name = (
+            "auto_checkin_post_match_next"
+            if is_checkin_mode
+            else "auto_post_match_next"
+        )
+        message_type = (
+            "checkin_post_match_next"
+            if is_checkin_mode
+            else "post_match_next"
+        )
+        if not self._is_enabled(toggle_name, default=False):
+            return []
+
+        current_slot = self._slot_for_match(match.id)
+        jobs: list[dict[str, Any]] = []
+        for team in self._teams_for_match(match):
+            if team.id is None:
+                continue
+            next_pair = self._next_match_for_team(
+                team_id=team.id,
+                exclude_match_id=match.id,
+                after_slot=current_slot,
+            )
+            if not next_pair:
+                continue
+            next_match, next_slot = next_pair
+            dedupe_key = self._dedupe_key(
+                message_type,
+                f"v{self.version_id}",
+                f"t{team.id}",
+                f"m{next_match.id}",
+            )
+            active, template_body = self._template_for(message_type)
+            if not active:
+                continue
+            jobs.append(
+                {
+                    "team": team,
+                    "message_type": message_type,
+                    "dedupe_key": dedupe_key,
+                    "message": self._render_template_message(
+                        team=team,
+                        template_body=template_body,
+                        match=next_match,
+                        slot=next_slot,
+                        opponent=self._opponent_display(next_match, team.id),
+                    ),
+                }
+            )
+        return jobs
 
     # ------------------------------------------------------------------
     # Match/slot/team helpers

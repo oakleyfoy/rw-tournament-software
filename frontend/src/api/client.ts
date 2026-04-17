@@ -2396,6 +2396,44 @@ export interface FinalizeResponse {
   downstream_updates: DownstreamUpdate[]
   warnings: AdvancementWarning[]
   auto_started: DeskMatchItem | null
+  sms_preview?: FinalizeSmsPreview | null
+}
+
+export interface FinalizeSmsPreviewRecipient {
+  team_id: number | null
+  team_name: string | null
+  player_id: number | null
+  player_name: string | null
+  phone: string
+  message: string
+}
+
+export interface FinalizeSmsPreview {
+  message_type: string
+  total_messages: number
+  recipients: FinalizeSmsPreviewRecipient[]
+}
+
+export interface FinalizeSmsSendResult {
+  phone: string
+  team_id: number | null
+  team_name: string | null
+  player_id: number | null
+  player_name: string | null
+  status: string
+  error: string | null
+}
+
+export interface FinalizeSmsSendResponse {
+  total: number
+  sent: number
+  failed: number
+  skipped_no_phone: number
+  skipped_consent: number
+  skipped_dedupe: number
+  skipped_test_mode: number
+  message_type: string
+  results: FinalizeSmsSendResult[]
 }
 
 export async function getDeskSnapshot(
@@ -2420,11 +2458,30 @@ export async function createWorkingDraft(
 export async function deskFinalizeMatch(
   tournamentId: number,
   matchId: number,
-  payload: { version_id: number; score?: string; winner_team_id: number; is_default?: boolean; is_retired?: boolean }
+  payload: {
+    version_id: number
+    score?: string
+    winner_team_id: number
+    is_default?: boolean
+    is_retired?: boolean
+    send_automation_texts?: boolean
+    include_sms_preview?: boolean
+  }
 ): Promise<FinalizeResponse> {
   return fetchJson<FinalizeResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/finalize`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskSendFinalizeSms(
+  tournamentId: number,
+  matchId: number,
+  payload: { version_id: number }
+): Promise<FinalizeSmsSendResponse> {
+  return fetchJson<FinalizeSmsSendResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/finalize-sms`,
+    { method: 'POST', body: JSON.stringify(payload) }
   )
 }
 

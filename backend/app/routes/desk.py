@@ -676,6 +676,8 @@ class FinalizeRequest(BaseModel):
     winner_team_id: int
     is_default: bool = False
     is_retired: bool = False
+    send_automation_texts: bool = True
+    include_sms_preview: bool = False
 
 
 class DownstreamUpdate(BaseModel):
@@ -701,6 +703,48 @@ class FinalizeResponse(BaseModel):
     downstream_updates: List[DownstreamUpdate]
     warnings: List[AdvancementWarning]
     auto_started: Optional[DeskMatchItem] = None
+    sms_preview: Optional["FinalizeSmsPreviewResponse"] = None
+
+
+class FinalizeSmsPreviewRecipient(BaseModel):
+    team_id: Optional[int] = None
+    team_name: Optional[str] = None
+    player_id: Optional[int] = None
+    player_name: Optional[str] = None
+    phone: str
+    message: str
+
+
+class FinalizeSmsPreviewResponse(BaseModel):
+    message_type: str
+    total_messages: int
+    recipients: List[FinalizeSmsPreviewRecipient]
+
+
+class FinalizeSmsSendRequest(BaseModel):
+    version_id: int
+
+
+class FinalizeSmsSendResult(BaseModel):
+    phone: str
+    team_id: Optional[int] = None
+    team_name: Optional[str] = None
+    player_id: Optional[int] = None
+    player_name: Optional[str] = None
+    status: str
+    error: Optional[str] = None
+
+
+class FinalizeSmsSendResponse(BaseModel):
+    total: int
+    sent: int
+    failed: int
+    skipped_no_phone: int
+    skipped_consent: int = 0
+    skipped_dedupe: int = 0
+    skipped_test_mode: int = 0
+    message_type: str
+    results: List[FinalizeSmsSendResult]
 
 
 class StatusRequest(BaseModel):
@@ -2886,9 +2930,28 @@ def finalize_match(
         if started_match:
             auto_started_item = _match_to_desk_item(started_match, session, tournament)
 
+    sms_preview = None
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
-        automation.handle_match_finalized(match)
+        if payload.send_automation_texts:
+            automation.send_match_finalized_texts(match)
+        elif payload.include_sms_preview:
+            preview_data = automation.preview_match_finalized_texts(match)
+            sms_preview = FinalizeSmsPreviewResponse(
+                message_type=str(preview_data.get("message_type") or "post_match_next"),
+                total_messages=int(preview_data.get("total_messages") or 0),
+                recipients=[
+                    FinalizeSmsPreviewRecipient(
+                        team_id=row.get("team_id"),
+                        team_name=row.get("team_name"),
+                        player_id=row.get("player_id"),
+                        player_name=row.get("player_name"),
+                        phone=str(row.get("phone") or ""),
+                        message=str(row.get("message") or ""),
+                    )
+                    for row in list(preview_data.get("recipients") or [])
+                ],
+            )
         if started_match:
             automation.handle_match_status_change(
                 started_match,
@@ -2907,6 +2970,71 @@ def finalize_match(
         downstream_updates=downstream,
         warnings=warns,
         auto_started=auto_started_item,
+        sms_preview=sms_preview,
+    )
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/matches/{match_id}/finalize-sms",
+    response_model=FinalizeSmsSendResponse,
+)
+def send_finalize_match_sms(
+    tournament_id: int,
+    match_id: int,
+    payload: FinalizeSmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    match = session.get(Match, match_id)
+    if not match or match.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if match.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=400, detail="Match does not belong to this version")
+    if (match.runtime_status or "SCHEDULED").upper() != "FINAL":
+        raise HTTPException(status_code=400, detail="Match must be finalized before sending post-match SMS")
+
+    try:
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        send_data = automation.send_match_finalized_texts(
+            match,
+            trigger="finalize_approved",
+        )
+    except Exception:
+        logger.exception(
+            "Finalize SMS approval send failed for tournament=%s match=%s",
+            tournament_id,
+            match_id,
+        )
+        raise HTTPException(status_code=500, detail="Failed to send finalize SMS")
+
+    return FinalizeSmsSendResponse(
+        total=int(send_data.get("total") or 0),
+        sent=int(send_data.get("sent") or 0),
+        failed=int(send_data.get("failed") or 0),
+        skipped_no_phone=int(send_data.get("skipped_no_phone") or 0),
+        skipped_consent=int(send_data.get("skipped_consent") or 0),
+        skipped_dedupe=int(send_data.get("skipped_dedupe") or 0),
+        skipped_test_mode=int(send_data.get("skipped_test_mode") or 0),
+        message_type=str(send_data.get("message_type") or "post_match_next"),
+        results=[
+            FinalizeSmsSendResult(
+                phone=str(row.phone),
+                team_id=row.team_id,
+                team_name=row.team_name,
+                player_id=row.player_id,
+                player_name=row.player_name,
+                status=row.status,
+                error=row.error,
+            )
+            for row in list(send_data.get("results") or [])
+        ],
     )
 
 
