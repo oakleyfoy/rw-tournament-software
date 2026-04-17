@@ -452,58 +452,30 @@ export default function TournamentDeskCheckinBoardPage() {
     }
   }, [kioskMode])
 
-  if (error) {
-    return (
-      <div style={{
-        height: '100vh',
-        backgroundColor: '#0d1b3e',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-        <div style={{ color: '#fff', fontSize: 24, textAlign: 'center' }}>
-          <div style={{ marginBottom: 8 }}>{error}</div>
-          <div style={{ fontSize: 14, color: '#aaa' }}>Auto-retrying...</div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!data) {
-    return (
-      <div style={{
-        height: '100vh',
-        backgroundColor: '#0d1b3e',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-        <div style={{ color: '#fff', fontSize: 20 }}>Loading check-in board...</div>
-      </div>
-    )
-  }
+  const snapshot = data
 
   const slotSections = useMemo(() => {
     type Section = { key: string; label: string; matches: CheckInMatchItem[] }
-    if ((data.checkin_slot_options || []).length > 0) {
-      return (data.checkin_slot_options || []).map((opt) => ({
+    if (!snapshot) return [] as Section[]
+    if ((snapshot.checkin_slot_options || []).length > 0) {
+      return (snapshot.checkin_slot_options || []).map((opt) => ({
         key: opt.slot_key,
         label: opt.label,
-        matches: (data.checkin_slot_rows?.[opt.slot_key] || [])
+        matches: (snapshot.checkin_slot_rows?.[opt.slot_key] || [])
           .slice()
           .sort((a, b) => a.match_number - b.match_number),
       }))
     }
 
     const byKey = new Map<string, Section>()
-    ;(data.checkin_matches || []).forEach((cm) => {
+    ;(snapshot.checkin_matches || []).forEach((cm) => {
       const key = `checkin|${cm.day_label}|${(cm.sort_time || cm.scheduled_time || '').slice(0, 5)}`
       const label = `${cm.day_label}${cm.scheduled_time ? ` ${cm.scheduled_time}` : ''}`.trim()
       if (!byKey.has(key)) byKey.set(key, { key, label, matches: [] })
       byKey.get(key)!.matches.push(cm)
     })
     return Array.from(byKey.values())
-  }, [data.checkin_matches, data.checkin_slot_options, data.checkin_slot_rows])
+  }, [snapshot])
 
   const slotLabelByKey = useMemo(() => {
     const map = new Map<string, string>()
@@ -536,7 +508,7 @@ export default function TournamentDeskCheckinBoardPage() {
 
   const readyCards = useMemo(
     () =>
-      (data.ready_queue || []).map((rq) => {
+      (snapshot?.ready_queue || []).map((rq) => {
         const slotKey = slotKeyByMatchId.get(rq.match_id) || null
         const slotIndex = slotKey ? slotSections.findIndex((section) => section.key === slotKey) : -1
         const slotLabel = slotKey ? (slotLabelByKey.get(slotKey) || null) : null
@@ -545,15 +517,15 @@ export default function TournamentDeskCheckinBoardPage() {
           slotTintIndex: slotIndex >= 0 ? slotIndex : null,
           headerTop: (slotLabel || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()) || '—',
           queueElapsedLabel: formatElapsedLabel(rq.ready_at, null, clockNowMs),
-          deskMatch: (data.matches || []).find((m) => m.match_id === rq.match_id),
+          deskMatch: (snapshot?.matches || []).find((m) => m.match_id === rq.match_id),
         }
       }),
-    [clockNowMs, data.matches, data.ready_queue, slotKeyByMatchId, slotLabelByKey, slotSections]
+    [clockNowMs, snapshot, slotKeyByMatchId, slotLabelByKey, slotSections]
   )
 
   const currentCards = useMemo(
     () =>
-      (data.board_by_court || [])
+      (snapshot?.board_by_court || [])
         .filter((slot) => Boolean(slot.now_playing))
         .map((slot) => {
           const match = slot.now_playing!
@@ -563,12 +535,43 @@ export default function TournamentDeskCheckinBoardPage() {
             courtName: slot.court_name,
             match,
             slotLabel,
-            startAtLabel: formatStartedAtLabel(match.started_at, data.tournament_timezone),
+            startAtLabel: formatStartedAtLabel(match.started_at, snapshot?.tournament_timezone || null),
             elapsedLabel: formatElapsedLabel(match.started_at, match.completed_at, clockNowMs),
           }
         }),
-    [clockNowMs, data.board_by_court, data.tournament_timezone, slotKeyByMatchId, slotLabelByKey]
+    [clockNowMs, snapshot, slotKeyByMatchId, slotLabelByKey]
   )
+
+  if (error) {
+    return (
+      <div style={{
+        height: '100vh',
+        backgroundColor: '#0d1b3e',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <div style={{ color: '#fff', fontSize: 24, textAlign: 'center' }}>
+          <div style={{ marginBottom: 8 }}>{error}</div>
+          <div style={{ fontSize: 14, color: '#aaa' }}>Auto-retrying...</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!snapshot) {
+    return (
+      <div style={{
+        height: '100vh',
+        backgroundColor: '#0d1b3e',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <div style={{ color: '#fff', fontSize: 20 }}>Loading check-in board...</div>
+      </div>
+    )
+  }
 
   return (
     <div style={{
