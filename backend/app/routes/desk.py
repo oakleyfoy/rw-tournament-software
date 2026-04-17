@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.database import get_session
 from app.models.court_state import TournamentCourtState
@@ -4227,6 +4227,259 @@ class DeskTeamItem(BaseModel):
     notes: Optional[str] = None
 
 
+class MergeDuplicateTeamsResponse(BaseModel):
+    groups_merged: int
+    teams_removed: int
+    matches_relinked: int
+    checkins_relinked: int
+    player_links_relinked: int
+    avoid_edges_relinked: int
+    sms_logs_relinked: int
+
+
+def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplicateTeamsResponse:
+    from app.models.sms_log import SmsLog
+    from app.models.team_avoid_edge import TeamAvoidEdge
+
+    events = session.exec(
+        select(Event).where(Event.tournament_id == tournament_id)
+    ).all()
+    event_ids = [e.id for e in events]
+    if not event_ids:
+        return MergeDuplicateTeamsResponse(
+            groups_merged=0,
+            teams_removed=0,
+            matches_relinked=0,
+            checkins_relinked=0,
+            player_links_relinked=0,
+            avoid_edges_relinked=0,
+            sms_logs_relinked=0,
+        )
+
+    teams = session.exec(
+        select(Team).where(Team.event_id.in_(event_ids))
+    ).all()
+    teams_by_event: Dict[int, List[Team]] = {}
+    for team in teams:
+        teams_by_event.setdefault(team.event_id, []).append(team)
+
+    groups_merged = 0
+    teams_removed = 0
+    matches_relinked = 0
+    checkins_relinked = 0
+    player_links_relinked = 0
+    avoid_edges_relinked = 0
+    sms_logs_relinked = 0
+
+    def _prefer_team_value(current: Optional[Any], candidate: Optional[Any]) -> Optional[Any]:
+        if current not in (None, ""):
+            return current
+        return candidate if candidate not in (None, "") else current
+
+    for event_id, event_teams in teams_by_event.items():
+        if len(event_teams) < 2:
+            continue
+
+        parent: Dict[int, int] = {team.id: team.id for team in event_teams if team.id is not None}
+
+        def _find(team_id: int) -> int:
+            while parent[team_id] != team_id:
+                parent[team_id] = parent[parent[team_id]]
+                team_id = parent[team_id]
+            return team_id
+
+        def _union(team_a_id: int, team_b_id: int) -> None:
+            root_a = _find(team_a_id)
+            root_b = _find(team_b_id)
+            if root_a == root_b:
+                return
+            keep = min(root_a, root_b)
+            drop = max(root_a, root_b)
+            parent[drop] = keep
+
+        seen_name: Dict[str, int] = {}
+        seen_seed: Dict[int, int] = {}
+        for team in sorted(event_teams, key=lambda t: t.id or 0):
+            if team.id is None:
+                continue
+            normalized_name = _normalize_lookup_name(team.name)
+            if normalized_name:
+                previous = seen_name.get(normalized_name)
+                if previous is not None:
+                    _union(previous, team.id)
+                else:
+                    seen_name[normalized_name] = team.id
+            if team.seed is not None:
+                previous_seed = seen_seed.get(team.seed)
+                if previous_seed is not None:
+                    _union(previous_seed, team.id)
+                else:
+                    seen_seed[team.seed] = team.id
+
+        components: Dict[int, List[Team]] = {}
+        for team in event_teams:
+            if team.id is None:
+                continue
+            components.setdefault(_find(team.id), []).append(team)
+
+        for component in components.values():
+            if len(component) < 2:
+                continue
+
+            component_sorted = sorted(component, key=lambda t: t.id or 0)
+            canonical = component_sorted[0]
+            duplicates = component_sorted[1:]
+            duplicate_ids = [team.id for team in duplicates if team.id is not None]
+            if not duplicate_ids or canonical.id is None:
+                continue
+
+            groups_merged += 1
+
+            for duplicate in duplicates:
+                canonical.seed = _prefer_team_value(canonical.seed, duplicate.seed)
+                canonical.display_name = _prefer_team_value(canonical.display_name, duplicate.display_name)
+                canonical.rating = _prefer_team_value(canonical.rating, duplicate.rating)
+                canonical.player1_cellphone = _prefer_team_value(canonical.player1_cellphone, duplicate.player1_cellphone)
+                canonical.player1_email = _prefer_team_value(canonical.player1_email, duplicate.player1_email)
+                canonical.player2_cellphone = _prefer_team_value(canonical.player2_cellphone, duplicate.player2_cellphone)
+                canonical.player2_email = _prefer_team_value(canonical.player2_email, duplicate.player2_email)
+                canonical.p1_cell = _prefer_team_value(canonical.p1_cell, duplicate.p1_cell)
+                canonical.p1_email = _prefer_team_value(canonical.p1_email, duplicate.p1_email)
+                canonical.p2_cell = _prefer_team_value(canonical.p2_cell, duplicate.p2_cell)
+                canonical.p2_email = _prefer_team_value(canonical.p2_email, duplicate.p2_email)
+                canonical.notes = _prefer_team_value(canonical.notes, duplicate.notes)
+                canonical.is_defaulted = canonical.is_defaulted or duplicate.is_defaulted
+            session.add(canonical)
+
+            affected_matches = session.exec(
+                select(Match).where(
+                    Match.event_id == event_id,
+                    or_(
+                        Match.team_a_id.in_(duplicate_ids),
+                        Match.team_b_id.in_(duplicate_ids),
+                        Match.winner_team_id.in_(duplicate_ids),
+                    ),
+                )
+            ).all()
+            for match in affected_matches:
+                if match.team_a_id in duplicate_ids:
+                    match.team_a_id = canonical.id
+                    matches_relinked += 1
+                if match.team_b_id in duplicate_ids:
+                    match.team_b_id = canonical.id
+                    matches_relinked += 1
+                if match.winner_team_id in duplicate_ids:
+                    match.winner_team_id = canonical.id
+                    matches_relinked += 1
+                session.add(match)
+
+            match_checkins = session.exec(
+                select(MatchCheckIn).where(
+                    MatchCheckIn.tournament_id == tournament_id,
+                    MatchCheckIn.team_id.in_(duplicate_ids),
+                )
+            ).all()
+            for checkin in match_checkins:
+                checkin.team_id = canonical.id
+                checkins_relinked += 1
+                session.add(checkin)
+
+            player_checkins = session.exec(
+                select(MatchPlayerCheckIn).where(
+                    MatchPlayerCheckIn.tournament_id == tournament_id,
+                    MatchPlayerCheckIn.team_id.in_(duplicate_ids),
+                )
+            ).all()
+            for checkin in player_checkins:
+                checkin.team_id = canonical.id
+                checkins_relinked += 1
+                session.add(checkin)
+
+            sms_logs = session.exec(
+                select(SmsLog).where(
+                    SmsLog.tournament_id == tournament_id,
+                    SmsLog.team_id.in_(duplicate_ids),
+                )
+            ).all()
+            for log in sms_logs:
+                log.team_id = canonical.id
+                sms_logs_relinked += 1
+                session.add(log)
+
+            canonical_links = session.exec(
+                select(TeamPlayer).where(TeamPlayer.team_id == canonical.id)
+            ).all()
+            canonical_links_by_player = {link.player_id: link for link in canonical_links}
+            duplicate_links = session.exec(
+                select(TeamPlayer).where(TeamPlayer.team_id.in_(duplicate_ids))
+            ).all()
+            for link in duplicate_links:
+                existing = canonical_links_by_player.get(link.player_id)
+                if existing:
+                    existing.lineup_slot = _prefer_team_value(existing.lineup_slot, link.lineup_slot)
+                    existing.role = _prefer_team_value(existing.role, link.role)
+                    existing.is_primary_contact = existing.is_primary_contact or link.is_primary_contact
+                    session.add(existing)
+                    session.delete(link)
+                    player_links_relinked += 1
+                    continue
+                link.team_id = canonical.id
+                canonical_links_by_player[link.player_id] = link
+                player_links_relinked += 1
+                session.add(link)
+
+            affected_edges = session.exec(
+                select(TeamAvoidEdge).where(
+                    TeamAvoidEdge.event_id == event_id,
+                    or_(
+                        TeamAvoidEdge.team_id_a.in_(duplicate_ids),
+                        TeamAvoidEdge.team_id_b.in_(duplicate_ids),
+                    ),
+                )
+            ).all()
+            for edge in affected_edges:
+                new_a = canonical.id if edge.team_id_a in duplicate_ids else edge.team_id_a
+                new_b = canonical.id if edge.team_id_b in duplicate_ids else edge.team_id_b
+                if new_a == new_b:
+                    session.delete(edge)
+                    avoid_edges_relinked += 1
+                    continue
+                ordered_a = min(new_a, new_b)
+                ordered_b = max(new_a, new_b)
+                existing_edge = session.exec(
+                    select(TeamAvoidEdge).where(
+                        TeamAvoidEdge.event_id == event_id,
+                        TeamAvoidEdge.team_id_a == ordered_a,
+                        TeamAvoidEdge.team_id_b == ordered_b,
+                        TeamAvoidEdge.id != edge.id,
+                    )
+                ).first()
+                if existing_edge:
+                    session.delete(edge)
+                    avoid_edges_relinked += 1
+                    continue
+                if edge.team_id_a != ordered_a or edge.team_id_b != ordered_b:
+                    edge.team_id_a = ordered_a
+                    edge.team_id_b = ordered_b
+                    avoid_edges_relinked += 1
+                    session.add(edge)
+
+            for duplicate in duplicates:
+                session.delete(duplicate)
+                teams_removed += 1
+
+    session.commit()
+    return MergeDuplicateTeamsResponse(
+        groups_merged=groups_merged,
+        teams_removed=teams_removed,
+        matches_relinked=matches_relinked,
+        checkins_relinked=checkins_relinked,
+        player_links_relinked=player_links_relinked,
+        avoid_edges_relinked=avoid_edges_relinked,
+        sms_logs_relinked=sms_logs_relinked,
+    )
+
+
 @router.get(
     "/desk/tournaments/{tournament_id}/teams",
     response_model=List[DeskTeamItem],
@@ -4268,6 +4521,20 @@ def get_desk_teams(
             notes=t.notes,
         ))
     return items
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/teams/merge-duplicates",
+    response_model=MergeDuplicateTeamsResponse,
+)
+def merge_duplicate_desk_teams(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(404, "Tournament not found")
+    return _merge_duplicate_teams(session, tournament_id)
 
 
 class DefaultWeekendRequest(BaseModel):

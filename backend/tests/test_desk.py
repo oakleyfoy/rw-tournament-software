@@ -20,12 +20,14 @@ from typing import List
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.sms_log import SmsLog
 from app.models.player import Player
 from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
@@ -2658,6 +2660,133 @@ def test_management_mode_toggle_defaults_and_persists(client, session):
 
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id}).json()
     assert snap["management_mode"] == "checkin_management"
+
+
+def test_merge_duplicate_desk_teams_relinks_references(client, session):
+    tournament = Tournament(
+        name="Duplicate Teams Test",
+        location="Test Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 6, 5),
+        end_date=date(2026, 6, 7),
+    )
+    session.add(tournament)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        category="womens",
+        name="Women's A",
+        team_count=3,
+    )
+    session.add(event)
+    session.flush()
+
+    canonical = Team(
+        event_id=event.id,
+        name="Amy / Beth",
+        display_name="Amy / Beth",
+        seed=1,
+        rating=8.5,
+    )
+    duplicate = Team(
+        event_id=event.id,
+        name=" Amy / Beth ",
+        display_name="Amy / Beth",
+        rating=8.0,
+        notes="duplicate row",
+    )
+    opponent = Team(
+        event_id=event.id,
+        name="Cara / Dana",
+        display_name="Cara / Dana",
+        seed=2,
+    )
+    session.add_all([canonical, duplicate, opponent])
+    session.flush()
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="draft",
+    )
+    session.add(version)
+    session.flush()
+
+    match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_RR_01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=duplicate.id,
+        team_b_id=opponent.id,
+        winner_team_id=duplicate.id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+    )
+    session.add(match)
+    session.flush()
+
+    session.add(MatchCheckIn(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        match_id=match.id,
+        team_id=duplicate.id,
+        side="A",
+        team_checked_in=True,
+    ))
+    session.add(TeamPlayer(team_id=duplicate.id, player_id=101))
+    session.add(TeamAvoidEdge(
+        event_id=event.id,
+        team_id_a=min(canonical.id, duplicate.id),
+        team_id_b=max(canonical.id, duplicate.id),
+    ))
+    session.add(SmsLog(
+        tournament_id=tournament.id,
+        team_id=duplicate.id,
+        phone_number="+15555550123",
+        message_body="test",
+        message_type="team_direct",
+    ))
+    session.commit()
+    duplicate_id = duplicate.id
+
+    resp = client.post(f"/api/desk/tournaments/{tournament.id}/teams/merge-duplicates")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["groups_merged"] == 1
+    assert body["teams_removed"] == 1
+
+    session.refresh(match)
+    assert match.team_a_id == canonical.id
+    assert match.winner_team_id == canonical.id
+
+    remaining = session.exec(
+        select(Team).where(Team.event_id == event.id)
+    ).all()
+    assert len(remaining) == 2
+    assert all(team.id != duplicate_id for team in remaining)
+
+    merged = session.get(Team, canonical.id)
+    assert merged is not None
+    assert merged.notes == "duplicate row"
+
+    checkin = session.exec(select(MatchCheckIn).where(MatchCheckIn.match_id == match.id)).one()
+    assert checkin.team_id == canonical.id
+
+    team_links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == canonical.id)).all()
+    assert len(team_links) == 1
+
+    sms_logs = session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all()
+    assert sms_logs[0].team_id == canonical.id
+
+    avoid_edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    assert avoid_edges == []
 
 
 def test_checkin_queue_inclusion_and_team_ready_flow(client, session):

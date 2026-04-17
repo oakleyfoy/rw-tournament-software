@@ -3247,6 +3247,25 @@ export async function getDeskTeams(
   )
 }
 
+export interface MergeDuplicateTeamsResponse {
+  groups_merged: number
+  teams_removed: number
+  matches_relinked: number
+  checkins_relinked: number
+  player_links_relinked: number
+  avoid_edges_relinked: number
+  sms_logs_relinked: number
+}
+
+export async function mergeDuplicateTeams(
+  tournamentId: number
+): Promise<MergeDuplicateTeamsResponse> {
+  return fetchJson<MergeDuplicateTeamsResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/teams/merge-duplicates`,
+    { method: 'POST' }
+  )
+}
+
 export interface DefaultWeekendResponse {
   team_id: number
   team_name: string

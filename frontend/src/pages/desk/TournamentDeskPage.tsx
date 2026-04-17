@@ -58,6 +58,7 @@ import {
   RebuildPreviewResponse,
   RebuildMatchItem,
   getDeskTeams,
+  mergeDuplicateTeams,
   defaultTeamWeekend,
   updateTeam,
   DeskTeamItem,
@@ -2885,6 +2886,7 @@ function PoolProjectionPanel({
   const [confirmEvt, setConfirmEvt] = useState<EventProjection | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [rrSchedules, setRrSchedules] = useState<Record<number, RoundRobinResponse>>({})
+  const [collapsedEvents, setCollapsedEvents] = useState<Record<number, boolean>>({})
 
   const fetchProjection = useCallback(async () => {
     setLoading(true)
@@ -2932,6 +2934,17 @@ function PoolProjectionPanel({
     const t = setTimeout(() => setToast(null), 3000)
     return () => clearTimeout(t)
   }, [toast])
+
+  useEffect(() => {
+    if (!data) return
+    setCollapsedEvents(prev => {
+      const next = { ...prev }
+      for (const evt of data.events) {
+        if (next[evt.event_id] == null) next[evt.event_id] = false
+      }
+      return next
+    })
+  }, [data])
 
   // Fetch RR match schedule for each event whenever projection data loads/refreshes
   useEffect(() => {
@@ -3012,20 +3025,43 @@ function PoolProjectionPanel({
 
       {allEvents.map(evt => {
         const pct = evt.total_wf_matches > 0 ? Math.round((evt.finalized_wf_matches / evt.total_wf_matches) * 100) : 0
+        const isCollapsed = collapsedEvents[evt.event_id] ?? false
         return (
-          <div key={evt.event_id} style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#1a237e' }}>{evt.event_name}</span>
-              {evt.wf_complete ? (
-                <span style={{ fontSize: 9, fontWeight: 700, color: '#2e7d32', backgroundColor: '#e8f5e9', padding: '1px 6px', borderRadius: 3 }}>
-                  ALL WF COMPLETE
-                </span>
-              ) : (
-                <span style={{ fontSize: 9, color: '#888' }}>
-                  {evt.finalized_wf_matches}/{evt.total_wf_matches} WF
-                </span>
-              )}
-            </div>
+          <div key={evt.event_id} style={{ marginBottom: 14, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff' }}>
+            <button
+              onClick={() => setCollapsedEvents(prev => ({ ...prev, [evt.event_id]: !isCollapsed }))}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '10px 12px',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#1a237e' }}>{evt.event_name}</span>
+                {evt.wf_complete ? (
+                  <span style={{ fontSize: 9, fontWeight: 700, color: '#2e7d32', backgroundColor: '#e8f5e9', padding: '1px 6px', borderRadius: 3 }}>
+                    ALL WF COMPLETE
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 9, color: '#888' }}>
+                    {evt.finalized_wf_matches}/{evt.total_wf_matches} WF
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#455a64', flexShrink: 0 }}>
+                {isCollapsed ? 'Show' : 'Hide'}
+              </span>
+            </button>
+
+            {!isCollapsed && (
+              <div style={{ padding: '0 12px 12px' }}>
 
             {/* Progress bar */}
             <div style={{ height: 4, backgroundColor: '#e0e0e0', borderRadius: 2, marginBottom: 6, maxWidth: 200 }}>
@@ -3337,6 +3373,8 @@ function PoolProjectionPanel({
                 </div>
               )
             })()}
+              </div>
+            )}
           </div>
         )
       })}
@@ -6108,6 +6146,7 @@ function TeamsTab({
   const [saving, setSaving] = useState(false)
   const [defaultConfirm, setDefaultConfirm] = useState<DeskTeamItem | null>(null)
   const [defaulting, setDefaulting] = useState(false)
+  const [mergingDuplicates, setMergingDuplicates] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -6206,6 +6245,34 @@ function TeamsTab({
     }
   }
 
+  const handleMergeDuplicates = async () => {
+    const confirmed = window.confirm(
+      'Merge duplicate teams in this tournament? This will keep one team row per duplicate group and repoint matches/check-ins to it.'
+    )
+    if (!confirmed) return
+
+    setMergingDuplicates(true)
+    try {
+      const resp = await mergeDuplicateTeams(tournamentId)
+      await loadTeams()
+      onRefresh()
+      if (resp.teams_removed > 0) {
+        setToast(
+          `Merged ${resp.groups_merged} duplicate group${resp.groups_merged === 1 ? '' : 's'} and removed ${resp.teams_removed} extra team row${resp.teams_removed === 1 ? '' : 's'}.`
+        )
+      } else {
+        setToast('No duplicate teams found to merge.')
+      }
+      setTimeout(() => setToast(null), 5000)
+    } catch (e: any) {
+      console.error('Failed to merge duplicate teams:', e)
+      setToast('Failed to merge duplicate teams')
+      setTimeout(() => setToast(null), 4000)
+    } finally {
+      setMergingDuplicates(false)
+    }
+  }
+
   const inputStyle: React.CSSProperties = {
     padding: '4px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 3, width: '100%', boxSizing: 'border-box',
   }
@@ -6215,7 +6282,7 @@ function TeamsTab({
 
   return (
     <div>
-      <div style={{ marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
+      <div style={{ marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
           type="text"
           placeholder="Search teams..."
@@ -6224,6 +6291,23 @@ function TeamsTab({
           style={{ flex: 1, maxWidth: 400, padding: '8px 12px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6 }}
         />
         <span style={{ fontSize: 12, color: '#888' }}>{filtered.length} of {teams.length} teams</span>
+        <button
+          onClick={handleMergeDuplicates}
+          disabled={mergingDuplicates}
+          style={{
+            padding: '7px 12px',
+            fontSize: 12,
+            fontWeight: 600,
+            backgroundColor: '#6a1b9a',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            cursor: mergingDuplicates ? 'not-allowed' : 'pointer',
+            opacity: mergingDuplicates ? 0.7 : 1,
+          }}
+        >
+          {mergingDuplicates ? 'Merging...' : 'Merge Duplicates'}
+        </button>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
@@ -8448,8 +8532,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('checkin')
-  const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
+  const [activeTab, setActiveTab] = useState<'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams'>('checkin')
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
   const [bulkToast, setBulkToast] = useState<string | null>(null)
@@ -8592,23 +8675,6 @@ export default function TournamentDeskPage() {
     } catch { /* ignore */ }
   }, [tid])
 
-  const handleQuickSmsTeam = useCallback((teamId: number) => {
-    setSmsQuickTarget({
-      scope: 'team',
-      targetId: teamId,
-    })
-    setActiveTab('sms')
-  }, [])
-
-  const handleQuickSmsMatch = useCallback((matchId: number, phaseHint?: 'upcoming' | 'completed') => {
-    setSmsQuickTarget({
-      scope: 'match',
-      targetId: matchId,
-      matchPhase: phaseHint || 'upcoming',
-    })
-    setActiveTab('sms')
-  }, [])
-
   const handleBulkPause = useCallback(async () => {
     if (!tid || !data) return
     try {
@@ -8661,13 +8727,10 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh])
 
-  const managementMode = (data?.management_mode || 'checkin_management') as 'court_management' | 'checkin_management'
-  const isCheckInManagement = managementMode === 'checkin_management'
   const visibleTabs = useMemo(
     () => ([
-      ...(isCheckInManagement ? ([] as const) : (['courts'] as const)),
-      ...(isCheckInManagement ? (['checkin'] as const) : []),
-      ...(isCheckInManagement ? (['towels'] as const) : []),
+      'checkin',
+      'towels',
       'schedule',
       'draws',
       'impact',
@@ -8676,37 +8739,15 @@ export default function TournamentDeskPage() {
       'grid',
       'weather',
       'teams',
-      'sms',
     ] as const),
-    [isCheckInManagement]
+    []
   )
 
   useEffect(() => {
-    if (!isCheckInManagement && (activeTab === 'checkin' || activeTab === 'towels')) {
-      setActiveTab('courts')
-    }
-    if (isCheckInManagement && activeTab === 'courts') {
+    if (!visibleTabs.includes(activeTab)) {
       setActiveTab('checkin')
     }
-  }, [isCheckInManagement, activeTab])
-
-  const handleSetManagementMode = useCallback(async (mode: 'court_management' | 'checkin_management') => {
-    if (!tid || !data) return
-    try {
-      await setDeskManagementMode(tid, {
-        version_id: data.version_id,
-        management_mode: mode,
-      })
-      await handleRefresh()
-      if (mode === 'checkin_management') {
-        setActiveTab('checkin')
-      } else if (activeTab === 'checkin' || activeTab === 'towels') {
-        setActiveTab('courts')
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change management mode')
-    }
-  }, [tid, data, handleRefresh, activeTab])
+  }, [activeTab, visibleTabs])
 
   const runCheckInWithNotePrompt = useCallback(async (
     eventId: number | null | undefined,
@@ -10023,51 +10064,6 @@ export default function TournamentDeskPage() {
           >
             Refresh
           </button>
-          <button
-            onClick={() => window.open(`/desk/t/${tid}/board?kiosk=1`, '_blank')}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: '#0d47a1',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.3)',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            Court Management Board View
-          </button>
-          <button
-            onClick={() => window.open(`/desk/t/${tid}/shared-screen`, '_blank')}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: '#6a1b9a',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.3)',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            Shared Screen
-          </button>
-          <button
-            onClick={() => window.open(`/desk/t/${tid}/checkin-board?kiosk=1`, '_blank')}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: '#2e7d32',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.3)',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            Check-In Management Board View
-          </button>
         </div>
       </div>
 
@@ -10106,63 +10102,18 @@ export default function TournamentDeskPage() {
               backgroundColor: 'transparent',
               color: activeTab === tab ? '#1a237e' : '#888',
               cursor: 'pointer',
-              textTransform: tab === 'sms' || tab === 'checkin' ? 'none' : 'capitalize',
+              textTransform: tab === 'checkin' ? 'none' : 'capitalize',
               marginBottom: -2,
             }}
           >
-            {tab === 'sms' ? 'SMS' : tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab}
+            {tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab}
           </button>
         ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0 6px 14px' }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#455a64' }}>Actions:</span>
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 2,
-            padding: 3,
-            borderRadius: 999,
-            border: '1px solid #90a4ae',
-            backgroundColor: '#f8fbff',
-          }}>
-            <button
-              onClick={() => { if (managementMode !== 'checkin_management') void handleSetManagementMode('checkin_management') }}
-              style={{
-                padding: '7px 14px',
-                fontSize: 12,
-                fontWeight: 700,
-                border: 'none',
-                borderRadius: 999,
-                backgroundColor: managementMode === 'checkin_management' ? '#1a237e' : 'transparent',
-                color: managementMode === 'checkin_management' ? '#fff' : '#455a64',
-                cursor: managementMode === 'checkin_management' ? 'default' : 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Check-In Management
-            </button>
-            <button
-              onClick={() => { if (managementMode !== 'court_management') void handleSetManagementMode('court_management') }}
-              style={{
-                padding: '7px 14px',
-                fontSize: 12,
-                fontWeight: 700,
-                border: 'none',
-                borderRadius: 999,
-                backgroundColor: managementMode === 'court_management' ? '#1a237e' : 'transparent',
-                color: managementMode === 'court_management' ? '#fff' : '#455a64',
-                cursor: managementMode === 'court_management' ? 'default' : 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Court Management
-            </button>
-          </div>
-        </div>
       </div>
 
       <div style={{ padding: '16px 24px' }}>
         {/* Courts Tab */}
-        {activeTab === 'courts' && (
+        {false && activeTab === 'courts' && (
           <>
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, position: 'relative' }}>
@@ -10976,11 +10927,11 @@ export default function TournamentDeskPage() {
           />
         )}
 
-        {activeTab === 'sms' && (
+        {false && activeTab === 'sms' && (
           <SmsAdminTab
             tournamentId={tid!}
-            quickTarget={smsQuickTarget}
-            managementMode={managementMode}
+            quickTarget={null}
+            managementMode={'checkin_management'}
           />
         )}
       </div>
