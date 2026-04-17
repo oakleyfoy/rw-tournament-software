@@ -147,6 +147,8 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   CANCELLED: { bg: '#efebe9', text: '#795548' },
 }
 
+const DEBUG_BUILD_MARKER = '00c0ef-p2'
+
 const STATUS_LABEL: Record<string, string> = {
   SCHEDULED: 'Scheduled',
   IN_PROGRESS: 'In Progress',
@@ -8326,18 +8328,12 @@ function CheckInCourtBoardCard({
   onOpenMatch,
   slotTintIndex,
   nativeDragOverCourt,
-  onReadyPointerEnter,
-  onReadyPointerLeave,
-  onReadyPointerUp,
 }: {
   row: CheckInCourtBoardRowData
   focusSlotLabel?: string | null
   onOpenMatch: (m: DeskMatchItem) => void
   slotTintIndex: number | null
   nativeDragOverCourt: string | null
-  onReadyPointerEnter: (court: string) => void
-  onReadyPointerLeave: (court: string) => void
-  onReadyPointerUp: (court: string) => void
 }) {
   const match = row.displayMatch
   const tint = getSlotTint(slotTintIndex)
@@ -8354,18 +8350,7 @@ function CheckInCourtBoardCard({
   if (!match && !row.isClosed) {
     return (
       <div
-        onPointerEnter={() => {
-          if (!canReceiveReady) return
-          onReadyPointerEnter(row.court)
-        }}
-        onPointerLeave={() => {
-          if (!canReceiveReady) return
-          onReadyPointerLeave(row.court)
-        }}
-        onPointerUp={() => {
-          if (!canReceiveReady) return
-          onReadyPointerUp(row.court)
-        }}
+        data-ready-court={canReceiveReady ? row.court : undefined}
         style={{
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
           borderRadius: 8,
@@ -9498,8 +9483,17 @@ export default function TournamentDeskPage() {
     x: number
     y: number
   } | null>(null)
+  const [debugProbe, setDebugProbe] = useState<string>('idle')
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H5',location:'TournamentDeskPage.tsx:mount',message:'tournament desk page mounted',data:{pathname:typeof window!=='undefined'?window.location.pathname:null,search:typeof window!=='undefined'?window.location.search:null,tid},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [tid])
   const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
     if (!data) return
+    // #region agent log
+    fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H3',location:'TournamentDeskPage.tsx:handleAssignReadyMatchToCourt:entry',message:'attempt assign ready match to court',data:{matchId,court,versionId:data.version_id,readyQueueCount:(data.ready_queue||[]).length,availableSlotsCount:(data.available_slots||[]).length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     const slotSectionMap = new Map<
       string,
@@ -9646,15 +9640,24 @@ export default function TournamentDeskPage() {
     const targetRow = courtBoardRows.find((r) => r.court === court)
     const rawNowPlaying = rawNowPlayingByCourt.get(court)
     if (rawNowPlaying) {
+      // #region agent log
+      fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H3',location:'TournamentDeskPage.tsx:handleAssignReadyMatchToCourt:rawNowPlaying',message:'assignment blocked by raw now playing',data:{matchId,court,rawNowPlayingMatchId:rawNowPlaying.match_id},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setError('That court is occupied right now.')
       return
     }
     if (targetRow?.now) {
+      // #region agent log
+      fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H3',location:'TournamentDeskPage.tsx:handleAssignReadyMatchToCourt:targetNow',message:'assignment blocked by targetRow.now',data:{matchId,court,targetNowMatchId:targetRow.now.match_id},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setError('That court already has a match assigned.')
       return
     }
     const slotId = targetRow?.availableSlotsForCourt[0]?.slot_id
     if (!slotId) {
+      // #region agent log
+      fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H3',location:'TournamentDeskPage.tsx:handleAssignReadyMatchToCourt:noSlot',message:'assignment blocked by missing open slot',data:{matchId,court,targetRowExists:Boolean(targetRow),availableSlotsForCourt:(targetRow?.availableSlotsForCourt||[]).map(s=>s.slot_id)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setError('No open assignment slot on that court.')
       return
     }
@@ -9667,11 +9670,18 @@ export default function TournamentDeskPage() {
           : prev
       )
     }
+    // #region agent log
+    fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H3',location:'TournamentDeskPage.tsx:handleAssignReadyMatchToCourt:beforeAssign',message:'assignment proceeding to slot',data:{matchId,court,slotId,readySlotKey,readySlotIndex},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     await handleAssignReadyMatch(matchId, slotId)
   }, [data, courtStates, handleAssignReadyMatch])
 
   const handlePointerDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    setDebugProbe(`drag-start:${rq.match_id}`)
+    // #region agent log
+    fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H1',location:'TournamentDeskPage.tsx:handlePointerDragStart',message:'ready card pointer drag started',data:{matchId:rq.match_id,matchNumber:rq.match_number,eventName:rq.event_name,pointerType:event.pointerType,button:event.button,x:event.clientX,y:event.clientY},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     setError(null)
     setNativeDraggedReadyMatchId(rq.match_id)
     setPointerDragGhost({
@@ -9683,25 +9693,37 @@ export default function TournamentDeskPage() {
       x: event.clientX,
       y: event.clientY,
     })
-    ;(event.currentTarget as HTMLDivElement).setPointerCapture?.(event.pointerId)
+    setNativeDragOverCourt(null)
   }, [])
 
   const handleNativeReadyDragEnd = useCallback(() => {
+    setDebugProbe(`drag-end:${nativeDraggedReadyMatchId ?? 'none'}:${nativeDragOverCourt ?? 'none'}`)
+    // #region agent log
+    fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H2',location:'TournamentDeskPage.tsx:handleNativeReadyDragEnd',message:'pointer drag ended/reset',data:{matchId:nativeDraggedReadyMatchId,court:nativeDragOverCourt,hadGhost:Boolean(pointerDragGhost)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     setNativeDraggedReadyMatchId(null)
     setNativeDragOverCourt(null)
     setPointerDragGhost(null)
-  }, [])
+  }, [nativeDraggedReadyMatchId, nativeDragOverCourt, pointerDragGhost])
 
   useEffect(() => {
     if (!pointerDragGhost) return
 
     const handlePointerMove = (event: PointerEvent) => {
+      const hoveredCourtEl = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('[data-ready-court]') as HTMLElement | null
+      const hoveredCourt = hoveredCourtEl?.dataset.readyCourt || null
       setPointerDragGhost((prev) => prev ? { ...prev, x: event.clientX, y: event.clientY } : null)
+      setNativeDragOverCourt(hoveredCourt)
+      setDebugProbe(hoveredCourt ? `hover:${nativeDraggedReadyMatchId ?? 'none'}:${hoveredCourt}` : `move:${nativeDraggedReadyMatchId ?? 'none'}:none`)
     }
 
     const handlePointerUp = () => {
       const matchId = nativeDraggedReadyMatchId
       const court = nativeDragOverCourt
+      setDebugProbe(`window-up:${matchId ?? 'none'}:${court ?? 'none'}`)
+      // #region agent log
+      fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H2',location:'TournamentDeskPage.tsx:useEffect:pointerUp',message:'window pointerup observed for ready drag',data:{matchId,court,ghost:Boolean(pointerDragGhost)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       void (async () => {
         handleNativeReadyDragEnd()
         if (matchId != null && court) {
@@ -9718,23 +9740,6 @@ export default function TournamentDeskPage() {
     }
   }, [pointerDragGhost, nativeDraggedReadyMatchId, nativeDragOverCourt, handleNativeReadyDragEnd, handleAssignReadyMatchToCourt])
 
-  const handleReadyPointerUp = useCallback((court: string) => {
-    if (nativeDraggedReadyMatchId == null) return
-    void (async () => {
-      handleNativeReadyDragEnd()
-      await handleAssignReadyMatchToCourt(nativeDraggedReadyMatchId, court)
-    })()
-  }, [nativeDraggedReadyMatchId, handleNativeReadyDragEnd, handleAssignReadyMatchToCourt])
-
-  const handleReadyPointerLeave = useCallback((court: string) => {
-    setNativeDragOverCourt((prev) => prev === court ? null : prev)
-  }, [])
-
-  const handleReadyPointerEnter = useCallback((court: string) => {
-    if (nativeDraggedReadyMatchId == null) return
-    setNativeDragOverCourt(court)
-  }, [nativeDraggedReadyMatchId])
-
   useEffect(() => {
     if (nativeDraggedReadyMatchId != null) {
       document.body.style.userSelect = 'none'
@@ -9744,6 +9749,12 @@ export default function TournamentDeskPage() {
     }
     return
   }, [nativeDraggedReadyMatchId])
+  useEffect(() => {
+    if (!data) return
+    // #region agent log
+    fetch('http://127.0.0.1:7519/ingest/37bb460e-befc-4ee4-99d2-a2eb163c26d3',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'00c0ef'},body:JSON.stringify({sessionId:'00c0ef',runId:'pre-fix',hypothesisId:'H6',location:'TournamentDeskPage.tsx:dataLoaded',message:'desk snapshot loaded into page',data:{versionId:data.version_id,managementMode:data.management_mode,readyQueueCount:(data.ready_queue||[]).length,availableSlotsCount:(data.available_slots||[]).length,courtsCount:(data.courts||[]).length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [data])
 
   if (loading && !data) {
     return (
@@ -10695,6 +10706,28 @@ export default function TournamentDeskPage() {
             ) : (
               <>
                 <div style={{ display: 'grid', gap: 14 }}>
+                  <div style={{
+                    padding: '6px 10px',
+                    border: '1px dashed #90a4ae',
+                    borderRadius: 8,
+                    backgroundColor: '#f8fbff',
+                    fontSize: 11,
+                    color: '#455a64',
+                    fontWeight: 700,
+                  }}>
+                    Debug build `{DEBUG_BUILD_MARKER}` active
+                  </div>
+                  <div style={{
+                    padding: '6px 10px',
+                    border: '1px dashed #c5cae9',
+                    borderRadius: 8,
+                    backgroundColor: '#eef2ff',
+                    fontSize: 11,
+                    color: '#283593',
+                    fontWeight: 700,
+                  }}>
+                    Drag probe: {debugProbe}
+                  </div>
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
                       Currently Playing
@@ -10712,9 +10745,6 @@ export default function TournamentDeskPage() {
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={row.slotTintIndex}
                               nativeDragOverCourt={nativeDragOverCourt}
-                              onReadyPointerEnter={handleReadyPointerEnter}
-                              onReadyPointerLeave={handleReadyPointerLeave}
-                              onReadyPointerUp={handleReadyPointerUp}
                             />
                           ))}
                         </div>
@@ -10739,9 +10769,6 @@ export default function TournamentDeskPage() {
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={null}
                               nativeDragOverCourt={nativeDragOverCourt}
-                              onReadyPointerEnter={handleReadyPointerEnter}
-                              onReadyPointerLeave={handleReadyPointerLeave}
-                              onReadyPointerUp={handleReadyPointerUp}
                             />
                           ))}
                         </div>
