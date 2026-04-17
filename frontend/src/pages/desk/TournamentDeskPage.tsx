@@ -9396,6 +9396,12 @@ export default function TournamentDeskPage() {
   const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
     if (!data) return
 
+    const targetCourtLabel = court.replace(/^Court\s+/i, '').trim()
+    const draggedMatch = data.matches.find((m) => m.match_id === matchId) || null
+    const draggedSlot = draggedMatch?.slot_id != null
+      ? data.slots.find((s) => s.slot_id === draggedMatch.slot_id) || null
+      : null
+
     const slotSectionMap = new Map<
       string,
       {
@@ -9548,7 +9554,20 @@ export default function TournamentDeskPage() {
       setError('That court already has a match assigned.')
       return
     }
-    const slotId = targetRow?.availableSlotsForCourt[0]?.slot_id
+    let slotId: number | null = null
+    if (draggedSlot) {
+      const matchingCourtSlot = (data.slots || []).find((slot) =>
+        slot.day_date === draggedSlot.day_date &&
+        slot.start_time === draggedSlot.start_time &&
+        String(slot.court_label || '').trim() === targetCourtLabel
+      )
+      if (matchingCourtSlot?.slot_id != null) {
+        slotId = matchingCourtSlot.slot_id
+      }
+    }
+    if (slotId == null) {
+      slotId = targetRow?.availableSlotsForCourt[0]?.slot_id ?? null
+    }
     if (!slotId) {
       setError('No open assignment slot on that court.')
       return
