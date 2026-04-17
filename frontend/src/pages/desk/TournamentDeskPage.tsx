@@ -91,7 +91,6 @@ import {
   patchSmsSettings,
   getSmsTemplates,
   putSmsTemplate,
-  resetSmsTemplates,
   SmsAutomationRunResponse,
   SmsRrAutomationRunResponse,
   SmsLogEntry,
@@ -6566,8 +6565,6 @@ function SmsAdminTab({
   const [applyingTemplateMode, setApplyingTemplateMode] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showAutomationToggles, setShowAutomationToggles] = useState(true)
-  const [showCourtTemplates, setShowCourtTemplates] = useState(true)
-  const [showCheckinTemplates, setShowCheckinTemplates] = useState(true)
 
   const [logs, setLogs] = useState<SmsLogEntry[]>([])
   const [logTypeFilter, setLogTypeFilter] = useState('')
@@ -6579,6 +6576,7 @@ function SmsAdminTab({
   const [lastRrReminderRun, setLastRrReminderRun] = useState<SmsRrAutomationRunResponse | null>(null)
   const [smsTemplateMode, setSmsTemplateMode] = useState<'court_management' | 'checkin_management'>('court_management')
   const [quickTestPhone, setQuickTestPhone] = useState('')
+  const onlyActiveCheckinTemplateType = 'checkin_post_match_next'
   const [savingQuickTestPhone, setSavingQuickTestPhone] = useState(false)
   const [rrMixedEventId, setRrMixedEventId] = useState('')
   const [events, setEvents] = useState<Event[]>([])
@@ -7166,15 +7164,15 @@ function SmsAdminTab({
     setError(null)
     try {
       const updated = await patchSmsSettings(tournamentId, {
-        auto_first_match: settingsDraft.auto_first_match,
-        auto_post_match_next: settingsDraft.auto_post_match_next,
-        auto_on_deck: settingsDraft.auto_on_deck,
-        auto_up_next: settingsDraft.auto_up_next,
-        auto_court_change: settingsDraft.auto_court_change,
-        auto_checkin_first_match: settingsDraft.auto_checkin_first_match,
-        auto_checkin_slot_checkin: settingsDraft.auto_checkin_slot_checkin,
+        auto_first_match: false,
+        auto_post_match_next: false,
+        auto_on_deck: false,
+        auto_up_next: false,
+        auto_court_change: false,
+        auto_checkin_first_match: false,
+        auto_checkin_slot_checkin: false,
         auto_checkin_post_match_next: settingsDraft.auto_checkin_post_match_next,
-        auto_checkin_court_assigned: settingsDraft.auto_checkin_court_assigned,
+        auto_checkin_court_assigned: false,
         texts_enabled: settingsDraft.texts_enabled,
         test_mode: settingsDraft.test_mode,
         test_allowlist: settingsDraft.test_allowlist,
@@ -7204,33 +7202,22 @@ function SmsAdminTab({
     }
   }
 
-  const handleResetTemplates = async () => {
-    setError(null)
-    try {
-      await resetSmsTemplates(tournamentId)
-      await loadTemplates()
-    } catch (e: any) {
-      setError(e?.message || 'Failed to reset templates')
-    }
-  }
-
   const handleTemplateModeChange = async (
     nextMode: 'court_management' | 'checkin_management'
   ) => {
     setSmsTemplateMode(nextMode)
-    const rows = [...templates]
-    const courtMode = nextMode === 'court_management'
     const nextAutomationDefaults = {
-      auto_first_match: courtMode,
-      auto_post_match_next: courtMode,
-      auto_on_deck: courtMode,
-      auto_up_next: courtMode,
-      auto_court_change: courtMode,
-      auto_checkin_first_match: !courtMode,
-      auto_checkin_slot_checkin: !courtMode,
-      auto_checkin_post_match_next: !courtMode,
-      auto_checkin_court_assigned: !courtMode,
+      auto_first_match: false,
+      auto_post_match_next: false,
+      auto_on_deck: false,
+      auto_up_next: false,
+      auto_court_change: false,
+      auto_checkin_first_match: false,
+      auto_checkin_slot_checkin: false,
+      auto_checkin_post_match_next: nextMode === 'checkin_management',
+      auto_checkin_court_assigned: false,
     }
+    const rows = [...templates]
     const settingsMismatch = settingsDraft
       ? (
           settingsDraft.auto_first_match !== nextAutomationDefaults.auto_first_match ||
@@ -7245,8 +7232,7 @@ function SmsAdminTab({
         )
       : false
     const hasMismatch = rows.some(row => {
-      const isCheckin = row.message_type.startsWith('checkin_')
-      const shouldBeActive = nextMode === 'checkin_management' ? isCheckin : !isCheckin
+      const shouldBeActive = row.message_type === onlyActiveCheckinTemplateType
       return row.is_active !== shouldBeActive
     })
     if (settingsDraft) {
@@ -7256,8 +7242,7 @@ function SmsAdminTab({
     setApplyingTemplateMode(true)
     setError(null)
     const nextTemplates = rows.map(row => {
-      const isCheckin = row.message_type.startsWith('checkin_')
-      const shouldBeActive = nextMode === 'checkin_management' ? isCheckin : !isCheckin
+      const shouldBeActive = row.message_type === onlyActiveCheckinTemplateType
       return { ...row, is_active: shouldBeActive }
     })
     setTemplates(nextTemplates)
@@ -7331,8 +7316,7 @@ function SmsAdminTab({
     checkin_post_match_next: 'Check-In: Post-match next (no court)',
     checkin_court_assigned: 'Check-In: Court assigned (go to your court)',
   }
-  const checkinTemplateRows = templates.filter(row => row.message_type.startsWith('checkin_'))
-  const courtTemplateRows = templates.filter(row => !row.message_type.startsWith('checkin_'))
+  const checkinTemplateRows = templates.filter(row => row.message_type === onlyActiveCheckinTemplateType)
   const textsEnabled = settingsDraft?.texts_enabled ?? true
   const visibleLogs = logs.filter(l => {
     const status = String(l.status || '').trim().toLowerCase()
@@ -7893,7 +7877,7 @@ function SmsAdminTab({
       <div style={{ display: 'grid', gap: 12, alignItems: 'start' }}>
         <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 15 }}>Automation Toggles</h3>
+            <h3 style={{ margin: 0, fontSize: 15 }}>Automation</h3>
             <button onClick={() => setShowAutomationToggles(v => !v)} style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
               {showAutomationToggles ? 'Hide toggles' : 'Show toggles'}
             </button>
@@ -7903,22 +7887,19 @@ function SmsAdminTab({
               <>
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr)', gap: 12, marginBottom: 12 }}>
                   <div style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Check-In Management SMS Options</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Check-In Post-Match SMS</div>
                     <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-                      {([
-                        ['auto_checkin_slot_checkin', 'Prior slot started: check-in now'],
-                        ['auto_checkin_post_match_next', 'Post-match next (no court)'],
-                        ['auto_checkin_court_assigned', 'Court assigned: go to your court'],
-                      ] as const).map(([key, label]) => (
-                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(settingsDraft[key])}
-                            onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, [key]: e.target.checked }) : prev)}
-                          />
-                          {label}
-                        </label>
-                      ))}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(settingsDraft.auto_checkin_post_match_next)}
+                          onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, auto_checkin_post_match_next: e.target.checked }) : prev)}
+                        />
+                        Post-match next (no court)
+                      </label>
+                      <div style={{ fontSize: 11, color: '#666' }}>
+                        All other automatic SMS types are hidden here and will be saved as off.
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -7966,7 +7947,7 @@ function SmsAdminTab({
 
         <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, backgroundColor: '#fff' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Templates</h3>
+            <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 15 }}>Template</h3>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={() => setShowTemplates(v => !v)}
@@ -7974,120 +7955,47 @@ function SmsAdminTab({
               >
                 {showTemplates ? 'Hide templates' : 'Show templates'}
               </button>
-              {showTemplates && (
-                <button
-                  onClick={() => {
-                    const ok = window.confirm(
-                      'Reset all SMS templates to defaults? This will overwrite current template text and active states.'
-                    )
-                    if (!ok) return
-                    void handleResetTemplates()
-                  }}
-                  style={{ padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-                >
-                  Reset to defaults
-                </button>
-              )}
             </div>
           </div>
           {showTemplates ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
-              <div style={{ border: '1px solid #e8eaf6', borderRadius: 8, padding: 10, backgroundColor: '#f8f9ff' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>Court Management Templates</div>
-                  <button onClick={() => setShowCourtTemplates(v => !v)} style={{ padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
-                    {showCourtTemplates ? 'Collapse' : 'Expand'}
-                  </button>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(380px, 1fr)', gap: 12 }}>
+              {checkinTemplateRows.map(row => (
+                <div key={row.message_type} style={{ border: '1px solid #e8eaf6', borderRadius: 8, padding: 10, backgroundColor: '#f8f9ff' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{templateLabels[row.message_type] || row.message_type}</div>
+                    <label style={{ fontSize: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={row.is_active}
+                        onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
+                      />{' '}
+                      Active
+                    </label>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={templateBodies[row.message_type] ?? row.template_body}
+                    onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
+                  />
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      onClick={() => saveTemplate(row)}
+                      disabled={savingTemplateType === row.message_type}
+                      style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 11, color: '#666' }}>
+                    All other SMS templates are hidden here and kept inactive.
+                  </div>
                 </div>
-                {showCourtTemplates ? (
-                  <div style={{ display: 'grid', gap: 10 }}>
-                    {courtTemplateRows.map(row => (
-                      <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10, backgroundColor: '#fff' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13 }}>{templateLabels[row.message_type] || row.message_type}</div>
-                          <label style={{ fontSize: 12 }}>
-                            <input
-                              type="checkbox"
-                              checked={row.is_active}
-                              onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
-                            />{' '}
-                            Active
-                          </label>
-                        </div>
-                        <textarea
-                          rows={3}
-                          value={templateBodies[row.message_type] ?? row.template_body}
-                          onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
-                          style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
-                        />
-                        <div style={{ marginTop: 6 }}>
-                          <button
-                            onClick={() => saveTemplate(row)}
-                            disabled={savingTemplateType === row.message_type}
-                            style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                          >
-                            {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
-                    Court templates are collapsed.
-                  </div>
-                )}
-              </div>
-              <div style={{ border: '1px solid #e8eaf6', borderRadius: 8, padding: 10, backgroundColor: '#f8f9ff' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>Check-In Management Templates</div>
-                  <button onClick={() => setShowCheckinTemplates(v => !v)} style={{ padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
-                    {showCheckinTemplates ? 'Collapse' : 'Expand'}
-                  </button>
-                </div>
-                {showCheckinTemplates ? (
-                  <div style={{ display: 'grid', gap: 10 }}>
-                    {checkinTemplateRows.map(row => (
-                      <div key={row.message_type} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10, backgroundColor: '#fff' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13 }}>{templateLabels[row.message_type] || row.message_type}</div>
-                          <label style={{ fontSize: 12 }}>
-                            <input
-                              type="checkbox"
-                              checked={row.is_active}
-                              onChange={e => setTemplates(prev => prev.map(t => t.message_type === row.message_type ? ({ ...t, is_active: e.target.checked }) : t))}
-                            />{' '}
-                            Active
-                          </label>
-                        </div>
-                        <textarea
-                          rows={3}
-                          value={templateBodies[row.message_type] ?? row.template_body}
-                          onChange={e => setTemplateBodies(prev => ({ ...prev, [row.message_type]: e.target.value }))}
-                          style={{ width: '100%', boxSizing: 'border-box', padding: 6, borderRadius: 4, border: '1px solid #ccc' }}
-                        />
-                        <div style={{ marginTop: 6 }}>
-                          <button
-                            onClick={() => saveTemplate(row)}
-                            disabled={savingTemplateType === row.message_type}
-                            style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                          >
-                            {savingTemplateType === row.message_type ? 'Saving…' : 'Save Template'}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
-                    Check-In templates are collapsed.
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
           ) : (
             <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
-              Templates are hidden. Click "Show templates" to edit message templates.
+              Template is hidden. Click "Show templates" to edit the post-match check-in message.
             </div>
           )}
         </div>
