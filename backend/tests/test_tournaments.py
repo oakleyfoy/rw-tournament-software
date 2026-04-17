@@ -458,10 +458,15 @@ def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: 
     session.add(event)
     session.flush()
 
-    # Two source names that differ only by trailing spaces are valid source data
-    # but normalize to the same base display name during clone.
-    session.add(Team(event_id=event.id, name="Dee Dee / Dennis", seed=1))
-    session.add(Team(event_id=event.id, name="Dee Dee / Dennis  ", seed=2))
+    session.add(Team(event_id=event.id, name="Dee Dee / Dennis", display_name="Dee Dee / Dennis", seed=1))
+    session.add(
+        Team(
+            event_id=event.id,
+            name="Dee Dee / Dennis (2)",
+            display_name="Dee Dee / Dennis",
+            seed=None,
+        )
+    )
     session.commit()
 
     resp = client.post(f"/api/tournaments/{source.id}/duplicate")
@@ -476,11 +481,9 @@ def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: 
     cloned_teams = session.exec(
         select(Team).where(Team.event_id == cloned_event.id)
     ).all()
-    assert len(cloned_teams) == 2
-    names = sorted(t.name for t in cloned_teams)
-    assert names[0] == "Dee Dee / Dennis"
-    assert names[1].startswith("Dee Dee / Dennis (")
-    assert len({t.name.casefold() for t in cloned_teams}) == 2
+    assert len(cloned_teams) == 1
+    assert cloned_teams[0].name == "Dee Dee / Dennis"
+    assert cloned_teams[0].seed == 1
 
 
 def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient, session: Session):

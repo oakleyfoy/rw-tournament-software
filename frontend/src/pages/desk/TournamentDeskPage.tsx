@@ -2885,7 +2885,7 @@ function PoolProjectionPanel({
   const [confirmEvt, setConfirmEvt] = useState<EventProjection | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [rrSchedules, setRrSchedules] = useState<Record<number, RoundRobinResponse>>({})
-  const [collapsedEvents, setCollapsedEvents] = useState<Record<number, boolean>>({})
+  const [collapsedSchedules, setCollapsedSchedules] = useState<Record<number, boolean>>({})
 
   const fetchProjection = useCallback(async () => {
     setLoading(true)
@@ -2936,7 +2936,7 @@ function PoolProjectionPanel({
 
   useEffect(() => {
     if (!data) return
-    setCollapsedEvents(prev => {
+    setCollapsedSchedules(prev => {
       const next = { ...prev }
       for (const evt of data.events) {
         if (next[evt.event_id] == null) next[evt.event_id] = false
@@ -3024,42 +3024,22 @@ function PoolProjectionPanel({
 
       {allEvents.map(evt => {
         const pct = evt.total_wf_matches > 0 ? Math.round((evt.finalized_wf_matches / evt.total_wf_matches) * 100) : 0
-        const isCollapsed = collapsedEvents[evt.event_id] ?? false
+        const isScheduleCollapsed = collapsedSchedules[evt.event_id] ?? false
         return (
           <div key={evt.event_id} style={{ marginBottom: 14, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff' }}>
-            <button
-              onClick={() => setCollapsedEvents(prev => ({ ...prev, [evt.event_id]: !isCollapsed }))}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                padding: '10px 12px',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#1a237e' }}>{evt.event_name}</span>
-                {evt.wf_complete ? (
-                  <span style={{ fontSize: 9, fontWeight: 700, color: '#2e7d32', backgroundColor: '#e8f5e9', padding: '1px 6px', borderRadius: 3 }}>
-                    ALL WF COMPLETE
-                  </span>
-                ) : (
-                  <span style={{ fontSize: 9, color: '#888' }}>
-                    {evt.finalized_wf_matches}/{evt.total_wf_matches} WF
-                  </span>
-                )}
-              </div>
-              <span style={{ fontSize: 10, fontWeight: 700, color: '#455a64', flexShrink: 0 }}>
-                {isCollapsed ? 'Show' : 'Hide'}
-              </span>
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, padding: '10px 12px 0' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#1a237e' }}>{evt.event_name}</span>
+              {evt.wf_complete ? (
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#2e7d32', backgroundColor: '#e8f5e9', padding: '1px 6px', borderRadius: 3 }}>
+                  ALL WF COMPLETE
+                </span>
+              ) : (
+                <span style={{ fontSize: 9, color: '#888' }}>
+                  {evt.finalized_wf_matches}/{evt.total_wf_matches} WF
+                </span>
+              )}
+            </div>
 
-            {!isCollapsed && (
               <div style={{ padding: '0 12px 12px' }}>
 
             {/* Progress bar */}
@@ -3114,9 +3094,27 @@ function PoolProjectionPanel({
               if (scheduled.length === 0) return null
               return (
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginBottom: 4 }}>
-                    Pool Match Schedule
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64' }}>
+                      Pool Match Schedule
+                    </div>
+                    <button
+                      onClick={() => setCollapsedSchedules(prev => ({ ...prev, [evt.event_id]: !isScheduleCollapsed }))}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: '#455a64',
+                        backgroundColor: '#fff',
+                        border: '1px solid #cfd8dc',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {isScheduleCollapsed ? 'Show' : 'Hide'}
+                    </button>
                   </div>
+                  {!isScheduleCollapsed && (
                   <div style={{ overflowX: 'auto', border: '1px solid #e0e0e0', borderRadius: 4 }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                       <thead>
@@ -3178,6 +3176,7 @@ function PoolProjectionPanel({
                       </tbody>
                     </table>
                   </div>
+                  )}
                 </div>
               )
             })()}
@@ -3373,7 +3372,6 @@ function PoolProjectionPanel({
               )
             })()}
               </div>
-            )}
           </div>
         )
       })}
@@ -6244,9 +6242,9 @@ function TeamsTab({
     }
   }
 
-  const handleMergeDuplicates = async () => {
+  const handleCleanupClonedTeams = async () => {
     const confirmed = window.confirm(
-      'Merge duplicate teams in this tournament? This will keep one team row per duplicate group and repoint matches/check-ins to it.'
+      'Run the one-time cloned team cleanup for this tournament? This will remove clone-style duplicate rows and repoint matches/check-ins to the surviving team.'
     )
     if (!confirmed) return
 
@@ -6257,15 +6255,15 @@ function TeamsTab({
       onRefresh()
       if (resp.teams_removed > 0) {
         setToast(
-          `Merged ${resp.groups_merged} duplicate group${resp.groups_merged === 1 ? '' : 's'} and removed ${resp.teams_removed} extra team row${resp.teams_removed === 1 ? '' : 's'}.`
+          `Cleaned ${resp.groups_merged} cloned team group${resp.groups_merged === 1 ? '' : 's'} and removed ${resp.teams_removed} extra row${resp.teams_removed === 1 ? '' : 's'}.`
         )
       } else {
-        setToast('No duplicate teams found to merge.')
+        setToast('No cloned duplicate teams were found.')
       }
       setTimeout(() => setToast(null), 5000)
     } catch (e: any) {
       console.error('Failed to merge duplicate teams:', e)
-      setToast('Failed to merge duplicate teams')
+      setToast('Failed to clean cloned duplicate teams')
       setTimeout(() => setToast(null), 4000)
     } finally {
       setMergingDuplicates(false)
@@ -6291,7 +6289,7 @@ function TeamsTab({
         />
         <span style={{ fontSize: 12, color: '#888' }}>{filtered.length} of {teams.length} teams</span>
         <button
-          onClick={handleMergeDuplicates}
+          onClick={handleCleanupClonedTeams}
           disabled={mergingDuplicates}
           style={{
             padding: '7px 12px',
@@ -6305,7 +6303,7 @@ function TeamsTab({
             opacity: mergingDuplicates ? 0.7 : 1,
           }}
         >
-          {mergingDuplicates ? 'Merging...' : 'Merge Duplicates'}
+          {mergingDuplicates ? 'Cleaning...' : 'One-Time Cleanup'}
         </button>
       </div>
 
@@ -7383,32 +7381,13 @@ function SmsAdminTab({
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, marginTop: 10 }}>
           <span style={{ color: '#666' }}>Template mode</span>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <input
-              type="radio"
-              name="sms-template-mode"
-              checked={smsTemplateMode === 'court_management'}
-              onChange={() => { void handleTemplateModeChange('court_management') }}
-              disabled={applyingTemplateMode}
-            />
-            Court Management
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <input
-              type="radio"
-              name="sms-template-mode"
-              checked={smsTemplateMode === 'checkin_management'}
-              onChange={() => { void handleTemplateModeChange('checkin_management') }}
-              disabled={applyingTemplateMode}
-            />
-            Check-In Management
-          </label>
+          <span style={{ fontWeight: 700, color: '#1a237e' }}>Check-In Management</span>
           {applyingTemplateMode && (
             <span style={{ color: '#666' }}>Applying template defaults…</span>
           )}
         </div>
         <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-          Selected template set: <strong>{smsTemplateMode === 'checkin_management' ? 'Check-In Management' : 'Court Management'}</strong>.
+          Selected template set: <strong>Check-In Management</strong>.
           {' '}Send anytime. TEST mode + allowlist is the active safety check.
         </div>
         {settingsDraft && (
@@ -7922,27 +7901,7 @@ function SmsAdminTab({
           {showAutomationToggles ? (
             settingsDraft && (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
-                  <div style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Court Management SMS Options</div>
-                    <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-                      {([
-                        ['auto_post_match_next', 'Post-match next'],
-                        ['auto_on_deck', 'On deck'],
-                        ['auto_up_next', 'Up next'],
-                        ['auto_court_change', 'Court change'],
-                      ] as const).map(([key, label]) => (
-                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(settingsDraft[key])}
-                            onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, [key]: e.target.checked }) : prev)}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr)', gap: 12, marginBottom: 12 }}>
                   <div style={{ border: '1px solid #eee', borderRadius: 6, padding: 10 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Check-In Management SMS Options</div>
                     <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
@@ -7961,7 +7920,6 @@ function SmsAdminTab({
                         </label>
                       ))}
                     </div>
-                  </div>
                 </div>
                 <div style={{ marginBottom: 10, padding: 10, border: '1px solid #e8eaf6', borderRadius: 6, backgroundColor: '#f5f7ff' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
@@ -8754,14 +8712,13 @@ export default function TournamentDeskPage() {
       'grid',
       'weather',
       'teams',
+      'sms',
     ] as const),
     []
   )
 
   const managementMode = 'checkin_management' as const
   const isCheckInManagement = true
-  void smsQuickTarget
-  void managementMode
 
 
   useEffect(() => {
@@ -10948,10 +10905,10 @@ export default function TournamentDeskPage() {
           />
         )}
 
-        {false && activeTab === 'sms' && (
+        {activeTab === 'sms' && (
           <SmsAdminTab
             tournamentId={tid!}
-            quickTarget={null}
+            quickTarget={smsQuickTarget}
             managementMode={'checkin_management'}
           />
         )}

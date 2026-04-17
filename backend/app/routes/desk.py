@@ -4,6 +4,7 @@ Now Playing / Up Next, score entry, auto-advancement, working draft management.
 """
 import logging
 import json
+import re
 from datetime import datetime, time as dt_time, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -102,6 +103,13 @@ ALLOWED_DESK_MODES = {MODE_COURT_MANAGEMENT, MODE_CHECKIN_MANAGEMENT}
 def _normalize_lookup_name(value: Optional[str]) -> str:
     raw = (value or "").strip().lower()
     return " ".join(raw.replace(",", " ").split())
+
+
+def _strip_clone_suffix(value: Optional[str]) -> str:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return ""
+    return re.sub(r"\s+\(\d+\)$", "", raw).strip()
 
 
 def _normalize_lookup_phone(value: Optional[str]) -> Optional[str]:
@@ -4302,8 +4310,13 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
         for team in sorted(event_teams, key=lambda t: t.id or 0):
             if team.id is None:
                 continue
-            normalized_name = _normalize_lookup_name(team.name)
-            if normalized_name:
+            name_candidates = {
+                _normalize_lookup_name(team.name),
+                _normalize_lookup_name(_strip_clone_suffix(team.name)),
+                _normalize_lookup_name(team.display_name),
+                _normalize_lookup_name(_strip_clone_suffix(team.display_name)),
+            }
+            for normalized_name in {name for name in name_candidates if name}:
                 previous = seen_name.get(normalized_name)
                 if previous is not None:
                     _union(previous, team.id)

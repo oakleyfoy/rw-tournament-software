@@ -2789,6 +2789,60 @@ def test_merge_duplicate_desk_teams_relinks_references(client, session):
     assert avoid_edges == []
 
 
+def test_merge_duplicate_desk_teams_matches_clone_suffix_rows(client, session):
+    tournament = Tournament(
+        name="Clone Suffix Duplicate Test",
+        location="Test Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 6, 5),
+        end_date=date(2026, 6, 7),
+    )
+    session.add(tournament)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        category="mixed",
+        name="Mixed",
+        team_count=2,
+    )
+    session.add(event)
+    session.flush()
+
+    canonical = Team(
+        event_id=event.id,
+        name="Dee Dee Worley, Alpharetta, GA / Dennis Lamoureux, Orange Park, FL",
+        display_name="Dee Dee / Dennis",
+        seed=1,
+        rating=8.5,
+    )
+    duplicate = Team(
+        event_id=event.id,
+        name="Dee Dee Worley, Alpharetta, GA / Dennis Lamoureux, Orange Park, FL (2)",
+        display_name="Dee Dee / Dennis",
+        rating=8.5,
+        notes="cloned row",
+    )
+    session.add_all([canonical, duplicate])
+    session.commit()
+    duplicate_id = duplicate.id
+
+    resp = client.post(f"/api/desk/tournaments/{tournament.id}/teams/merge-duplicates")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["groups_merged"] == 1
+    assert body["teams_removed"] == 1
+
+    remaining = session.exec(
+        select(Team).where(Team.event_id == event.id)
+    ).all()
+    assert len(remaining) == 1
+    assert remaining[0].id == canonical.id
+    assert remaining[0].seed == 1
+    assert remaining[0].notes == "cloned row"
+    assert all(team.id != duplicate_id for team in remaining)
+
+
 def test_checkin_queue_inclusion_and_team_ready_flow(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     m1 = matches[0]

@@ -42,6 +42,14 @@ _PRINT_CATEGORY_LABEL = {
 }
 
 
+def _normalize_clone_team_name(value: Optional[str]) -> str:
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return ""
+    raw = re.sub(r"\s+\(\d+\)$", "", raw).strip()
+    return raw.casefold()
+
+
 def _record_start_over_baseline_assignments(
     session: Session,
     *,
@@ -1172,6 +1180,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         team_id_map: dict[int, int] = {}
         used_team_name_keys_by_event: dict[int, set[str]] = {}
         used_team_seeds_by_event: dict[int, set[int]] = {}
+        canonical_team_id_by_event_and_name: dict[tuple[int, str], int] = {}
         for team in source_teams:
             if team.id is None:
                 continue
@@ -1181,6 +1190,13 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             used_name_keys = used_team_name_keys_by_event.setdefault(mapped_event_id, set())
             used_seeds = used_team_seeds_by_event.setdefault(mapped_event_id, set())
             base_name = (team.name or "").strip() or f"Team {team.id}"
+            normalized_base_name = _normalize_clone_team_name(base_name)
+            canonical_key = (mapped_event_id, normalized_base_name) if normalized_base_name else None
+            if canonical_key and team.seed is None:
+                canonical_team_id = canonical_team_id_by_event_and_name.get(canonical_key)
+                if canonical_team_id is not None:
+                    team_id_map[team.id] = canonical_team_id  # type: ignore[index]
+                    continue
             suffix = 2
             candidate_name = base_name
             while candidate_name.casefold() in used_name_keys:
@@ -1237,6 +1253,8 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             if candidate_seed is not None:
                 used_seeds.add(candidate_seed)
             team_id_map[team.id] = cloned.id  # type: ignore[index]
+            if canonical_key:
+                canonical_team_id_by_event_and_name.setdefault(canonical_key, cloned.id)  # type: ignore[arg-type]
 
         for edge in source_avoid_edges:
             mapped_event_id = event_id_map.get(edge.event_id)
