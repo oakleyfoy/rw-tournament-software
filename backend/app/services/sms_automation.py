@@ -75,9 +75,24 @@ class SmsAutomationEngine:
         self.send_match_finalized_texts(match)
 
     def preview_match_finalized_texts(self, match: Match) -> Dict[str, Any]:
-        jobs = self._match_finalized_sms_jobs(match)
+        plan = self._match_finalized_sms_plan(match)
+        jobs = list(plan["jobs"])
         recipients: list[dict[str, Any]] = []
+        teams_with_next_match = len(jobs)
+        teams_without_phone = 0
+        blocked_test_mode = 0
+        blocked_consent = 0
+        deduped = 0
         for job in jobs:
+            projection = self._project_team_send_outcomes(
+                team=job["team"],
+                message_type=job["message_type"],
+                dedupe_key=job["dedupe_key"],
+            )
+            teams_without_phone += int(projection["no_phone"])
+            blocked_test_mode += int(projection["blocked_test_mode"])
+            blocked_consent += int(projection["blocked_consent"])
+            deduped += int(projection["deduped"])
             recipients.extend(
                 self._preview_template_to_phone_targets(
                     team=job["team"],
@@ -86,13 +101,17 @@ class SmsAutomationEngine:
                     dedupe_key=job["dedupe_key"],
                 )
             )
-        message_type = jobs[0]["message_type"] if jobs else (
-            "checkin_post_match_next" if self._is_checkin_management() else "post_match_next"
-        )
+        message_type = str(plan["message_type"])
         return {
             "message_type": message_type,
             "total_messages": len(recipients),
             "recipients": recipients,
+            "teams_with_next_match": teams_with_next_match,
+            "teams_without_phone": teams_without_phone,
+            "blocked_test_mode": blocked_test_mode,
+            "blocked_consent": blocked_consent,
+            "deduped": deduped,
+            "disabled_reason": plan["disabled_reason"],
         }
 
     def send_match_finalized_texts(
@@ -101,10 +120,9 @@ class SmsAutomationEngine:
         *,
         trigger: str = "auto",
     ) -> Dict[str, Any]:
-        jobs = self._match_finalized_sms_jobs(match)
-        message_type = jobs[0]["message_type"] if jobs else (
-            "checkin_post_match_next" if self._is_checkin_management() else "post_match_next"
-        )
+        plan = self._match_finalized_sms_plan(match)
+        jobs = list(plan["jobs"])
+        message_type = str(plan["message_type"])
         aggregate: Dict[str, Any] = {
             "total": 0,
             "sent": 0,
@@ -779,7 +797,11 @@ class SmsAutomationEngine:
             "deduped": 0,
             "blocked_test_mode": 0,
             "blocked_consent": 0,
+            "no_phone": 0,
         }
+        if not targets:
+            projected["no_phone"] += 1
+            return projected
         for target in targets:
             phone = str(target.get("phone") or "").strip()
             if not phone:
@@ -887,8 +909,15 @@ class SmsAutomationEngine:
         return preview_rows
 
     def _match_finalized_sms_jobs(self, match: Match) -> list[dict[str, Any]]:
+        return list(self._match_finalized_sms_plan(match)["jobs"])
+
+    def _match_finalized_sms_plan(self, match: Match) -> Dict[str, Any]:
         if (match.runtime_status or "").upper() != "FINAL":
-            return []
+            return {
+                "message_type": "checkin_post_match_next" if self._is_checkin_management() else "post_match_next",
+                "disabled_reason": "match_not_final",
+                "jobs": [],
+            }
         is_checkin_mode = self._is_checkin_management()
         toggle_name = (
             "auto_checkin_post_match_next"
@@ -900,8 +929,18 @@ class SmsAutomationEngine:
             if is_checkin_mode
             else "post_match_next"
         )
+        if not self._texts_enabled():
+            return {
+                "message_type": message_type,
+                "disabled_reason": "texts_disabled",
+                "jobs": [],
+            }
         if not self._is_enabled(toggle_name, default=False):
-            return []
+            return {
+                "message_type": message_type,
+                "disabled_reason": "automation_disabled",
+                "jobs": [],
+            }
 
         current_slot = self._slot_for_match(match.id)
         jobs: list[dict[str, Any]] = []
@@ -924,7 +963,11 @@ class SmsAutomationEngine:
             )
             active, template_body = self._template_for(message_type)
             if not active:
-                continue
+                return {
+                    "message_type": message_type,
+                    "disabled_reason": "template_inactive",
+                    "jobs": [],
+                }
             jobs.append(
                 {
                     "team": team,
@@ -939,7 +982,11 @@ class SmsAutomationEngine:
                     ),
                 }
             )
-        return jobs
+        return {
+            "message_type": message_type,
+            "disabled_reason": None,
+            "jobs": jobs,
+        }
 
     # ------------------------------------------------------------------
     # Match/slot/team helpers

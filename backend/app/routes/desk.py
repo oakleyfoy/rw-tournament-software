@@ -719,6 +719,12 @@ class FinalizeSmsPreviewResponse(BaseModel):
     message_type: str
     total_messages: int
     recipients: List[FinalizeSmsPreviewRecipient]
+    teams_with_next_match: int = 0
+    teams_without_phone: int = 0
+    blocked_test_mode: int = 0
+    blocked_consent: int = 0
+    deduped: int = 0
+    disabled_reason: Optional[str] = None
 
 
 class FinalizeSmsSendRequest(BaseModel):
@@ -2940,6 +2946,16 @@ def finalize_match(
             sms_preview = FinalizeSmsPreviewResponse(
                 message_type=str(preview_data.get("message_type") or "post_match_next"),
                 total_messages=int(preview_data.get("total_messages") or 0),
+                teams_with_next_match=int(preview_data.get("teams_with_next_match") or 0),
+                teams_without_phone=int(preview_data.get("teams_without_phone") or 0),
+                blocked_test_mode=int(preview_data.get("blocked_test_mode") or 0),
+                blocked_consent=int(preview_data.get("blocked_consent") or 0),
+                deduped=int(preview_data.get("deduped") or 0),
+                disabled_reason=(
+                    str(preview_data.get("disabled_reason"))
+                    if preview_data.get("disabled_reason") is not None
+                    else None
+                ),
                 recipients=[
                     FinalizeSmsPreviewRecipient(
                         team_id=row.get("team_id"),

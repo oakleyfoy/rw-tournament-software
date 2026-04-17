@@ -1551,6 +1551,46 @@ function MatchDrawer({
     }
   }, [finalizeSmsPreview, tournamentId, match.match_id, versionId])
 
+  const finalizeSmsEmptyReason = useMemo(() => {
+    if (!finalizeSmsPreview || finalizeSmsPreview.recipients.length > 0) return null
+    switch (finalizeSmsPreview.disabled_reason) {
+      case 'texts_disabled':
+        return 'Texts are currently turned off for this tournament.'
+      case 'automation_disabled':
+        return 'Post-match check-in SMS is currently turned off.'
+      case 'template_inactive':
+        return 'The post-match SMS template is inactive.'
+      case 'match_not_final':
+        return 'This match must be finalized before any SMS can be queued.'
+      default:
+        if (finalizeSmsPreview.teams_with_next_match === 0) {
+          return 'No post-match texts are queued because these teams do not have any next matches.'
+        }
+        return 'No post-match texts are queued for this result.'
+    }
+  }, [finalizeSmsPreview])
+
+  const finalizeSmsBlockedReasons = useMemo(() => {
+    if (!finalizeSmsPreview || finalizeSmsPreview.recipients.length > 0) return []
+    const reasons: string[] = []
+    if (finalizeSmsPreview.teams_with_next_match > 0) {
+      reasons.push(`${finalizeSmsPreview.teams_with_next_match} team${finalizeSmsPreview.teams_with_next_match === 1 ? '' : 's'} have next matches`)
+    }
+    if (finalizeSmsPreview.teams_without_phone > 0) {
+      reasons.push(`${finalizeSmsPreview.teams_without_phone} team${finalizeSmsPreview.teams_without_phone === 1 ? '' : 's'} missing phone numbers`)
+    }
+    if (finalizeSmsPreview.blocked_test_mode > 0) {
+      reasons.push(`${finalizeSmsPreview.blocked_test_mode} recipient${finalizeSmsPreview.blocked_test_mode === 1 ? '' : 's'} blocked by test mode`)
+    }
+    if (finalizeSmsPreview.blocked_consent > 0) {
+      reasons.push(`${finalizeSmsPreview.blocked_consent} recipient${finalizeSmsPreview.blocked_consent === 1 ? '' : 's'} blocked by consent settings`)
+    }
+    if (finalizeSmsPreview.deduped > 0) {
+      reasons.push(`${finalizeSmsPreview.deduped} text${finalizeSmsPreview.deduped === 1 ? '' : 's'} already sent for this matchup`)
+    }
+    return reasons
+  }, [finalizeSmsPreview])
+
   const actionsPanel = isDraft ? (
     <div style={{ marginBottom: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
@@ -2326,7 +2366,14 @@ function MatchDrawer({
                   color: '#666',
                   fontSize: 13,
                 }}>
-                  No post-match texts are queued for this result.
+                  <div>{finalizeSmsEmptyReason}</div>
+                  {finalizeSmsBlockedReasons.length > 0 && (
+                    <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
+                      {finalizeSmsBlockedReasons.map(reason => (
+                        <div key={reason}>- {reason}</div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'grid', gap: 10 }}>
@@ -10140,11 +10187,11 @@ export default function TournamentDeskPage() {
               backgroundColor: 'transparent',
               color: activeTab === tab ? '#1a237e' : '#888',
               cursor: 'pointer',
-              textTransform: tab === 'checkin' ? 'none' : 'capitalize',
+              textTransform: tab === 'checkin' || tab === 'sms' ? 'none' : 'capitalize',
               marginBottom: -2,
             }}
           >
-            {tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab}
+            {tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab}
           </button>
         ))}
       </div>

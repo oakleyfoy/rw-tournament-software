@@ -2412,6 +2412,12 @@ export interface FinalizeSmsPreview {
   message_type: string
   total_messages: number
   recipients: FinalizeSmsPreviewRecipient[]
+  teams_with_next_match: number
+  teams_without_phone: number
+  blocked_test_mode: number
+  blocked_consent: number
+  deduped: number
+  disabled_reason: string | null
 }
 
 export interface FinalizeSmsSendResult {
