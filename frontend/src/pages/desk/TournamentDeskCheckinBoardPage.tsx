@@ -750,7 +750,7 @@ export default function TournamentDeskCheckinBoardPage() {
                   No ready matches are waiting right now
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(165px, 1fr))', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 165px))', gap: 8, justifyContent: 'start' }}>
                   {readyCards.map((card) => (
                     <CheckInReadyDisplayCard
                       key={card.rq.match_id}
@@ -794,7 +794,7 @@ export default function TournamentDeskCheckinBoardPage() {
                   No matches are currently playing
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 135px))', gap: 8, justifyContent: 'start' }}>
                   {currentCards.map((card) => (
                     <CurrentCourtCard
                       key={card.courtName}
