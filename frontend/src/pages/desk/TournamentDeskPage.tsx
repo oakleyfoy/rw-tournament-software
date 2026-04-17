@@ -7920,6 +7920,7 @@ function SmsAdminTab({
                         </label>
                       ))}
                     </div>
+                  </div>
                 </div>
                 <div style={{ marginBottom: 10, padding: 10, border: '1px solid #e8eaf6', borderRadius: 6, backgroundColor: '#f5f7ff' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
@@ -8717,7 +8718,6 @@ export default function TournamentDeskPage() {
     []
   )
 
-  const managementMode = 'checkin_management' as const
   const isCheckInManagement = true
 
 
