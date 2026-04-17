@@ -8742,7 +8742,7 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, handleRefresh])
 
-  const visibleTabs = useMemo(
+  const visibleTabs = useMemo<ReadonlyArray<typeof activeTab>>(
     () => ([
       'checkin',
       'towels',
@@ -10262,22 +10262,22 @@ export default function TournamentDeskPage() {
               }}>
                 {visibleCourts.map(court => {
                   const courtLabel = court.replace(/^Court\s+/i, '')
-                  const courtMatches = data.matches
+                  const courtMatches = (data?.matches || [])
                     .filter(m => m.court_name === court && m.status === 'FINAL')
                     .sort((a, b) => (a.day_index - b.day_index) || (a.sort_time || '').localeCompare(b.sort_time || ''))
                   return (
                     <CourtCard
                       key={court}
                       courtName={court}
-                      nowPlaying={data.now_playing_by_court[court]}
-                      upNext={data.up_next_by_court[court]}
-                      onDeck={data.on_deck_by_court[court]}
+                      nowPlaying={data?.now_playing_by_court[court]}
+                      upNext={data?.up_next_by_court[court]}
+                      onDeck={data?.on_deck_by_court[court]}
                       isDraft={isDraft}
                       onAction={handleAction}
                       courtState={courtStates[courtLabel]}
                       onCourtStateChange={handleCourtStateChange}
                       courtMatches={courtMatches}
-                      allMatches={data.matches}
+                      allMatches={data?.matches || []}
                       onMatchClick={m => setDrawerMatch(m)}
                       onSmsTeamClick={handleQuickSmsTeam}
                       onSmsMatchClick={handleQuickSmsMatch}
@@ -10320,13 +10320,13 @@ export default function TournamentDeskPage() {
                     gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
                     gap: 8,
                   }}>
-                    {searchResults.map(m => (
+                    {(searchResults || []).map(m => (
                       <div
                         key={m.match_id}
                         onClick={() => setDrawerMatch(m)}
                         style={{ cursor: 'pointer' }}
                       >
-                        <MiniMatchCard match={m} isDraft={isDraft} onAction={handleAction} allMatches={data.matches} />
+                        <MiniMatchCard match={m} isDraft={isDraft} onAction={handleAction} allMatches={data?.matches || []} />
                       </div>
                     ))}
                   </div>
