@@ -1323,7 +1323,7 @@ function MatchDrawer({
     try {
       const resp = await deskFinalizeMatch(tournamentId, match.match_id, {
         version_id: versionId,
-        score: options?.is_default ? undefined : (options?.score ?? score || undefined),
+        score: options?.is_default ? undefined : (options?.score ?? (score || undefined)),
         winner_team_id: winnerId,
         is_default: options?.is_default,
         is_retired: options?.is_retired,
