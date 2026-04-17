@@ -224,7 +224,7 @@ export default function TournamentDeskSharedScreenPage() {
       },
       {
         key: 'checkin_management_board',
-        label: 'Check-In Management Board View',
+        label: 'Check-In Display',
         path: `/desk/t/${tid}/checkin-board?kiosk=1`,
         kind: 'board',
       },

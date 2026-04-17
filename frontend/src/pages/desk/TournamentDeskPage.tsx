@@ -10135,6 +10135,24 @@ export default function TournamentDeskPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
+            onClick={() => {
+              if (!tid) return
+              window.open(`/desk/t/${tid}/checkin-board?kiosk=1`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Check-In Display
+          </button>
+          <button
             onClick={handleRefresh}
             style={{
               padding: '6px 14px',
