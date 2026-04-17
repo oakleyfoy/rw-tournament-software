@@ -2937,6 +2937,97 @@ def test_checkin_assign_accepts_noncanonical_slot_id_for_available_court(client,
     assert moved["status"] == "IN_PROGRESS"
 
 
+def test_checkin_assign_parks_preassigned_match_into_dragged_match_old_slot_when_no_free_slots(client, session):
+    """Occupied open courts should swap through the ready match's old slot before failing."""
+    t, v, _ev, teams, matches, slots = _setup_draft_for_move(session)
+    m1, m2 = matches
+    slot_c1_t1, slot_c2_t1, slot_c1_t2, slot_c2_t2 = slots
+
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    delta_players = _add_two_players_for_team(session, t.id, teams[3].id, "Delta")
+
+    # Fill every slot in the version so there is no completely free parking slot.
+    m3 = Match(
+        tournament_id=t.id,
+        event_id=m1.event_id,
+        schedule_version_id=v.id,
+        match_code="MOVE_TEST_M03",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=3,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="Alpha",
+        placeholder_side_b="Bravo",
+    )
+    m4 = Match(
+        tournament_id=t.id,
+        event_id=m1.event_id,
+        schedule_version_id=v.id,
+        match_code="MOVE_TEST_M04",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=4,
+        duration_minutes=60,
+        team_a_id=teams[2].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="Charlie",
+        placeholder_side_b="Delta",
+    )
+    session.add_all([m3, m4])
+    session.flush()
+    session.add_all([
+        MatchAssignment(schedule_version_id=v.id, match_id=m3.id, slot_id=slot_c1_t2.id),
+        MatchAssignment(schedule_version_id=v.id, match_id=m4.id, slot_id=slot_c2_t2.id),
+    ])
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    # Make m1 ready.
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[0].id, "checked_in": True},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": alpha_players[1].id, "checked_in": True},
+    )
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[0].id, "checked_in": True},
+    )
+    ready_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/checkin/player",
+        json={"version_id": v.id, "side": "B", "player_id": delta_players[1].id, "checked_in": True},
+    )
+    assert ready_resp.status_code == 200
+
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": m1.id, "slot_id": slot_c2_t1.id},
+    )
+    assert assign.status_code == 200
+
+    refreshed_assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)
+    ).all()
+    slot_by_match = {a.match_id: a.slot_id for a in refreshed_assignments}
+    assert slot_by_match[m1.id] == slot_c2_t1.id
+    assert slot_by_match[m2.id] == slot_c1_t1.id
+
+    moved = [m for m in assign.json()["matches"] if m["match_id"] == m1.id][0]
+    assert moved["court_name"] == "Court 2"
+    assert moved["status"] == "IN_PROGRESS"
+
+
 def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     m1 = matches[0]

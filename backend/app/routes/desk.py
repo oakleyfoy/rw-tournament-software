@@ -45,6 +45,7 @@ from app.services.reschedule_engine import (
 
 logger = logging.getLogger(__name__)
 _DEBUG_LOG_PATH = r"c:\RW Tournament Software\.cursor\debug.log"
+_SESSION_DEBUG_LOG_PATH = r"c:\RW Tournament Software\debug-00c0ef.log"
 
 
 def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
@@ -58,6 +59,23 @@ def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Dict
             "timestamp": int(datetime.utcnow().timestamp() * 1000),
         }
         with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
+
+def _session_debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any], run_id: str = "pre-fix") -> None:
+    try:
+        payload = {
+            "sessionId": "00c0ef",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.utcnow().timestamp() * 1000),
+        }
+        with open(_SESSION_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, separators=(",", ":")) + "\n")
     except Exception:
         pass
@@ -2417,6 +2435,17 @@ def assign_ready_match_to_slot(
     target_slot = session.get(ScheduleSlot, payload.slot_id)
     if not target_slot or target_slot.schedule_version_id != payload.version_id:
         raise HTTPException(status_code=404, detail="Target slot not found")
+    _session_debug_log(
+        "H4",
+        "desk.py:assign_ready_match_to_slot:entry",
+        "checkin assign request",
+        {
+            "tournamentId": tournament_id,
+            "versionId": payload.version_id,
+            "matchId": payload.match_id,
+            "slotId": payload.slot_id,
+        },
+    )
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
     checkin_matches, ready_queue, _available_courts, available_slots, _slot_options, _slot_rows = _build_checkin_snapshot(session, tournament, version, items)
@@ -2455,6 +2484,7 @@ def assign_ready_match_to_slot(
     ).first()
 
     assigned_slot_id = effective_slot_id
+    selected_previous_slot_id = selected_assignment.slot_id
     if target_assignment and target_assignment.match_id != payload.match_id:
         # Refuse to displace a match that is actively in progress or paused.
         occupant_match = session.get(Match, target_assignment.match_id)
@@ -2466,35 +2496,80 @@ def assign_ready_match_to_slot(
         # In check-in mode, chosen courts may still carry preplanned assignments.
         # Park the occupant into any currently unoccupied slot so this court can
         # be used immediately by the ready match.
-        all_assignments = session.exec(
-            select(MatchAssignment).where(
-                MatchAssignment.schedule_version_id == payload.version_id,
+        park_slot_id: Optional[int] = None
+        selected_old_slot_id = selected_assignment.slot_id
+        if selected_old_slot_id and selected_old_slot_id != effective_slot_id:
+            park_slot_id = selected_old_slot_id
+        else:
+            all_assignments = session.exec(
+                select(MatchAssignment).where(
+                    MatchAssignment.schedule_version_id == payload.version_id,
+                )
+            ).all()
+            occupied_slot_ids = {a.slot_id for a in all_assignments}
+            free_slot = session.exec(
+                select(ScheduleSlot).where(
+                    ScheduleSlot.schedule_version_id == payload.version_id,
+                    ~ScheduleSlot.id.in_(list(occupied_slot_ids)),  # type: ignore[arg-type]
+                ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
+            ).first()
+            if free_slot:
+                park_slot_id = free_slot.id
+        if not park_slot_id:
+            _session_debug_log(
+                "H4",
+                "desk.py:assign_ready_match_to_slot:no_park_slot",
+                "checkin assign failed to find park slot",
+                {
+                    "selectedAssignmentSlotId": selected_assignment.slot_id,
+                    "effectiveSlotId": effective_slot_id,
+                    "targetAssignmentMatchId": target_assignment.match_id,
+                },
             )
-        ).all()
-        occupied_slot_ids = {a.slot_id for a in all_assignments}
-        free_slot = session.exec(
-            select(ScheduleSlot).where(
-                ScheduleSlot.schedule_version_id == payload.version_id,
-                ~ScheduleSlot.id.in_(list(occupied_slot_ids)),  # type: ignore[arg-type]
-            ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
-        ).first()
-        if not free_slot:
             raise HTTPException(
                 status_code=400,
                 detail="No free slot available to park preassigned match on selected court",
             )
-        target_assignment.slot_id = free_slot.id
-        target_assignment.assigned_by = "CHECKIN_PARK"
-        target_assignment.assigned_at = datetime.utcnow()
-        target_assignment.locked = False
-        session.add(target_assignment)
+        _session_debug_log(
+            "H4",
+            "desk.py:assign_ready_match_to_slot:park_slot",
+            "parking displaced preassigned match",
+            {
+                "targetAssignmentMatchId": target_assignment.match_id,
+                "selectedAssignmentMatchId": selected_assignment.match_id,
+                "selectedOldSlotId": selected_assignment.slot_id,
+                "effectiveSlotId": effective_slot_id,
+                "parkSlotId": park_slot_id,
+            },
+        )
+        parked_match_id = target_assignment.match_id
+        session.delete(target_assignment)
         session.flush()
 
-    selected_assignment.slot_id = assigned_slot_id
-    selected_assignment.assigned_by = "CHECKIN_DESK"
-    selected_assignment.assigned_at = datetime.utcnow()
-    selected_assignment.locked = True
-    session.add(selected_assignment)
+        selected_assignment.slot_id = assigned_slot_id
+        selected_assignment.assigned_by = "CHECKIN_DESK"
+        selected_assignment.assigned_at = datetime.utcnow()
+        selected_assignment.locked = True
+        session.add(selected_assignment)
+        session.flush()
+
+        parked_assignment = MatchAssignment(
+            schedule_version_id=payload.version_id,
+            match_id=parked_match_id,
+            slot_id=park_slot_id,
+            assigned_by="CHECKIN_PARK",
+            assigned_at=datetime.utcnow(),
+            locked=False,
+        )
+        session.add(parked_assignment)
+        session.flush()
+
+    else:
+        selected_assignment.slot_id = assigned_slot_id
+        selected_assignment.assigned_by = "CHECKIN_DESK"
+        selected_assignment.assigned_at = datetime.utcnow()
+        selected_assignment.locked = True
+        session.add(selected_assignment)
     # Assigning from Ready To Play means the match is starting immediately on court.
     match.runtime_status = "IN_PROGRESS"
     if not match.started_at:
@@ -2502,6 +2577,18 @@ def assign_ready_match_to_slot(
     match.completed_at = None
     session.add(match)
     session.commit()
+    _session_debug_log(
+        "H4",
+        "desk.py:assign_ready_match_to_slot:success",
+        "checkin assign committed",
+        {
+            "matchId": payload.match_id,
+            "assignedSlotId": assigned_slot_id,
+            "selectedAssignmentPreviousSlotId": selected_previous_slot_id,
+            "targetAssignmentMatchId": target_assignment.match_id if target_assignment else None,
+        },
+        run_id="post-fix",
+    )
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
