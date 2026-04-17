@@ -587,10 +587,10 @@ export default function PublicWaterfallPage() {
               WF Pool Tiebreaker Rules
             </div>
             <ol style={{ margin: '0 0 0 18px', padding: 0, lineHeight: 1.5 }}>
-              <li>Most match wins (W)</li>
-              <li>Best set differential</li>
-              <li>Best game differential</li>
-              <li>Head-to-head (for exact two-team ties)</li>
+              <li>WF wins</li>
+              <li>WF Match #2 game difference</li>
+              <li>WF Match #1 &amp; #2 combined game difference</li>
+              <li>Combined Ratings</li>
             </ol>
           </div>
 
