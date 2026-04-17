@@ -24,7 +24,6 @@ import {
   deskRemapCourts,
   deskCheckInPlayer,
   deskCheckInTeam,
-  setDeskManagementMode,
   assignReadyMatchToSlot,
   bulkPauseInProgress,
   bulkDelayAfter,
@@ -8532,7 +8531,8 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams'>('checkin')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('checkin')
+  const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
   const [bulkToast, setBulkToast] = useState<string | null>(null)
@@ -8675,6 +8675,21 @@ export default function TournamentDeskPage() {
     } catch { /* ignore */ }
   }, [tid])
 
+  const handleQuickSmsTeam = useCallback((teamId: number) => {
+    setSmsQuickTarget({
+      scope: 'team',
+      targetId: teamId,
+    })
+  }, [])
+
+  const handleQuickSmsMatch = useCallback((matchId: number, phaseHint?: 'upcoming' | 'completed') => {
+    setSmsQuickTarget({
+      scope: 'match',
+      targetId: matchId,
+      matchPhase: phaseHint || 'upcoming',
+    })
+  }, [])
+
   const handleBulkPause = useCallback(async () => {
     if (!tid || !data) return
     try {
@@ -8742,6 +8757,10 @@ export default function TournamentDeskPage() {
     ] as const),
     []
   )
+
+  const managementMode = 'checkin_management' as const
+  const isCheckInManagement = true
+
 
   useEffect(() => {
     if (!visibleTabs.includes(activeTab)) {
