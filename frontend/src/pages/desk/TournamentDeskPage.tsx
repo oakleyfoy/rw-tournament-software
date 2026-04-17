@@ -8760,6 +8760,8 @@ export default function TournamentDeskPage() {
 
   const managementMode = 'checkin_management' as const
   const isCheckInManagement = true
+  void smsQuickTarget
+  void managementMode
 
 
   useEffect(() => {
@@ -10313,14 +10315,14 @@ export default function TournamentDeskPage() {
               {searchResults && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>
-                    {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+                    {searchResults!.length} result{searchResults!.length !== 1 ? 's' : ''}
                   </div>
                   <div style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
                     gap: 8,
                   }}>
-                    {(searchResults || []).map(m => (
+                    {searchResults!.map(m => (
                       <div
                         key={m.match_id}
                         onClick={() => setDrawerMatch(m)}
@@ -10330,7 +10332,7 @@ export default function TournamentDeskPage() {
                       </div>
                     ))}
                   </div>
-                  {searchResults.length === 0 && (
+                  {searchResults!.length === 0 && (
                     <div style={{ color: '#888', fontSize: 13, fontStyle: 'italic' }}>No matches found</div>
                   )}
                 </div>
