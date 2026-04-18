@@ -351,6 +351,7 @@ def place_matches_into_slots(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.is_active == True,
+            ScheduleSlot.is_manual_only == False,
         )
     ).all()
 
@@ -552,6 +553,7 @@ def run_sequence_schedule(
             select(ScheduleSlot).where(
                 ScheduleSlot.schedule_version_id == schedule_version_id,
                 ScheduleSlot.is_active == True,
+                ScheduleSlot.is_manual_only == False,
             )
         ).all()
         if s.id not in _blocked

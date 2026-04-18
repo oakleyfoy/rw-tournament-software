@@ -11,7 +11,7 @@ from sqlmodel.pool import StaticPool
 
 from app.database import get_session
 from app.main import app
-from app.models import ScheduleSlot, ScheduleVersion, Tournament, TournamentTimeWindow
+from app.models import Event, Match, MatchAssignment, ScheduleSlot, ScheduleVersion, Tournament, TournamentTimeWindow
 
 
 @pytest.fixture(name="session")
@@ -248,4 +248,106 @@ def test_generate_slots_marks_extra_courts_manual_only(client: TestClient, sessi
     assert len(extra_slots) == 4
     assert all(not s.is_manual_only for s in regular_slots)
     assert all(s.is_manual_only for s in extra_slots)
+
+
+def test_run_sequence_schedule_skips_manual_only_slots(session: Session):
+    from app.services.schedule_sequence import run_sequence_schedule
+
+    tournament = Tournament(
+        name="Manual Only Sequence Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 2, 20),
+        end_date=date(2026, 2, 20),
+        use_time_windows=True,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Mixed",
+        category="mixed",
+        team_count=8,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    regular_slots = []
+    manual_only_slots = []
+    for court_num in [1, 2]:
+        regular_slots.append(
+            ScheduleSlot(
+                tournament_id=tournament.id,
+                schedule_version_id=version.id,
+                day_date=date(2026, 2, 20),
+                start_time=time(9, 0),
+                end_time=time(10, 0),
+                court_number=court_num,
+                court_label=f"Court {court_num}",
+                block_minutes=60,
+                is_active=True,
+                is_manual_only=False,
+            )
+        )
+    for court_num in [3, 4]:
+        manual_only_slots.append(
+            ScheduleSlot(
+                tournament_id=tournament.id,
+                schedule_version_id=version.id,
+                day_date=date(2026, 2, 20),
+                start_time=time(9, 0),
+                end_time=time(10, 0),
+                court_number=court_num,
+                court_label=f"Court {court_num}",
+                block_minutes=60,
+                is_active=True,
+                is_manual_only=True,
+            )
+        )
+    session.add_all(regular_slots + manual_only_slots)
+    session.commit()
+
+    matches = []
+    for idx in range(1, 5):
+        matches.append(
+            Match(
+                tournament_id=tournament.id,
+                event_id=event.id,
+                schedule_version_id=version.id,
+                match_code=f"MIX_SEQ_{idx:02d}",
+                match_type="WF",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=idx,
+                duration_minutes=60,
+                placeholder_side_a=f"Team A{idx}",
+                placeholder_side_b=f"Team B{idx}",
+                status="unscheduled",
+            )
+        )
+    session.add_all(matches)
+    session.commit()
+
+    result = run_sequence_schedule(session, tournament.id, version.id)
+    session.flush()
+
+    assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
+    ).all()
+    assigned_slot_ids = {a.slot_id for a in assignments}
+    regular_slot_ids = {s.id for s in regular_slots}
+    manual_only_slot_ids = {s.id for s in manual_only_slots}
+
+    assert result.total_assigned == 2
+    assert len(assignments) == 2
+    assert assigned_slot_ids <= regular_slot_ids
+    assert assigned_slot_ids.isdisjoint(manual_only_slot_ids)
 
