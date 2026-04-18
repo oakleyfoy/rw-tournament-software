@@ -380,6 +380,51 @@ class SmsPlayerWipeResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+_STRUCTURAL_PLACEHOLDER_PREFIXES = (
+    "Seed ",
+    "SEED_",
+    "Winner of Match #",
+    "Loser of Match #",
+    "WINNER:",
+    "LOSER:",
+    "W(",
+    "L(",
+    "TBD",
+    "Pool ",
+)
+
+
+def _is_structural_placeholder(value: Optional[str]) -> bool:
+    text = (value or "").strip()
+    return bool(text) and text.startswith(_STRUCTURAL_PLACEHOLDER_PREFIXES)
+
+
+def _reset_match_placeholder(
+    match: Match,
+    side: str,
+    team_by_id: dict[int, Team],
+    team_ids: set[int],
+) -> str:
+    current = (match.placeholder_side_a if side == "A" else match.placeholder_side_b) or ""
+    team_id = match.team_a_id if side == "A" else match.team_b_id
+    source_match_id = match.source_match_a_id if side == "A" else match.source_match_b_id
+    source_role = (match.source_a_role if side == "A" else match.source_b_role) or ""
+    role_norm = source_role.upper()
+
+    if source_match_id and role_norm in {"WINNER", "LOSER"}:
+        role_label = "Winner" if role_norm == "WINNER" else "Loser"
+        return f"{role_label} of Match #{source_match_id}"
+
+    if team_id is not None and team_id in team_ids:
+        team = team_by_id.get(team_id)
+        if team and team.seed is not None:
+            return f"Seed {team.seed}"
+
+    if _is_structural_placeholder(current):
+        return current
+
+    return "TBD"
+
 
 def _get_tournament_or_404(
     session: Session, tournament_id: int
@@ -1759,6 +1804,8 @@ def wipe_sms_players(
         select(Team).where(Team.event_id.in_(event_ids))  # type: ignore[arg-type]
     ).all() if event_ids else []
     team_ids = [team.id for team in teams if team.id is not None]
+    team_ids_set = set(team_ids)
+    team_by_id = {team.id: team for team in teams if team.id is not None}
 
     players = session.exec(
         select(Player).where(Player.tournament_id == tournament_id)
@@ -1801,13 +1848,21 @@ def wipe_sms_players(
     matches_cleared = 0
     for match in matches:
         touched = False
-        if match.team_a_id in team_ids:
+        next_placeholder_a = _reset_match_placeholder(match, "A", team_by_id, team_ids_set)
+        if match.placeholder_side_a != next_placeholder_a:
+            match.placeholder_side_a = next_placeholder_a
+            touched = True
+        if match.team_a_id in team_ids_set:
             match.team_a_id = None
             touched = True
-        if match.team_b_id in team_ids:
+        next_placeholder_b = _reset_match_placeholder(match, "B", team_by_id, team_ids_set)
+        if match.placeholder_side_b != next_placeholder_b:
+            match.placeholder_side_b = next_placeholder_b
+            touched = True
+        if match.team_b_id in team_ids_set:
             match.team_b_id = None
             touched = True
-        if match.winner_team_id in team_ids:
+        if match.winner_team_id in team_ids_set:
             match.winner_team_id = None
             touched = True
         if touched:

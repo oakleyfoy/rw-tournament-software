@@ -59,7 +59,6 @@ import {
   RebuildPreviewResponse,
   RebuildMatchItem,
   getDeskTeams,
-  mergeDuplicateTeams,
   defaultTeamWeekend,
   updateTeam,
   DeskTeamItem,
@@ -6344,7 +6343,6 @@ function TeamsTab({
   const [saving, setSaving] = useState(false)
   const [defaultConfirm, setDefaultConfirm] = useState<DeskTeamItem | null>(null)
   const [defaulting, setDefaulting] = useState(false)
-  const [mergingDuplicates, setMergingDuplicates] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -6443,34 +6441,6 @@ function TeamsTab({
     }
   }
 
-  const handleCleanupClonedTeams = async () => {
-    const confirmed = window.confirm(
-      'Run the one-time cloned team cleanup for this tournament? This will remove clone-style duplicate rows and repoint matches/check-ins to the surviving team.'
-    )
-    if (!confirmed) return
-
-    setMergingDuplicates(true)
-    try {
-      const resp = await mergeDuplicateTeams(tournamentId)
-      await loadTeams()
-      onRefresh()
-      if (resp.teams_removed > 0) {
-        setToast(
-          `Cleaned ${resp.groups_merged} cloned team group${resp.groups_merged === 1 ? '' : 's'} and removed ${resp.teams_removed} extra row${resp.teams_removed === 1 ? '' : 's'}.`
-        )
-      } else {
-        setToast('No cloned duplicate teams were found.')
-      }
-      setTimeout(() => setToast(null), 5000)
-    } catch (e: any) {
-      console.error('Failed to merge duplicate teams:', e)
-      setToast('Failed to clean cloned duplicate teams')
-      setTimeout(() => setToast(null), 4000)
-    } finally {
-      setMergingDuplicates(false)
-    }
-  }
-
   const inputStyle: React.CSSProperties = {
     padding: '4px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 3, width: '100%', boxSizing: 'border-box',
   }
@@ -6489,23 +6459,6 @@ function TeamsTab({
           style={{ flex: 1, maxWidth: 400, padding: '8px 12px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6 }}
         />
         <span style={{ fontSize: 12, color: '#888' }}>{filtered.length} of {teams.length} teams</span>
-        <button
-          onClick={handleCleanupClonedTeams}
-          disabled={mergingDuplicates}
-          style={{
-            padding: '7px 12px',
-            fontSize: 12,
-            fontWeight: 600,
-            backgroundColor: '#6a1b9a',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            cursor: mergingDuplicates ? 'not-allowed' : 'pointer',
-            opacity: mergingDuplicates ? 0.7 : 1,
-          }}
-        >
-          {mergingDuplicates ? 'Cleaning...' : 'One-Time Cleanup'}
-        </button>
       </div>
 
       <div style={{ overflowX: 'auto' }}>

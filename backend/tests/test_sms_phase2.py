@@ -262,6 +262,7 @@ def test_wipe_players_removes_all_player_related_rows(
     setup_tournament_with_teams,
 ):
     """Wipe endpoint should clear player/team rows and dependent tournament-scoped data."""
+    from app.models.match import Match
     from app.models.match_checkin import MatchCheckIn
     from app.models.match_player_checkin import MatchPlayerCheckIn
     from app.models.player import Player
@@ -299,6 +300,29 @@ def test_wipe_players_removes_all_player_related_rows(
         start_time_local=time(9, 0),
         end_time_local=time(10, 0),
     )
+    match.placeholder_side_a = teams[0].name
+    match.placeholder_side_b = teams[1].name
+
+    downstream_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_E1_WF_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=None,
+        team_b_id=None,
+        placeholder_side_a=teams[0].name,
+        placeholder_side_b="TBD",
+        source_match_a_id=match.id,
+        source_a_role="WINNER",
+        runtime_status="SCHEDULED",
+    )
+    session.add(downstream_match)
+    session.flush()
 
     session.add(
         MatchCheckIn(
@@ -378,7 +402,7 @@ def test_wipe_players_removes_all_player_related_rows(
     assert data["consent_events_deleted"] == 1
     assert data["avoid_edges_deleted"] == 1
     assert data["sms_logs_unlinked"] == 1
-    assert data["matches_cleared"] == 1
+    assert data["matches_cleared"] == 2
 
     assert session.exec(
         select(Player).where(Player.tournament_id == tournament.id)
@@ -408,6 +432,12 @@ def test_wipe_players_removes_all_player_related_rows(
     assert refreshed_match.team_a_id is None
     assert refreshed_match.team_b_id is None
     assert refreshed_match.winner_team_id is None
+    assert refreshed_match.placeholder_side_a == "Seed 1"
+    assert refreshed_match.placeholder_side_b == "Seed 2"
+
+    refreshed_downstream = session.get(Match, downstream_match.id)
+    assert refreshed_downstream is not None
+    assert refreshed_downstream.placeholder_side_a == f"Winner of Match #{match.id}"
 
     logs = session.exec(
         select(SmsLog).where(SmsLog.tournament_id == tournament.id)
