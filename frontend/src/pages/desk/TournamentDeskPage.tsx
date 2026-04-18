@@ -68,6 +68,7 @@ import {
   getSmsEventDivisions,
   getSmsPlayers,
   syncSmsPlayerContacts,
+  wipeSmsPlayers,
   getTemporaryPlayerLookups,
   importTemporaryPlayerLookups,
   createTemporaryPlayerLookup,
@@ -104,6 +105,7 @@ import {
   SmsDivisionLookupItem,
   SmsPlayerLookupItem,
   SmsPlayerSyncResponse,
+  SmsPlayerWipeResponse,
   TemporaryPlayerLookupItem,
   getPublicRoundRobin,
   RoundRobinResponse,
@@ -119,6 +121,7 @@ import {
   useDroppable,
   useDraggable,
 } from '@dnd-kit/core'
+import { confirmDialog } from '../../utils/confirm'
 
 const SLOT_TINT_PALETTE = [
   { bg: '#f7fff7', border: '#c8e6c9', accent: '#1b5e20' },
@@ -6757,6 +6760,7 @@ function SmsAdminTab({
   const [savingSettings, setSavingSettings] = useState(false)
   const [syncingPlayerContacts, setSyncingPlayerContacts] = useState(false)
   const [playerSyncSummary, setPlayerSyncSummary] = useState<SmsPlayerSyncResponse | null>(null)
+  const [playerAdminNotice, setPlayerAdminNotice] = useState<string | null>(null)
 
   const [templates, setTemplates] = useState<SmsTemplateResponse[]>([])
   const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
@@ -6787,6 +6791,7 @@ function SmsAdminTab({
   const [teams, setTeams] = useState<DeskTeamItem[]>([])
   const [teamSearch, setTeamSearch] = useState('')
   const [playerSearch, setPlayerSearch] = useState('')
+  const [wipingPlayers, setWipingPlayers] = useState(false)
   const skipScopeResetRef = useRef(false)
   const skipMatchPhaseTargetResetRef = useRef(false)
   const appliedTemplateDefaultsForTournamentRef = useRef(false)
@@ -7317,6 +7322,9 @@ function SmsAdminTab({
     try {
       const summary = await syncSmsPlayerContacts(tournamentId)
       setPlayerSyncSummary(summary)
+      setPlayerAdminNotice(
+        `Rebuilt player links: +${summary.players_created} players, +${summary.links_created} links, ${summary.links_removed} removed.`
+      )
       await Promise.all([
         loadLookups(),
         loadStatusAndSettings(),
@@ -7325,6 +7333,31 @@ function SmsAdminTab({
       setError(e?.message || 'Failed to sync player contacts')
     } finally {
       setSyncingPlayerContacts(false)
+    }
+  }
+
+  const handleWipePlayers = async () => {
+    const confirmed = await confirmDialog(
+      'Wipe all player records for this tournament?\n\nThis deletes Players, Player Links, player check-ins, consent history, and imported player lookup rows.\n\nTeam rows stay in place.'
+    )
+    if (!confirmed) return
+
+    setWipingPlayers(true)
+    setError(null)
+    try {
+      const summary: SmsPlayerWipeResponse = await wipeSmsPlayers(tournamentId)
+      setPlayerSyncSummary(null)
+      setPlayerAdminNotice(
+        `Wiped ${summary.players_deleted} players, ${summary.links_deleted} links, ${summary.player_checkins_deleted} player check-ins, ${summary.lookup_rows_deleted} lookup rows, and ${summary.consent_events_deleted} consent rows.`
+      )
+      await Promise.all([
+        loadLookups(),
+        loadStatusAndSettings(),
+      ])
+    } catch (e: any) {
+      setError(e?.message || 'Failed to wipe players')
+    } finally {
+      setWipingPlayers(false)
     }
   }
 
@@ -8117,10 +8150,17 @@ function SmsAdminTab({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                     <button
                       onClick={handleSyncPlayerContacts}
-                      disabled={syncingPlayerContacts}
+                      disabled={syncingPlayerContacts || wipingPlayers}
                       style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
                     >
                       {syncingPlayerContacts ? 'Rebuilding…' : 'Rebuild Player Links'}
+                    </button>
+                    <button
+                      onClick={handleWipePlayers}
+                      disabled={wipingPlayers || syncingPlayerContacts}
+                      style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#fff5f5', border: '1px solid #f1b5b5', color: '#a12626' }}
+                    >
+                      {wipingPlayers ? 'Wiping…' : 'Temporary: Wipe All Players'}
                     </button>
                     <span style={{ fontSize: 11, color: '#666' }}>
                       Team changes sync automatically. Use Rebuild only after a big import or if something looks wrong.
@@ -8129,6 +8169,11 @@ function SmsAdminTab({
                   {playerSyncSummary && (
                     <div style={{ fontSize: 11, color: '#444', marginTop: 6 }}>
                       Last sync — players +{playerSyncSummary.players_created} created / {playerSyncSummary.players_updated} updated, links +{playerSyncSummary.links_created} created / {playerSyncSummary.links_updated} updated / {playerSyncSummary.links_removed} removed.
+                    </div>
+                  )}
+                  {playerAdminNotice && (
+                    <div style={{ fontSize: 11, color: '#444', marginTop: 6 }}>
+                      {playerAdminNotice}
                     </div>
                   )}
                 </div>

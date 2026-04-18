@@ -233,6 +233,130 @@ def test_blast_empty_tournament(client, session):
     assert resp.status_code == 400
 
 
+def test_player_lookup_does_not_auto_create_from_team_slots(
+    client,
+    session,
+    setup_tournament_with_teams,
+):
+    """Player lookup should stay empty until players are explicitly created/synced."""
+    from app.models.player import Player
+    from app.models.team_player import TeamPlayer
+
+    tournament, _, _ = setup_tournament_with_teams
+
+    resp = client.get(f"/api/tournaments/{tournament.id}/sms/players")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    players = session.exec(
+        select(Player).where(Player.tournament_id == tournament.id)
+    ).all()
+    team_links = session.exec(select(TeamPlayer)).all()
+    assert players == []
+    assert team_links == []
+
+
+def test_wipe_players_removes_all_player_related_rows(
+    client,
+    session,
+    setup_tournament_with_teams,
+):
+    """Wipe endpoint should clear players and all dependent tournament-scoped player data."""
+    from app.models.match_player_checkin import MatchPlayerCheckIn
+    from app.models.player import Player
+    from app.models.sms_consent_event import SmsConsentEvent
+    from app.models.team_player import TeamPlayer
+    from app.models.temporary_player_lookup import TemporaryPlayerLookup
+
+    tournament, event, teams = setup_tournament_with_teams
+    player = Player(
+        tournament_id=tournament.id,
+        full_name="Wipe Me",
+        display_name="Wipe",
+        phone_e164="+15550001111",
+        sms_consent_status="opted_in",
+        sms_consent_source="manual",
+    )
+    session.add(player)
+    session.commit()
+    session.refresh(player)
+
+    link = TeamPlayer(team_id=teams[0].id, player_id=player.id, lineup_slot=1)
+    session.add(link)
+    session.commit()
+
+    version, match, _ = _create_single_match_schedule(
+        session,
+        tournament.id,
+        event.id,
+        teams[0].id,
+        teams[1].id,
+        day_date=date(2026, 3, 15),
+        start_time_local=time(9, 0),
+        end_time_local=time(10, 0),
+    )
+
+    session.add(
+        MatchPlayerCheckIn(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=teams[0].id,
+            player_id=player.id,
+            side="A",
+            checked_in=True,
+        )
+    )
+    session.add(
+        TemporaryPlayerLookup(
+            tournament_id=tournament.id,
+            player_id=player.id,
+            source_name="Wipe Me",
+            normalized_name="wipe me",
+            source_phone="+15550001111",
+            normalized_phone="+15550001111",
+            source_email="wipe@test.com",
+            normalized_email="wipe@test.com",
+            towel_color="Blue",
+            report_url="https://example.com/report",
+        )
+    )
+    session.add(
+        SmsConsentEvent(
+            tournament_id=tournament.id,
+            player_id=player.id,
+            phone_number="+15550001111",
+            event_type="opted_in",
+            source="manual",
+            dedupe_key="wipe-test-1",
+        )
+    )
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{tournament.id}/sms/players/wipe")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["players_deleted"] == 1
+    assert data["links_deleted"] == 1
+    assert data["player_checkins_deleted"] == 1
+    assert data["lookup_rows_deleted"] == 1
+    assert data["consent_events_deleted"] == 1
+
+    assert session.exec(
+        select(Player).where(Player.tournament_id == tournament.id)
+    ).all() == []
+    assert session.exec(select(TeamPlayer)).all() == []
+    assert session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)
+    ).all() == []
+    assert session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament.id)
+    ).all() == []
+    assert session.exec(
+        select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament.id)
+    ).all() == []
+
+
 def test_team_text(client, session, setup_tournament_with_teams):
     """Send text to a specific team."""
     tournament, event, teams = setup_tournament_with_teams
@@ -1087,8 +1211,8 @@ def test_player_contacts_only_requires_player_links_for_new_teams(
     assert blocked.status_code == 400
     assert "player-linked contacts" in blocked.json()["detail"].lower()
 
-    # Player lookup endpoint runs sync and creates TeamPlayer links.
-    sync_resp = client.get(f"/api/tournaments/{tournament.id}/sms/players")
+    # Explicit sync creates Player + TeamPlayer links for the new team.
+    sync_resp = client.post(f"/api/tournaments/{tournament.id}/sms/sync-player-contacts")
     assert sync_resp.status_code == 200
 
     allowed = client.post(
@@ -1273,9 +1397,16 @@ def test_sms_status(client, session, setup_tournament_with_teams):
     assert data["teams_with_phones"] == 2  # team1 and team2
 
 
-def test_players_lookup_auto_provisions_from_team_contacts(client, session, setup_tournament_with_teams):
-    """Player lookup should populate from team phone/name slots when players are missing."""
+def test_sync_player_contacts_populates_player_lookup(client, session, setup_tournament_with_teams):
+    """Player lookup should populate only after explicit player-contact sync."""
     tournament, _, _ = setup_tournament_with_teams
+
+    lookup = client.get(f"/api/tournaments/{tournament.id}/sms/players")
+    assert lookup.status_code == 200
+    assert lookup.json() == []
+
+    sync_resp = client.post(f"/api/tournaments/{tournament.id}/sms/sync-player-contacts")
+    assert sync_resp.status_code == 200
 
     lookup = client.get(f"/api/tournaments/{tournament.id}/sms/players")
     assert lookup.status_code == 200

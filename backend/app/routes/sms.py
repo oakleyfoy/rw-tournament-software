@@ -25,6 +25,7 @@ from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.player import Player
 from app.models.schedule_version import ScheduleVersion
 from app.models.schedule_slot import ScheduleSlot
@@ -33,6 +34,7 @@ from app.models.sms_log import SmsLog
 from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
 from app.models.team_player import TeamPlayer
+from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.services.sms_automation import (
@@ -354,6 +356,17 @@ class SmsPlayerSyncResponse(BaseModel):
     links_created: int
     links_updated: int
     links_removed: int
+
+
+class SmsPlayerWipeResponse(BaseModel):
+    """Summary from deleting all player-related rows for a tournament."""
+
+    tournament_id: int
+    players_deleted: int
+    links_deleted: int
+    player_checkins_deleted: int
+    lookup_rows_deleted: int
+    consent_events_deleted: int
 
 
 # ---------------------------------------------------------------------------
@@ -1698,19 +1711,8 @@ def get_sms_players(
     tournament_id: int,
     session: Session = Depends(get_session),
 ):
-    """List known players for player-target lookup in SMS UI.
-
-    If Player rows are missing (legacy team-only records), this endpoint
-    auto-provisions players and TeamPlayer links from team phone slots.
-    """
+    """List existing Player rows for player-target lookup in SMS UI."""
     _get_tournament_or_404(session, tournament_id)
-    sync_stats = _sync_players_and_team_links_from_team_slots(
-        session=session,
-        tournament_id=tournament_id,
-    )
-    if any(sync_stats.values()):
-        session.commit()
-
     players = session.exec(
         select(Player).where(Player.tournament_id == tournament_id)
     ).all()
@@ -1731,6 +1733,55 @@ def get_sms_players(
         for p in players
         if p.id is not None
     ]
+
+
+@router.post("/players/wipe", response_model=SmsPlayerWipeResponse)
+def wipe_sms_players(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    """Delete all player-related records for a tournament."""
+    _get_tournament_or_404(session, tournament_id)
+
+    players = session.exec(
+        select(Player).where(Player.tournament_id == tournament_id)
+    ).all()
+    player_ids = [player.id for player in players if player.id is not None]
+
+    team_links = session.exec(
+        select(TeamPlayer).where(TeamPlayer.player_id.in_(player_ids))  # type: ignore[arg-type]
+    ).all() if player_ids else []
+    player_checkins = session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
+    ).all()
+    lookup_rows = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
+    ).all()
+    consent_events = session.exec(
+        select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament_id)
+    ).all()
+
+    for row in player_checkins:
+        session.delete(row)
+    for row in lookup_rows:
+        session.delete(row)
+    for row in consent_events:
+        session.delete(row)
+    for row in team_links:
+        session.delete(row)
+    for player in players:
+        session.delete(player)
+
+    session.commit()
+
+    return SmsPlayerWipeResponse(
+        tournament_id=tournament_id,
+        players_deleted=len(players),
+        links_deleted=len(team_links),
+        player_checkins_deleted=len(player_checkins),
+        lookup_rows_deleted=len(lookup_rows),
+        consent_events_deleted=len(consent_events),
+    )
 
 
 @router.post("/sync-player-contacts", response_model=SmsPlayerSyncResponse)

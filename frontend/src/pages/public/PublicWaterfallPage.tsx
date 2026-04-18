@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getPublicWaterfall, PublicWaterfallResponse, PublicMatchBox } from '../../api/client'
 
@@ -89,10 +89,77 @@ const COLORS = {
 
 const CENTER_BOX_WIDTH = 480
 const SIDE_BOX_WIDTH = 340
+const DEST_BOX_WIDTH = 200
+const CONNECTOR_WIDTH = 32
+const WATERFALL_BASE_WIDTH =
+  (DEST_BOX_WIDTH * 2) +
+  (SIDE_BOX_WIDTH * 2) +
+  CENTER_BOX_WIDTH +
+  (CONNECTOR_WIDTH * 4)
 
-function MatchBoxCard({ box, variant }: {
+type WaterfallLayout = {
+  scale: number
+  centerBoxWidth: number
+  sideBoxWidth: number
+  destBoxWidth: number
+  connectorWidth: number
+  matchFontSize: number
+  teamFontSize: number
+  topLineFontSize: number
+  badgeFontSize: number
+  vsFontSize: number
+  notesFontSize: number
+  cardPaddingY: number
+  cardPaddingX: number
+  rowGap: number
+  rowMarginBottom: number
+  rowMinHeight: number
+  destPaddingY: number
+  destPaddingX: number
+  destFontSize: number
+  destTeamFontSize: number
+  headerFontSize: number
+  headerGap: number
+}
+
+function buildWaterfallLayout(scale: number, canvasWidth: number): WaterfallLayout {
+  const isPhone = canvasWidth <= 520
+  const isCompact = canvasWidth <= 900
+  const minScale = isPhone ? 0.19 : isCompact ? 0.34 : 0.58
+  const s = Math.min(Math.max(scale, minScale), 1)
+  const px = (value: number, min: number) => Math.max(min, Math.round(value * s))
+  const fp = (value: number, min: number) => Math.max(min, Number((value * s).toFixed(1)))
+  return {
+    scale: s,
+    centerBoxWidth: px(CENTER_BOX_WIDTH, isPhone ? 88 : isCompact ? 140 : 250),
+    sideBoxWidth: px(SIDE_BOX_WIDTH, isPhone ? 62 : isCompact ? 98 : 180),
+    destBoxWidth: px(DEST_BOX_WIDTH, isPhone ? 36 : isCompact ? 58 : 110),
+    connectorWidth: px(CONNECTOR_WIDTH, isPhone ? 6 : isCompact ? 10 : 16),
+    matchFontSize: fp(12, isPhone ? 5.6 : isCompact ? 7.2 : 9),
+    teamFontSize: fp(11, isPhone ? 5.2 : isCompact ? 6.8 : 8.5),
+    topLineFontSize: fp(11, isPhone ? 5.2 : isCompact ? 6.8 : 8.5),
+    badgeFontSize: fp(9, isPhone ? 4.8 : isCompact ? 5.8 : 7),
+    vsFontSize: fp(10, isPhone ? 4.8 : isCompact ? 6 : 7.5),
+    notesFontSize: fp(9, isPhone ? 4.8 : isCompact ? 5.8 : 7),
+    cardPaddingY: px(6, isPhone ? 2 : 3),
+    cardPaddingX: px(10, isPhone ? 3 : 5),
+    rowGap: px(2, 1),
+    rowMarginBottom: px(18, isPhone ? 5 : 8),
+    rowMinHeight: px(90, isPhone ? 30 : isCompact ? 40 : 52),
+    destPaddingY: px(8, isPhone ? 2 : 4),
+    destPaddingX: px(10, isPhone ? 3 : 5),
+    destFontSize: fp(10, isPhone ? 5 : isCompact ? 6.2 : 7.5),
+    destTeamFontSize: fp(11, isPhone ? 5.2 : isCompact ? 6.5 : 8.5),
+    headerFontSize: fp(11, isPhone ? 5.8 : isCompact ? 7.2 : 8.5),
+    headerGap: px(6, isPhone ? 2 : 4),
+  }
+}
+
+function MatchBoxCard({ box, variant, layout, widthOverride }: {
   box: PublicMatchBox
   variant: 'center' | 'winner' | 'loser'
+  layout: WaterfallLayout
+  widthOverride?: number | string
 }) {
   const palette = COLORS[variant]
   const isFinal = box.status === 'FINAL'
@@ -106,10 +173,10 @@ function MatchBoxCard({ box, variant }: {
       backgroundColor: isFinal ? palette.bgFinal : palette.bg,
       border: `1px solid ${palette.border}`,
       borderRadius: 3,
-      padding: '6px 10px',
-      width: isCenter ? CENTER_BOX_WIDTH : SIDE_BOX_WIDTH,
+      padding: `${layout.cardPaddingY}px ${layout.cardPaddingX}px`,
+      width: widthOverride ?? (isCenter ? layout.centerBoxWidth : layout.sideBoxWidth),
       boxSizing: 'border-box',
-      fontSize: 12,
+      fontSize: layout.matchFontSize,
       lineHeight: 1.4,
       position: 'relative',
       textAlign: 'center',
@@ -117,22 +184,23 @@ function MatchBoxCard({ box, variant }: {
       {/* Top line: match number + court/time or score */}
       <div style={{
         fontWeight: 700,
-        fontSize: 11,
+        fontSize: layout.topLineFontSize,
         color: '#333',
         marginBottom: 3,
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        gap: 6,
+        gap: layout.headerGap,
+        flexWrap: 'wrap',
       }}>
         {box.top_line && <span>{box.top_line}</span>}
         {isFinal && (
           <span style={{
-            fontSize: 9,
+            fontSize: layout.badgeFontSize,
             fontWeight: 700,
             color: '#2e7d32',
             backgroundColor: '#c8e6c9',
-            padding: '1px 5px',
+            padding: `${Math.max(1, Math.round(layout.cardPaddingY / 3))}px ${Math.max(3, Math.round(layout.cardPaddingX / 2))}px`,
             borderRadius: 2,
             textTransform: 'uppercase',
           }}>
@@ -144,27 +212,27 @@ function MatchBoxCard({ box, variant }: {
       {/* Team lines with "vs" — winner highlighted */}
       <div style={{
         color: line1IsWinner ? '#1b5e20' : '#222',
-        fontSize: 11,
+        fontSize: layout.teamFontSize,
         fontWeight: line1IsWinner ? 700 : 400,
       }}>
-        {line1IsWinner && <span style={{ fontSize: 9, marginRight: 4 }}>&#9654;</span>}
+        {line1IsWinner && <span style={{ fontSize: layout.badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {box.line1}
       </div>
-      <div data-vs style={{ fontSize: 10, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: '1px 0' }}>
+      <div data-vs style={{ fontSize: layout.vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: '1px 0' }}>
         vs
       </div>
       <div style={{
         color: line2IsWinner ? '#1b5e20' : '#222',
-        fontSize: 11,
+        fontSize: layout.teamFontSize,
         fontWeight: line2IsWinner ? 700 : 400,
       }}>
-        {line2IsWinner && <span style={{ fontSize: 9, marginRight: 4 }}>&#9654;</span>}
+        {line2IsWinner && <span style={{ fontSize: layout.badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {box.line2}
       </div>
 
       {/* Notes */}
       {box.notes && (
-        <div style={{ fontSize: 9, color: '#888', marginTop: 2, fontStyle: 'italic' }}>
+        <div style={{ fontSize: layout.notesFontSize, color: '#888', marginTop: 2, fontStyle: 'italic' }}>
           {box.notes}
         </div>
       )}
@@ -174,11 +242,11 @@ function MatchBoxCard({ box, variant }: {
 
 // ── Arrow connector ─────────────────────────────────────────────────────
 
-function ArrowConnector({ direction }: { direction: 'left' | 'right' }) {
+function ArrowConnector({ direction, layout }: { direction: 'left' | 'right'; layout: WaterfallLayout }) {
   const isLeft = direction === 'left'
   return (
     <div data-connector style={{
-      width: 32,
+      width: layout.connectorWidth,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -191,19 +259,17 @@ function ArrowConnector({ direction }: { direction: 'left' | 'right' }) {
         [isLeft ? 'left' : 'right']: 0,
         width: 0,
         height: 0,
-        borderTop: '5px solid transparent',
-        borderBottom: '5px solid transparent',
+        borderTop: `${Math.max(3, Math.round(layout.connectorWidth * 0.16))}px solid transparent`,
+        borderBottom: `${Math.max(3, Math.round(layout.connectorWidth * 0.16))}px solid transparent`,
         ...(isLeft
-          ? { borderRight: '8px solid #999' }
-          : { borderLeft: '8px solid #999' }),
+          ? { borderRight: `${Math.max(5, Math.round(layout.connectorWidth * 0.25))}px solid #999` }
+          : { borderLeft: `${Math.max(5, Math.round(layout.connectorWidth * 0.25))}px solid #999` }),
       }} />
     </div>
   )
 }
 
 // ── Destination label box ───────────────────────────────────────────────
-
-const DEST_BOX_WIDTH = 200
 
 const DIV_CODE_MAP: Record<string, string> = {
   'Division I': 'BWW',
@@ -212,12 +278,14 @@ const DIV_CODE_MAP: Record<string, string> = {
   'Division IV': 'BLL',
 }
 
-function DestinationBox({ label, teamName, tournamentId, eventId, divisionType }: {
+function DestinationBox({ label, teamName, tournamentId, eventId, divisionType, layout, widthOverride }: {
   label: string
   teamName: string | null
   tournamentId: number | null
   eventId: number | null
   divisionType: 'bracket' | 'roundrobin'
+  layout: WaterfallLayout
+  widthOverride?: number | string
 }) {
   const navigate = useNavigate()
   const lines = label.split('\n')
@@ -240,9 +308,9 @@ function DestinationBox({ label, teamName, tournamentId, eventId, divisionType }
 
   return (
     <div style={{
-      width: DEST_BOX_WIDTH,
-      padding: '8px 10px',
-      fontSize: 10,
+      width: widthOverride ?? layout.destBoxWidth,
+      padding: `${layout.destPaddingY}px ${layout.destPaddingX}px`,
+      fontSize: layout.destFontSize,
       fontWeight: 600,
       backgroundColor: '#f5f5f5',
       border: '1px dashed #ccc',
@@ -251,15 +319,15 @@ function DestinationBox({ label, teamName, tournamentId, eventId, divisionType }
       boxSizing: 'border-box',
       display: 'flex',
       flexDirection: 'column',
-      gap: 6,
+      gap: layout.headerGap,
     }} data-dest-box>
       {teamName && (
         <div style={{
           color: '#1b5e20',
           fontWeight: 700,
-          fontSize: 11,
+          fontSize: layout.destTeamFontSize,
           lineHeight: 1.3,
-          paddingBottom: 4,
+          paddingBottom: Math.max(2, Math.round(layout.destPaddingY / 2)),
           borderBottom: '1px solid #e0e0e0',
         }}>
           {teamName}
@@ -297,86 +365,167 @@ interface RowPair {
   r2_loser_team_name: string | null
 }
 
-function WaterfallRowPair({ pair, tournamentId, eventId, divisionType }: {
+function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }: {
   pair: RowPair
   tournamentId: number | null
   eventId: number | null
   divisionType: 'bracket' | 'roundrobin'
+  layout: WaterfallLayout
 }) {
   return (
     <div data-row-pair style={{
       display: 'flex',
       alignItems: 'stretch',
       justifyContent: 'center',
-      marginBottom: 18,
-      minHeight: 90,
+      marginBottom: layout.rowMarginBottom,
+      minHeight: layout.rowMinHeight,
     }}>
       {/* Loser destination (far left) */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        width: DEST_BOX_WIDTH,
+        width: layout.destBoxWidth,
         flexShrink: 0,
       }}>
-        {pair.loser_dest && <DestinationBox label={pair.loser_dest} teamName={pair.r2_loser_team_name} tournamentId={tournamentId} eventId={eventId} divisionType={divisionType} />}
+        {pair.loser_dest && <DestinationBox label={pair.loser_dest} teamName={pair.r2_loser_team_name} tournamentId={tournamentId} eventId={eventId} divisionType={divisionType} layout={layout} />}
       </div>
 
       {/* Arrow: destination ← loser box */}
-      {pair.loser_dest && <ArrowConnector direction="left" />}
-      {!pair.loser_dest && <div style={{ width: 32, flexShrink: 0 }} />}
+      {pair.loser_dest && <ArrowConnector direction="left" layout={layout} />}
+      {!pair.loser_dest && <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />}
 
       {/* Loser box (left) */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        width: SIDE_BOX_WIDTH,
+        width: layout.sideBoxWidth,
         flexShrink: 0,
       }}>
-        {pair.loser ? <MatchBoxCard box={pair.loser} variant="loser" /> : <div style={{ width: SIDE_BOX_WIDTH }} />}
+        {pair.loser ? <MatchBoxCard box={pair.loser} variant="loser" layout={layout} /> : <div style={{ width: layout.sideBoxWidth }} />}
       </div>
 
       {/* Arrow: loser ← center */}
-      <ArrowConnector direction="left" />
+      <ArrowConnector direction="left" layout={layout} />
 
       {/* Center column: two R1 boxes stacked */}
       <div style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 2,
+        gap: layout.rowGap,
         justifyContent: 'center',
         flexShrink: 0,
-        width: CENTER_BOX_WIDTH,
+        width: layout.centerBoxWidth,
       }}>
-        <MatchBoxCard box={pair.r1_a} variant="center" />
-        {pair.r1_b && <MatchBoxCard box={pair.r1_b} variant="center" />}
+        <MatchBoxCard box={pair.r1_a} variant="center" layout={layout} />
+        {pair.r1_b && <MatchBoxCard box={pair.r1_b} variant="center" layout={layout} />}
       </div>
 
       {/* Arrow: center → winner */}
-      <ArrowConnector direction="right" />
+      <ArrowConnector direction="right" layout={layout} />
 
       {/* Winner box (right) */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        width: SIDE_BOX_WIDTH,
+        width: layout.sideBoxWidth,
         flexShrink: 0,
       }}>
-        {pair.winner ? <MatchBoxCard box={pair.winner} variant="winner" /> : <div style={{ width: SIDE_BOX_WIDTH }} />}
+        {pair.winner ? <MatchBoxCard box={pair.winner} variant="winner" layout={layout} /> : <div style={{ width: layout.sideBoxWidth }} />}
       </div>
 
       {/* Arrow: winner → destination */}
-      {pair.winner_dest && <ArrowConnector direction="right" />}
-      {!pair.winner_dest && <div style={{ width: 32, flexShrink: 0 }} />}
+      {pair.winner_dest && <ArrowConnector direction="right" layout={layout} />}
+      {!pair.winner_dest && <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />}
 
       {/* Winner destination (far right) */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        width: DEST_BOX_WIDTH,
+        width: layout.destBoxWidth,
         flexShrink: 0,
       }}>
-        {pair.winner_dest && <DestinationBox label={pair.winner_dest} teamName={pair.r2_winner_team_name} tournamentId={tournamentId} eventId={eventId} divisionType={divisionType} />}
+        {pair.winner_dest && <DestinationBox label={pair.winner_dest} teamName={pair.r2_winner_team_name} tournamentId={tournamentId} eventId={eventId} divisionType={divisionType} layout={layout} />}
       </div>
+    </div>
+  )
+}
+
+function WaterfallRowPairCompact({
+  pair,
+  tournamentId,
+  eventId,
+  divisionType,
+  layout,
+  canvasWidth,
+}: {
+  pair: RowPair
+  tournamentId: number | null
+  eventId: number | null
+  divisionType: 'bracket' | 'roundrobin'
+  layout: WaterfallLayout
+  canvasWidth: number
+}) {
+  const laneWidth = Math.max(Math.min(canvasWidth - 20, 420), 260)
+  const sectionLabelStyle = {
+    fontSize: Math.max(layout.destFontSize, 9),
+    fontWeight: 700,
+    color: '#666',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  }
+
+  return (
+    <div
+      data-row-pair
+      style={{
+        display: 'grid',
+        gap: Math.max(layout.rowMarginBottom, 10),
+        justifyItems: 'center',
+        marginBottom: Math.max(layout.rowMarginBottom + 6, 14),
+      }}
+    >
+      <div style={{ display: 'grid', gap: layout.rowGap, justifyItems: 'center', width: '100%' }}>
+        <div style={sectionLabelStyle}>WF Round 1</div>
+        <MatchBoxCard box={pair.r1_a} variant="center" layout={layout} widthOverride={laneWidth} />
+        {pair.r1_b && <MatchBoxCard box={pair.r1_b} variant="center" layout={layout} widthOverride={laneWidth} />}
+      </div>
+
+      {pair.loser && (
+        <div style={{ display: 'grid', gap: Math.max(layout.headerGap, 6), justifyItems: 'center', width: '100%' }}>
+          <div style={sectionLabelStyle}>Loser Path</div>
+          <MatchBoxCard box={pair.loser} variant="loser" layout={layout} widthOverride={laneWidth} />
+          {pair.loser_dest && (
+            <DestinationBox
+              label={pair.loser_dest}
+              teamName={pair.r2_loser_team_name}
+              tournamentId={tournamentId}
+              eventId={eventId}
+              divisionType={divisionType}
+              layout={layout}
+              widthOverride={laneWidth}
+            />
+          )}
+        </div>
+      )}
+
+      {pair.winner && (
+        <div style={{ display: 'grid', gap: Math.max(layout.headerGap, 6), justifyItems: 'center', width: '100%' }}>
+          <div style={sectionLabelStyle}>Winner Path</div>
+          <MatchBoxCard box={pair.winner} variant="winner" layout={layout} widthOverride={laneWidth} />
+          {pair.winner_dest && (
+            <DestinationBox
+              label={pair.winner_dest}
+              teamName={pair.r2_winner_team_name}
+              tournamentId={tournamentId}
+              eventId={eventId}
+              divisionType={divisionType}
+              layout={layout}
+              widthOverride={laneWidth}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -396,6 +545,8 @@ export default function PublicWaterfallPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
+  const canvasRef = useRef<HTMLDivElement | null>(null)
+  const [canvasWidth, setCanvasWidth] = useState<number>(WATERFALL_BASE_WIDTH)
 
   useEffect(() => {
     if (!tid || !eid) return
@@ -462,6 +613,22 @@ export default function PublicWaterfallPage() {
     setTimeout(() => window.print(), 100)
   }, [])
 
+  useEffect(() => {
+    const node = canvasRef.current
+    if (!node) return
+    const recompute = () => {
+      setCanvasWidth(Math.max(node.clientWidth, 320))
+    }
+    recompute()
+    const observer = new ResizeObserver(recompute)
+    observer.observe(node)
+    window.addEventListener('resize', recompute)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', recompute)
+    }
+  }, [])
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: '#666', fontSize: 16 }}>
@@ -494,6 +661,10 @@ export default function PublicWaterfallPage() {
   if (!data) return null
 
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
+  const useCompactWaterfallLayout = !captureMode && canvasWidth <= 520
+  const layout = captureMode
+    ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
+    : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
 
   return (
     <div className="print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
@@ -568,10 +739,24 @@ export default function PublicWaterfallPage() {
       </div>
 
       {/* Bracket canvas: fixed width, horizontal scroll on mobile */}
-      <div data-bracket-canvas style={{ overflowX: 'auto', padding: captureMode ? '10px 8px' : '20px 16px' }}>
+      <div
+        ref={canvasRef}
+        data-bracket-canvas
+        style={{
+          overflowX: captureMode ? 'visible' : 'hidden',
+          padding: captureMode
+            ? '10px 8px'
+            : canvasWidth <= 520
+              ? '12px 6px'
+              : canvasWidth <= 900
+                ? '16px 10px'
+                : '20px 16px',
+        }}
+      >
         <div data-bracket-inner style={{
-          minWidth: captureMode ? 1200 : 1500,
-          maxWidth: 1900,
+          width: '100%',
+          minWidth: 0,
+          maxWidth: captureMode ? 1900 : WATERFALL_BASE_WIDTH,
           margin: '0 auto',
         }}>
           <div style={{
@@ -594,38 +779,58 @@ export default function PublicWaterfallPage() {
             </ol>
           </div>
 
-          {/* Column headers */}
-          <div data-col-headers style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: 10,
-            fontSize: 11,
-            fontWeight: 700,
-            color: '#666',
-            textTransform: 'uppercase',
-            letterSpacing: 1,
-          }}>
-            <div style={{ width: DEST_BOX_WIDTH, flexShrink: 0 }} />
-            <div style={{ width: 32, flexShrink: 0 }} />
-            <div style={{ width: SIDE_BOX_WIDTH, textAlign: 'center', flexShrink: 0 }}>
-              Round 1 Loser
+          {!useCompactWaterfallLayout && (
+            <div data-col-headers style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 10,
+              fontSize: layout.headerFontSize,
+              fontWeight: 700,
+              color: '#666',
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+            }}>
+              <div style={{ width: layout.destBoxWidth, flexShrink: 0 }} />
+              <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />
+              <div style={{ width: layout.sideBoxWidth, textAlign: 'center', flexShrink: 0 }}>
+                Round 1 Loser
+              </div>
+              <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />
+              <div style={{ width: layout.centerBoxWidth, textAlign: 'center', flexShrink: 0 }}>
+                WF Round 1
+              </div>
+              <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />
+              <div style={{ width: layout.sideBoxWidth, textAlign: 'center', flexShrink: 0 }}>
+                Round 1 Winner
+              </div>
+              <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />
+              <div style={{ width: layout.destBoxWidth, flexShrink: 0 }} />
             </div>
-            <div style={{ width: 32, flexShrink: 0 }} />
-            <div style={{ width: CENTER_BOX_WIDTH, textAlign: 'center', flexShrink: 0 }}>
-              WF Round 1
-            </div>
-            <div style={{ width: 32, flexShrink: 0 }} />
-            <div style={{ width: SIDE_BOX_WIDTH, textAlign: 'center', flexShrink: 0 }}>
-              Round 1 Winner
-            </div>
-            <div style={{ width: 32, flexShrink: 0 }} />
-            <div style={{ width: DEST_BOX_WIDTH, flexShrink: 0 }} />
-          </div>
+          )}
 
           {/* Row pairs */}
           {rowPairs.map((pair, idx) => (
-            <WaterfallRowPair key={idx} pair={pair} tournamentId={tid} eventId={eid} divisionType={data.division_type || 'bracket'} />
+            useCompactWaterfallLayout ? (
+              <WaterfallRowPairCompact
+                key={idx}
+                pair={pair}
+                tournamentId={tid}
+                eventId={eid}
+                divisionType={data.division_type || 'bracket'}
+                layout={layout}
+                canvasWidth={canvasWidth}
+              />
+            ) : (
+              <WaterfallRowPair
+                key={idx}
+                pair={pair}
+                tournamentId={tid}
+                eventId={eid}
+                divisionType={data.division_type || 'bracket'}
+                layout={layout}
+              />
+            )
           ))}
 
           {rowPairs.length === 0 && (

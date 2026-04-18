@@ -1683,3 +1683,83 @@ class TestWF2BracketWiring:
                 f"{bracket_label} QF1 should have {expected_token_a}, got {qf1_match.placeholder_side_a} / {qf1_match.placeholder_side_b}"
             assert expected_token_b in qf1_match.placeholder_side_a or expected_token_b in qf1_match.placeholder_side_b, \
                 f"{bracket_label} QF1 should have {expected_token_b}, got {qf1_match.placeholder_side_a} / {qf1_match.placeholder_side_b}"
+
+    def test_drop_in_matches_wire_to_correct_feeders(self, session):
+        """Extra drop-in matches should use consolation-semi losers, then main-semi losers."""
+        from app.services.draw_plan_engine import generate_matches_for_event
+
+        tournament = Tournament(
+            name="Drop In Wiring Test",
+            location="Test Location",
+            timezone="America/New_York",
+            start_date=date(2026, 1, 15),
+            end_date=date(2026, 1, 17),
+            use_time_windows=False,
+        )
+        session.add(tournament)
+        session.commit()
+        session.refresh(tournament)
+
+        event = Event(
+            tournament_id=tournament.id,
+            category="mixed",
+            name="Test Event",
+            team_count=16,
+            guarantee_selected=5,
+        )
+        event.draw_plan_json = json.dumps({
+            "template_type": "WF_TO_BRACKETS_8",
+            "wf_rounds": 2,
+        })
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        version = ScheduleVersion(tournament_id=tournament.id, version_number=1)
+        session.add(version)
+        session.commit()
+        session.refresh(version)
+
+        spec = DrawPlanSpec(
+            event_id=event.id,
+            event_name=event.name,
+            division="Mixed",
+            team_count=16,
+            template_type="WF_TO_BRACKETS_8",
+            template_key="WF_TO_BRACKETS_8",
+            guarantee=5,
+            waterfall_rounds=2,
+            waterfall_minutes=60,
+            standard_minutes=105,
+            tournament_id=tournament.id,
+            event_category="mixed",
+        )
+
+        session._allow_match_generation = True
+        matches, warnings = generate_matches_for_event(
+            session, version.id, spec, list(range(1, 17)), set()
+        )
+        session.add_all(matches)
+        session.commit()
+
+        match_by_code = {m.match_code: m for m in matches if m.match_code}
+        any_bww = next((m for m in matches if "BWW_M1" in (m.match_code or "")), None)
+        assert any_bww is not None, "Expected BWW bracket matches to be generated"
+        event_prefix = any_bww.match_code.split("_BWW_")[0].rstrip("_")
+
+        c1 = match_by_code[f"{event_prefix}_BWW_C1"]
+        c2 = match_by_code[f"{event_prefix}_BWW_C2"]
+        m5 = match_by_code[f"{event_prefix}_BWW_M5"]
+        m6 = match_by_code[f"{event_prefix}_BWW_M6"]
+        c4 = match_by_code[f"{event_prefix}_BWW_C4"]
+        c5 = match_by_code[f"{event_prefix}_BWW_C5"]
+
+        assert c4.source_match_a_id == c1.id
+        assert c4.source_a_role == "LOSER"
+        assert c4.source_match_b_id == c2.id
+        assert c4.source_b_role == "LOSER"
+
+        assert c5.source_match_a_id == m5.id
+        assert c5.source_a_role == "LOSER"
+        assert c5.source_match_b_id == m6.id
+        assert c5.source_b_role == "LOSER"

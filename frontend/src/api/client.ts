@@ -3484,6 +3484,15 @@ export interface SmsPlayerSyncResponse {
   links_removed: number
 }
 
+export interface SmsPlayerWipeResponse {
+  tournament_id: number
+  players_deleted: number
+  links_deleted: number
+  player_checkins_deleted: number
+  lookup_rows_deleted: number
+  consent_events_deleted: number
+}
+
 export interface SmsMatchLookupItem {
   match_id: number
   match_code: string
@@ -3603,6 +3612,15 @@ export async function syncSmsPlayerContacts(
 ): Promise<SmsPlayerSyncResponse> {
   return fetchJson<SmsPlayerSyncResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/sync-player-contacts`,
+    { method: 'POST' }
+  )
+}
+
+export async function wipeSmsPlayers(
+  tournamentId: number
+): Promise<SmsPlayerWipeResponse> {
+  return fetchJson<SmsPlayerWipeResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/players/wipe`,
     { method: 'POST' }
   )
 }

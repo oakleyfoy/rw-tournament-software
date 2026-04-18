@@ -1409,6 +1409,7 @@ def _generate_wf_to_brackets_8(
             else:
                 match_type = "CONSOLATION"
                 sub_code = f"C{match_idx - 6}"
+                consolation_match_number = match_idx - 6  # C1..C5 across the bracket
                 # C1,C2 (match_idx 7,8) = Round 1 (consolation semis)
                 # C3,C4,C5 (match_idx 9,10,11) = Round 2 (cons final + SF losers + cons semi losers)
                 if match_idx <= 8:
@@ -1416,45 +1417,45 @@ def _generate_wf_to_brackets_8(
                     sequence_in_round = match_idx - 6   # 1, 2
                 else:
                     round_index = 2
-                    sequence_in_round = match_idx - 8   # 1, 2, 3
+                    sequence_in_round = match_idx - 8   # 1, 2, 3 within round 2
                 
-                # Consolation placeholders reference losers of QF matches
+                # Consolation placeholders reference a fixed per-bracket path:
                 # C1 (Cons SF): LOSER of QF1 vs LOSER of QF2
                 # C2 (Cons SF): LOSER of QF3 vs LOSER of QF4
                 # C3 (Cons Final): WINNER of C1 vs WINNER of C2
-                # C4 (Main-Cons SF): LOSER of Main SF1 (M5) vs LOSER of Main SF2 (M6)
-                # C5 (2XL): LOSER of C1 vs LOSER of C2
+                # C4 (Drop-In): LOSER of C1 vs LOSER of C2
+                # C5 (Drop-In): LOSER of Main SF1 (M5) vs LOSER of Main SF2 (M6)
                 # etc.
-                if sequence_in_round == 1:
+                if consolation_match_number == 1:
                     # Cons SF 1: LOSER of QF1 vs LOSER of QF2
                     qf1_code = f"{prefix}B{bracket_label}_M1"
                     qf2_code = f"{prefix}B{bracket_label}_M2"
                     placeholder_a = f"LOSER:{qf1_code}"
                     placeholder_b = f"LOSER:{qf2_code}"
-                elif sequence_in_round == 2:
+                elif consolation_match_number == 2:
                     # Cons SF 2: LOSER of QF3 vs LOSER of QF4
                     qf3_code = f"{prefix}B{bracket_label}_M3"
                     qf4_code = f"{prefix}B{bracket_label}_M4"
                     placeholder_a = f"LOSER:{qf3_code}"
                     placeholder_b = f"LOSER:{qf4_code}"
-                elif sequence_in_round == 3:
+                elif consolation_match_number == 3:
                     # Cons Final: WINNER of C1 vs WINNER of C2 (winners of consolation semi-finals)
                     c1_code = f"{prefix}B{bracket_label}_C1"
                     c2_code = f"{prefix}B{bracket_label}_C2"
                     placeholder_a = f"WINNER:{c1_code}"
                     placeholder_b = f"WINNER:{c2_code}"
-                elif sequence_in_round == 4:
-                    # Main-Cons SF: LOSER of Main SF1 (M5) vs LOSER of Main SF2 (M6) (losers of main draw semi-finals)
-                    sf1_code = f"{prefix}B{bracket_label}_M5"
-                    sf2_code = f"{prefix}B{bracket_label}_M6"
-                    placeholder_a = f"LOSER:{sf1_code}"
-                    placeholder_b = f"LOSER:{sf2_code}"
-                elif sequence_in_round == 5:
-                    # 2XL: LOSER of C1 vs LOSER of C2 (losers of consolation semi-finals 1 & 2)
+                elif consolation_match_number == 4:
+                    # First drop-in: LOSER of C1 vs LOSER of C2
                     c1_code = f"{prefix}B{bracket_label}_C1"
                     c2_code = f"{prefix}B{bracket_label}_C2"
                     placeholder_a = f"LOSER:{c1_code}"
                     placeholder_b = f"LOSER:{c2_code}"
+                elif consolation_match_number == 5:
+                    # Second drop-in: LOSER of Main SF1 vs LOSER of Main SF2
+                    sf1_code = f"{prefix}B{bracket_label}_M5"
+                    sf2_code = f"{prefix}B{bracket_label}_M6"
+                    placeholder_a = f"LOSER:{sf1_code}"
+                    placeholder_b = f"LOSER:{sf2_code}"
                 else:
                     # Additional consolation matches (Placement, etc.)
                     # Reference prior matches deterministically
