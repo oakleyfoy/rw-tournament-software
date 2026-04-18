@@ -540,6 +540,7 @@ export default function PublicWaterfallPage() {
   const versionIdParam = searchParams.get('version_id')
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : undefined
   const captureMode = searchParams.get('capture_packet') === '1'
+  const displayFitMode = searchParams.get('display_fit') === '1'
 
   const [data, setData] = useState<PublicWaterfallResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -629,6 +630,20 @@ export default function PublicWaterfallPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!displayFitMode) return
+    const html = document.documentElement
+    const body = document.body
+    const prevHtmlOverflowX = html.style.overflowX
+    const prevBodyOverflowX = body.style.overflowX
+    html.style.overflowX = 'hidden'
+    body.style.overflowX = 'hidden'
+    return () => {
+      html.style.overflowX = prevHtmlOverflowX
+      body.style.overflowX = prevBodyOverflowX
+    }
+  }, [displayFitMode])
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: '#666', fontSize: 16 }}>
@@ -661,14 +676,14 @@ export default function PublicWaterfallPage() {
   if (!data) return null
 
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
-  const useCompactWaterfallLayout = !captureMode && canvasWidth <= 520
+  const useCompactWaterfallLayout = displayFitMode || (!captureMode && canvasWidth <= 520)
   const layout = captureMode
     ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
     : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
 
   return (
-    <div className="print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
-      {versionId && !captureMode && (
+    <div className="print-root" style={{ backgroundColor: captureMode || displayFitMode ? '#fff' : '#f8f9fa', minHeight: captureMode || displayFitMode ? 'auto' : '100vh' }}>
+      {versionId && !captureMode && !displayFitMode && (
         <div className="no-print" style={{
           padding: '8px 20px',
           backgroundColor: '#fff3e0',
@@ -691,7 +706,7 @@ export default function PublicWaterfallPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        ...(captureMode ? { display: 'none' } : {}),
+        ...((captureMode || displayFitMode) ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link

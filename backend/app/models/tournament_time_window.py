@@ -19,6 +19,7 @@ class TournamentTimeWindow(SQLModel, table=True):
     start_time: time
     end_time: time
     courts_available: int = Field(default=1)
+    extra_courts: int = Field(default=0)
     block_minutes: int = Field(default=120)  # Must be one of [60, 90, 105, 120]
     label: Optional[str] = Field(default=None)
     is_active: bool = Field(default=True)

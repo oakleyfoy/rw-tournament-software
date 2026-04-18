@@ -542,6 +542,7 @@ export interface TimeWindow {
   start_time: string;
   end_time: string;
   courts_available: number;
+  extra_courts: number;
   block_minutes: number;
   label?: string | null;
   is_active: boolean;
@@ -552,6 +553,7 @@ export interface TimeWindowCreate {
   start_time: string;
   end_time: string;
   courts_available: number;
+  extra_courts: number;
   block_minutes: number;
   label?: string | null;
   is_active?: boolean;
@@ -562,6 +564,7 @@ export interface TimeWindowUpdate {
   start_time?: string;
   end_time?: string;
   courts_available?: number;
+  extra_courts?: number;
   block_minutes?: number;
   label?: string | null;
   is_active?: boolean;

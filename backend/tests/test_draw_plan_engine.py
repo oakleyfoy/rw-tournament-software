@@ -26,6 +26,7 @@ from app.services.draw_plan_engine import (
     bracket_matches_for_guarantee,
     compute_inventory,
     normalize_template_key,
+    repair_existing_drop_in_wiring,
     resolve_event_family,
     validate_spec,
 )
@@ -1763,3 +1764,103 @@ class TestWF2BracketWiring:
         assert c5.source_a_role == "LOSER"
         assert c5.source_match_b_id == m6.id
         assert c5.source_b_role == "LOSER"
+
+    def test_repair_existing_drop_in_wiring_fixes_stale_generated_matches(self, session):
+        """Existing stale C4/C5 feeder links should be repaired in-place."""
+        from app.services.draw_plan_engine import generate_matches_for_event
+
+        tournament = Tournament(
+            name="Repair Drop In Wiring Test",
+            location="Test Location",
+            timezone="America/New_York",
+            start_date=date(2026, 1, 15),
+            end_date=date(2026, 1, 17),
+            use_time_windows=False,
+        )
+        session.add(tournament)
+        session.commit()
+        session.refresh(tournament)
+
+        event = Event(
+            tournament_id=tournament.id,
+            category="mixed",
+            name="Repair Event",
+            team_count=16,
+            guarantee_selected=5,
+        )
+        event.draw_plan_json = json.dumps({
+            "template_type": "WF_TO_BRACKETS_8",
+            "wf_rounds": 2,
+        })
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        version = ScheduleVersion(tournament_id=tournament.id, version_number=1)
+        session.add(version)
+        session.commit()
+        session.refresh(version)
+
+        spec = DrawPlanSpec(
+            event_id=event.id,
+            event_name=event.name,
+            division="Mixed",
+            team_count=16,
+            template_type="WF_TO_BRACKETS_8",
+            template_key="WF_TO_BRACKETS_8",
+            guarantee=5,
+            waterfall_rounds=2,
+            waterfall_minutes=60,
+            standard_minutes=105,
+            tournament_id=tournament.id,
+            event_category="mixed",
+        )
+
+        session._allow_match_generation = True
+        matches, warnings = generate_matches_for_event(
+            session, version.id, spec, list(range(1, 17)), set()
+        )
+        session.add_all(matches)
+        session.commit()
+
+        assert warnings == []
+
+        match_by_code = {m.match_code: m for m in matches if m.match_code}
+        any_bww = next((m for m in matches if "BWW_M1" in (m.match_code or "")), None)
+        assert any_bww is not None
+        event_prefix = any_bww.match_code.split("_BWW_")[0].rstrip("_")
+
+        qf1 = match_by_code[f"{event_prefix}_BWW_M1"]
+        qf2 = match_by_code[f"{event_prefix}_BWW_M2"]
+        qf3 = match_by_code[f"{event_prefix}_BWW_M3"]
+        qf4 = match_by_code[f"{event_prefix}_BWW_M4"]
+        c4 = match_by_code[f"{event_prefix}_BWW_C4"]
+        c5 = match_by_code[f"{event_prefix}_BWW_C5"]
+
+        c4.source_match_a_id = qf1.id
+        c4.source_match_b_id = qf2.id
+        c4.placeholder_side_a = f"LOSER:{qf1.match_code}"
+        c4.placeholder_side_b = f"LOSER:{qf2.match_code}"
+        c5.source_match_a_id = qf3.id
+        c5.source_match_b_id = qf4.id
+        c5.placeholder_side_a = f"LOSER:{qf3.match_code}"
+        c5.placeholder_side_b = f"LOSER:{qf4.match_code}"
+        session.add(c4)
+        session.add(c5)
+        session.commit()
+
+        repaired = repair_existing_drop_in_wiring(session, version.id, event.id)
+        session.commit()
+
+        assert repaired == 2
+
+        session.refresh(c4)
+        session.refresh(c5)
+        assert c4.source_match_a_id == match_by_code[f"{event_prefix}_BWW_C1"].id
+        assert c4.source_match_b_id == match_by_code[f"{event_prefix}_BWW_C2"].id
+        assert c4.placeholder_side_a == f"LOSER:{event_prefix}_BWW_C1"
+        assert c4.placeholder_side_b == f"LOSER:{event_prefix}_BWW_C2"
+        assert c5.source_match_a_id == match_by_code[f"{event_prefix}_BWW_M5"].id
+        assert c5.source_match_b_id == match_by_code[f"{event_prefix}_BWW_M6"].id
+        assert c5.placeholder_side_a == f"LOSER:{event_prefix}_BWW_M5"
+        assert c5.placeholder_side_b == f"LOSER:{event_prefix}_BWW_M6"

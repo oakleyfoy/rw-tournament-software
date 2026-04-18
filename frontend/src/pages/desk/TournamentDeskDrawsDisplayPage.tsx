@@ -185,7 +185,7 @@ export default function TournamentDeskDrawsDisplayPage() {
         panels.push({
           key: `waterfall:${event.event_id}`,
           label: `${event.name} Waterfall`,
-          path: `/t/${tid}/draws/${event.event_id}/waterfall`,
+          path: `/t/${tid}/draws/${event.event_id}/waterfall?display_fit=1`,
         })
       }
       if (event.has_round_robin) {

@@ -1626,3 +1626,105 @@ def build_spec_from_event(event, draw_plan: Optional[dict] = None) -> DrawPlanSp
         tournament_id=event.tournament_id,
         event_category=event.category,
     )
+
+
+def repair_existing_drop_in_wiring(
+    session,
+    schedule_version_id: int,
+    event_id: Optional[int] = None,
+) -> int:
+    """Repair stale C4/C5 drop-in wiring for already-generated brackets."""
+    from sqlmodel import select
+    from app.models.match import Match
+
+    query = select(Match).where(Match.schedule_version_id == schedule_version_id)
+    if event_id is not None:
+        query = query.where(Match.event_id == event_id)
+
+    matches = session.exec(query).all()
+    if not matches:
+        return 0
+
+    code_to_match = {m.match_code: m for m in matches if m.match_code}
+    repaired = 0
+
+    def _loser_team_id(source_match: Match) -> Optional[int]:
+        winner_id = source_match.winner_team_id
+        if winner_id is None:
+            return None
+        if (source_match.runtime_status or "SCHEDULED") != "FINAL":
+            return None
+        if source_match.team_a_id is not None and winner_id == source_match.team_a_id:
+            return source_match.team_b_id
+        if source_match.team_b_id is not None and winner_id == source_match.team_b_id:
+            return source_match.team_a_id
+        return None
+
+    def _repair_side(match: Match, side: str, source_code: str) -> bool:
+        source_match = code_to_match.get(source_code)
+        if source_match is None or source_match.id is None:
+            return False
+
+        placeholder = f"LOSER:{source_code}"
+        resolved_team_id = _loser_team_id(source_match)
+        changed = False
+
+        if side == "A":
+            if match.source_match_a_id != source_match.id:
+                match.source_match_a_id = source_match.id
+                changed = True
+            if match.source_a_role != "LOSER":
+                match.source_a_role = "LOSER"
+                changed = True
+            if match.placeholder_side_a != placeholder:
+                match.placeholder_side_a = placeholder
+                changed = True
+            if (match.runtime_status or "SCHEDULED") != "FINAL" and match.team_a_id != resolved_team_id:
+                match.team_a_id = resolved_team_id
+                changed = True
+        else:
+            if match.source_match_b_id != source_match.id:
+                match.source_match_b_id = source_match.id
+                changed = True
+            if match.source_b_role != "LOSER":
+                match.source_b_role = "LOSER"
+                changed = True
+            if match.placeholder_side_b != placeholder:
+                match.placeholder_side_b = placeholder
+                changed = True
+            if (match.runtime_status or "SCHEDULED") != "FINAL" and match.team_b_id != resolved_team_id:
+                match.team_b_id = resolved_team_id
+                changed = True
+
+        return changed
+
+    for match in matches:
+        match_code = (match.match_code or "").strip()
+        if (match.match_type or "").upper() != "CONSOLATION" or not match_code:
+            continue
+
+        if match_code.endswith("_C4"):
+            prefix = match_code[:-3]
+            changed = _repair_side(match, "A", f"{prefix}_C1")
+            changed = _repair_side(match, "B", f"{prefix}_C2") or changed
+        elif match_code.endswith("_C5"):
+            prefix = match_code[:-3]
+            changed = _repair_side(match, "A", f"{prefix}_M5")
+            changed = _repair_side(match, "B", f"{prefix}_M6") or changed
+        else:
+            continue
+
+        if changed:
+            session.add(match)
+            repaired += 1
+
+    if repaired:
+        session.flush()
+        logger.info(
+            "Repaired %d stale drop-in matches for version %s event %s",
+            repaired,
+            schedule_version_id,
+            event_id,
+        )
+
+    return repaired

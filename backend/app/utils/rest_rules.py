@@ -464,7 +464,11 @@ def auto_assign_with_rest(
     # Load slots in deterministic order
     slots = session.exec(
         select(ScheduleSlot)
-        .where(ScheduleSlot.schedule_version_id == schedule_version_id, ScheduleSlot.is_active)
+        .where(
+            ScheduleSlot.schedule_version_id == schedule_version_id,
+            ScheduleSlot.is_active,
+            ScheduleSlot.is_manual_only == False,
+        )
         .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
     ).all()
 

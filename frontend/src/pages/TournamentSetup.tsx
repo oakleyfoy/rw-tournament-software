@@ -76,6 +76,7 @@ function TournamentSetup() {
     start_time: '',
     end_time: '',
     courts_available: 1,
+    extra_courts: 0,
     block_minutes: 120,
     label: '',
     is_active: true,
@@ -566,6 +567,7 @@ function TournamentSetup() {
     if (!window.end_time) return 'End time is required'
     if (window.end_time <= window.start_time) return 'End time must be greater than start time'
     if (!window.courts_available || window.courts_available < 1) return 'Courts available must be at least 1'
+    if ((window.extra_courts ?? 0) < 0) return 'Extra courts cannot be negative'
     if (!window.block_minutes || ![60, 90, 105, 120].includes(window.block_minutes)) {
       return 'Block minutes must be 60, 90, 105, or 120'
     }
@@ -626,6 +628,7 @@ function TournamentSetup() {
         start_time: '',
         end_time: '',
         courts_available: 1,
+        extra_courts: 0,
         block_minutes: 120,
         label: '',
         is_active: true,
@@ -729,6 +732,7 @@ function TournamentSetup() {
           start_time: startTime,
           end_time: endTime,
           courts_available: courts,
+          extra_courts: 0,
           block_minutes: blockMinutes,
           label: 'Auto',
           is_active: true,
@@ -1338,6 +1342,7 @@ function TournamentSetup() {
                       <th>Start Time</th>
                       <th>End Time</th>
                       <th>Courts</th>
+                      <th>Extra Courts</th>
                       <th>Block Length</th>
                       <th>Label</th>
                       <th>Active</th>
@@ -1395,6 +1400,18 @@ function TournamentSetup() {
                               />
                             ) : (
                               win.courts_available
+                            )}
+                          </td>
+                          <td>
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                min="0"
+                                value={win.extra_courts ?? 0}
+                                onChange={(e) => handleWindowChange(window.id, 'extra_courts', parseInt(e.target.value) || 0)}
+                              />
+                            ) : (
+                              win.extra_courts ?? 0
                             )}
                           </td>
                           <td>
@@ -1471,7 +1488,7 @@ function TournamentSetup() {
               {/* New Window Form */}
               <div style={{ padding: '16px', backgroundColor: 'var(--theme-card-bg)', borderRadius: '4px', marginBottom: '16px' }}>
                 <h3 style={{ marginTop: 0, marginBottom: '12px', color: 'var(--theme-text)' }}>Add New Time Window</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px', alignItems: 'end' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '12px', alignItems: 'end' }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: '4px', fontSize: '14px', fontWeight: '500', color: 'var(--theme-text)' }}>Day</label>
                     <input
@@ -1508,6 +1525,16 @@ function TournamentSetup() {
                       min="1"
                       value={newWindow.courts_available || ''}
                       onChange={(e) => handleWindowChange('new', 'courts_available', parseInt(e.target.value) || 1)}
+                      style={{ width: '100%', padding: '8px', border: '1px solid var(--theme-input-border)', borderRadius: '4px', fontSize: '16px', fontFamily: 'inherit', backgroundColor: 'var(--theme-input-bg)', color: 'var(--theme-input-text)' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '14px', fontWeight: '500', color: 'var(--theme-text)' }}>Extra Courts</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newWindow.extra_courts ?? 0}
+                      onChange={(e) => handleWindowChange('new', 'extra_courts', parseInt(e.target.value) || 0)}
                       style={{ width: '100%', padding: '8px', border: '1px solid var(--theme-input-border)', borderRadius: '4px', fontSize: '16px', fontFamily: 'inherit', backgroundColor: 'var(--theme-input-bg)', color: 'var(--theme-input-text)' }}
                     />
                   </div>
@@ -1605,7 +1632,14 @@ function TournamentSetup() {
             {/* Validation Warnings */}
             {(() => {
               const courtNames = tournament.court_names || []
-              const maxCourts = Math.max(...days.filter(d => d.is_active).map(d => d.courts_available), 0)
+              const maxDayCourts = Math.max(...days.filter(d => d.is_active).map(d => d.courts_available), 0)
+              const maxWindowCourts = Math.max(
+                ...timeWindows
+                  .filter(w => w.is_active !== false)
+                  .map(w => (w.courts_available || 0) + (w.extra_courts || 0)),
+                0
+              )
+              const maxCourts = Math.max(maxDayCourts, maxWindowCourts)
               const hasSchedule = scheduleVersions.length > 0
               const labelsChanged = originalCourtNames && 
                 JSON.stringify(originalCourtNames) !== JSON.stringify(courtNames)

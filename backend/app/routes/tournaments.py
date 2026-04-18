@@ -1148,6 +1148,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                     start_time=window.start_time,
                     end_time=window.end_time,
                     courts_available=window.courts_available,
+                    extra_courts=window.extra_courts,
                     block_minutes=window.block_minutes,
                     label=window.label,
                     is_active=window.is_active,
@@ -1374,6 +1375,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 block_minutes=slot.block_minutes,
                 label=slot.label,
                 is_active=slot.is_active,
+                is_manual_only=slot.is_manual_only,
             )
             session.add(cloned)
             session.flush()

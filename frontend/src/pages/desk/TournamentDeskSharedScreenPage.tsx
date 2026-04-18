@@ -237,7 +237,7 @@ export default function TournamentDeskSharedScreenPage() {
         options.push({
           key: `waterfall:${event.event_id}`,
           label: `${event.name} Waterfall`,
-          path: `/t/${tid}/draws/${event.event_id}/waterfall`,
+          path: `/t/${tid}/draws/${event.event_id}/waterfall?display_fit=1`,
           kind: 'draw',
         })
       }

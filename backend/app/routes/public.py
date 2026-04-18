@@ -798,6 +798,11 @@ def public_bracket(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
+    from app.services.draw_plan_engine import repair_existing_drop_in_wiring
+
+    if repair_existing_drop_in_wiring(session, version.id, event_id):
+        session.commit()
+
     div_upper = division_code.upper()
     div_label = _CODE_TO_DIV.get(div_upper, division_code)
 

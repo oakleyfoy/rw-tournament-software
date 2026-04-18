@@ -20,6 +20,7 @@ class TimeWindowCreate(BaseModel):
     start_time: time
     end_time: time
     courts_available: int
+    extra_courts: int = 0
     block_minutes: int
     label: Optional[str] = None
     is_active: bool = True
@@ -37,6 +38,8 @@ class TimeWindowCreate(BaseModel):
             raise ValueError("end_time must be greater than start_time")
         if self.courts_available < 1:
             raise ValueError("courts_available must be >= 1")
+        if self.extra_courts < 0:
+            raise ValueError("extra_courts must be >= 0")
         return self
 
 
@@ -45,6 +48,7 @@ class TimeWindowUpdate(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     courts_available: Optional[int] = None
+    extra_courts: Optional[int] = None
     block_minutes: Optional[int] = None
     label: Optional[str] = None
     is_active: Optional[bool] = None
@@ -62,6 +66,8 @@ class TimeWindowUpdate(BaseModel):
         if self.start_time is not None and self.end_time is not None:
             if self.end_time <= self.start_time:
                 raise ValueError("end_time must be greater than start_time")
+        if self.extra_courts is not None and self.extra_courts < 0:
+            raise ValueError("extra_courts must be >= 0")
         return self
 
 
@@ -72,6 +78,7 @@ class TimeWindowResponse(BaseModel):
     start_time: time
     end_time: time
     courts_available: int
+    extra_courts: int
     block_minutes: int
     label: Optional[str]
     is_active: bool

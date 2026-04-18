@@ -165,6 +165,9 @@ def is_slot_compatible(slot: ScheduleSlot, match: Match, occupied_slot_ids: set)
     if slot.id in occupied_slot_ids:
         return False, "SLOT_OCCUPIED"
 
+    if slot.is_manual_only:
+        return False, "MANUAL_ONLY_SLOT"
+
     # Check duration compatibility
     # For V1, we use block_minutes as the slot capacity
     slot_duration = slot.block_minutes or 0

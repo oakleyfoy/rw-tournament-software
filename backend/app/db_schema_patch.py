@@ -26,6 +26,14 @@ REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("shared_screen_config_json", "TEXT", "TEXT"),
 ]
 
+REQUIRED_TOURNAMENT_TIME_WINDOW_COLUMNS: List[Tuple[str, str, str]] = [
+    ("extra_courts", "INTEGER", "INTEGER"),
+]
+
+REQUIRED_SCHEDULE_SLOT_COLUMNS: List[Tuple[str, str, str]] = [
+    ("is_manual_only", "INTEGER", "BOOLEAN"),
+]
+
 # Columns we must ensure exist in the "team" table.
 REQUIRED_TEAM_COLUMNS: List[Tuple[str, str, str]] = [
     ("avoid_group", "VARCHAR(4)", "VARCHAR(4)"),
@@ -493,4 +501,108 @@ def ensure_start_over_baseline_assignment_table(engine: Engine) -> None:
         logger = logging.getLogger(__name__)
         logger.warning(
             f"Failed to ensure start_over_baseline_assignment table (this is OK if table doesn't exist yet): {e}"
+        )
+
+
+def ensure_tournament_time_window_columns(engine: Engine) -> None:
+    """Idempotently adds required columns to the tournament time window table."""
+    try:
+        from app.models.tournament_time_window import TournamentTimeWindow
+
+        table = TournamentTimeWindow.__table__.name
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_TOURNAMENT_TIME_WINDOW_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} DEFAULT 0;"))
+        else:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    )
+                """
+                    ),
+                    {"table_name": table},
+                ).fetchone()
+                if not result or not result[0]:
+                    return
+
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_TOURNAMENT_TIME_WINDOW_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} DEFAULT 0;"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure tournament time window columns (this is OK if table doesn't exist yet): {e}"
+        )
+
+
+def ensure_schedule_slot_columns(engine: Engine) -> None:
+    """Idempotently adds required columns to the schedule slot table."""
+    try:
+        from app.models.schedule_slot import ScheduleSlot
+
+        table = ScheduleSlot.__table__.name
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_SCHEDULE_SLOT_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} DEFAULT 0;"))
+        else:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = :table_name
+                    )
+                """
+                    ),
+                    {"table_name": table},
+                ).fetchone()
+                if not result or not result[0]:
+                    return
+
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_SCHEDULE_SLOT_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} DEFAULT FALSE;"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure schedule slot columns (this is OK if table doesn't exist yet): {e}"
         )

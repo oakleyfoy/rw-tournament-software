@@ -208,6 +208,9 @@ def is_slot_compatible_v2(
     if slot.id in occupied_slot_ids:
         return False, CONFLICT_SLOT_OCCUPIED, {"slot_id": slot.id}
 
+    if slot.is_manual_only:
+        return False, "MANUAL_ONLY_SLOT", {"slot_id": slot.id}
+
     slot_duration = slot.block_minutes or 0
     if slot_duration < match.duration_minutes:
         return (

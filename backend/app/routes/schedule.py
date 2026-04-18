@@ -745,6 +745,7 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
             block_minutes=slot.block_minutes,
             label=slot.label,
             is_active=slot.is_active,
+            is_manual_only=slot.is_manual_only,
         )
         session.add(new_slot)
         session.flush()  # Get new ID
@@ -840,6 +841,7 @@ class SlotResponse(BaseModel):
     block_minutes: int
     label: Optional[str] = None
     is_active: bool
+    is_manual_only: bool = False
     match_id: Optional[int] = None
     match_code: Optional[str] = None
     assignment_id: Optional[int] = None
@@ -957,12 +959,14 @@ def generate_slots(
                 continue  # Skip invalid time ranges
 
             print(
-                f"[DEBUG] Processing window: {window.day_date} {window.start_time}-{window.end_time}, courts={window.courts_available}, block_minutes={window.block_minutes}"
+                f"[DEBUG] Processing window: {window.day_date} {window.start_time}-{window.end_time}, courts={window.courts_available}, extra_courts={window.extra_courts}, block_minutes={window.block_minutes}"
             )
 
             # Generate slots at block_minutes granularity (e.g., 60 or 105 minute slots)
             # Algorithm: t = start; while t + slot_len <= end: create slot; t += step
-            for court_num in range(1, window.courts_available + 1):
+            total_window_courts = window.courts_available + (window.extra_courts or 0)
+            for court_num in range(1, total_window_courts + 1):
+                is_manual_only = court_num > window.courts_available
                 current_minutes = start_minutes
                 court_slots = 0
                 
@@ -997,6 +1001,7 @@ def generate_slots(
                         block_minutes=window.block_minutes,  # Match the window's block duration
                         label=window.label,  # Preserve window label if any
                         is_active=True,
+                        is_manual_only=is_manual_only,
                     )
                     session.add(slot)
                     slots_created += 1
@@ -1194,6 +1199,7 @@ def get_slots(
             "block_minutes": slot.block_minutes,
             "label": slot.label,
             "is_active": slot.is_active,
+            "is_manual_only": slot.is_manual_only,
             "match_id": None,
             "match_code": None,
             "assignment_id": None,

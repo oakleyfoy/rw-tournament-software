@@ -40,6 +40,7 @@ class ScheduleSlot(SQLModel, table=True):
     block_minutes: int
     label: Optional[str] = None
     is_active: bool = Field(default=True)
+    is_manual_only: bool = Field(default=False)
 
     # Relationships
     tournament: "Tournament" = Relationship(back_populates="schedule_slots")

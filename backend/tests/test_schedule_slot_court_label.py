@@ -194,3 +194,58 @@ def test_generate_slots_respects_window_block_minutes(client: TestClient, sessio
     fifteen_min_slots = [s for s in slots if s.block_minutes == 15]
     assert len(fifteen_min_slots) == 0, f"Found {len(fifteen_min_slots)} 15-minute slots (should be 0)"
 
+
+def test_generate_slots_marks_extra_courts_manual_only(client: TestClient, session: Session):
+    tournament = Tournament(
+        name="Extra Courts Test",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 2, 20),
+        end_date=date(2026, 2, 22),
+        use_time_windows=True,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    tid = tournament.id
+
+    window = TournamentTimeWindow(
+        tournament_id=tid,
+        day_date=date(2026, 2, 20),
+        start_time=time(9, 0),
+        end_time=time(11, 0),
+        courts_available=2,
+        extra_courts=2,
+        block_minutes=60,
+        is_active=True,
+    )
+    session.add(window)
+    session.commit()
+
+    version = ScheduleVersion(tournament_id=tid, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    resp = client.post(
+        f"/api/tournaments/{tid}/schedule/slots/generate",
+        json={"source": "time_windows", "schedule_version_id": version.id, "wipe_existing": True},
+    )
+    assert resp.status_code in (200, 201), resp.text
+    result = resp.json()
+    assert result["slots_created"] == 8
+
+    slots = session.exec(
+        select(ScheduleSlot)
+        .where(ScheduleSlot.schedule_version_id == version.id)
+        .order_by(ScheduleSlot.court_number, ScheduleSlot.start_time)
+    ).all()
+    assert len(slots) == 8
+
+    regular_slots = [s for s in slots if s.court_number in (1, 2)]
+    extra_slots = [s for s in slots if s.court_number in (3, 4)]
+    assert len(regular_slots) == 4
+    assert len(extra_slots) == 4
+    assert all(not s.is_manual_only for s in regular_slots)
+    assert all(s.is_manual_only for s in extra_slots)
+
