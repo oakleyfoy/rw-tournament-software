@@ -261,10 +261,14 @@ def test_wipe_players_removes_all_player_related_rows(
     session,
     setup_tournament_with_teams,
 ):
-    """Wipe endpoint should clear players and all dependent tournament-scoped player data."""
+    """Wipe endpoint should clear player/team rows and dependent tournament-scoped data."""
+    from app.models.match_checkin import MatchCheckIn
     from app.models.match_player_checkin import MatchPlayerCheckIn
     from app.models.player import Player
     from app.models.sms_consent_event import SmsConsentEvent
+    from app.models.sms_log import SmsLog
+    from app.models.team import Team
+    from app.models.team_avoid_edge import TeamAvoidEdge
     from app.models.team_player import TeamPlayer
     from app.models.temporary_player_lookup import TemporaryPlayerLookup
 
@@ -296,6 +300,16 @@ def test_wipe_players_removes_all_player_related_rows(
         end_time_local=time(10, 0),
     )
 
+    session.add(
+        MatchCheckIn(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=teams[0].id,
+            side="A",
+            team_checked_in=True,
+        )
+    )
     session.add(
         MatchPlayerCheckIn(
             tournament_id=tournament.id,
@@ -331,21 +345,51 @@ def test_wipe_players_removes_all_player_related_rows(
             dedupe_key="wipe-test-1",
         )
     )
+    session.add(
+        SmsLog(
+            tournament_id=tournament.id,
+            team_id=teams[0].id,
+            phone_number="+15550001111",
+            message_body="test",
+            message_type="team_direct",
+            status="queued",
+        )
+    )
+    session.add(
+        TeamAvoidEdge(
+            event_id=event.id,
+            team_id_a=min(teams[0].id, teams[1].id),
+            team_id_b=max(teams[0].id, teams[1].id),
+            reason="test",
+        )
+    )
+    match.winner_team_id = teams[0].id
     session.commit()
 
     resp = client.post(f"/api/tournaments/{tournament.id}/sms/players/wipe")
     assert resp.status_code == 200
     data = resp.json()
     assert data["players_deleted"] == 1
+    assert data["teams_deleted"] == len(teams)
     assert data["links_deleted"] == 1
+    assert data["team_checkins_deleted"] == 1
     assert data["player_checkins_deleted"] == 1
     assert data["lookup_rows_deleted"] == 1
     assert data["consent_events_deleted"] == 1
+    assert data["avoid_edges_deleted"] == 1
+    assert data["sms_logs_unlinked"] == 1
+    assert data["matches_cleared"] == 1
 
     assert session.exec(
         select(Player).where(Player.tournament_id == tournament.id)
     ).all() == []
     assert session.exec(select(TeamPlayer)).all() == []
+    assert session.exec(
+        select(Team).where(Team.event_id == event.id)
+    ).all() == []
+    assert session.exec(
+        select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament.id)
+    ).all() == []
     assert session.exec(
         select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)
     ).all() == []
@@ -355,6 +399,21 @@ def test_wipe_players_removes_all_player_related_rows(
     assert session.exec(
         select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament.id)
     ).all() == []
+    assert session.exec(
+        select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)
+    ).all() == []
+
+    refreshed_match = session.get(type(match), match.id)
+    assert refreshed_match is not None
+    assert refreshed_match.team_a_id is None
+    assert refreshed_match.team_b_id is None
+    assert refreshed_match.winner_team_id is None
+
+    logs = session.exec(
+        select(SmsLog).where(SmsLog.tournament_id == tournament.id)
+    ).all()
+    assert len(logs) == 1
+    assert logs[0].team_id is None
 
 
 def test_team_text(client, session, setup_tournament_with_teams):

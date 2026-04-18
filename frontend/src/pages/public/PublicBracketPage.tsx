@@ -285,21 +285,28 @@ function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchB
 
   const { bracketMatches, standaloneMatches } = useMemo(() => {
     const matchIds = new Set(matches.map(m => m.match_id))
-
-    // Find matches whose sources are OTHER consolation matches (bracket chain)
-    const sourcedFromConsol = matches.filter(m =>
-      (m.source_match_a_id && matchIds.has(m.source_match_a_id)) ||
-      (m.source_match_b_id && matchIds.has(m.source_match_b_id))
-    )
     const bracketChainIds = new Set<number>()
+    const winnerChainMatches = matches.filter(m => {
+      const fromConsol =
+        (m.source_match_a_id && matchIds.has(m.source_match_a_id)) ||
+        (m.source_match_b_id && matchIds.has(m.source_match_b_id))
+      if (!fromConsol) return false
+      const line1 = (m.line1 || '').toLowerCase()
+      const line2 = (m.line2 || '').toLowerCase()
+      return line1.startsWith('winner of match') || line2.startsWith('winner of match')
+    })
 
-    // Add the final(s) and trace back to their sources
-    for (const m of sourcedFromConsol) {
+    // Add only the winner-path consolation chain to the bracket tree.
+    // Loser-path placement matches (like the "Round 3" card) stay below
+    // under the Drop-In Matches heading.
+    for (const m of winnerChainMatches) {
       bracketChainIds.add(m.match_id)
-      if (m.source_match_a_id && matchIds.has(m.source_match_a_id))
+      if (m.source_match_a_id && matchIds.has(m.source_match_a_id)) {
         bracketChainIds.add(m.source_match_a_id)
-      if (m.source_match_b_id && matchIds.has(m.source_match_b_id))
+      }
+      if (m.source_match_b_id && matchIds.has(m.source_match_b_id)) {
         bracketChainIds.add(m.source_match_b_id)
+      }
     }
 
     const bm = matches
@@ -308,14 +315,22 @@ function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchB
 
     const sm = matches
       .filter(m => !bracketChainIds.has(m.match_id))
-      .sort((a, b) => (a.round_index - b.round_index) || (a.sequence_in_round - b.sequence_in_round))
+      .sort((a, b) => (b.round_index - a.round_index) || (a.sequence_in_round - b.sequence_in_round))
 
     // Re-index bracket matches for the tree: the feeder matches become round 1,
     // the match they feed into becomes round 2
     if (bm.length > 0) {
-      const feeders = bm.filter(m => !bracketChainIds.has(m.source_match_a_id!) || !matchIds.has(m.source_match_a_id!))
-        .filter(m => sourcedFromConsol.every(s => s.match_id !== m.match_id))
-      const finals = bm.filter(m => sourcedFromConsol.some(s => s.match_id === m.match_id))
+      const finals = bm.filter(m => winnerChainMatches.some(s => s.match_id === m.match_id))
+      const feederIds = new Set<number>()
+      for (const finalMatch of finals) {
+        if (finalMatch.source_match_a_id && bracketChainIds.has(finalMatch.source_match_a_id)) {
+          feederIds.add(finalMatch.source_match_a_id)
+        }
+        if (finalMatch.source_match_b_id && bracketChainIds.has(finalMatch.source_match_b_id)) {
+          feederIds.add(finalMatch.source_match_b_id)
+        }
+      }
+      const feeders = bm.filter(m => feederIds.has(m.match_id))
 
       for (const f of feeders) f.round_index = 1
       let ri = 2
@@ -359,7 +374,7 @@ function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchB
           }}>
             Drop-In Matches
           </div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
             {standaloneMatches.map(m => (
               <MatchCard key={m.match_id} match={m} variant="consolation" showCourtInfo={showCourtInfo} />
             ))}

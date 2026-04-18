@@ -3490,10 +3490,15 @@ export interface SmsPlayerSyncResponse {
 export interface SmsPlayerWipeResponse {
   tournament_id: number
   players_deleted: number
+  teams_deleted: number
   links_deleted: number
+  team_checkins_deleted: number
   player_checkins_deleted: number
   lookup_rows_deleted: number
   consent_events_deleted: number
+  avoid_edges_deleted: number
+  sms_logs_unlinked: number
+  matches_cleared: number
 }
 
 export interface SmsMatchLookupItem {

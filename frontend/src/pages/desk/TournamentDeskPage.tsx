@@ -7338,7 +7338,7 @@ function SmsAdminTab({
 
   const handleWipePlayers = async () => {
     const confirmed = await confirmDialog(
-      'Wipe all player records for this tournament?\n\nThis deletes Players, Player Links, player check-ins, consent history, and imported player lookup rows.\n\nTeam rows stay in place.'
+      'Clear all players and teams for this tournament?\n\nThis deletes Team rows, Players, Player Links, team/player check-ins, consent history, and imported player lookup rows. Match team assignments will be cleared too.'
     )
     if (!confirmed) return
 
@@ -7348,7 +7348,7 @@ function SmsAdminTab({
       const summary: SmsPlayerWipeResponse = await wipeSmsPlayers(tournamentId)
       setPlayerSyncSummary(null)
       setPlayerAdminNotice(
-        `Wiped ${summary.players_deleted} players, ${summary.links_deleted} links, ${summary.player_checkins_deleted} player check-ins, ${summary.lookup_rows_deleted} lookup rows, and ${summary.consent_events_deleted} consent rows.`
+        `Cleared ${summary.teams_deleted} teams, ${summary.players_deleted} players, ${summary.links_deleted} links, ${summary.team_checkins_deleted} team check-ins, ${summary.player_checkins_deleted} player check-ins, ${summary.matches_cleared} match assignments, ${summary.lookup_rows_deleted} lookup rows, and ${summary.consent_events_deleted} consent rows.`
       )
       await Promise.all([
         loadLookups(),
@@ -8160,7 +8160,7 @@ function SmsAdminTab({
                       disabled={wipingPlayers || syncingPlayerContacts}
                       style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#fff5f5', border: '1px solid #f1b5b5', color: '#a12626' }}
                     >
-                      {wipingPlayers ? 'Wiping…' : 'Temporary: Wipe All Players'}
+                      {wipingPlayers ? 'Clearing…' : 'Temporary: Clear Players + Teams'}
                     </button>
                     <span style={{ fontSize: 11, color: '#666' }}>
                       Team changes sync automatically. Use Rebuild only after a big import or if something looks wrong.

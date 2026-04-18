@@ -18,13 +18,14 @@ from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
 from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.player import Player
 from app.models.schedule_version import ScheduleVersion
@@ -33,6 +34,7 @@ from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_log import SmsLog
 from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
@@ -359,14 +361,19 @@ class SmsPlayerSyncResponse(BaseModel):
 
 
 class SmsPlayerWipeResponse(BaseModel):
-    """Summary from deleting all player-related rows for a tournament."""
+    """Summary from deleting all player/team rows for a tournament."""
 
     tournament_id: int
     players_deleted: int
+    teams_deleted: int
     links_deleted: int
+    team_checkins_deleted: int
     player_checkins_deleted: int
     lookup_rows_deleted: int
     consent_events_deleted: int
+    avoid_edges_deleted: int
+    sms_logs_unlinked: int
+    matches_cleared: int
 
 
 # ---------------------------------------------------------------------------
@@ -1740,17 +1747,29 @@ def wipe_sms_players(
     tournament_id: int,
     session: Session = Depends(get_session),
 ):
-    """Delete all player-related records for a tournament."""
+    """Delete all player and team records for a tournament."""
     _get_tournament_or_404(session, tournament_id)
+
+    events = session.exec(
+        select(Event).where(Event.tournament_id == tournament_id)
+    ).all()
+    event_ids = [event.id for event in events if event.id is not None]
+
+    teams = session.exec(
+        select(Team).where(Team.event_id.in_(event_ids))  # type: ignore[arg-type]
+    ).all() if event_ids else []
+    team_ids = [team.id for team in teams if team.id is not None]
 
     players = session.exec(
         select(Player).where(Player.tournament_id == tournament_id)
     ).all()
-    player_ids = [player.id for player in players if player.id is not None]
 
     team_links = session.exec(
-        select(TeamPlayer).where(TeamPlayer.player_id.in_(player_ids))  # type: ignore[arg-type]
-    ).all() if player_ids else []
+        select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))  # type: ignore[arg-type]
+    ).all() if team_ids else []
+    team_checkins = session.exec(
+        select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)
+    ).all()
     player_checkins = session.exec(
         select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
     ).all()
@@ -1760,27 +1779,74 @@ def wipe_sms_players(
     consent_events = session.exec(
         select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament_id)
     ).all()
+    avoid_edges = session.exec(
+        select(TeamAvoidEdge).where(
+            TeamAvoidEdge.event_id.in_(event_ids),  # type: ignore[arg-type]
+            or_(
+                TeamAvoidEdge.team_id_a.in_(team_ids),  # type: ignore[arg-type]
+                TeamAvoidEdge.team_id_b.in_(team_ids),  # type: ignore[arg-type]
+            ),
+        )
+    ).all() if team_ids and event_ids else []
+    sms_logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == tournament_id,
+            SmsLog.team_id.in_(team_ids),  # type: ignore[arg-type]
+        )
+    ).all() if team_ids else []
+    matches = session.exec(
+        select(Match).where(Match.tournament_id == tournament_id)
+    ).all()
 
+    matches_cleared = 0
+    for match in matches:
+        touched = False
+        if match.team_a_id in team_ids:
+            match.team_a_id = None
+            touched = True
+        if match.team_b_id in team_ids:
+            match.team_b_id = None
+            touched = True
+        if match.winner_team_id in team_ids:
+            match.winner_team_id = None
+            touched = True
+        if touched:
+            matches_cleared += 1
+
+    for row in sms_logs:
+        row.team_id = None
+
+    for row in team_checkins:
+        session.delete(row)
     for row in player_checkins:
         session.delete(row)
     for row in lookup_rows:
         session.delete(row)
     for row in consent_events:
         session.delete(row)
+    for row in avoid_edges:
+        session.delete(row)
     for row in team_links:
         session.delete(row)
     for player in players:
         session.delete(player)
+    for team in teams:
+        session.delete(team)
 
     session.commit()
 
     return SmsPlayerWipeResponse(
         tournament_id=tournament_id,
         players_deleted=len(players),
+        teams_deleted=len(teams),
         links_deleted=len(team_links),
+        team_checkins_deleted=len(team_checkins),
         player_checkins_deleted=len(player_checkins),
         lookup_rows_deleted=len(lookup_rows),
         consent_events_deleted=len(consent_events),
+        avoid_edges_deleted=len(avoid_edges),
+        sms_logs_unlinked=len(sms_logs),
+        matches_cleared=matches_cleared,
     )
 
 
