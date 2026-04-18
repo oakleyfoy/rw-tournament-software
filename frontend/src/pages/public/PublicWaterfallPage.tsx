@@ -659,6 +659,25 @@ export default function PublicWaterfallPage() {
     }
   }, [displayFitMode])
 
+  const useCompactWaterfallLayout = displayFitMode || (!captureMode && canvasWidth <= 520)
+  const layout = captureMode
+    ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
+    : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
+  const compactColumnCount = useMemo(() => {
+    if (!displayFitMode) return 1
+    if (rowPairs.length >= 10 && canvasWidth >= 1080) return 3
+    if (rowPairs.length >= 5) return 2
+    return 1
+  }, [displayFitMode, rowPairs.length, canvasWidth])
+  const compactColumns = useMemo(
+    () => splitIntoBalancedColumns(rowPairs, compactColumnCount),
+    [rowPairs, compactColumnCount]
+  )
+  const compactGridGap = Math.max(layout.rowMarginBottom, 14)
+  const compactColumnWidth = compactColumnCount > 0
+    ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
+    : canvasWidth
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: '#666', fontSize: 16 }}>
@@ -691,24 +710,6 @@ export default function PublicWaterfallPage() {
   if (!data) return null
 
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
-  const useCompactWaterfallLayout = displayFitMode || (!captureMode && canvasWidth <= 520)
-  const layout = captureMode
-    ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
-    : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
-  const compactColumnCount = useMemo(() => {
-    if (!displayFitMode) return 1
-    if (rowPairs.length >= 10 && canvasWidth >= 1080) return 3
-    if (rowPairs.length >= 5) return 2
-    return 1
-  }, [displayFitMode, rowPairs.length, canvasWidth])
-  const compactColumns = useMemo(
-    () => splitIntoBalancedColumns(rowPairs, compactColumnCount),
-    [rowPairs, compactColumnCount]
-  )
-  const compactGridGap = Math.max(layout.rowMarginBottom, 14)
-  const compactColumnWidth = compactColumnCount > 0
-    ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
-    : canvasWidth
 
   return (
     <div className="print-root" style={{ backgroundColor: captureMode || displayFitMode ? '#fff' : '#f8f9fa', minHeight: captureMode || displayFitMode ? 'auto' : '100vh' }}>
