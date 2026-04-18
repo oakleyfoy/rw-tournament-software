@@ -365,6 +365,21 @@ interface RowPair {
   r2_loser_team_name: string | null
 }
 
+function splitIntoBalancedColumns<T>(items: T[], columnCount: number): T[][] {
+  if (columnCount <= 1 || items.length === 0) return [items]
+
+  const columns: T[][] = []
+  let start = 0
+  for (let idx = 0; idx < columnCount; idx += 1) {
+    const remainingItems = items.length - start
+    const remainingColumns = columnCount - idx
+    const size = Math.ceil(remainingItems / remainingColumns)
+    columns.push(items.slice(start, start + size))
+    start += size
+  }
+  return columns.filter((column) => column.length > 0)
+}
+
 function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }: {
   pair: RowPair
   tournamentId: number | null
@@ -456,16 +471,16 @@ function WaterfallRowPairCompact({
   eventId,
   divisionType,
   layout,
-  canvasWidth,
+  availableWidth,
 }: {
   pair: RowPair
   tournamentId: number | null
   eventId: number | null
   divisionType: 'bracket' | 'roundrobin'
   layout: WaterfallLayout
-  canvasWidth: number
+  availableWidth: number
 }) {
-  const laneWidth = Math.max(Math.min(canvasWidth - 20, 420), 260)
+  const laneWidth = Math.max(Math.min(availableWidth - 20, 420), 260)
   const sectionLabelStyle = {
     fontSize: Math.max(layout.destFontSize, 9),
     fontWeight: 700,
@@ -680,6 +695,20 @@ export default function PublicWaterfallPage() {
   const layout = captureMode
     ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
     : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
+  const compactColumnCount = useMemo(() => {
+    if (!displayFitMode) return 1
+    if (rowPairs.length >= 10 && canvasWidth >= 1080) return 3
+    if (rowPairs.length >= 5) return 2
+    return 1
+  }, [displayFitMode, rowPairs.length, canvasWidth])
+  const compactColumns = useMemo(
+    () => splitIntoBalancedColumns(rowPairs, compactColumnCount),
+    [rowPairs, compactColumnCount]
+  )
+  const compactGridGap = Math.max(layout.rowMarginBottom, 14)
+  const compactColumnWidth = compactColumnCount > 0
+    ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
+    : canvasWidth
 
   return (
     <div className="print-root" style={{ backgroundColor: captureMode || displayFitMode ? '#fff' : '#f8f9fa', minHeight: captureMode || displayFitMode ? 'auto' : '100vh' }}>
@@ -825,18 +854,56 @@ export default function PublicWaterfallPage() {
           )}
 
           {/* Row pairs */}
-          {rowPairs.map((pair, idx) => (
-            useCompactWaterfallLayout ? (
-              <WaterfallRowPairCompact
-                key={idx}
-                pair={pair}
-                tournamentId={tid}
-                eventId={eid}
-                divisionType={data.division_type || 'bracket'}
-                layout={layout}
-                canvasWidth={canvasWidth}
-              />
+          {useCompactWaterfallLayout ? (
+            compactColumnCount > 1 ? (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${compactColumnCount}, minmax(0, 1fr))`,
+                gap: compactGridGap,
+                alignItems: 'start',
+              }}>
+                {compactColumns.map((column, columnIdx) => (
+                  <div key={columnIdx} style={{ minWidth: 0 }}>
+                    <div style={{
+                      fontSize: Math.max(layout.headerFontSize, 10),
+                      fontWeight: 700,
+                      color: '#666',
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.8,
+                      textAlign: 'center',
+                      marginBottom: Math.max(layout.headerGap + 4, 8),
+                    }}>
+                      Section {columnIdx + 1}
+                    </div>
+                    {column.map((pair, pairIdx) => (
+                      <WaterfallRowPairCompact
+                        key={`${columnIdx}-${pairIdx}`}
+                        pair={pair}
+                        tournamentId={tid}
+                        eventId={eid}
+                        divisionType={data.division_type || 'bracket'}
+                        layout={layout}
+                        availableWidth={compactColumnWidth}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
             ) : (
+              rowPairs.map((pair, idx) => (
+                <WaterfallRowPairCompact
+                  key={idx}
+                  pair={pair}
+                  tournamentId={tid}
+                  eventId={eid}
+                  divisionType={data.division_type || 'bracket'}
+                  layout={layout}
+                  availableWidth={canvasWidth}
+                />
+              ))
+            )
+          ) : (
+            rowPairs.map((pair, idx) => (
               <WaterfallRowPair
                 key={idx}
                 pair={pair}
@@ -845,8 +912,8 @@ export default function PublicWaterfallPage() {
                 divisionType={data.division_type || 'bracket'}
                 layout={layout}
               />
-            )
-          ))}
+            ))
+          )}
 
           {rowPairs.length === 0 && (
             <div style={{
