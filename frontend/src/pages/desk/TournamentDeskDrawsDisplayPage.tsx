@@ -330,6 +330,7 @@ export default function TournamentDeskDrawsDisplayPage() {
               width: '100%',
               display: 'grid',
               gridTemplateColumns: visiblePanels.length === 1 ? 'minmax(0, 1fr)' : `repeat(${visiblePanels.length}, minmax(0, 1fr))`,
+              gridTemplateRows: 'minmax(0, 1fr)',
               gap: PANEL_GAP_PX,
               minHeight: 0,
             }}

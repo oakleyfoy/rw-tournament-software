@@ -193,7 +193,7 @@ function CheckInReadyDisplayCard({
         gap: 4,
         minWidth: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', flexWrap: 'nowrap' }}>
           <span style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleLabel}</span>
           <EventBadge name={rq.event_name} />
           {deskMatch && (
