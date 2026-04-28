@@ -127,6 +127,28 @@ function stripTvLocationSuffix(text: string | null | undefined): string {
   return text.replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/, '').trim()
 }
 
+function shortenTvPersonName(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  if (
+    /^(winner|loser)\s+of\b/i.test(trimmed) ||
+    /^seed\b/i.test(trimmed) ||
+    /^(tbd|bye)\b/i.test(trimmed)
+  ) {
+    return trimmed
+  }
+  const [firstWord] = trimmed.split(/\s+/)
+  return firstWord || trimmed
+}
+
+function shortenTvTeamLine(text: string | null | undefined): string {
+  if (!text) return ''
+  return text
+    .split(/\s*\/\s*/)
+    .map((segment) => shortenTvPersonName(stripTvLocationSuffix(segment)))
+    .join(' / ')
+}
+
 function buildWaterfallLayout(scale: number, canvasWidth: number): WaterfallLayout {
   const isPhone = canvasWidth <= 520
   const isCompact = canvasWidth <= 900
@@ -189,8 +211,8 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
   const notesFontSize = tvMode
     ? Math.max(layout.notesFontSize * 1.5, layout.notesFontSize + 2)
     : layout.notesFontSize
-  const line1 = tvMode ? stripTvLocationSuffix(box.line1) : box.line1
-  const line2 = tvMode ? stripTvLocationSuffix(box.line2) : box.line2
+  const line1 = tvMode ? shortenTvTeamLine(box.line1) : box.line1
+  const line2 = tvMode ? shortenTvTeamLine(box.line2) : box.line2
   const notes = tvMode ? stripTvLocationSuffix(box.notes) : box.notes
 
   return (

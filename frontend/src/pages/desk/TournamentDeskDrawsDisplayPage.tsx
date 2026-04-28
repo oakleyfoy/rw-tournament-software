@@ -6,6 +6,9 @@ type DrawPanel = {
   key: string
   label: string
   path: string
+  categoryOrder: number
+  panelOrder: number
+  sequence: number
 }
 
 const ROTATION_MS = 20_000
@@ -178,12 +181,17 @@ export default function TournamentDeskDrawsDisplayPage() {
   const drawPanels = useMemo<DrawPanel[]>(() => {
     if (!draws) return []
     const panels: DrawPanel[] = []
+    let sequence = 0
     draws.events.forEach((event) => {
+      const categoryOrder = event.category === 'mixed' ? 1 : 0
       if (event.has_waterfall) {
         panels.push({
           key: `waterfall:${event.event_id}`,
           label: `${event.name} Waterfall`,
           path: `/t/${tid}/draws/${event.event_id}/waterfall?display_fit=1&tv=1`,
+          categoryOrder,
+          panelOrder: 0,
+          sequence: sequence++,
         })
       }
       if (event.has_round_robin) {
@@ -191,6 +199,9 @@ export default function TournamentDeskDrawsDisplayPage() {
           key: `roundrobin:${event.event_id}`,
           label: `${event.name} Round Robin`,
           path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1`,
+          categoryOrder,
+          panelOrder: 1,
+          sequence: sequence++,
         })
       }
       event.divisions.forEach((division) => {
@@ -198,10 +209,17 @@ export default function TournamentDeskDrawsDisplayPage() {
           key: `bracket:${event.event_id}:${division.code}`,
           label: `${event.name} ${division.label}`,
           path: `/t/${tid}/draws/${event.event_id}/bracket/${division.code}?tv=1`,
+          categoryOrder,
+          panelOrder: 1,
+          sequence: sequence++,
         })
       })
     })
-    return panels
+    return panels.sort((a, b) =>
+      (a.categoryOrder - b.categoryOrder) ||
+      (a.panelOrder - b.panelOrder) ||
+      (a.sequence - b.sequence)
+    )
   }, [draws, tid])
 
   const panelsPerPage = 1

@@ -159,6 +159,21 @@ function stripTvLocationSuffix(text: string | null | undefined): string {
   return text.replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/, '').trim()
 }
 
+function shortenTvPersonName(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  const [firstWord] = trimmed.split(/\s+/)
+  return firstWord || trimmed
+}
+
+function shortenTvTeamLine(text: string | null | undefined): string {
+  if (!text) return ''
+  return stripTvLocationSuffix(text)
+    .split(/\s*\/\s*/)
+    .map((segment) => shortenTvPersonName(segment))
+    .join(' / ')
+}
+
 // ── Pool section ────────────────────────────────────────────────────────
 
 function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
@@ -233,47 +248,59 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
   const infoParts: string[] = []
   if (showCourtInfo && match.court_label) infoParts.push(match.court_label)
   if (match.time_display) infoParts.push(match.time_display)
-  const line1 = stripTvLocationSuffix(match.line1)
-  const line2 = stripTvLocationSuffix(match.line2)
-  const winnerName = stripTvLocationSuffix(match.winner_name)
+  const line1 = shortenTvTeamLine(match.line1)
+  const line2 = shortenTvTeamLine(match.line2)
+  const winnerName = shortenTvTeamLine(match.winner_name)
+  const line1IsWinner = isFinal && Boolean(winnerName) && line1 === winnerName
+  const line2IsWinner = isFinal && Boolean(winnerName) && line2 === winnerName
 
   return (
     <div style={{
       border: '1px solid #d7deef',
       borderRadius: 6,
-      padding: '7px 9px',
+      padding: '5px 7px',
       backgroundColor: '#fff',
-      fontSize: 12,
-      lineHeight: 1.35,
+      fontSize: 11,
+      lineHeight: 1.2,
     }}>
-      <div style={{ fontWeight: 800, fontSize: 12, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{
+        fontWeight: line1IsWinner ? 900 : 800,
+        fontSize: 11.5,
+        color: line1IsWinner ? '#2e7d32' : '#1f2937',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}>
         {line1}
       </div>
-      <div style={{ fontSize: 10, color: '#6b7280', textAlign: 'center', padding: '2px 0', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+      <div style={{ fontSize: 9, color: '#6b7280', textAlign: 'center', padding: '1px 0', textTransform: 'uppercase', letterSpacing: 0.5 }}>
         vs
       </div>
-      <div style={{ fontWeight: 800, fontSize: 12, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{
+        fontWeight: line2IsWinner ? 900 : 800,
+        fontSize: 11.5,
+        color: line2IsWinner ? '#2e7d32' : '#1f2937',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}>
         {line2}
       </div>
       <div style={{
-        marginTop: 5,
+        marginTop: 3,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        gap: 8,
-        fontSize: 10,
+        gap: 6,
+        fontSize: 9,
         color: '#667085',
+        whiteSpace: 'nowrap',
       }}>
-        <span>{infoParts.join(' • ') || (isFinal ? 'Completed' : 'Pending')}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{infoParts.join(' • ') || (isFinal ? 'Completed' : 'Pending')}</span>
         {isFinal && match.score_display && (
           <span style={{ color: '#1a237e', fontWeight: 800 }}>{match.score_display}</span>
         )}
       </div>
-      {isFinal && winnerName && (
-        <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: '#2e7d32' }}>
-          Winner: {winnerName}
-        </div>
-      )}
     </div>
   )
 }
@@ -303,8 +330,8 @@ function PoolMatchesTv({
       <div style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '8px 10px',
-        fontSize: 12,
+        padding: '6px 8px',
+        fontSize: 11,
         fontWeight: 800,
         letterSpacing: 0.7,
         textTransform: 'uppercase',
@@ -312,11 +339,11 @@ function PoolMatchesTv({
       }}>
         {title}
       </div>
-      <div style={{ padding: '10px', display: 'grid', gap: 8 }}>
+      <div style={{ padding: '6px', display: 'grid', gap: 6 }}>
         {rounds.map(({ roundIndex, matches }, ri) => (
-          <div key={`${pool.pool_code}-${roundIndex}-${ri}`} style={{ display: 'grid', gap: 6 }}>
+          <div key={`${pool.pool_code}-${roundIndex}-${ri}`} style={{ display: 'grid', gap: 4 }}>
             <div style={{
-              fontSize: 10,
+              fontSize: 9,
               fontWeight: 800,
               color: '#1a237e',
               textTransform: 'uppercase',
@@ -325,7 +352,7 @@ function PoolMatchesTv({
             }}>
               Round {roundIndex || ri + 1}
             </div>
-            <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ display: 'grid', gap: 4 }}>
               {matches.map((match) => (
                 <RRMatchCardTv key={match.match_id} match={match} showCourtInfo={showCourtInfo} />
               ))}
@@ -344,12 +371,13 @@ function PoolStandingsTableTv({ standings }: { standings: RRPoolStandings }) {
       borderRadius: 8,
       backgroundColor: '#fcfdff',
       overflow: 'hidden',
+      minHeight: 0,
     }}>
       <div style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '8px 10px',
-        fontSize: 12,
+        padding: '5px 8px',
+        fontSize: 10.5,
         fontWeight: 800,
         letterSpacing: 0.7,
         textTransform: 'uppercase',
@@ -357,16 +385,16 @@ function PoolStandingsTableTv({ standings }: { standings: RRPoolStandings }) {
       }}>
         {`${standings.pool_label} Standings`.toUpperCase()}
       </div>
-      <div style={{ padding: '8px 10px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+      <div style={{ padding: '4px 6px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 8.5, tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ backgroundColor: '#eef2ff', borderBottom: '1px solid #c7d2fe' }}>
-              <th style={{ padding: '4px 6px', textAlign: 'left' }}>#</th>
-              <th style={{ padding: '4px 6px', textAlign: 'left' }}>Team</th>
-              <th style={{ padding: '4px 6px', textAlign: 'center' }}>W</th>
-              <th style={{ padding: '4px 6px', textAlign: 'center' }}>L</th>
-              <th style={{ padding: '4px 6px', textAlign: 'center' }}>SD</th>
-              <th style={{ padding: '4px 6px', textAlign: 'center' }}>GD</th>
+              <th style={{ padding: '2px 4px', textAlign: 'left', whiteSpace: 'nowrap', width: 16 }}>#</th>
+              <th style={{ padding: '2px 4px', textAlign: 'left', whiteSpace: 'nowrap' }}>Team</th>
+              <th style={{ padding: '2px 2px', textAlign: 'center', whiteSpace: 'nowrap', width: 20 }}>W</th>
+              <th style={{ padding: '2px 2px', textAlign: 'center', whiteSpace: 'nowrap', width: 20 }}>L</th>
+              <th style={{ padding: '2px 2px', textAlign: 'center', whiteSpace: 'nowrap', width: 24 }}>SD</th>
+              <th style={{ padding: '2px 2px', textAlign: 'center', whiteSpace: 'nowrap', width: 24 }}>GD</th>
             </tr>
           </thead>
           <tbody>
@@ -375,14 +403,23 @@ function PoolStandingsTableTv({ standings }: { standings: RRPoolStandings }) {
               const gameDiff = row.games_won - row.games_lost
               return (
                 <tr key={row.team_id} style={{ borderBottom: '1px solid #eef2f7', backgroundColor: idx < 2 ? '#f1f8e9' : '#fff' }}>
-                  <td style={{ padding: '4px 6px', fontWeight: 700 }}>{idx + 1}</td>
-                  <td style={{ padding: '4px 6px', fontWeight: 700, color: '#1f2937' }}>{stripTvLocationSuffix(row.team_display)}</td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{row.wins}</td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', color: '#c62828' }}>{row.losses}</td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: setDiff >= 0 ? '#2e7d32' : '#c62828' }}>
+                  <td style={{ padding: '2px 4px', fontWeight: 700, whiteSpace: 'nowrap' }}>{idx + 1}</td>
+                  <td style={{
+                    padding: '2px 4px',
+                    fontWeight: 700,
+                    color: '#1f2937',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {shortenTvTeamLine(row.team_display)}
+                  </td>
+                  <td style={{ padding: '2px 2px', textAlign: 'center', fontWeight: 700, color: '#2e7d32', whiteSpace: 'nowrap' }}>{row.wins}</td>
+                  <td style={{ padding: '2px 2px', textAlign: 'center', color: '#c62828', whiteSpace: 'nowrap' }}>{row.losses}</td>
+                  <td style={{ padding: '2px 2px', textAlign: 'center', fontWeight: 700, color: setDiff >= 0 ? '#2e7d32' : '#c62828', whiteSpace: 'nowrap' }}>
                     {setDiff >= 0 ? '+' : ''}{setDiff}
                   </td>
-                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: gameDiff >= 0 ? '#1565c0' : '#c62828' }}>
+                  <td style={{ padding: '2px 2px', textAlign: 'center', fontWeight: 700, color: gameDiff >= 0 ? '#1565c0' : '#c62828', whiteSpace: 'nowrap' }}>
                     {gameDiff >= 0 ? '+' : ''}{gameDiff}
                   </td>
                 </tr>
@@ -801,7 +838,7 @@ export default function PublicRoundRobinPage() {
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr)',
-              gap: 12,
+              gap: 10,
               height: '100%',
               alignItems: 'start',
             }}>
@@ -847,7 +884,16 @@ export default function PublicRoundRobinPage() {
                   </div>
                 )}
               </div>
-              <div style={{ minWidth: 0, minHeight: 0, display: 'grid', gap: 12, alignContent: 'start' }}>
+              <div
+                style={{
+                  minWidth: 0,
+                  minHeight: 0,
+                  display: 'grid',
+                  gap: 8,
+                  alignContent: 'stretch',
+                  gridTemplateRows: `repeat(${Math.max(tvStandingsList.length, 1)}, minmax(0, 1fr))`,
+                }}
+              >
                 {tvStandingsList.length > 0 ? (
                   tvStandingsList.map((standings) => (
                     <PoolStandingsTableTv key={standings.pool_code} standings={standings} />
