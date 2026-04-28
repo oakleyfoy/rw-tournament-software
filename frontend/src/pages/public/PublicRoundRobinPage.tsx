@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicRoundRobin, RoundRobinResponse, RRMatchBox, RRPool, RRPoolStandings } from '../../api/client'
 
@@ -137,6 +137,16 @@ function RRMatchCard({ match, showCourtInfo }: { match: RRMatchBox; showCourtInf
   )
 }
 
+function splitIntoFixedSections<T>(items: T[], sectionCount: number): T[][] {
+  if (sectionCount <= 1) return [items]
+  const sections = Array.from({ length: sectionCount }, () => [] as T[])
+  for (let idx = 0; idx < items.length; idx += 1) {
+    const sectionIndex = Math.floor((idx * sectionCount) / Math.max(items.length, 1))
+    sections[Math.min(sectionIndex, sectionCount - 1)].push(items[idx])
+  }
+  return sections
+}
+
 // ── Pool section ────────────────────────────────────────────────────────
 
 function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
@@ -199,6 +209,101 @@ function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventNa
             {matches.map(m => (
               <RRMatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
             ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtInfo: boolean }) {
+  const isFinal = match.status === 'FINAL'
+  const infoParts: string[] = []
+  if (showCourtInfo && match.court_label) infoParts.push(match.court_label)
+  if (match.time_display) infoParts.push(match.time_display)
+
+  return (
+    <div style={{
+      border: '1px solid #d7deef',
+      borderRadius: 6,
+      padding: '7px 9px',
+      backgroundColor: '#fff',
+      fontSize: 12,
+      lineHeight: 1.35,
+    }}>
+      <div style={{ fontWeight: 800, fontSize: 12, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {match.line1}
+      </div>
+      <div style={{ fontSize: 10, color: '#6b7280', textAlign: 'center', padding: '2px 0', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        vs
+      </div>
+      <div style={{ fontWeight: 800, fontSize: 12, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {match.line2}
+      </div>
+      <div style={{
+        marginTop: 5,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 10,
+        color: '#667085',
+      }}>
+        <span>{infoParts.join(' • ') || (isFinal ? 'Completed' : 'Pending')}</span>
+        {isFinal && match.score_display && (
+          <span style={{ color: '#1a237e', fontWeight: 800 }}>{match.score_display}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PoolSectionTv({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
+  const title = `${eventName} ${pool.pool_label}`.toUpperCase()
+  const rounds = Array.from(
+    pool.matches.reduce((acc, match) => {
+      const roundIndex = match.round_index || 0
+      const existing = acc.get(roundIndex) || []
+      existing.push(match)
+      acc.set(roundIndex, existing)
+      return acc
+    }, new Map<number, RRMatchBox[]>()).entries()
+  )
+    .sort((a, b) => a[0] - b[0])
+    .map(([roundIndex, matches]) => ({ roundIndex, matches }))
+
+  return (
+    <div style={{ border: '1px solid #d9deeb', borderRadius: 8, backgroundColor: '#fcfdff', overflow: 'hidden' }}>
+      <div style={{
+        backgroundColor: '#1a237e',
+        color: '#fff',
+        padding: '8px 10px',
+        fontSize: 12,
+        fontWeight: 800,
+        letterSpacing: 0.7,
+        textTransform: 'uppercase',
+        textAlign: 'center',
+      }}>
+        {title}
+      </div>
+      <div style={{ padding: '10px', display: 'grid', gap: 10 }}>
+        {rounds.map(({ roundIndex, matches }, ri) => (
+          <div key={`${pool.pool_code}-${roundIndex}-${ri}`} style={{ display: 'grid', gap: 6 }}>
+            <div style={{
+              fontSize: 10,
+              fontWeight: 800,
+              color: '#1a237e',
+              textTransform: 'uppercase',
+              letterSpacing: 0.6,
+              textAlign: 'center',
+            }}>
+              Round {roundIndex || ri + 1}
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {matches.map((match) => (
+                <RRMatchCardTv key={match.match_id} match={match} showCourtInfo={showCourtInfo} />
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -395,6 +500,7 @@ export default function PublicRoundRobinPage() {
   const eid = eventId ? parseInt(eventId, 10) : null
   const [searchParams] = useSearchParams()
   const captureMode = searchParams.get('capture_packet') === '1'
+  const tvMode = searchParams.get('tv') === '1'
 
   const [data, setData] = useState<RoundRobinResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -443,6 +549,7 @@ export default function PublicRoundRobinPage() {
   }, [])
 
   const showCourtInfo = data?.show_court_info !== false
+  const tvSections = useMemo(() => splitIntoFixedSections(data?.pools || [], 4), [data?.pools])
 
   if (loading) {
     return (
@@ -484,7 +591,14 @@ export default function PublicRoundRobinPage() {
   }
 
   return (
-    <div className="rr-print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
+    <div className="rr-print-root" style={{
+      backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
+      minHeight: captureMode ? 'auto' : '100vh',
+      height: tvMode ? '100vh' : undefined,
+      overflow: tvMode ? 'hidden' : undefined,
+      display: tvMode ? 'flex' : undefined,
+      flexDirection: tvMode ? 'column' : undefined,
+    }}>
       {/* Nav */}
       <div className="no-print" style={{
         padding: '8px 20px',
@@ -495,7 +609,7 @@ export default function PublicRoundRobinPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        ...(captureMode ? { display: 'none' } : {}),
+        ...(captureMode || tvMode ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link
@@ -538,18 +652,19 @@ export default function PublicRoundRobinPage() {
       <div data-rr-header style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '14px 24px',
-        fontSize: 16,
+        padding: tvMode ? '10px 18px' : '14px 24px',
+        fontSize: tvMode ? 14 : 16,
         fontWeight: 700,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
         textAlign: 'center',
+        flexShrink: tvMode ? 0 : undefined,
       }}>
         {headerText}
       </div>
 
       {/* Standings */}
-      {!captureMode && data.standings && data.standings.length > 0 && (
+      {!captureMode && !tvMode && data.standings && data.standings.length > 0 && (
         <div style={{ padding: '16px 24px 0' }}>
           <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 720px', minWidth: 300 }}>
@@ -561,24 +676,76 @@ export default function PublicRoundRobinPage() {
       )}
 
       {/* Content */}
-      <div data-rr-canvas style={{ padding: captureMode ? '12px 14px' : '20px 24px' }}>
+      <div data-rr-canvas style={{
+        padding: captureMode ? '12px 14px' : tvMode ? '10px 12px' : '20px 24px',
+        flex: tvMode ? 1 : undefined,
+        minHeight: tvMode ? 0 : undefined,
+        overflow: tvMode ? 'hidden' : undefined,
+      }}>
         <div data-rr-inner>
-          {poolPairs.map((pair, pi) => (
-            <div key={pi} style={{
-              display: 'flex',
-              gap: 24,
-              marginBottom: 20,
-              flexWrap: 'wrap',
+          {tvMode ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+              gap: 12,
+              height: '100%',
             }}>
-              {pair.map(pool => (
-                <div key={pool.pool_code} style={{ flex: '1 1 48%', minWidth: 320 }}>
-                  <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
+              {tvSections.map((section, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'grid',
+                    gap: 10,
+                    alignContent: 'start',
+                  }}
+                >
+                  {section.length > 0 ? (
+                    section.map((pool) => (
+                      <PoolSectionTv key={pool.pool_code} pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
+                    ))
+                  ) : (
+                    <div style={{
+                      border: '1px solid #d9deeb',
+                      borderRadius: 8,
+                      backgroundColor: '#fcfdff',
+                      minHeight: 120,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#90a4ae',
+                      fontSize: 12,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.6,
+                    }}>
+                      Section {idx + 1}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
-          ))}
+          ) : (
+            <>
+              {poolPairs.map((pair, pi) => (
+                <div key={pi} style={{
+                  display: 'flex',
+                  gap: 24,
+                  marginBottom: 20,
+                  flexWrap: 'wrap',
+                }}>
+                  {pair.map(pool => (
+                    <div key={pool.pool_code} style={{ flex: '1 1 48%', minWidth: 320 }}>
+                      <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
+                    </div>
+                  ))}
+                </div>
+              ))}
 
-          {captureMode && <StandingsHelpRow tiebreakerNote={data.tiebreaker_note} />}
+              {captureMode && <StandingsHelpRow tiebreakerNote={data.tiebreaker_note} />}
+            </>
+          )}
 
         </div>
       </div>

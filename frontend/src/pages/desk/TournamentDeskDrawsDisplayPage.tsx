@@ -183,21 +183,21 @@ export default function TournamentDeskDrawsDisplayPage() {
         panels.push({
           key: `waterfall:${event.event_id}`,
           label: `${event.name} Waterfall`,
-          path: `/t/${tid}/draws/${event.event_id}/waterfall?display_fit=1`,
+          path: `/t/${tid}/draws/${event.event_id}/waterfall?display_fit=1&tv=1`,
         })
       }
       if (event.has_round_robin) {
         panels.push({
           key: `roundrobin:${event.event_id}`,
           label: `${event.name} Round Robin`,
-          path: `/t/${tid}/draws/${event.event_id}/roundrobin`,
+          path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1`,
         })
       }
       event.divisions.forEach((division) => {
         panels.push({
           key: `bracket:${event.event_id}:${division.code}`,
           label: `${event.name} ${division.label}`,
-          path: `/t/${tid}/draws/${event.event_id}/bracket/${division.code}`,
+          path: `/t/${tid}/draws/${event.event_id}/bracket/${division.code}?tv=1`,
         })
       })
     })

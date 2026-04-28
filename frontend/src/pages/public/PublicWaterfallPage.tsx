@@ -380,6 +380,16 @@ function splitIntoBalancedColumns<T>(items: T[], columnCount: number): T[][] {
   return columns.filter((column) => column.length > 0)
 }
 
+function splitIntoFixedSections<T>(items: T[], sectionCount: number): T[][] {
+  if (sectionCount <= 1) return [items]
+  const sections = Array.from({ length: sectionCount }, () => [] as T[])
+  for (let idx = 0; idx < items.length; idx += 1) {
+    const sectionIndex = Math.floor((idx * sectionCount) / Math.max(items.length, 1))
+    sections[Math.min(sectionIndex, sectionCount - 1)].push(items[idx])
+  }
+  return sections
+}
+
 function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }: {
   pair: RowPair
   tournamentId: number | null
@@ -472,6 +482,7 @@ function WaterfallRowPairCompact({
   divisionType,
   layout,
   availableWidth,
+  tvMode = false,
 }: {
   pair: RowPair
   tournamentId: number | null
@@ -479,15 +490,18 @@ function WaterfallRowPairCompact({
   divisionType: 'bracket' | 'roundrobin'
   layout: WaterfallLayout
   availableWidth: number
+  tvMode?: boolean
 }) {
-  const laneWidth = Math.max(Math.min(availableWidth - 20, 420), 260)
+  const laneWidth = tvMode
+    ? Math.max(Math.min(availableWidth - 16, 360), 220)
+    : Math.max(Math.min(availableWidth - 20, 420), 260)
   const sectionLabelStyle = {
-    fontSize: Math.max(layout.destFontSize, 9),
+    fontSize: Math.max(layout.destFontSize, tvMode ? 10 : 9),
     fontWeight: 700,
     color: '#666',
     textTransform: 'uppercase' as const,
     letterSpacing: 0.6,
-    marginBottom: 4,
+    marginBottom: tvMode ? 2 : 4,
   }
 
   return (
@@ -495,9 +509,9 @@ function WaterfallRowPairCompact({
       data-row-pair
       style={{
         display: 'grid',
-        gap: Math.max(layout.rowMarginBottom, 10),
+        gap: tvMode ? Math.max(layout.headerGap, 4) : Math.max(layout.rowMarginBottom, 10),
         justifyItems: 'center',
-        marginBottom: Math.max(layout.rowMarginBottom + 6, 14),
+        marginBottom: tvMode ? Math.max(layout.headerGap + 4, 8) : Math.max(layout.rowMarginBottom + 6, 14),
       }}
     >
       <div style={{ display: 'grid', gap: layout.rowGap, justifyItems: 'center', width: '100%' }}>
@@ -556,6 +570,7 @@ export default function PublicWaterfallPage() {
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : undefined
   const captureMode = searchParams.get('capture_packet') === '1'
   const displayFitMode = searchParams.get('display_fit') === '1'
+  const tvMode = searchParams.get('tv') === '1'
 
   const [data, setData] = useState<PublicWaterfallResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -659,24 +674,31 @@ export default function PublicWaterfallPage() {
     }
   }, [displayFitMode])
 
-  const useCompactWaterfallLayout = displayFitMode || (!captureMode && canvasWidth <= 520)
+  const useCompactWaterfallLayout = tvMode || displayFitMode || (!captureMode && canvasWidth <= 520)
   const layout = captureMode
     ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
+    : tvMode
+      ? buildWaterfallLayout(0.82, Math.max(canvasWidth / 2, 420))
     : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
   const compactColumnCount = useMemo(() => {
+    if (tvMode) return 4
     if (!displayFitMode) return 1
     if (rowPairs.length >= 10 && canvasWidth >= 1080) return 3
     if (rowPairs.length >= 5) return 2
     return 1
-  }, [displayFitMode, rowPairs.length, canvasWidth])
+  }, [tvMode, displayFitMode, rowPairs.length, canvasWidth])
   const compactColumns = useMemo(
-    () => splitIntoBalancedColumns(rowPairs, compactColumnCount),
+    () => tvMode
+      ? splitIntoFixedSections(rowPairs, compactColumnCount)
+      : splitIntoBalancedColumns(rowPairs, compactColumnCount),
     [rowPairs, compactColumnCount]
   )
   const compactGridGap = Math.max(layout.rowMarginBottom, 14)
-  const compactColumnWidth = compactColumnCount > 0
-    ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
-    : canvasWidth
+  const compactColumnWidth = tvMode
+    ? Math.max((canvasWidth - compactGridGap) / 2, 320)
+    : compactColumnCount > 0
+      ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
+      : canvasWidth
 
   if (loading) {
     return (
@@ -712,8 +734,15 @@ export default function PublicWaterfallPage() {
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
 
   return (
-    <div className="print-root" style={{ backgroundColor: captureMode || displayFitMode ? '#fff' : '#f8f9fa', minHeight: captureMode || displayFitMode ? 'auto' : '100vh' }}>
-      {versionId && !captureMode && !displayFitMode && (
+    <div className="print-root" style={{
+      backgroundColor: captureMode || displayFitMode || tvMode ? '#fff' : '#f8f9fa',
+      minHeight: captureMode || displayFitMode ? 'auto' : '100vh',
+      height: tvMode ? '100vh' : undefined,
+      overflow: tvMode ? 'hidden' : undefined,
+      display: tvMode ? 'flex' : undefined,
+      flexDirection: tvMode ? 'column' : undefined,
+    }}>
+      {versionId && !captureMode && !displayFitMode && !tvMode && (
         <div className="no-print" style={{
           padding: '8px 20px',
           backgroundColor: '#fff3e0',
@@ -736,7 +765,7 @@ export default function PublicWaterfallPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        ...((captureMode || displayFitMode) ? { display: 'none' } : {}),
+        ...((captureMode || displayFitMode || tvMode) ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link
@@ -773,12 +802,13 @@ export default function PublicWaterfallPage() {
       <div data-header style={{
         backgroundColor: COLORS.header.bg,
         color: COLORS.header.text,
-        padding: '14px 24px',
-        fontSize: 16,
+        padding: tvMode ? '10px 18px' : '14px 24px',
+        fontSize: tvMode ? 14 : 16,
         fontWeight: 700,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
         textAlign: 'center',
+        flexShrink: tvMode ? 0 : undefined,
       }}>
         {headerText}
       </div>
@@ -789,22 +819,31 @@ export default function PublicWaterfallPage() {
         data-bracket-canvas
         style={{
           overflowX: captureMode ? 'visible' : 'hidden',
+          overflowY: tvMode ? 'hidden' : 'visible',
           padding: captureMode
             ? '10px 8px'
+            : tvMode
+              ? '10px 12px'
             : canvasWidth <= 520
               ? '12px 6px'
               : canvasWidth <= 900
                 ? '16px 10px'
                 : '20px 16px',
+          flex: tvMode ? 1 : undefined,
+          minHeight: tvMode ? 0 : undefined,
         }}
       >
         <div data-bracket-inner style={{
           width: '100%',
           minWidth: 0,
-          maxWidth: captureMode ? 1900 : WATERFALL_BASE_WIDTH,
+          maxWidth: captureMode ? 1900 : tvMode ? 'none' : WATERFALL_BASE_WIDTH,
           margin: '0 auto',
+          height: tvMode ? '100%' : undefined,
+          display: tvMode ? 'flex' : undefined,
+          flexDirection: tvMode ? 'column' : undefined,
         }}>
-          <div style={{
+          {!tvMode && (
+            <div style={{
             marginBottom: 12,
             padding: '10px 12px',
             border: '1px solid #dce775',
@@ -822,7 +861,8 @@ export default function PublicWaterfallPage() {
               <li>WF Match #1 &amp; #2 combined game difference</li>
               <li>Combined Ratings</li>
             </ol>
-          </div>
+            </div>
+          )}
 
           {!useCompactWaterfallLayout && (
             <div data-col-headers style={{
@@ -859,20 +899,36 @@ export default function PublicWaterfallPage() {
             compactColumnCount > 1 ? (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: `repeat(${compactColumnCount}, minmax(0, 1fr))`,
+                gridTemplateColumns: tvMode
+                  ? 'repeat(2, minmax(0, 1fr))'
+                  : `repeat(${compactColumnCount}, minmax(0, 1fr))`,
+                gridTemplateRows: tvMode ? 'repeat(2, minmax(0, 1fr))' : undefined,
                 gap: compactGridGap,
                 alignItems: 'start',
+                flex: tvMode ? 1 : undefined,
+                minHeight: tvMode ? 0 : undefined,
               }}>
                 {compactColumns.map((column, columnIdx) => (
-                  <div key={columnIdx} style={{ minWidth: 0 }}>
+                  <div
+                    key={columnIdx}
+                    style={{
+                      minWidth: 0,
+                      minHeight: tvMode ? 0 : undefined,
+                      border: tvMode ? '1px solid #d9deeb' : undefined,
+                      borderRadius: tvMode ? 8 : undefined,
+                      backgroundColor: tvMode ? '#fcfdff' : undefined,
+                      padding: tvMode ? '8px 10px' : undefined,
+                      overflow: tvMode ? 'hidden' : undefined,
+                    }}
+                  >
                     <div style={{
-                      fontSize: Math.max(layout.headerFontSize, 10),
+                      fontSize: Math.max(layout.headerFontSize, tvMode ? 11 : 10),
                       fontWeight: 700,
-                      color: '#666',
+                      color: tvMode ? '#1a237e' : '#666',
                       textTransform: 'uppercase',
                       letterSpacing: 0.8,
                       textAlign: 'center',
-                      marginBottom: Math.max(layout.headerGap + 4, 8),
+                      marginBottom: tvMode ? 8 : Math.max(layout.headerGap + 4, 8),
                     }}>
                       Section {columnIdx + 1}
                     </div>
@@ -885,8 +941,24 @@ export default function PublicWaterfallPage() {
                         divisionType={data.division_type || 'bracket'}
                         layout={layout}
                         availableWidth={compactColumnWidth}
+                        tvMode={tvMode}
                       />
                     ))}
+                    {tvMode && column.length === 0 && (
+                      <div style={{
+                        height: '100%',
+                        minHeight: 80,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#90a4ae',
+                        fontSize: 12,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.6,
+                      }}>
+                        No Matches
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -900,6 +972,7 @@ export default function PublicWaterfallPage() {
                   divisionType={data.division_type || 'bracket'}
                   layout={layout}
                   availableWidth={canvasWidth}
+                  tvMode={tvMode}
                 />
               ))
             )

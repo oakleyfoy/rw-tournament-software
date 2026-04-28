@@ -77,6 +77,60 @@ const COLORS = {
   consolation: { bg: '#fff3e0', border: '#ffb74d', bgFinal: '#ffe0b2' },
 }
 
+function partitionConsolationMatches(matches: BracketMatchBox[]) {
+  const matchIds = new Set(matches.map(m => m.match_id))
+  const bracketChainIds = new Set<number>()
+  const winnerChainMatches = matches.filter(m => {
+    const fromConsol =
+      (m.source_match_a_id && matchIds.has(m.source_match_a_id)) ||
+      (m.source_match_b_id && matchIds.has(m.source_match_b_id))
+    if (!fromConsol) return false
+    const line1 = (m.line1 || '').toLowerCase()
+    const line2 = (m.line2 || '').toLowerCase()
+    return line1.startsWith('winner of match') || line2.startsWith('winner of match')
+  })
+
+  for (const m of winnerChainMatches) {
+    bracketChainIds.add(m.match_id)
+    if (m.source_match_a_id && matchIds.has(m.source_match_a_id)) {
+      bracketChainIds.add(m.source_match_a_id)
+    }
+    if (m.source_match_b_id && matchIds.has(m.source_match_b_id)) {
+      bracketChainIds.add(m.source_match_b_id)
+    }
+  }
+
+  const bracketMatches = matches
+    .filter(m => bracketChainIds.has(m.match_id))
+    .map(m => ({ ...m }))
+    .sort((a, b) => (a.round_index - b.round_index) || (a.sequence_in_round - b.sequence_in_round))
+
+  const standaloneMatches = matches
+    .filter(m => !bracketChainIds.has(m.match_id))
+    .map(m => ({ ...m }))
+    .sort((a, b) => (b.round_index - a.round_index) || (a.sequence_in_round - b.sequence_in_round))
+
+  if (bracketMatches.length > 0) {
+    const finals = bracketMatches.filter(m => winnerChainMatches.some(s => s.match_id === m.match_id))
+    const feederIds = new Set<number>()
+    for (const finalMatch of finals) {
+      if (finalMatch.source_match_a_id && bracketChainIds.has(finalMatch.source_match_a_id)) {
+        feederIds.add(finalMatch.source_match_a_id)
+      }
+      if (finalMatch.source_match_b_id && bracketChainIds.has(finalMatch.source_match_b_id)) {
+        feederIds.add(finalMatch.source_match_b_id)
+      }
+    }
+    const feeders = bracketMatches.filter(m => feederIds.has(m.match_id))
+
+    for (const feeder of feeders) feeder.round_index = 1
+    let ri = 2
+    for (const finalMatch of finals) finalMatch.round_index = ri++
+  }
+
+  return { bracketMatches, standaloneMatches }
+}
+
 function MatchCard({ match, variant, showCourtInfo }: {
   match: BracketMatchBox
   variant: 'main' | 'consolation'
@@ -165,6 +219,46 @@ function MatchCard({ match, variant, showCourtInfo }: {
         textOverflow: 'ellipsis',
       }}>
         {match.line2}
+      </div>
+    </div>
+  )
+}
+
+function MatchCardTv({ match, variant, showCourtInfo }: {
+  match: BracketMatchBox
+  variant: 'main' | 'consolation'
+  showCourtInfo: boolean
+}) {
+  const palette = COLORS[variant]
+  const isFinal = match.status === 'FINAL'
+  const metaParts: string[] = []
+  if (showCourtInfo && match.court_label) metaParts.push(match.court_label)
+  if (match.time_display) metaParts.push(match.time_display)
+
+  return (
+    <div style={{
+      backgroundColor: isFinal ? palette.bgFinal : palette.bg,
+      border: `1px solid ${palette.border}`,
+      borderRadius: 6,
+      padding: '8px 10px',
+      boxSizing: 'border-box',
+      display: 'grid',
+      gap: 4,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: '#475467' }}>{`Match #${match.match_id}`}</span>
+        {isFinal && match.score_display && (
+          <span style={{ fontSize: 10, fontWeight: 800, color: '#1a237e' }}>{match.score_display}</span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 800, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {match.line1}
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 800, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {match.line2}
+      </div>
+      <div style={{ fontSize: 10, color: '#667085' }}>
+        {metaParts.join(' • ') || (match.status === 'UNSCHEDULED' ? 'Pending' : 'Completed')}
       </div>
     </div>
   )
@@ -283,62 +377,7 @@ function BracketTree({ matches, variant, roundLabels, showCourtInfo }: {
 function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchBox[]; showCourtInfo: boolean }) {
   if (matches.length === 0) return null
 
-  const { bracketMatches, standaloneMatches } = useMemo(() => {
-    const matchIds = new Set(matches.map(m => m.match_id))
-    const bracketChainIds = new Set<number>()
-    const winnerChainMatches = matches.filter(m => {
-      const fromConsol =
-        (m.source_match_a_id && matchIds.has(m.source_match_a_id)) ||
-        (m.source_match_b_id && matchIds.has(m.source_match_b_id))
-      if (!fromConsol) return false
-      const line1 = (m.line1 || '').toLowerCase()
-      const line2 = (m.line2 || '').toLowerCase()
-      return line1.startsWith('winner of match') || line2.startsWith('winner of match')
-    })
-
-    // Add only the winner-path consolation chain to the bracket tree.
-    // Loser-path placement matches (like the "Round 3" card) stay below
-    // under the Drop-In Matches heading.
-    for (const m of winnerChainMatches) {
-      bracketChainIds.add(m.match_id)
-      if (m.source_match_a_id && matchIds.has(m.source_match_a_id)) {
-        bracketChainIds.add(m.source_match_a_id)
-      }
-      if (m.source_match_b_id && matchIds.has(m.source_match_b_id)) {
-        bracketChainIds.add(m.source_match_b_id)
-      }
-    }
-
-    const bm = matches
-      .filter(m => bracketChainIds.has(m.match_id))
-      .sort((a, b) => (a.round_index - b.round_index) || (a.sequence_in_round - b.sequence_in_round))
-
-    const sm = matches
-      .filter(m => !bracketChainIds.has(m.match_id))
-      .sort((a, b) => (b.round_index - a.round_index) || (a.sequence_in_round - b.sequence_in_round))
-
-    // Re-index bracket matches for the tree: the feeder matches become round 1,
-    // the match they feed into becomes round 2
-    if (bm.length > 0) {
-      const finals = bm.filter(m => winnerChainMatches.some(s => s.match_id === m.match_id))
-      const feederIds = new Set<number>()
-      for (const finalMatch of finals) {
-        if (finalMatch.source_match_a_id && bracketChainIds.has(finalMatch.source_match_a_id)) {
-          feederIds.add(finalMatch.source_match_a_id)
-        }
-        if (finalMatch.source_match_b_id && bracketChainIds.has(finalMatch.source_match_b_id)) {
-          feederIds.add(finalMatch.source_match_b_id)
-        }
-      }
-      const feeders = bm.filter(m => feederIds.has(m.match_id))
-
-      for (const f of feeders) f.round_index = 1
-      let ri = 2
-      for (const f of finals) f.round_index = ri++
-    }
-
-    return { bracketMatches: bm, standaloneMatches: sm }
-  }, [matches])
+  const { bracketMatches, standaloneMatches } = useMemo(() => partitionConsolationMatches(matches), [matches])
 
   return (
     <div style={{ marginTop: 40 }}>
@@ -398,6 +437,7 @@ export default function PublicBracketPage() {
   const versionIdParam = searchParams.get('version_id')
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : undefined
   const captureMode = searchParams.get('capture_packet') === '1'
+  const tvMode = searchParams.get('tv') === '1'
 
   const [data, setData] = useState<BracketResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -446,6 +486,26 @@ export default function PublicBracketPage() {
   }, [])
 
   const showCourtInfo = data?.show_court_info !== false
+  const tvMainRounds = useMemo(() => {
+    const labels: Record<number, string> = { 1: 'Quarterfinals', 2: 'Semifinals', 3: 'Final' }
+    if (!data) return []
+    const roundMap = new Map<number, BracketMatchBox[]>()
+    for (const match of data.main_matches) {
+      const existing = roundMap.get(match.round_index) || []
+      existing.push(match)
+      roundMap.set(match.round_index, existing)
+    }
+    return Array.from(roundMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([roundIndex, matches]) => ({
+        title: labels[roundIndex] || `Round ${roundIndex}`,
+        matches: matches.slice().sort((a, b) => a.sequence_in_round - b.sequence_in_round),
+      }))
+  }, [data])
+  const tvConsolation = useMemo(
+    () => partitionConsolationMatches(data?.consolation_matches || []),
+    [data?.consolation_matches]
+  )
 
   if (loading) {
     return (
@@ -481,8 +541,15 @@ export default function PublicBracketPage() {
   const headerText = `${data.event_name} — ${data.division_label}`.toUpperCase()
 
   return (
-    <div className="bracket-print-root" style={{ backgroundColor: captureMode ? '#fff' : '#f8f9fa', minHeight: captureMode ? 'auto' : '100vh' }}>
-      {versionId && !captureMode && (
+    <div className="bracket-print-root" style={{
+      backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
+      minHeight: captureMode ? 'auto' : '100vh',
+      height: tvMode ? '100vh' : undefined,
+      overflow: tvMode ? 'hidden' : undefined,
+      display: tvMode ? 'flex' : undefined,
+      flexDirection: tvMode ? 'column' : undefined,
+    }}>
+      {versionId && !captureMode && !tvMode && (
         <div className="no-print" style={{
           padding: '8px 20px',
           backgroundColor: '#fff3e0',
@@ -506,7 +573,7 @@ export default function PublicBracketPage() {
         gap: 16,
         justifyContent: 'space-between',
         alignItems: 'center',
-        ...(captureMode ? { display: 'none' } : {}),
+        ...(captureMode || tvMode ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
           <Link
@@ -549,21 +616,109 @@ export default function PublicBracketPage() {
       <div data-bracket-header style={{
         backgroundColor: COLORS.header.bg,
         color: COLORS.header.text,
-        padding: '14px 24px',
-        fontSize: 16,
+        padding: tvMode ? '10px 18px' : '14px 24px',
+        fontSize: tvMode ? 14 : 16,
         fontWeight: 700,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
         textAlign: 'center',
+        flexShrink: tvMode ? 0 : undefined,
       }}>
         {headerText}
       </div>
 
       {/* Bracket canvas */}
-      <div data-bracket-canvas style={{ overflowX: 'auto', padding: captureMode ? '10px 14px' : '20px 24px' }}>
-        <div data-bracket-inner style={{ display: 'inline-block', minWidth: captureMode ? 640 : 800 }}>
-          <BracketTree matches={data.main_matches} variant="main" showCourtInfo={showCourtInfo} />
-          <ConsolationSection matches={data.consolation_matches} showCourtInfo={showCourtInfo} />
+      <div data-bracket-canvas style={{
+        overflowX: tvMode ? 'hidden' : 'auto',
+        overflowY: tvMode ? 'hidden' : 'visible',
+        padding: captureMode ? '10px 14px' : tvMode ? '10px 12px' : '20px 24px',
+        flex: tvMode ? 1 : undefined,
+        minHeight: tvMode ? 0 : undefined,
+      }}>
+        <div data-bracket-inner style={{ display: tvMode ? 'block' : 'inline-block', minWidth: captureMode ? 640 : tvMode ? 0 : 800, height: tvMode ? '100%' : undefined }}>
+          {tvMode ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+              gap: 12,
+              height: '100%',
+            }}>
+              {[
+                { title: tvMainRounds[0]?.title || 'Round 1', matches: tvMainRounds[0]?.matches || [], variant: 'main' as const },
+                { title: tvMainRounds[1]?.title || 'Round 2', matches: tvMainRounds[1]?.matches || [], variant: 'main' as const },
+                {
+                  title: tvMainRounds.length > 2
+                    ? tvMainRounds.slice(2).map((round) => round.title).join(' / ')
+                    : 'Final Rounds',
+                  matches: tvMainRounds.slice(2).flatMap((round) => round.matches),
+                  variant: 'main' as const,
+                },
+                {
+                  title: tvConsolation.standaloneMatches.length > 0 ? 'Drop-In Matches' : 'Consolation',
+                  matches: [...tvConsolation.bracketMatches, ...tvConsolation.standaloneMatches],
+                  variant: 'consolation' as const,
+                },
+              ].map((section, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    padding: '10px',
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'grid',
+                    alignContent: 'start',
+                    gap: 8,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div style={{
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: '#1a237e',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.7,
+                    textAlign: 'center',
+                  }}>
+                    {section.title}
+                  </div>
+                  {section.matches.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {section.matches.map((match) => (
+                        <MatchCardTv
+                          key={match.match_id}
+                          match={match}
+                          variant={section.variant}
+                          showCourtInfo={showCourtInfo}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{
+                      minHeight: 80,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#90a4ae',
+                      fontSize: 12,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.6,
+                    }}>
+                      No Matches
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <BracketTree matches={data.main_matches} variant="main" showCourtInfo={showCourtInfo} />
+              <ConsolationSection matches={data.consolation_matches} showCourtInfo={showCourtInfo} />
+            </>
+          )}
         </div>
       </div>
     </div>
