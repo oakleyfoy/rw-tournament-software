@@ -380,16 +380,6 @@ function splitIntoBalancedColumns<T>(items: T[], columnCount: number): T[][] {
   return columns.filter((column) => column.length > 0)
 }
 
-function splitIntoFixedSections<T>(items: T[], sectionCount: number): T[][] {
-  if (sectionCount <= 1) return [items]
-  const sections = Array.from({ length: sectionCount }, () => [] as T[])
-  for (let idx = 0; idx < items.length; idx += 1) {
-    const sectionIndex = Math.floor((idx * sectionCount) / Math.max(items.length, 1))
-    sections[Math.min(sectionIndex, sectionCount - 1)].push(items[idx])
-  }
-  return sections
-}
-
 function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }: {
   pair: RowPair
   tournamentId: number | null
@@ -559,6 +549,77 @@ function WaterfallRowPairCompact({
   )
 }
 
+type TvWaterfallEntry = {
+  box: PublicMatchBox
+  variant: 'center' | 'winner' | 'loser'
+}
+
+function WaterfallTvColumn({
+  title,
+  entries,
+  layout,
+  cardWidth,
+}: {
+  title: string
+  entries: TvWaterfallEntry[]
+  layout: WaterfallLayout
+  cardWidth: number
+}) {
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        minHeight: 0,
+        border: '1px solid #d9deeb',
+        borderRadius: 8,
+        backgroundColor: '#fcfdff',
+        padding: '8px 10px',
+        overflow: 'hidden',
+        display: 'grid',
+        alignContent: 'start',
+        gap: 8,
+      }}
+    >
+      <div style={{
+        fontSize: Math.max(layout.headerFontSize, 11),
+        fontWeight: 700,
+        color: '#1a237e',
+        textTransform: 'uppercase',
+        letterSpacing: 0.8,
+        textAlign: 'center',
+      }}>
+        {title}
+      </div>
+      {entries.length > 0 ? (
+        <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
+          {entries.map((entry, idx) => (
+            <MatchBoxCard
+              key={`${entry.box.match_id}-${idx}`}
+              box={entry.box}
+              variant={entry.variant}
+              layout={layout}
+              widthOverride={cardWidth}
+            />
+          ))}
+        </div>
+      ) : (
+        <div style={{
+          minHeight: 80,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#90a4ae',
+          fontSize: 12,
+          textTransform: 'uppercase',
+          letterSpacing: 0.6,
+        }}>
+          No Matches
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ───────────────────────────────────────────────────────────
 
 export default function PublicWaterfallPage() {
@@ -638,6 +699,32 @@ export default function PublicWaterfallPage() {
 
     return pairs
   }, [data])
+  const tvRoundOneEntries = useMemo<TvWaterfallEntry[]>(
+    () => rowPairs.flatMap((pair) => {
+      const entries: TvWaterfallEntry[] = [{ box: pair.r1_a, variant: 'center' }]
+      if (pair.r1_b) entries.push({ box: pair.r1_b, variant: 'center' })
+      return entries
+    }),
+    [rowPairs]
+  )
+  const tvWinnerEntries = useMemo<TvWaterfallEntry[]>(
+    () => rowPairs.flatMap((pair) => pair.winner ? [{ box: pair.winner, variant: 'winner' }] : []),
+    [rowPairs]
+  )
+  const tvLoserEntries = useMemo<TvWaterfallEntry[]>(
+    () => rowPairs.flatMap((pair) => pair.loser ? [{ box: pair.loser, variant: 'loser' }] : []),
+    [rowPairs]
+  )
+  const tvSecondRoundEntries = useMemo<TvWaterfallEntry[]>(
+    () => rowPairs.flatMap((pair) => {
+      const entries: TvWaterfallEntry[] = []
+      if (pair.winner) entries.push({ box: pair.winner, variant: 'winner' })
+      if (pair.loser) entries.push({ box: pair.loser, variant: 'loser' })
+      return entries
+    }),
+    [rowPairs]
+  )
+  const tvUseFourColumns = tvRoundOneEntries.length > 8
 
   const handlePrint = useCallback(() => {
     injectPrintStyles()
@@ -674,31 +761,52 @@ export default function PublicWaterfallPage() {
     }
   }, [displayFitMode])
 
-  const useCompactWaterfallLayout = tvMode || displayFitMode || (!captureMode && canvasWidth <= 520)
+  const useCompactWaterfallLayout = displayFitMode || (!captureMode && canvasWidth <= 520)
   const layout = captureMode
     ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
     : tvMode
-      ? buildWaterfallLayout(0.82, Math.max(canvasWidth / 2, 420))
+      ? buildWaterfallLayout(tvUseFourColumns ? 0.5 : 0.68, Math.max(canvasWidth / (tvUseFourColumns ? 4 : 2), 240))
     : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
   const compactColumnCount = useMemo(() => {
-    if (tvMode) return 4
     if (!displayFitMode) return 1
     if (rowPairs.length >= 10 && canvasWidth >= 1080) return 3
     if (rowPairs.length >= 5) return 2
     return 1
-  }, [tvMode, displayFitMode, rowPairs.length, canvasWidth])
+  }, [displayFitMode, rowPairs.length, canvasWidth])
   const compactColumns = useMemo(
-    () => tvMode
-      ? splitIntoFixedSections(rowPairs, compactColumnCount)
-      : splitIntoBalancedColumns(rowPairs, compactColumnCount),
+    () => splitIntoBalancedColumns(rowPairs, compactColumnCount),
     [rowPairs, compactColumnCount]
   )
   const compactGridGap = Math.max(layout.rowMarginBottom, 14)
-  const compactColumnWidth = tvMode
-    ? Math.max((canvasWidth - compactGridGap) / 2, 320)
-    : compactColumnCount > 0
+  const compactColumnWidth = compactColumnCount > 0
       ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
       : canvasWidth
+  const tvColumnCount = tvUseFourColumns ? 4 : 2
+  const tvColumnGap = 12
+  const tvColumnWidth = Math.max((canvasWidth - (tvColumnGap * (tvColumnCount - 1))) / tvColumnCount, 220)
+  const tvCardWidth = Math.max(
+    Math.min(tvColumnWidth - 8, tvUseFourColumns ? 250 : 410),
+    tvUseFourColumns ? 205 : 300
+  )
+  const tvRoundOneColumns = useMemo(
+    () => splitIntoBalancedColumns(tvRoundOneEntries, tvUseFourColumns ? 2 : 1),
+    [tvRoundOneEntries, tvUseFourColumns]
+  )
+  const tvColumns = useMemo(() => {
+    if (!tvMode) return []
+    if (tvUseFourColumns) {
+      return [
+        { title: 'WF Round 1', entries: tvRoundOneColumns[0] || [] },
+        { title: 'WF Round 1', entries: tvRoundOneColumns[1] || [] },
+        { title: 'Round 2 Winners', entries: tvWinnerEntries },
+        { title: 'Round 2 Losers', entries: tvLoserEntries },
+      ]
+    }
+    return [
+      { title: 'WF Round 1', entries: tvRoundOneEntries },
+      { title: 'WF Round 2', entries: tvSecondRoundEntries },
+    ]
+  }, [tvMode, tvUseFourColumns, tvRoundOneColumns, tvWinnerEntries, tvLoserEntries, tvRoundOneEntries, tvSecondRoundEntries])
 
   if (loading) {
     return (
@@ -864,7 +972,7 @@ export default function PublicWaterfallPage() {
             </div>
           )}
 
-          {!useCompactWaterfallLayout && (
+          {!tvMode && !useCompactWaterfallLayout && (
             <div data-col-headers style={{
               display: 'flex',
               alignItems: 'center',
@@ -895,40 +1003,48 @@ export default function PublicWaterfallPage() {
           )}
 
           {/* Row pairs */}
-          {useCompactWaterfallLayout ? (
+          {tvMode ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${tvColumnCount}, minmax(0, 1fr))`,
+              gap: tvColumnGap,
+              alignItems: 'start',
+              flex: 1,
+              minHeight: 0,
+            }}>
+              {tvColumns.map((column, idx) => (
+                <WaterfallTvColumn
+                  key={`${column.title}-${idx}`}
+                  title={column.title}
+                  entries={column.entries}
+                  layout={layout}
+                  cardWidth={tvCardWidth}
+                />
+              ))}
+            </div>
+          ) : useCompactWaterfallLayout ? (
             compactColumnCount > 1 ? (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: tvMode
-                  ? 'repeat(2, minmax(0, 1fr))'
-                  : `repeat(${compactColumnCount}, minmax(0, 1fr))`,
-                gridTemplateRows: tvMode ? 'repeat(2, minmax(0, 1fr))' : undefined,
+                gridTemplateColumns: `repeat(${compactColumnCount}, minmax(0, 1fr))`,
                 gap: compactGridGap,
                 alignItems: 'start',
-                flex: tvMode ? 1 : undefined,
-                minHeight: tvMode ? 0 : undefined,
               }}>
                 {compactColumns.map((column, columnIdx) => (
                   <div
                     key={columnIdx}
                     style={{
                       minWidth: 0,
-                      minHeight: tvMode ? 0 : undefined,
-                      border: tvMode ? '1px solid #d9deeb' : undefined,
-                      borderRadius: tvMode ? 8 : undefined,
-                      backgroundColor: tvMode ? '#fcfdff' : undefined,
-                      padding: tvMode ? '8px 10px' : undefined,
-                      overflow: tvMode ? 'hidden' : undefined,
                     }}
                   >
                     <div style={{
-                      fontSize: Math.max(layout.headerFontSize, tvMode ? 11 : 10),
+                      fontSize: Math.max(layout.headerFontSize, 10),
                       fontWeight: 700,
-                      color: tvMode ? '#1a237e' : '#666',
+                      color: '#666',
                       textTransform: 'uppercase',
                       letterSpacing: 0.8,
                       textAlign: 'center',
-                      marginBottom: tvMode ? 8 : Math.max(layout.headerGap + 4, 8),
+                      marginBottom: Math.max(layout.headerGap + 4, 8),
                     }}>
                       Section {columnIdx + 1}
                     </div>
@@ -941,24 +1057,8 @@ export default function PublicWaterfallPage() {
                         divisionType={data.division_type || 'bracket'}
                         layout={layout}
                         availableWidth={compactColumnWidth}
-                        tvMode={tvMode}
                       />
                     ))}
-                    {tvMode && column.length === 0 && (
-                      <div style={{
-                        height: '100%',
-                        minHeight: 80,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: '#90a4ae',
-                        fontSize: 12,
-                        textTransform: 'uppercase',
-                        letterSpacing: 0.6,
-                      }}>
-                        No Matches
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -972,7 +1072,6 @@ export default function PublicWaterfallPage() {
                   divisionType={data.division_type || 'bracket'}
                   layout={layout}
                   availableWidth={canvasWidth}
-                  tvMode={tvMode}
                 />
               ))
             )

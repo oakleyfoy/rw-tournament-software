@@ -137,14 +137,21 @@ function RRMatchCard({ match, showCourtInfo }: { match: RRMatchBox; showCourtInf
   )
 }
 
-function splitIntoFixedSections<T>(items: T[], sectionCount: number): T[][] {
-  if (sectionCount <= 1) return [items]
-  const sections = Array.from({ length: sectionCount }, () => [] as T[])
-  for (let idx = 0; idx < items.length; idx += 1) {
-    const sectionIndex = Math.floor((idx * sectionCount) / Math.max(items.length, 1))
-    sections[Math.min(sectionIndex, sectionCount - 1)].push(items[idx])
+function getDivisionNumberFromLabel(label: string): number {
+  const match = label.match(/Division\s+([IVX]+)/i)
+  if (!match) return Number.MAX_SAFE_INTEGER
+  const roman = match[1].toUpperCase()
+  const values: Record<string, number> = {
+    I: 1,
+    II: 2,
+    III: 3,
+    IV: 4,
+    V: 5,
+    VI: 6,
+    VII: 7,
+    VIII: 8,
   }
-  return sections
+  return values[roman] ?? Number.MAX_SAFE_INTEGER
 }
 
 // ── Pool section ────────────────────────────────────────────────────────
@@ -254,12 +261,23 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
           <span style={{ color: '#1a237e', fontWeight: 800 }}>{match.score_display}</span>
         )}
       </div>
+      {isFinal && match.winner_name && (
+        <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: '#2e7d32' }}>
+          Winner: {match.winner_name}
+        </div>
+      )}
     </div>
   )
 }
 
-function PoolSectionTv({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
-  const title = `${eventName} ${pool.pool_label}`.toUpperCase()
+function PoolMatchesTv({
+  pool,
+  showCourtInfo,
+}: {
+  pool: RRPool
+  showCourtInfo: boolean
+}) {
+  const title = pool.pool_label.toUpperCase()
   const rounds = Array.from(
     pool.matches.reduce((acc, match) => {
       const roundIndex = match.round_index || 0
@@ -286,7 +304,7 @@ function PoolSectionTv({ pool, eventName, showCourtInfo }: { pool: RRPool; event
       }}>
         {title}
       </div>
-      <div style={{ padding: '10px', display: 'grid', gap: 10 }}>
+      <div style={{ padding: '10px', display: 'grid', gap: 8 }}>
         {rounds.map(({ roundIndex, matches }, ri) => (
           <div key={`${pool.pool_code}-${roundIndex}-${ri}`} style={{ display: 'grid', gap: 6 }}>
             <div style={{
@@ -306,6 +324,64 @@ function PoolSectionTv({ pool, eventName, showCourtInfo }: { pool: RRPool; event
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function PoolStandingsTableTv({ standings }: { standings: RRPoolStandings }) {
+  return (
+    <div style={{
+      border: '1px solid #d9deeb',
+      borderRadius: 8,
+      backgroundColor: '#fcfdff',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        backgroundColor: '#1a237e',
+        color: '#fff',
+        padding: '8px 10px',
+        fontSize: 12,
+        fontWeight: 800,
+        letterSpacing: 0.7,
+        textTransform: 'uppercase',
+        textAlign: 'center',
+      }}>
+        {`${standings.pool_label} Standings`.toUpperCase()}
+      </div>
+      <div style={{ padding: '8px 10px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+          <thead>
+            <tr style={{ backgroundColor: '#eef2ff', borderBottom: '1px solid #c7d2fe' }}>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>#</th>
+              <th style={{ padding: '4px 6px', textAlign: 'left' }}>Team</th>
+              <th style={{ padding: '4px 6px', textAlign: 'center' }}>W</th>
+              <th style={{ padding: '4px 6px', textAlign: 'center' }}>L</th>
+              <th style={{ padding: '4px 6px', textAlign: 'center' }}>SD</th>
+              <th style={{ padding: '4px 6px', textAlign: 'center' }}>GD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {standings.rows.map((row, idx) => {
+              const setDiff = row.sets_won - row.sets_lost
+              const gameDiff = row.games_won - row.games_lost
+              return (
+                <tr key={row.team_id} style={{ borderBottom: '1px solid #eef2f7', backgroundColor: idx < 2 ? '#f1f8e9' : '#fff' }}>
+                  <td style={{ padding: '4px 6px', fontWeight: 700 }}>{idx + 1}</td>
+                  <td style={{ padding: '4px 6px', fontWeight: 700, color: '#1f2937' }}>{row.team_display}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{row.wins}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'center', color: '#c62828' }}>{row.losses}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: setDiff >= 0 ? '#2e7d32' : '#c62828' }}>
+                    {setDiff >= 0 ? '+' : ''}{setDiff}
+                  </td>
+                  <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: gameDiff >= 0 ? '#1565c0' : '#c62828' }}>
+                    {gameDiff >= 0 ? '+' : ''}{gameDiff}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -549,7 +625,6 @@ export default function PublicRoundRobinPage() {
   }, [])
 
   const showCourtInfo = data?.show_court_info !== false
-  const tvSections = useMemo(() => splitIntoFixedSections(data?.pools || [], 4), [data?.pools])
 
   if (loading) {
     return (
@@ -583,12 +658,33 @@ export default function PublicRoundRobinPage() {
   if (!data) return null
 
   const headerText = `${data.event_name} Round Robin`.toUpperCase()
+  const poolsSorted = useMemo(
+    () => [...data.pools].sort((a, b) => getDivisionNumberFromLabel(a.pool_label) - getDivisionNumberFromLabel(b.pool_label)),
+    [data.pools]
+  )
+  const standingsByCode = useMemo(
+    () => new Map(data.standings.map((standing) => [standing.pool_code, standing])),
+    [data.standings]
+  )
 
   // Display pools in a 2-column grid (Div I + Div II side by side, Div III + Div IV side by side)
   const poolPairs: RRPool[][] = []
-  for (let i = 0; i < data.pools.length; i += 2) {
-    poolPairs.push(data.pools.slice(i, i + 2))
+  for (let i = 0; i < poolsSorted.length; i += 2) {
+    poolPairs.push(poolsSorted.slice(i, i + 2))
   }
+  const tvPageParam = searchParams.get('tv_page')
+  const tvRotationParam = searchParams.get('tv_rotation')
+  const tvRequestedPage = tvPageParam ? Math.max(parseInt(tvPageParam, 10) || 0, 0) : null
+  const tvRotation = tvRotationParam ? Math.max(parseInt(tvRotationParam, 10) || 0, 0) : 0
+  const tvPageCount = Math.max(poolPairs.length, 1)
+  const tvPageIndex = tvRequestedPage != null
+    ? Math.min(tvRequestedPage, tvPageCount - 1)
+    : tvRotation % tvPageCount
+  const tvActivePair = poolPairs[tvPageIndex] || []
+  const tvLeftPool = tvActivePair[0] || null
+  const tvRightPool = tvActivePair[1] || null
+  const tvLeftStandings = tvLeftPool ? standingsByCode.get(tvLeftPool.pool_code) || null : null
+  const tvRightStandings = tvRightPool ? standingsByCode.get(tvRightPool.pool_code) || null : null
 
   return (
     <div className="rr-print-root" style={{
@@ -686,45 +782,93 @@ export default function PublicRoundRobinPage() {
           {tvMode ? (
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-              gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+              gridTemplateColumns: '1.2fr 0.9fr 1.2fr',
               gap: 12,
               height: '100%',
+              alignItems: 'start',
             }}>
-              {tvSections.map((section, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    minWidth: 0,
-                    minHeight: 0,
-                    display: 'grid',
-                    gap: 10,
-                    alignContent: 'start',
-                  }}
-                >
-                  {section.length > 0 ? (
-                    section.map((pool) => (
-                      <PoolSectionTv key={pool.pool_code} pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
-                    ))
-                  ) : (
-                    <div style={{
-                      border: '1px solid #d9deeb',
-                      borderRadius: 8,
-                      backgroundColor: '#fcfdff',
-                      minHeight: 120,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#90a4ae',
-                      fontSize: 12,
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.6,
-                    }}>
-                      Section {idx + 1}
-                    </div>
-                  )}
-                </div>
-              ))}
+              <div style={{ minWidth: 0, minHeight: 0 }}>
+                {tvLeftPool ? (
+                  <PoolMatchesTv pool={tvLeftPool} showCourtInfo={showCourtInfo} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Division
+                  </div>
+                )}
+              </div>
+              <div style={{ minWidth: 0, minHeight: 0, display: 'grid', gap: 12, alignContent: 'start' }}>
+                {tvLeftStandings ? (
+                  <PoolStandingsTableTv standings={tvLeftStandings} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Standings
+                  </div>
+                )}
+                {tvRightStandings ? (
+                  <PoolStandingsTableTv standings={tvRightStandings} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Standings
+                  </div>
+                )}
+              </div>
+              <div style={{ minWidth: 0, minHeight: 0 }}>
+                {tvRightPool ? (
+                  <PoolMatchesTv pool={tvRightPool} showCourtInfo={showCourtInfo} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Division
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <>
