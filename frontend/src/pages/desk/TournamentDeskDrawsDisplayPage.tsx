@@ -153,9 +153,7 @@ export default function TournamentDeskDrawsDisplayPage() {
   const [error, setError] = useState<string | null>(null)
   const [kioskMode, setKioskMode] = useState<boolean>(initialKiosk)
   const [rotationTick, setRotationTick] = useState(0)
-  const [squareSize, setSquareSize] = useState<number>(320)
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const gridHostRef = useRef<HTMLDivElement | null>(null)
 
   const setKiosk = useCallback((enabled: boolean) => {
     setKioskMode(enabled)
@@ -206,8 +204,10 @@ export default function TournamentDeskDrawsDisplayPage() {
     return panels
   }, [draws, tid])
 
+  const panelsPerPage = Math.min(Math.max(drawPanels.length, 1), 2)
+
   useEffect(() => {
-    if (drawPanels.length <= 4) {
+    if (drawPanels.length <= panelsPerPage) {
       if (refreshRef.current) clearInterval(refreshRef.current)
       refreshRef.current = null
       return
@@ -219,7 +219,7 @@ export default function TournamentDeskDrawsDisplayPage() {
       if (refreshRef.current) clearInterval(refreshRef.current)
       refreshRef.current = null
     }
-  }, [drawPanels.length])
+  }, [drawPanels.length, panelsPerPage])
 
   useEffect(() => {
     const el = document.documentElement
@@ -231,37 +231,14 @@ export default function TournamentDeskDrawsDisplayPage() {
     }
   }, [kioskMode])
 
-  useEffect(() => {
-    const recomputeGrid = () => {
-      const host = gridHostRef.current
-      if (!host) return
-      const width = host.clientWidth
-      const height = host.clientHeight
-      const next = Math.max(
-        Math.floor(Math.min((width - PANEL_GAP_PX) / 2, (height - PANEL_GAP_PX) / 2)),
-        120
-      )
-      setSquareSize(next)
-    }
-
-    recomputeGrid()
-    const observer = new ResizeObserver(recomputeGrid)
-    if (gridHostRef.current) observer.observe(gridHostRef.current)
-    window.addEventListener('resize', recomputeGrid)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', recomputeGrid)
-    }
-  }, [])
-
   const visiblePanels = useMemo(() => {
     if (drawPanels.length === 0) return [] as (DrawPanel | null)[]
-    if (drawPanels.length <= 4) {
-      return [...drawPanels, ...Array.from({ length: 4 - drawPanels.length }, () => null)].slice(0, 4)
+    if (drawPanels.length <= panelsPerPage) {
+      return drawPanels.slice(0, panelsPerPage)
     }
-    const start = (rotationTick * 4) % drawPanels.length
-    return Array.from({ length: 4 }, (_value, index) => drawPanels[(start + index) % drawPanels.length])
-  }, [drawPanels, rotationTick])
+    const start = (rotationTick * panelsPerPage) % drawPanels.length
+    return Array.from({ length: panelsPerPage }, (_value, index) => drawPanels[(start + index) % drawPanels.length])
+  }, [drawPanels, rotationTick, panelsPerPage])
 
   if (loading) {
     return <div style={{ padding: 24, color: '#666' }}>Loading draws display...</div>
@@ -293,7 +270,9 @@ export default function TournamentDeskDrawsDisplayPage() {
           <div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{draws?.tournament_name || 'Draws Display'}</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-              Rotating 4 draw panels every 20 seconds.
+              {drawPanels.length > panelsPerPage
+                ? `Rotating ${panelsPerPage} draw panels every 20 seconds.`
+                : `Showing up to ${panelsPerPage} draw panel${panelsPerPage === 1 ? '' : 's'} at a time.`}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -310,7 +289,7 @@ export default function TournamentDeskDrawsDisplayPage() {
                 cursor: 'pointer',
               }}
             >
-              Next 4
+              {`Next ${panelsPerPage}`}
             </button>
             <button
               onClick={() => setKiosk(true)}
@@ -346,48 +325,40 @@ export default function TournamentDeskDrawsDisplayPage() {
           </div>
         ) : (
           <div
-            ref={gridHostRef}
             style={{
               height: '100%',
               width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              display: 'grid',
+              gridTemplateColumns: visiblePanels.length === 1 ? 'minmax(0, 1fr)' : `repeat(${visiblePanels.length}, minmax(0, 1fr))`,
+              gap: PANEL_GAP_PX,
               minHeight: 0,
             }}
           >
-            <div style={{
-              width: squareSize * 2 + PANEL_GAP_PX,
-              height: squareSize * 2 + PANEL_GAP_PX,
-              display: 'grid',
-              gridTemplateColumns: `${squareSize}px ${squareSize}px`,
-              gridTemplateRows: `${squareSize}px ${squareSize}px`,
-              gap: PANEL_GAP_PX,
-            }}>
-              {visiblePanels.map((panel, idx) => {
-                const iframeSrc = panel
-                  ? `${panel.path}${panel.path.includes('?') ? '&' : '?'}tv_rotation=${rotationTick}`
-                  : ''
-                const frameKey = panel ? `${panel.key}:${rotationTick}` : `empty-${idx}`
-                return (
-                  <div
-                    key={frameKey}
-                    style={{
-                      backgroundColor: '#fff',
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                      boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
-                    }}
-                  >
-                    {panel ? (
-                      <FitPanelFrame title={panel.label} src={iframeSrc} />
-                    ) : (
-                      <EmptyPanel />
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+            {visiblePanels.map((panel, idx) => {
+              const iframeSrc = panel
+                ? `${panel.path}${panel.path.includes('?') ? '&' : '?'}tv_rotation=${rotationTick}`
+                : ''
+              const frameKey = panel ? `${panel.key}:${rotationTick}` : `empty-${idx}`
+              return (
+                <div
+                  key={frameKey}
+                  style={{
+                    backgroundColor: '#fff',
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
+                    minWidth: 0,
+                    minHeight: 0,
+                  }}
+                >
+                  {panel ? (
+                    <FitPanelFrame title={panel.label} src={iframeSrc} />
+                  ) : (
+                    <EmptyPanel />
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
