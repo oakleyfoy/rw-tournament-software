@@ -155,11 +155,13 @@ function buildWaterfallLayout(scale: number, canvasWidth: number): WaterfallLayo
   }
 }
 
-function MatchBoxCard({ box, variant, layout, widthOverride }: {
+function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvMode = false }: {
   box: PublicMatchBox
   variant: 'center' | 'winner' | 'loser'
   layout: WaterfallLayout
   widthOverride?: number | string
+  heightOverride?: number | string
+  tvMode?: boolean
 }) {
   const palette = COLORS[variant]
   const isFinal = box.status === 'FINAL'
@@ -167,6 +169,21 @@ function MatchBoxCard({ box, variant, layout, widthOverride }: {
   const winnerId = box.winner_team_id
   const line1IsWinner = isFinal && winnerId != null && box.team_a_id === winnerId
   const line2IsWinner = isFinal && winnerId != null && box.team_b_id === winnerId
+  const topLineFontSize = tvMode
+    ? Math.max(layout.topLineFontSize * 1.35, layout.topLineFontSize + 2.5)
+    : layout.topLineFontSize
+  const badgeFontSize = tvMode
+    ? Math.max(layout.badgeFontSize * 1.2, layout.badgeFontSize + 1)
+    : layout.badgeFontSize
+  const teamFontSize = tvMode
+    ? Math.max(layout.teamFontSize * 1.55, layout.teamFontSize + 3.2)
+    : layout.teamFontSize
+  const vsFontSize = tvMode
+    ? Math.max(layout.vsFontSize * 1.2, layout.vsFontSize + 1.2)
+    : layout.vsFontSize
+  const notesFontSize = tvMode
+    ? Math.max(layout.notesFontSize * 1.2, layout.notesFontSize + 1)
+    : layout.notesFontSize
 
   return (
     <div style={{
@@ -175,18 +192,22 @@ function MatchBoxCard({ box, variant, layout, widthOverride }: {
       borderRadius: 3,
       padding: `${layout.cardPaddingY}px ${layout.cardPaddingX}px`,
       width: widthOverride ?? (isCenter ? layout.centerBoxWidth : layout.sideBoxWidth),
+      height: heightOverride,
       boxSizing: 'border-box',
       fontSize: layout.matchFontSize,
-      lineHeight: 1.4,
+      lineHeight: tvMode ? 1.25 : 1.4,
       position: 'relative',
       textAlign: 'center',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
     }} data-match-box>
       {/* Top line: match number + court/time or score */}
       <div style={{
         fontWeight: 700,
-        fontSize: layout.topLineFontSize,
+        fontSize: topLineFontSize,
         color: '#333',
-        marginBottom: 3,
+        marginBottom: tvMode ? 5 : 3,
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
@@ -196,7 +217,7 @@ function MatchBoxCard({ box, variant, layout, widthOverride }: {
         {box.top_line && <span>{box.top_line}</span>}
         {isFinal && (
           <span style={{
-            fontSize: layout.badgeFontSize,
+            fontSize: badgeFontSize,
             fontWeight: 700,
             color: '#2e7d32',
             backgroundColor: '#c8e6c9',
@@ -212,27 +233,27 @@ function MatchBoxCard({ box, variant, layout, widthOverride }: {
       {/* Team lines with "vs" — winner highlighted */}
       <div style={{
         color: line1IsWinner ? '#1b5e20' : '#222',
-        fontSize: layout.teamFontSize,
-        fontWeight: line1IsWinner ? 700 : 400,
+        fontSize: teamFontSize,
+        fontWeight: line1IsWinner ? 800 : 600,
       }}>
-        {line1IsWinner && <span style={{ fontSize: layout.badgeFontSize, marginRight: 4 }}>&#9654;</span>}
+        {line1IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {box.line1}
       </div>
-      <div data-vs style={{ fontSize: layout.vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: '1px 0' }}>
+      <div data-vs style={{ fontSize: vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: tvMode ? '3px 0' : '1px 0' }}>
         vs
       </div>
       <div style={{
         color: line2IsWinner ? '#1b5e20' : '#222',
-        fontSize: layout.teamFontSize,
-        fontWeight: line2IsWinner ? 700 : 400,
+        fontSize: teamFontSize,
+        fontWeight: line2IsWinner ? 800 : 600,
       }}>
-        {line2IsWinner && <span style={{ fontSize: layout.badgeFontSize, marginRight: 4 }}>&#9654;</span>}
+        {line2IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {box.line2}
       </div>
 
       {/* Notes */}
       {box.notes && (
-        <div style={{ fontSize: layout.notesFontSize, color: '#888', marginTop: 2, fontStyle: 'italic' }}>
+        <div style={{ fontSize: notesFontSize, color: '#888', marginTop: tvMode ? 5 : 2, fontStyle: 'italic' }}>
           {box.notes}
         </div>
       )}
@@ -575,13 +596,13 @@ function WaterfallTvColumn({
         backgroundColor: '#fcfdff',
         padding: '8px 10px',
         overflow: 'hidden',
-        display: 'grid',
-        alignContent: 'start',
-        gap: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
       }}
     >
       <div style={{
-        fontSize: Math.max(layout.headerFontSize, 11),
+        fontSize: Math.max(layout.headerFontSize, 12.5),
         fontWeight: 700,
         color: '#1a237e',
         textTransform: 'uppercase',
@@ -591,15 +612,28 @@ function WaterfallTvColumn({
         {title}
       </div>
       {entries.length > 0 ? (
-        <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateRows: `repeat(${entries.length}, minmax(0, 1fr))`,
+            gap: 8,
+            justifyItems: 'center',
+            alignItems: 'stretch',
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
           {entries.map((entry, idx) => (
-            <MatchBoxCard
-              key={`${entry.box.match_id}-${idx}`}
-              box={entry.box}
-              variant={entry.variant}
-              layout={layout}
-              widthOverride={cardWidth}
-            />
+            <div key={`${entry.box.match_id}-${idx}`} style={{ width: '100%', display: 'flex', justifyContent: 'center', minHeight: 0 }}>
+              <MatchBoxCard
+                box={entry.box}
+                variant={entry.variant}
+                layout={layout}
+                widthOverride={cardWidth}
+                heightOverride="100%"
+                tvMode
+              />
+            </div>
           ))}
         </div>
       ) : (
