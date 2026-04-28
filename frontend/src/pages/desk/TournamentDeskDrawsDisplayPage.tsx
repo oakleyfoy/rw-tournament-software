@@ -328,9 +328,8 @@ export default function TournamentDeskDrawsDisplayPage() {
             style={{
               height: '100%',
               width: '100%',
-              display: 'grid',
-              gridTemplateColumns: visiblePanels.length === 1 ? 'minmax(0, 1fr)' : `repeat(${visiblePanels.length}, minmax(0, 1fr))`,
-              gridTemplateRows: 'minmax(0, 1fr)',
+              display: 'flex',
+              flexDirection: visiblePanels.length === 1 ? 'column' : 'row',
               gap: PANEL_GAP_PX,
               minHeight: 0,
             }}
@@ -348,6 +347,9 @@ export default function TournamentDeskDrawsDisplayPage() {
                     borderRadius: 8,
                     overflow: 'hidden',
                     boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
+                    flex: 1,
+                    width: 0,
+                    height: '100%',
                     minWidth: 0,
                     minHeight: 0,
                   }}
