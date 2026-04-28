@@ -170,19 +170,19 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
   const line1IsWinner = isFinal && winnerId != null && box.team_a_id === winnerId
   const line2IsWinner = isFinal && winnerId != null && box.team_b_id === winnerId
   const topLineFontSize = tvMode
-    ? Math.max(layout.topLineFontSize * 1.35, layout.topLineFontSize + 2.5)
+    ? Math.max(layout.topLineFontSize * 1.6, layout.topLineFontSize + 3.5)
     : layout.topLineFontSize
   const badgeFontSize = tvMode
     ? Math.max(layout.badgeFontSize * 1.2, layout.badgeFontSize + 1)
     : layout.badgeFontSize
   const teamFontSize = tvMode
-    ? Math.max(layout.teamFontSize * 1.55, layout.teamFontSize + 3.2)
+    ? Math.max(layout.teamFontSize * 1.85, layout.teamFontSize + 5)
     : layout.teamFontSize
   const vsFontSize = tvMode
     ? Math.max(layout.vsFontSize * 1.2, layout.vsFontSize + 1.2)
     : layout.vsFontSize
   const notesFontSize = tvMode
-    ? Math.max(layout.notesFontSize * 1.2, layout.notesFontSize + 1)
+    ? Math.max(layout.notesFontSize * 1.5, layout.notesFontSize + 2)
     : layout.notesFontSize
 
   return (
@@ -212,7 +212,10 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         justifyContent: 'center',
         alignItems: 'center',
         gap: layout.headerGap,
-        flexWrap: 'wrap',
+        flexWrap: tvMode ? 'nowrap' : 'wrap',
+        whiteSpace: tvMode ? 'nowrap' : undefined,
+        overflow: tvMode ? 'hidden' : undefined,
+        textOverflow: tvMode ? 'ellipsis' : undefined,
       }}>
         {box.top_line && <span>{box.top_line}</span>}
         {isFinal && (
@@ -235,6 +238,9 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         color: line1IsWinner ? '#1b5e20' : '#222',
         fontSize: teamFontSize,
         fontWeight: line1IsWinner ? 800 : 600,
+        whiteSpace: tvMode ? 'nowrap' : undefined,
+        overflow: tvMode ? 'hidden' : undefined,
+        textOverflow: tvMode ? 'ellipsis' : undefined,
       }}>
         {line1IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {box.line1}
@@ -246,6 +252,9 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         color: line2IsWinner ? '#1b5e20' : '#222',
         fontSize: teamFontSize,
         fontWeight: line2IsWinner ? 800 : 600,
+        whiteSpace: tvMode ? 'nowrap' : undefined,
+        overflow: tvMode ? 'hidden' : undefined,
+        textOverflow: tvMode ? 'ellipsis' : undefined,
       }}>
         {line2IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {box.line2}
@@ -253,7 +262,15 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
 
       {/* Notes */}
       {box.notes && (
-        <div style={{ fontSize: notesFontSize, color: '#888', marginTop: tvMode ? 5 : 2, fontStyle: 'italic' }}>
+        <div style={{
+          fontSize: notesFontSize,
+          color: '#888',
+          marginTop: tvMode ? 5 : 2,
+          fontStyle: 'italic',
+          whiteSpace: tvMode ? 'nowrap' : undefined,
+          overflow: tvMode ? 'hidden' : undefined,
+          textOverflow: tvMode ? 'ellipsis' : undefined,
+        }}>
           {box.notes}
         </div>
       )}
@@ -591,18 +608,19 @@ function WaterfallTvColumn({
       style={{
         minWidth: 0,
         minHeight: 0,
+        height: '100%',
         border: '1px solid #d9deeb',
         borderRadius: 8,
         backgroundColor: '#fcfdff',
-        padding: '8px 10px',
+        padding: '6px 8px',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        gap: 10,
+        gap: 8,
       }}
     >
       <div style={{
-        fontSize: Math.max(layout.headerFontSize, 12.5),
+        fontSize: Math.max(layout.headerFontSize, 13),
         fontWeight: 700,
         color: '#1a237e',
         textTransform: 'uppercase',
@@ -616,7 +634,7 @@ function WaterfallTvColumn({
           style={{
             display: 'grid',
             gridTemplateRows: `repeat(${entries.length}, minmax(0, 1fr))`,
-            gap: 8,
+            gap: 6,
             justifyItems: 'center',
             alignItems: 'stretch',
             flex: 1,
@@ -758,7 +776,7 @@ export default function PublicWaterfallPage() {
     }),
     [rowPairs]
   )
-  const tvUseFourColumns = tvRoundOneEntries.length > 8
+  const tvUseFourColumns = tvMode
 
   const handlePrint = useCallback(() => {
     injectPrintStyles()
@@ -799,7 +817,7 @@ export default function PublicWaterfallPage() {
   const layout = captureMode
     ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
     : tvMode
-      ? buildWaterfallLayout(tvUseFourColumns ? 0.5 : 0.68, Math.max(canvasWidth / (tvUseFourColumns ? 4 : 2), 240))
+      ? buildWaterfallLayout(tvUseFourColumns ? 0.58 : 0.68, Math.max(canvasWidth / (tvUseFourColumns ? 4 : 2), 260))
     : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
   const compactColumnCount = useMemo(() => {
     if (!displayFitMode) return 1
@@ -816,11 +834,11 @@ export default function PublicWaterfallPage() {
       ? Math.max((canvasWidth - (compactGridGap * (compactColumnCount - 1))) / compactColumnCount, 280)
       : canvasWidth
   const tvColumnCount = tvUseFourColumns ? 4 : 2
-  const tvColumnGap = 12
+  const tvColumnGap = 8
   const tvColumnWidth = Math.max((canvasWidth - (tvColumnGap * (tvColumnCount - 1))) / tvColumnCount, 220)
   const tvCardWidth = Math.max(
-    Math.min(tvColumnWidth - 8, tvUseFourColumns ? 250 : 410),
-    tvUseFourColumns ? 205 : 300
+    Math.min(tvColumnWidth - 2, tvUseFourColumns ? 315 : 520),
+    tvUseFourColumns ? 250 : 360
   )
   const tvRoundOneColumns = useMemo(
     () => splitIntoBalancedColumns(tvRoundOneEntries, tvUseFourColumns ? 2 : 1),
@@ -1042,7 +1060,7 @@ export default function PublicWaterfallPage() {
               display: 'grid',
               gridTemplateColumns: `repeat(${tvColumnCount}, minmax(0, 1fr))`,
               gap: tvColumnGap,
-              alignItems: 'start',
+              alignItems: 'stretch',
               flex: 1,
               minHeight: 0,
             }}>

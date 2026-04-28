@@ -625,6 +625,31 @@ export default function PublicRoundRobinPage() {
   }, [])
 
   const showCourtInfo = data?.show_court_info !== false
+  const poolsSorted = useMemo(
+    () => [...(data?.pools || [])].sort((a, b) => getDivisionNumberFromLabel(a.pool_label) - getDivisionNumberFromLabel(b.pool_label)),
+    [data?.pools]
+  )
+  const standingsByCode = useMemo(
+    () => new Map((data?.standings || []).map((standing) => [standing.pool_code, standing])),
+    [data?.standings]
+  )
+  const poolPairs: RRPool[][] = []
+  for (let i = 0; i < poolsSorted.length; i += 2) {
+    poolPairs.push(poolsSorted.slice(i, i + 2))
+  }
+  const tvPageParam = searchParams.get('tv_page')
+  const tvRotationParam = searchParams.get('tv_rotation')
+  const tvRequestedPage = tvPageParam ? Math.max(parseInt(tvPageParam, 10) || 0, 0) : null
+  const tvRotation = tvRotationParam ? Math.max(parseInt(tvRotationParam, 10) || 0, 0) : 0
+  const tvPageCount = Math.max(poolPairs.length, 1)
+  const tvPageIndex = tvRequestedPage != null
+    ? Math.min(tvRequestedPage, tvPageCount - 1)
+    : tvRotation % tvPageCount
+  const tvActivePair = poolPairs[tvPageIndex] || []
+  const tvLeftPool = tvActivePair[0] || null
+  const tvRightPool = tvActivePair[1] || null
+  const tvLeftStandings = tvLeftPool ? standingsByCode.get(tvLeftPool.pool_code) || null : null
+  const tvRightStandings = tvRightPool ? standingsByCode.get(tvRightPool.pool_code) || null : null
 
   if (loading) {
     return (
@@ -658,33 +683,6 @@ export default function PublicRoundRobinPage() {
   if (!data) return null
 
   const headerText = `${data.event_name} Round Robin`.toUpperCase()
-  const poolsSorted = useMemo(
-    () => [...data.pools].sort((a, b) => getDivisionNumberFromLabel(a.pool_label) - getDivisionNumberFromLabel(b.pool_label)),
-    [data.pools]
-  )
-  const standingsByCode = useMemo(
-    () => new Map(data.standings.map((standing) => [standing.pool_code, standing])),
-    [data.standings]
-  )
-
-  // Display pools in a 2-column grid (Div I + Div II side by side, Div III + Div IV side by side)
-  const poolPairs: RRPool[][] = []
-  for (let i = 0; i < poolsSorted.length; i += 2) {
-    poolPairs.push(poolsSorted.slice(i, i + 2))
-  }
-  const tvPageParam = searchParams.get('tv_page')
-  const tvRotationParam = searchParams.get('tv_rotation')
-  const tvRequestedPage = tvPageParam ? Math.max(parseInt(tvPageParam, 10) || 0, 0) : null
-  const tvRotation = tvRotationParam ? Math.max(parseInt(tvRotationParam, 10) || 0, 0) : 0
-  const tvPageCount = Math.max(poolPairs.length, 1)
-  const tvPageIndex = tvRequestedPage != null
-    ? Math.min(tvRequestedPage, tvPageCount - 1)
-    : tvRotation % tvPageCount
-  const tvActivePair = poolPairs[tvPageIndex] || []
-  const tvLeftPool = tvActivePair[0] || null
-  const tvRightPool = tvActivePair[1] || null
-  const tvLeftStandings = tvLeftPool ? standingsByCode.get(tvLeftPool.pool_code) || null : null
-  const tvRightStandings = tvRightPool ? standingsByCode.get(tvRightPool.pool_code) || null : null
 
   return (
     <div className="rr-print-root" style={{
