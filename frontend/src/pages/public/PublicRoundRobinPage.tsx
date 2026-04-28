@@ -154,6 +154,11 @@ function getDivisionNumberFromLabel(label: string): number {
   return values[roman] ?? Number.MAX_SAFE_INTEGER
 }
 
+function stripTvLocationSuffix(text: string | null | undefined): string {
+  if (!text) return ''
+  return text.replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/, '').trim()
+}
+
 // ── Pool section ────────────────────────────────────────────────────────
 
 function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
@@ -228,6 +233,9 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
   const infoParts: string[] = []
   if (showCourtInfo && match.court_label) infoParts.push(match.court_label)
   if (match.time_display) infoParts.push(match.time_display)
+  const line1 = stripTvLocationSuffix(match.line1)
+  const line2 = stripTvLocationSuffix(match.line2)
+  const winnerName = stripTvLocationSuffix(match.winner_name)
 
   return (
     <div style={{
@@ -239,13 +247,13 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
       lineHeight: 1.35,
     }}>
       <div style={{ fontWeight: 800, fontSize: 12, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {match.line1}
+        {line1}
       </div>
       <div style={{ fontSize: 10, color: '#6b7280', textAlign: 'center', padding: '2px 0', textTransform: 'uppercase', letterSpacing: 0.5 }}>
         vs
       </div>
       <div style={{ fontWeight: 800, fontSize: 12, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {match.line2}
+        {line2}
       </div>
       <div style={{
         marginTop: 5,
@@ -261,9 +269,9 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
           <span style={{ color: '#1a237e', fontWeight: 800 }}>{match.score_display}</span>
         )}
       </div>
-      {isFinal && match.winner_name && (
+      {isFinal && winnerName && (
         <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: '#2e7d32' }}>
-          Winner: {match.winner_name}
+          Winner: {winnerName}
         </div>
       )}
     </div>
@@ -368,7 +376,7 @@ function PoolStandingsTableTv({ standings }: { standings: RRPoolStandings }) {
               return (
                 <tr key={row.team_id} style={{ borderBottom: '1px solid #eef2f7', backgroundColor: idx < 2 ? '#f1f8e9' : '#fff' }}>
                   <td style={{ padding: '4px 6px', fontWeight: 700 }}>{idx + 1}</td>
-                  <td style={{ padding: '4px 6px', fontWeight: 700, color: '#1f2937' }}>{row.team_display}</td>
+                  <td style={{ padding: '4px 6px', fontWeight: 700, color: '#1f2937' }}>{stripTvLocationSuffix(row.team_display)}</td>
                   <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: '#2e7d32' }}>{row.wins}</td>
                   <td style={{ padding: '4px 6px', textAlign: 'center', color: '#c62828' }}>{row.losses}</td>
                   <td style={{ padding: '4px 6px', textAlign: 'center', fontWeight: 700, color: setDiff >= 0 ? '#2e7d32' : '#c62828' }}>
@@ -633,23 +641,35 @@ export default function PublicRoundRobinPage() {
     () => new Map((data?.standings || []).map((standing) => [standing.pool_code, standing])),
     [data?.standings]
   )
-  const poolPairs: RRPool[][] = []
-  for (let i = 0; i < poolsSorted.length; i += 2) {
-    poolPairs.push(poolsSorted.slice(i, i + 2))
+  const poolPairs = useMemo(() => {
+    const pairs: RRPool[][] = []
+    for (let i = 0; i < poolsSorted.length; i += 2) {
+      pairs.push(poolsSorted.slice(i, i + 2))
+    }
+    return pairs
+  }, [poolsSorted])
+  const poolPages: RRPool[][] = []
+  for (let i = 0; i < poolsSorted.length; i += 4) {
+    poolPages.push(poolsSorted.slice(i, i + 4))
   }
   const tvPageParam = searchParams.get('tv_page')
   const tvRotationParam = searchParams.get('tv_rotation')
   const tvRequestedPage = tvPageParam ? Math.max(parseInt(tvPageParam, 10) || 0, 0) : null
   const tvRotation = tvRotationParam ? Math.max(parseInt(tvRotationParam, 10) || 0, 0) : 0
-  const tvPageCount = Math.max(poolPairs.length, 1)
+  const tvPageCount = Math.max(poolPages.length, 1)
   const tvPageIndex = tvRequestedPage != null
     ? Math.min(tvRequestedPage, tvPageCount - 1)
     : tvRotation % tvPageCount
-  const tvActivePair = poolPairs[tvPageIndex] || []
-  const tvLeftPool = tvActivePair[0] || null
-  const tvRightPool = tvActivePair[1] || null
-  const tvLeftStandings = tvLeftPool ? standingsByCode.get(tvLeftPool.pool_code) || null : null
-  const tvRightStandings = tvRightPool ? standingsByCode.get(tvRightPool.pool_code) || null : null
+  const tvActivePools = poolPages[tvPageIndex] || []
+  const tvMatchColumns = [
+    tvActivePools[0] || null,
+    tvActivePools[1] || null,
+    tvActivePools[2] || null,
+    tvActivePools[3] || null,
+  ]
+  const tvStandingsList = tvActivePools
+    .map((pool) => standingsByCode.get(pool.pool_code))
+    .filter((standing): standing is RRPoolStandings => Boolean(standing))
 
   if (loading) {
     return (
@@ -780,14 +800,35 @@ export default function PublicRoundRobinPage() {
           {tvMode ? (
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '1.2fr 0.9fr 1.2fr',
+              gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr)',
               gap: 12,
               height: '100%',
               alignItems: 'start',
             }}>
               <div style={{ minWidth: 0, minHeight: 0 }}>
-                {tvLeftPool ? (
-                  <PoolMatchesTv pool={tvLeftPool} showCourtInfo={showCourtInfo} />
+                {tvMatchColumns[0] ? (
+                  <PoolMatchesTv pool={tvMatchColumns[0]} showCourtInfo={showCourtInfo} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Division
+                  </div>
+                )}
+              </div>
+              <div style={{ minWidth: 0, minHeight: 0 }}>
+                {tvMatchColumns[1] ? (
+                  <PoolMatchesTv pool={tvMatchColumns[1]} showCourtInfo={showCourtInfo} />
                 ) : (
                   <div style={{
                     border: '1px solid #d9deeb',
@@ -807,27 +848,10 @@ export default function PublicRoundRobinPage() {
                 )}
               </div>
               <div style={{ minWidth: 0, minHeight: 0, display: 'grid', gap: 12, alignContent: 'start' }}>
-                {tvLeftStandings ? (
-                  <PoolStandingsTableTv standings={tvLeftStandings} />
-                ) : (
-                  <div style={{
-                    border: '1px solid #d9deeb',
-                    borderRadius: 8,
-                    backgroundColor: '#fcfdff',
-                    minHeight: 120,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#90a4ae',
-                    fontSize: 12,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.6,
-                  }}>
-                    No Standings
-                  </div>
-                )}
-                {tvRightStandings ? (
-                  <PoolStandingsTableTv standings={tvRightStandings} />
+                {tvStandingsList.length > 0 ? (
+                  tvStandingsList.map((standings) => (
+                    <PoolStandingsTableTv key={standings.pool_code} standings={standings} />
+                  ))
                 ) : (
                   <div style={{
                     border: '1px solid #d9deeb',
@@ -847,8 +871,29 @@ export default function PublicRoundRobinPage() {
                 )}
               </div>
               <div style={{ minWidth: 0, minHeight: 0 }}>
-                {tvRightPool ? (
-                  <PoolMatchesTv pool={tvRightPool} showCourtInfo={showCourtInfo} />
+                {tvMatchColumns[2] ? (
+                  <PoolMatchesTv pool={tvMatchColumns[2]} showCourtInfo={showCourtInfo} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Division
+                  </div>
+                )}
+              </div>
+              <div style={{ minWidth: 0, minHeight: 0 }}>
+                {tvMatchColumns[3] ? (
+                  <PoolMatchesTv pool={tvMatchColumns[3]} showCourtInfo={showCourtInfo} />
                 ) : (
                   <div style={{
                     border: '1px solid #d9deeb',

@@ -122,6 +122,11 @@ type WaterfallLayout = {
   headerGap: number
 }
 
+function stripTvLocationSuffix(text: string | null | undefined): string {
+  if (!text) return ''
+  return text.replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/, '').trim()
+}
+
 function buildWaterfallLayout(scale: number, canvasWidth: number): WaterfallLayout {
   const isPhone = canvasWidth <= 520
   const isCompact = canvasWidth <= 900
@@ -184,6 +189,9 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
   const notesFontSize = tvMode
     ? Math.max(layout.notesFontSize * 1.5, layout.notesFontSize + 2)
     : layout.notesFontSize
+  const line1 = tvMode ? stripTvLocationSuffix(box.line1) : box.line1
+  const line2 = tvMode ? stripTvLocationSuffix(box.line2) : box.line2
+  const notes = tvMode ? stripTvLocationSuffix(box.notes) : box.notes
 
   return (
     <div style={{
@@ -243,7 +251,7 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         textOverflow: tvMode ? 'ellipsis' : undefined,
       }}>
         {line1IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
-        {box.line1}
+        {line1}
       </div>
       <div data-vs style={{ fontSize: vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: tvMode ? '3px 0' : '1px 0' }}>
         vs
@@ -257,11 +265,11 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         textOverflow: tvMode ? 'ellipsis' : undefined,
       }}>
         {line2IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
-        {box.line2}
+        {line2}
       </div>
 
       {/* Notes */}
-      {box.notes && (
+      {notes && (
         <div style={{
           fontSize: notesFontSize,
           color: '#888',
@@ -271,7 +279,7 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
           overflow: tvMode ? 'hidden' : undefined,
           textOverflow: tvMode ? 'ellipsis' : undefined,
         }}>
-          {box.notes}
+          {notes}
         </div>
       )}
     </div>
