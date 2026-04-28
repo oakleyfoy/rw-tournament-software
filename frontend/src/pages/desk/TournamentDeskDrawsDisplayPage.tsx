@@ -204,7 +204,7 @@ export default function TournamentDeskDrawsDisplayPage() {
     return panels
   }, [draws, tid])
 
-  const panelsPerPage = Math.min(Math.max(drawPanels.length, 1), 2)
+  const panelsPerPage = 1
 
   useEffect(() => {
     if (drawPanels.length <= panelsPerPage) {
@@ -331,7 +331,7 @@ export default function TournamentDeskDrawsDisplayPage() {
               height: '100%',
               width: '100%',
               display: 'flex',
-              flexDirection: visiblePanels.length === 1 ? 'column' : 'row',
+              flexDirection: 'column',
               gap: PANEL_GAP_PX,
               minHeight: 0,
             }}
@@ -350,7 +350,7 @@ export default function TournamentDeskDrawsDisplayPage() {
                     overflow: 'hidden',
                     boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
                     flex: 1,
-                    width: 0,
+                    width: '100%',
                     height: '100%',
                     minWidth: 0,
                     minHeight: 0,
