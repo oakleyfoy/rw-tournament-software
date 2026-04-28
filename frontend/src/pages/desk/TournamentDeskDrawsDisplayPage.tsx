@@ -250,11 +250,13 @@ export default function TournamentDeskDrawsDisplayPage() {
 
   return (
     <div style={{
+      height: '100vh',
       minHeight: '100vh',
       backgroundColor: '#0d1b3e',
       color: '#fff',
       display: 'flex',
       flexDirection: 'column',
+      overflow: 'hidden',
     }}>
       {!kioskMode && (
         <div style={{
@@ -310,7 +312,7 @@ export default function TournamentDeskDrawsDisplayPage() {
         </div>
       )}
 
-      <div style={{ flex: 1, padding: kioskMode ? 8 : 12, minHeight: 0 }}>
+      <div style={{ flex: 1, height: '100%', padding: kioskMode ? 8 : 12, minHeight: 0 }}>
         {visiblePanels.length === 0 ? (
           <div style={{
             height: '100%',
