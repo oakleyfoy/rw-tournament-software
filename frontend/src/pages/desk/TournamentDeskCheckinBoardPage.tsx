@@ -184,11 +184,11 @@ function CheckInReadyDisplayCard({
       <div style={{
         backgroundColor: accentColor,
         color: '#fff',
-        padding: '5px 8px',
-        fontSize: 12,
+        padding: '4px 6px',
+        fontSize: 11,
         fontWeight: 700,
         display: 'flex',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-start',
         alignItems: 'center',
         gap: 4,
         minWidth: 0,
@@ -200,38 +200,35 @@ function CheckInReadyDisplayCard({
             <Badge label={deskMatch.stage} bg={STAGE_COLORS[deskMatch.stage] || '#757575'} color="#fff" />
           )}
         </div>
-        <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.92, whiteSpace: 'nowrap', flexShrink: 0 }}>
-          #{rq.match_number}
-        </span>
       </div>
-      <div style={{ backgroundColor: '#fff', padding: '5px 7px 6px', minHeight: 88, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+      <div style={{ backgroundColor: '#fff', padding: '4px 6px 5px', minHeight: 74, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         <div style={{
-            fontSize: 9,
+            fontSize: 8,
             fontWeight: 700,
             color: '#607d8b',
             textTransform: 'uppercase',
             letterSpacing: 0.4,
-            marginBottom: 3,
+            marginBottom: 2,
           }}>
           {headerRightTop}
         </div>
         {queueElapsedLabel && (
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64', marginBottom: 3 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: '#455a64', marginBottom: 2 }}>
             Queue: {queueElapsedLabel}
           </div>
         )}
         <div style={{
           fontWeight: 700,
-          fontSize: 12,
+          fontSize: 11,
           color: '#1a1a1a',
           lineHeight: 1.25,
         }}>
           {rq.team1_display}
         </div>
-        <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
+        <div style={{ color: '#999', fontSize: 8, margin: '1px 0' }}>vs</div>
         <div style={{
           fontWeight: 700,
-          fontSize: 12,
+          fontSize: 11,
           color: '#1a1a1a',
           lineHeight: 1.25,
         }}>
@@ -271,8 +268,8 @@ function CurrentCourtCard({
       <div style={{
         backgroundColor: '#1a237e',
         color: '#fff',
-        padding: '5px 8px',
-        fontSize: 12,
+        padding: '4px 6px',
+        fontSize: 11,
         fontWeight: 700,
         display: 'flex',
         justifyContent: 'space-between',
@@ -280,7 +277,7 @@ function CurrentCourtCard({
         gap: 4,
         minWidth: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', flexWrap: 'nowrap' }}>
           <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{courtName.replace(/^Court\s+/i, 'Ct ')}</span>
           <EventBadge name={match.event_name} />
           <Badge label={match.stage} bg={stageColor} color="#fff" />
@@ -289,18 +286,18 @@ function CurrentCourtCard({
           {slotLabel ? slotLabel.split(' ').slice(-2).join('\u00a0') : ''}
         </span>
       </div>
-      <div style={{ backgroundColor: '#fff', padding: '5px 7px 6px', minHeight: 88, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+      <div style={{ backgroundColor: '#fff', padding: '4px 6px 5px', minHeight: 74, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         <div>
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            marginBottom: 4,
+            justifyContent: 'flex-start',
+            gap: 6,
+            marginBottom: 3,
             flexWrap: 'wrap',
           }}>
             <div style={{
-              fontSize: 9,
+              fontSize: 8,
               fontWeight: 700,
               color: '#e65100',
               textTransform: 'uppercase',
@@ -315,17 +312,16 @@ function CurrentCourtCard({
                 <span style={{ fontSize: 8, fontWeight: 700, color: '#c62828', letterSpacing: 0.8 }}>Paused</span>
               )}
             </div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#455a64' }}>#{match.match_number}</div>
           </div>
-          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
+          <div style={{ color: '#1a1a1a', fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>
             {match.team1_display || 'TBD'}
           </div>
-          <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
-          <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
+          <div style={{ color: '#999', fontSize: 8, margin: '1px 0' }}>vs</div>
+          <div style={{ color: '#1a1a1a', fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>
             {match.team2_display || 'TBD'}
           </div>
           {(startAtLabel || elapsedLabel) && (
-            <div style={{ marginTop: 3, fontSize: 9, color: '#607d8b' }}>
+            <div style={{ marginTop: 2, fontSize: 8, color: '#607d8b' }}>
               {startAtLabel && <span>▶ {startAtLabel}</span>}
               {startAtLabel && elapsedLabel && <span style={{ margin: '0 3px' }}>·</span>}
               {elapsedLabel && <span>{elapsedLabel}</span>}
@@ -349,7 +345,7 @@ function WaitingMatchCard({
     <div style={{
       border: '1px solid #d7dee5',
       borderRadius: 8,
-      padding: '10px 12px',
+      padding: '7px 8px',
       backgroundColor: '#fff',
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
     }}>
@@ -359,27 +355,24 @@ function WaitingMatchCard({
         alignItems: 'center',
         gap: 10,
         flexWrap: 'wrap',
-        marginBottom: 8,
+        marginBottom: 6,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{slotLabel}</span>
-          <span style={{ fontSize: 12, color: '#607d8b', fontWeight: 700 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: '#334155' }}>{slotLabel}</span>
+          <span style={{ fontSize: 10, color: '#607d8b', fontWeight: 700 }}>
             Match #{match.match_number}
           </span>
           <EventBadge name={match.event_name} />
         </div>
-        <div style={{ fontSize: 12, color: '#607d8b', fontWeight: 700 }}>
-          {match.day_label}{match.scheduled_time ? ` · ${match.scheduled_time}` : ''}
-        </div>
       </div>
       <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: '#1a1a1a', lineHeight: 1.15 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: '#1a1a1a', lineHeight: 1.15 }}>
           {match.side_a.team_display || 'TBD'}
         </div>
-        <div style={{ fontSize: 12, color: '#90a4ae', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        <div style={{ fontSize: 10, color: '#90a4ae', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
           vs
         </div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: '#1a1a1a', lineHeight: 1.15 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: '#1a1a1a', lineHeight: 1.15 }}>
           {match.side_b.team_display || 'TBD'}
         </div>
       </div>
@@ -697,7 +690,7 @@ export default function TournamentDeskCheckinBoardPage() {
                       <div style={{
                         padding: 10,
                         display: 'grid',
-                        gridTemplateColumns: kioskMode ? 'repeat(2, minmax(0, 1fr))' : '1fr',
+                        gridTemplateColumns: kioskMode ? 'repeat(3, minmax(0, 1fr))' : '1fr',
                         gap: 10,
                       }}>
                         {group.matches.map((match) => (
@@ -750,7 +743,7 @@ export default function TournamentDeskCheckinBoardPage() {
                   No ready matches are waiting right now
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 165px))', gap: 8, justifyContent: 'start' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 140px))', gap: 8, justifyContent: 'start' }}>
                   {readyCards.map((card) => (
                     <CheckInReadyDisplayCard
                       key={card.rq.match_id}
@@ -794,7 +787,7 @@ export default function TournamentDeskCheckinBoardPage() {
                   No matches are currently playing
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 135px))', gap: 8, justifyContent: 'start' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(122px, 122px))', gap: 8, justifyContent: 'start' }}>
                   {currentCards.map((card) => (
                     <CurrentCourtCard
                       key={card.courtName}
