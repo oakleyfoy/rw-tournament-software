@@ -1808,6 +1808,17 @@ export interface SeededImportResponse {
   warnings: string[]
 }
 
+export interface CombinedTeamImportResponse {
+  imported_count: number
+  updated_count: number
+  total_rows: number
+  events_touched: number
+  towel_rows_imported: number
+  towel_rows_matched: number
+  rejected_rows: SeededImportRejectedRow[]
+  warnings: string[]
+}
+
 export async function importSeededTeams(
   tournamentId: number,
   eventId: number,
@@ -1818,6 +1829,19 @@ export async function importSeededTeams(
     {
       method: 'POST',
       body: JSON.stringify({ format: 'sectioned_text', text }),
+    }
+  )
+}
+
+export async function importCombinedTeams(
+  tournamentId: number,
+  text: string
+): Promise<CombinedTeamImportResponse> {
+  return fetchJson<CombinedTeamImportResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/teams/import-combined`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ text }),
     }
   )
 }

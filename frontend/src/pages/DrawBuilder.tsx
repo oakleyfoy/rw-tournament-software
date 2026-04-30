@@ -7,6 +7,7 @@ import {
   getScheduleBuilder,
   getPlanReport,
   importSeededTeams,
+  importCombinedTeams,
   getEventTeams,
   ScheduleBuilderResponse,
   SchedulePlanReport,
@@ -101,10 +102,12 @@ function DrawBuilder() {
   const [eventEditorStates, setEventEditorStates] = useState<Record<number, EventEditorState>>({})
   const [expandedExplanations, setExpandedExplanations] = useState<Record<number, boolean>>({})
 
-  // Team import state
-  const [importOpenEventId, setImportOpenEventId] = useState<number | null>(null)
+  // Combined roster + towel import state
   const [importText, setImportText] = useState('')
   const [importLoading, setImportLoading] = useState(false)
+  const [legacyImportOpenEventId, setLegacyImportOpenEventId] = useState<number | null>(null)
+  const [legacyImportText, setLegacyImportText] = useState('')
+  const [legacyImportLoading, setLegacyImportLoading] = useState(false)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
 
@@ -560,6 +563,35 @@ function DrawBuilder() {
     }
   }
 
+  const handleImportTeams = async () => {
+    if (!tournamentId || !importText.trim()) return
+    setImportLoading(true)
+    try {
+      const res = await importCombinedTeams(tournamentId, importText)
+      const parts: string[] = []
+      if (res.imported_count > 0) parts.push(`${res.imported_count} imported`)
+      if (res.updated_count > 0) parts.push(`${res.updated_count} updated`)
+      if (res.events_touched > 0) parts.push(`${res.events_touched} draw${res.events_touched === 1 ? '' : 's'} updated`)
+      if (res.towel_rows_imported > 0) {
+        parts.push(`${res.towel_rows_imported} towel row${res.towel_rows_imported === 1 ? '' : 's'}`)
+      }
+      if (res.rejected_rows.length > 0) parts.push(`${res.rejected_rows.length} rejected`)
+      showToast(parts.join(', ') || 'No changes', res.rejected_rows.length > 0 ? 'warning' : 'success')
+      if (res.warnings.length > 0) {
+        res.warnings.forEach(w => showToast(w, 'warning'))
+      }
+      if (res.rejected_rows.length > 0) {
+        res.rejected_rows.forEach(r => showToast(`Line ${r.line}: ${r.reason}`, 'error'))
+      }
+      setImportText('')
+      await loadData()
+    } catch (err: any) {
+      showToast(err?.message || 'Import failed', 'error')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
   const handleLoadTeams = async (eventId: number) => {
     setLoadingTeamsFor(eventId)
     try {
@@ -572,11 +604,11 @@ function DrawBuilder() {
     }
   }
 
-  const handleImportTeams = async (eventId: number) => {
-    if (!tournamentId || !importText.trim()) return
-    setImportLoading(true)
+  const handleLegacyImportTeams = async (eventId: number) => {
+    if (!tournamentId || !legacyImportText.trim()) return
+    setLegacyImportLoading(true)
     try {
-      const res = await importSeededTeams(tournamentId, eventId, importText)
+      const res = await importSeededTeams(tournamentId, eventId, legacyImportText)
       const parts: string[] = []
       if (res.imported_count > 0) parts.push(`${res.imported_count} imported`)
       if (res.updated_count > 0) parts.push(`${res.updated_count} updated`)
@@ -588,13 +620,13 @@ function DrawBuilder() {
       if (res.rejected_rows.length > 0) {
         res.rejected_rows.forEach(r => showToast(`Line ${r.line}: ${r.reason}`, 'error'))
       }
-      setImportText('')
-      setImportOpenEventId(null)
-      handleLoadTeams(eventId)
+      setLegacyImportText('')
+      setLegacyImportOpenEventId(null)
+      await Promise.all([handleLoadTeams(eventId), loadData()])
     } catch (err: any) {
       showToast(err?.message || 'Import failed', 'error')
     } finally {
-      setImportLoading(false)
+      setLegacyImportLoading(false)
     }
   }
 
@@ -1225,12 +1257,61 @@ function DrawBuilder() {
         )
       })()}
 
-      {/* Team Rosters — import seeded teams per event */}
+      {/* Combined roster + towel import */}
       {events.filter(e => e.draw_status === 'final').length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
-          <h2 className="section-title">Team Rosters</h2>
+          <h2 className="section-title">Combined Team + Towel Import</h2>
+          <div style={{ fontSize: 13, color: 'var(--theme-text)', lineHeight: 1.5, marginBottom: 12 }}>
+            Paste one tournament-wide sheet here. The <strong>Draw</strong> column routes each row into the right finalized draw automatically,
+            and this same upload also refreshes the towel/contact rows used at check-in.
+          </div>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder={
+              "Seed\tWho knows who\tFirst names team\tFull name, city, state team\tDraw\tLevel\ttowel color first player\tcellphone first player\temail first player\ttowel color second player\tcellphone second player\temail second player\n1\tB\tAlex / Torrie\tAlex Quiros, PA / Torrie Kline, PA\tWomens\t8.5\tBlue\t8123612060\talex@mail.com\tPink\t6109696386\ttorrie@mail.com\n2\tA\tJeni / Marina\tJeni Dao, TX / Marina Wang, TX\tMixed\t8.5\tGreen\t2819199929\tjeni@mail.com\tYellow\t7133068878\tmarina@mail.com"
+            }
+            style={{
+              width: '100%',
+              minHeight: 180,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              padding: 8,
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              resize: 'vertical',
+              boxSizing: 'border-box',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 12, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-primary"
+              disabled={importLoading || !importText.trim()}
+              onClick={() => handleImportTeams()}
+              style={{ fontSize: 13, padding: '6px 14px' }}
+            >
+              {importLoading ? 'Importing...' : 'Import Teams + Towels'}
+            </button>
+            <span style={{ fontSize: 11, color: '#888' }}>
+              Uses `Seed`, `Who knows who`, `First names team`, `Full name, city, state team`, `Draw`, `Level`,
+              and both players&apos; towel/cell/email columns.
+            </span>
+          </div>
+          <div style={{ marginTop: 12, fontSize: 12, color: '#666', lineHeight: 1.5 }}>
+            Finalized draws ready for import:{' '}
+            {events
+              .filter(e => e.draw_status === 'final')
+              .map(e => e.name)
+              .join(', ')}
+          </div>
+        </div>
+      )}
+
+      {events.filter(e => e.draw_status === 'final').length > 0 && (
+        <div className="card" style={{ marginTop: 24 }}>
+          <h2 className="section-title">Legacy Per-Event Team Import</h2>
           {events.filter(e => e.draw_status === 'final').map((ev) => {
-            const isOpen = importOpenEventId === ev.id
+            const isOpen = legacyImportOpenEventId === ev.id
             const teams = eventTeams[ev.id]
             const isLoadingTeams = loadingTeamsFor === ev.id
             return (
@@ -1243,7 +1324,7 @@ function DrawBuilder() {
                   }}
                   onClick={() => {
                     const nextOpen = isOpen ? null : ev.id
-                    setImportOpenEventId(nextOpen)
+                    setLegacyImportOpenEventId(nextOpen)
                     if (nextOpen && !eventTeams[ev.id]) handleLoadTeams(ev.id)
                   }}
                 >
@@ -1261,11 +1342,11 @@ function DrawBuilder() {
                   <div style={{ padding: '12px 14px' }}>
                     <div style={{ marginBottom: 16 }}>
                       <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                        Import Seeded Teams (paste from WAR Tournaments / Excel)
+                        Import Seeded Teams (legacy path)
                       </div>
                       <textarea
-                        value={importText}
-                        onChange={(e) => setImportText(e.target.value)}
+                        value={legacyImportText}
+                        onChange={(e) => setLegacyImportText(e.target.value)}
                         placeholder={"1\tB\tAlex / Torrie\tAlex Quiros, PA / Torrie Kline, PA\tWomens\t8.5\t8123612060\talex@mail.com\t6109696386\ttorrie@mail.com\n2\tA\tJeni / Marina\tJeni Dao, TX / Marina Wang, TX\tWomens\t8.5\t2819199929\tjeni@mail.com\t7133068878\tmarina@mail.com\n..."}
                         style={{
                           width: '100%', minHeight: 120, fontFamily: 'monospace', fontSize: 12,
@@ -1276,11 +1357,11 @@ function DrawBuilder() {
                       <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
                         <button
                           className="btn btn-primary"
-                          disabled={importLoading || !importText.trim()}
-                          onClick={() => handleImportTeams(ev.id)}
+                          disabled={legacyImportLoading || !legacyImportText.trim()}
+                          onClick={() => handleLegacyImportTeams(ev.id)}
                           style={{ fontSize: 13, padding: '6px 14px' }}
                         >
-                          {importLoading ? 'Importing...' : 'Import Teams'}
+                          {legacyImportLoading ? 'Importing...' : 'Import Teams'}
                         </button>
                         <span style={{ fontSize: 11, color: '#888' }}>
                           Format: seed  group  display_name  full_name  event  rating  p1_cell  p1_email  p2_cell  p2_email (tab separated)
