@@ -218,19 +218,25 @@ function CheckInReadyDisplayCard({
           </div>
         )}
         <div style={{
-          fontWeight: 700,
-          fontSize: 11,
-          color: '#1a1a1a',
-          lineHeight: 1.25,
+          fontWeight: 800,
+          fontSize: 13,
+          color: '#0f172a',
+          lineHeight: 1.15,
+          letterSpacing: 0.1,
+          textRendering: 'optimizeLegibility',
+          WebkitFontSmoothing: 'antialiased',
         }}>
           {rq.team1_display}
         </div>
         <div style={{ color: '#999', fontSize: 8, margin: '1px 0' }}>vs</div>
         <div style={{
-          fontWeight: 700,
-          fontSize: 11,
-          color: '#1a1a1a',
-          lineHeight: 1.25,
+          fontWeight: 800,
+          fontSize: 13,
+          color: '#0f172a',
+          lineHeight: 1.15,
+          letterSpacing: 0.1,
+          textRendering: 'optimizeLegibility',
+          WebkitFontSmoothing: 'antialiased',
         }}>
           {rq.team2_display}
         </div>
@@ -313,11 +319,27 @@ function CurrentCourtCard({
               )}
             </div>
           </div>
-          <div style={{ color: '#1a1a1a', fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>
+          <div style={{
+            color: '#0f172a',
+            fontSize: 13,
+            fontWeight: 800,
+            lineHeight: 1.15,
+            letterSpacing: 0.1,
+            textRendering: 'optimizeLegibility',
+            WebkitFontSmoothing: 'antialiased',
+          }}>
             {match.team1_display || 'TBD'}
           </div>
           <div style={{ color: '#999', fontSize: 8, margin: '1px 0' }}>vs</div>
-          <div style={{ color: '#1a1a1a', fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>
+          <div style={{
+            color: '#0f172a',
+            fontSize: 13,
+            fontWeight: 800,
+            lineHeight: 1.15,
+            letterSpacing: 0.1,
+            textRendering: 'optimizeLegibility',
+            WebkitFontSmoothing: 'antialiased',
+          }}>
             {match.team2_display || 'TBD'}
           </div>
           {(startAtLabel || elapsedLabel) && (
