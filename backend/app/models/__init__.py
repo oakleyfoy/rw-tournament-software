@@ -15,6 +15,7 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.sms_log import SmsLog
+from app.models.sms_phone_list import SmsPhoneList, SmsPhoneListMember
 from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_template import SmsTemplate
 from app.models.player import Player
@@ -45,6 +46,8 @@ __all__ = [
     "TeamAvoidEdge",
     "PolicyRun",
     "SmsLog",
+    "SmsPhoneList",
+    "SmsPhoneListMember",
     "SmsConsentEvent",
     "SmsTemplate",
     "Player",

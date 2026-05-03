@@ -233,6 +233,85 @@ def test_blast_empty_tournament(client, session):
     assert resp.status_code == 400
 
 
+def test_phone_list_crud_import_and_send(client, session):
+    from app.models.tournament import Tournament
+
+    tournament = Tournament(
+        name="Phone List Tournament",
+        location="Memphis",
+        timezone="America/Chicago",
+        start_date=date(2026, 3, 15),
+        end_date=date(2026, 3, 16),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    create_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/phone-lists",
+        json={"name": "Volunteers"},
+    )
+    assert create_resp.status_code == 200
+    phone_list = create_resp.json()
+    assert phone_list["name"] == "Volunteers"
+    phone_list_id = phone_list["id"]
+
+    import_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/phone-lists/{phone_list_id}/import",
+        json={"raw_text": "John Smith\t9013593035\nJane Doe\t901-555-1234\nbad\tabc"},
+    )
+    assert import_resp.status_code == 200
+    imported = import_resp.json()
+    assert imported["imported_count"] == 2
+    assert len(imported["rejected_rows"]) == 1
+    assert imported["phone_list"]["member_count"] == 2
+
+    preview_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/preview/phone-lists/{phone_list_id}",
+        json={"message": "Volunteer check-in at 7am"},
+    )
+    assert preview_resp.status_code == 200
+    preview = preview_resp.json()
+    assert preview["total_messages"] == 2
+
+    send_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/phone-lists/{phone_list_id}",
+        json={"message": "Volunteer check-in at 7am"},
+    )
+    assert send_resp.status_code == 200
+    data = send_resp.json()
+    assert data["sent"] == 2
+    assert data["message_type"] == "phone_list_blast"
+
+
+def test_phone_list_requires_members_before_send(client, session):
+    from app.models.tournament import Tournament
+
+    tournament = Tournament(
+        name="Empty Phone List Tournament",
+        location="Memphis",
+        timezone="America/Chicago",
+        start_date=date(2026, 3, 15),
+        end_date=date(2026, 3, 16),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    create_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/phone-lists",
+        json={"name": "Sponsors"},
+    )
+    assert create_resp.status_code == 200
+    phone_list_id = create_resp.json()["id"]
+
+    send_resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/phone-lists/{phone_list_id}",
+        json={"message": "Hello"},
+    )
+    assert send_resp.status_code == 400
+
+
 def test_player_lookup_does_not_auto_create_from_team_slots(
     client,
     session,

@@ -67,6 +67,17 @@ REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
     ("auto_checkin_court_assigned", "INTEGER", "BOOLEAN"),
 ]
 
+REQUIRED_SMS_PHONE_LIST_COLUMNS: List[Tuple[str, str, str]] = [
+    ("created_at", "TIMESTAMP", "TIMESTAMP"),
+    ("updated_at", "TIMESTAMP", "TIMESTAMP"),
+]
+
+REQUIRED_SMS_PHONE_LIST_MEMBER_COLUMNS: List[Tuple[str, str, str]] = [
+    ("raw_name", "TEXT", "TEXT"),
+    ("phone_number", "TEXT", "TEXT"),
+    ("created_at", "TIMESTAMP", "TIMESTAMP"),
+]
+
 # Columns we must ensure exist in the "temporary_player_lookup" table.
 REQUIRED_TEMPORARY_PLAYER_LOOKUP_COLUMNS: List[Tuple[str, str, str]] = [
     ("player_id", "INTEGER", "INTEGER"),
@@ -481,6 +492,63 @@ def ensure_temporary_player_lookup_columns(engine: Engine) -> None:
         logger = logging.getLogger(__name__)
         logger.warning(
             f"Failed to ensure temporary_player_lookup columns (this is OK if table doesn't exist yet): {e}"
+        )
+
+
+def ensure_sms_phone_list_columns(engine: Engine) -> None:
+    """Idempotently adds required columns to the sms phone list tables."""
+    try:
+        from app.models.sms_phone_list import SmsPhoneList, SmsPhoneListMember
+
+        for model, required_columns in (
+            (SmsPhoneList, REQUIRED_SMS_PHONE_LIST_COLUMNS),
+            (SmsPhoneListMember, REQUIRED_SMS_PHONE_LIST_MEMBER_COLUMNS),
+        ):
+            table = model.__table__.name
+
+            if _is_sqlite(engine):
+                with engine.connect() as conn:
+                    result = conn.execute(
+                        text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                        {"table_name": table},
+                    ).fetchone()
+                    if not result:
+                        continue
+
+                existing = _get_existing_columns_sqlite(engine, table)
+                with engine.begin() as conn:
+                    for name, sqlite_type, _pg_type in required_columns:
+                        if name in existing:
+                            continue
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type};"))
+            else:
+                with engine.connect() as conn:
+                    result = conn.execute(
+                        text(
+                            """
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables
+                            WHERE table_schema = 'public' AND table_name = :table_name
+                        )
+                    """
+                        ),
+                        {"table_name": table},
+                    ).fetchone()
+                    if not result or not result[0]:
+                        continue
+
+                existing = _get_existing_columns_postgres(engine, table)
+                with engine.begin() as conn:
+                    for name, _sqlite_type, pg_type in required_columns:
+                        if name in existing:
+                            continue
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type};"))
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure sms phone list columns (this is OK if table doesn't exist yet): {e}"
         )
 
 

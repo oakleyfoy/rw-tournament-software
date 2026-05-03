@@ -17,6 +17,7 @@ from app.db_schema_patch import (
     ensure_event_columns,
     ensure_schedule_slot_columns,
     ensure_sms_log_columns,
+    ensure_sms_phone_list_columns,
     ensure_start_over_baseline_assignment_table,
     ensure_team_columns,
     ensure_temporary_player_lookup_columns,
@@ -208,6 +209,7 @@ def on_startup():
     ensure_start_over_baseline_assignment_table(engine)
     ensure_tournament_sms_settings_columns(engine)
     ensure_temporary_player_lookup_columns(engine)
+    ensure_sms_phone_list_columns(engine)
     ensure_tournament_time_window_columns(engine)
     ensure_schedule_slot_columns(engine)
     start_first_match_runner_if_enabled()

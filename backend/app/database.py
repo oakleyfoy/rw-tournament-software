@@ -51,6 +51,7 @@ def init_db() -> None:
     from app.models.schedule_slot import ScheduleSlot  # noqa: F401
     from app.models.schedule_version import ScheduleVersion  # noqa: F401
     from app.models.sms_consent_event import SmsConsentEvent  # noqa: F401
+    from app.models.sms_phone_list import SmsPhoneList, SmsPhoneListMember  # noqa: F401
     from app.models.team import Team  # noqa: F401
     from app.models.team_avoid_edge import TeamAvoidEdge  # noqa: F401
     from app.models.team_player import TeamPlayer  # noqa: F401

@@ -3566,6 +3566,34 @@ export interface SmsAutomationRunResponse {
   template_inactive: boolean
 }
 
+export interface SmsPhoneListMember {
+  id: number
+  raw_name: string | null
+  phone_number: string
+}
+
+export interface SmsPhoneList {
+  id: number
+  tournament_id: number
+  name: string
+  member_count: number
+  created_at: string
+  updated_at: string
+  members: SmsPhoneListMember[]
+}
+
+export interface SmsPhoneListImportRejectedRow {
+  line: number
+  text: string
+  reason: string
+}
+
+export interface SmsPhoneListImportResponse {
+  phone_list: SmsPhoneList
+  imported_count: number
+  rejected_rows: SmsPhoneListImportRejectedRow[]
+}
+
 export interface SmsRrAutomationRunResponse {
   tournament_id: number
   version_id: number | null
@@ -3826,6 +3854,78 @@ export async function previewSmsMatch(
 ): Promise<SmsPreviewResponse> {
   return fetchJson<SmsPreviewResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/match/${matchId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function getSmsPhoneLists(
+  tournamentId: number
+): Promise<SmsPhoneList[]> {
+  return fetchJson<SmsPhoneList[]>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists`
+  )
+}
+
+export async function createSmsPhoneList(
+  tournamentId: number,
+  payload: { name: string }
+): Promise<SmsPhoneList> {
+  return fetchJson<SmsPhoneList>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function renameSmsPhoneList(
+  tournamentId: number,
+  phoneListId: number,
+  payload: { name: string }
+): Promise<SmsPhoneList> {
+  return fetchJson<SmsPhoneList>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deleteSmsPhoneList(
+  tournamentId: number,
+  phoneListId: number
+): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}`,
+    { method: 'DELETE' }
+  )
+}
+
+export async function importSmsPhoneList(
+  tournamentId: number,
+  phoneListId: number,
+  payload: { raw_text: string }
+): Promise<SmsPhoneListImportResponse> {
+  return fetchJson<SmsPhoneListImportResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}/import`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsPhoneList(
+  tournamentId: number,
+  phoneListId: number,
+  payload: SmsSendRequest
+): Promise<SmsPreviewResponse> {
+  return fetchJson<SmsPreviewResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/preview/phone-lists/${phoneListId}`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function sendSmsPhoneList(
+  tournamentId: number,
+  phoneListId: number,
+  payload: SmsSendRequest
+): Promise<SmsSendResponse> {
+  return fetchJson<SmsSendResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
 }

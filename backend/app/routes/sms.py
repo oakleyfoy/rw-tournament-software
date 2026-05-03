@@ -32,6 +32,7 @@ from app.models.schedule_version import ScheduleVersion
 from app.models.schedule_slot import ScheduleSlot
 from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_log import SmsLog
+from app.models.sms_phone_list import SmsPhoneList, SmsPhoneListMember
 from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
@@ -103,6 +104,46 @@ class SmsPreviewResponse(BaseModel):
     total_messages: int
     teams_without_phone: int
     recipients: List[SmsPreviewRecipient]
+
+
+class SmsPhoneListMemberResponse(BaseModel):
+    id: int
+    raw_name: Optional[str] = None
+    phone_number: str
+
+
+class SmsPhoneListResponse(BaseModel):
+    id: int
+    tournament_id: int
+    name: str
+    member_count: int
+    created_at: datetime
+    updated_at: datetime
+    members: List[SmsPhoneListMemberResponse] = []
+
+
+class SmsPhoneListCreateRequest(BaseModel):
+    name: str
+
+
+class SmsPhoneListRenameRequest(BaseModel):
+    name: str
+
+
+class SmsPhoneListImportRequest(BaseModel):
+    raw_text: str
+
+
+class SmsPhoneListRejectedRow(BaseModel):
+    line: int
+    text: str
+    reason: str
+
+
+class SmsPhoneListImportResponse(BaseModel):
+    phone_list: SmsPhoneListResponse
+    imported_count: int
+    rejected_rows: List[SmsPhoneListRejectedRow]
 
 
 class SmsLogResponse(BaseModel):
@@ -1690,6 +1731,129 @@ def _preview_for_teams(
     )
 
 
+def _serialize_phone_list(
+    phone_list: SmsPhoneList,
+    members: List[SmsPhoneListMember],
+) -> SmsPhoneListResponse:
+    return SmsPhoneListResponse(
+        id=phone_list.id or 0,
+        tournament_id=phone_list.tournament_id,
+        name=phone_list.name,
+        member_count=len(members),
+        created_at=phone_list.created_at,
+        updated_at=phone_list.updated_at,
+        members=[
+            SmsPhoneListMemberResponse(
+                id=member.id or 0,
+                raw_name=member.raw_name,
+                phone_number=member.phone_number,
+            )
+            for member in members
+        ],
+    )
+
+
+def _get_phone_list_or_404(
+    session: Session,
+    tournament_id: int,
+    phone_list_id: int,
+) -> SmsPhoneList:
+    phone_list = session.get(SmsPhoneList, phone_list_id)
+    if not phone_list or phone_list.tournament_id != tournament_id:
+        raise HTTPException(404, f"Phone list {phone_list_id} not found")
+    return phone_list
+
+
+def _get_phone_list_members(
+    session: Session,
+    phone_list_id: int,
+) -> List[SmsPhoneListMember]:
+    members = session.exec(
+        select(SmsPhoneListMember)
+        .where(SmsPhoneListMember.phone_list_id == phone_list_id)
+        .order_by(SmsPhoneListMember.id.asc())
+    ).all()
+    return list(members)
+
+
+def _parse_phone_list_import_rows(raw_text: str) -> tuple[List[dict], List[SmsPhoneListRejectedRow]]:
+    lines = [line.rstrip("\r") for line in (raw_text or "").splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(400, "Paste phone rows or upload a plain text / TSV list")
+
+    parsed: List[dict] = []
+    rejected: List[SmsPhoneListRejectedRow] = []
+    seen: set[str] = set()
+
+    for line_num, raw_line in enumerate(lines, start=1):
+        cells = [cell.strip() for cell in raw_line.split("\t")]
+        if not cells:
+            continue
+
+        lowered = " ".join(cells).lower()
+        if any(token in lowered for token in ("phone", "cell", "mobile")) and not re.search(r"\d", lowered):
+            continue
+
+        raw_name: Optional[str] = None
+        phone_candidate = ""
+        if len(cells) == 1:
+            phone_candidate = cells[0]
+        else:
+            raw_name = cells[0] or None
+            phone_candidate = cells[1]
+
+        try:
+            phone_number = format_e164(phone_candidate)
+        except ValueError as exc:
+            rejected.append(
+                SmsPhoneListRejectedRow(
+                    line=line_num,
+                    text=raw_line[:120],
+                    reason=str(exc),
+                )
+            )
+            continue
+
+        if phone_number in seen:
+            continue
+        seen.add(phone_number)
+        parsed.append(
+            {
+                "raw_name": raw_name,
+                "phone_number": phone_number,
+            }
+        )
+
+    if not parsed and not rejected:
+        raise HTTPException(400, "No valid phone numbers found in the uploaded list")
+    return parsed, rejected
+
+
+def _preview_phone_targets(
+    targets: List[dict],
+    message: str,
+) -> SmsPreviewResponse:
+    normalized_message = _normalize_sms_message(message)
+    recipients: List[SmsPreviewRecipient] = []
+    for target in targets:
+        recipients.append(
+            SmsPreviewRecipient(
+                team_id=None,
+                team_name=None,
+                player_id=None,
+                player_name=target.get("player_name"),
+                phones=[target["phone"]],
+                message=normalized_message,
+            )
+        )
+    return SmsPreviewResponse(
+        total_teams=len(targets),
+        total_messages=len(targets),
+        teams_without_phone=0,
+        recipients=recipients,
+    )
+
+
 def _render_template(
     template_body: str,
     **kwargs,
@@ -1785,6 +1949,143 @@ def get_sms_players(
         for p in players
         if p.id is not None
     ]
+
+
+@router.get("/phone-lists", response_model=List[SmsPhoneListResponse])
+def get_sms_phone_lists(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    phone_lists = session.exec(
+        select(SmsPhoneList)
+        .where(SmsPhoneList.tournament_id == tournament_id)
+        .order_by(SmsPhoneList.name.asc(), SmsPhoneList.id.asc())
+    ).all()
+    responses: List[SmsPhoneListResponse] = []
+    for phone_list in phone_lists:
+        members = _get_phone_list_members(session, phone_list.id or 0)
+        responses.append(_serialize_phone_list(phone_list, members))
+    return responses
+
+
+@router.post("/phone-lists", response_model=SmsPhoneListResponse)
+def create_sms_phone_list(
+    tournament_id: int,
+    body: SmsPhoneListCreateRequest,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "List name is required")
+
+    existing = session.exec(
+        select(SmsPhoneList).where(
+            SmsPhoneList.tournament_id == tournament_id,
+            SmsPhoneList.name == name,
+        )
+    ).first()
+    if existing:
+        raise HTTPException(409, f"Phone list '{name}' already exists")
+
+    phone_list = SmsPhoneList(
+        tournament_id=tournament_id,
+        name=name,
+        updated_at=datetime.now(timezone.utc),
+    )
+    session.add(phone_list)
+    session.commit()
+    session.refresh(phone_list)
+    return _serialize_phone_list(phone_list, [])
+
+
+@router.patch("/phone-lists/{phone_list_id}", response_model=SmsPhoneListResponse)
+def rename_sms_phone_list(
+    tournament_id: int,
+    phone_list_id: int,
+    body: SmsPhoneListRenameRequest,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "List name is required")
+
+    existing = session.exec(
+        select(SmsPhoneList).where(
+            SmsPhoneList.tournament_id == tournament_id,
+            SmsPhoneList.name == name,
+            SmsPhoneList.id != phone_list_id,
+        )
+    ).first()
+    if existing:
+        raise HTTPException(409, f"Phone list '{name}' already exists")
+
+    phone_list.name = name
+    phone_list.updated_at = datetime.now(timezone.utc)
+    session.add(phone_list)
+    session.commit()
+    session.refresh(phone_list)
+    members = _get_phone_list_members(session, phone_list_id)
+    return _serialize_phone_list(phone_list, members)
+
+
+@router.delete("/phone-lists/{phone_list_id}")
+def delete_sms_phone_list(
+    tournament_id: int,
+    phone_list_id: int,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    members = _get_phone_list_members(session, phone_list_id)
+    for member in members:
+        session.delete(member)
+    session.delete(phone_list)
+    session.commit()
+    return {"ok": True}
+
+
+@router.post("/phone-lists/{phone_list_id}/import", response_model=SmsPhoneListImportResponse)
+def import_sms_phone_list_members(
+    tournament_id: int,
+    phone_list_id: int,
+    body: SmsPhoneListImportRequest,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    parsed_rows, rejected_rows = _parse_phone_list_import_rows(body.raw_text)
+
+    existing_members = _get_phone_list_members(session, phone_list_id)
+    for member in existing_members:
+        session.delete(member)
+    session.flush()
+
+    created_members: List[SmsPhoneListMember] = []
+    for row in parsed_rows:
+        member = SmsPhoneListMember(
+            phone_list_id=phone_list_id,
+            raw_name=row.get("raw_name"),
+            phone_number=row["phone_number"],
+        )
+        session.add(member)
+        created_members.append(member)
+
+    phone_list.updated_at = datetime.now(timezone.utc)
+    session.add(phone_list)
+    session.commit()
+    session.refresh(phone_list)
+    for member in created_members:
+        session.refresh(member)
+
+    return SmsPhoneListImportResponse(
+        phone_list=_serialize_phone_list(phone_list, created_members),
+        imported_count=len(created_members),
+        rejected_rows=rejected_rows,
+    )
 
 
 @router.post("/players/wipe", response_model=SmsPlayerWipeResponse)
@@ -2602,6 +2903,43 @@ def send_timeslot_text(
     )
 
 
+@router.post("/phone-lists/{phone_list_id}", response_model=SmsSendResponse)
+def send_phone_list_text(
+    tournament_id: int,
+    phone_list_id: int,
+    body: SmsSendRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    members = _get_phone_list_members(session, phone_list_id)
+    if not members:
+        raise HTTPException(400, f"Phone list '{phone_list.name}' has no recipients")
+
+    targets = [
+        {
+            "phone": member.phone_number,
+            "team_id": None,
+            "team_name": None,
+            "player_id": None,
+            "player_name": member.raw_name or phone_list.name,
+        }
+        for member in members
+    ]
+    return _send_to_phone_targets(
+        session=session,
+        tournament_id=tournament_id,
+        targets=targets,
+        message=body.message,
+        message_type="phone_list_blast",
+        trigger="manual",
+        dedupe_key=body.dedupe_key,
+        skipped_no_phone=0,
+        status_callback_base_url=str(request.base_url),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Preview endpoint (dry-run)
 # ---------------------------------------------------------------------------
@@ -2640,6 +2978,29 @@ def preview_event(
         teams=teams,
         message=body.message,
     )
+
+
+@router.post("/preview/phone-lists/{phone_list_id}", response_model=SmsPreviewResponse)
+def preview_phone_list(
+    tournament_id: int,
+    phone_list_id: int,
+    body: SmsSendRequest,
+    session: Session = Depends(get_session),
+):
+    _get_tournament_or_404(session, tournament_id)
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    members = _get_phone_list_members(session, phone_list_id)
+    if not members:
+        raise HTTPException(400, f"Phone list '{phone_list.name}' has no recipients")
+
+    targets = [
+        {
+            "phone": member.phone_number,
+            "player_name": member.raw_name or phone_list.name,
+        }
+        for member in members
+    ]
+    return _preview_phone_targets(targets, body.message)
 
 
 @router.post("/preview/division/{division}", response_model=SmsPreviewResponse)
