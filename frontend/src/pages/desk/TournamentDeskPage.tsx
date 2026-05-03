@@ -6665,7 +6665,7 @@ function TeamsTab({
 
 // ── SMS Admin Tab ──────────────────────────────────────────────────────
 
-type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player' | 'match' | 'phone_list'
+type SmsScope = 'blast' | 'event' | 'division' | 'team' | 'player' | 'match'
 
 type SmsQuickTargetPrefill = {
   scope: 'team' | 'match'
@@ -6681,6 +6681,435 @@ function formatEventScopeLabel(event: Event): string {
     return name
   }
   return `${categoryPrefix} ${name}`.trim()
+}
+
+// ── Text List Tab ───────────────────────────────────────────────────────
+
+function TextListTab({ tournamentId }: { tournamentId: number }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [phoneLists, setPhoneLists] = useState<SmsPhoneList[]>([])
+  const [newPhoneListName, setNewPhoneListName] = useState('')
+  const [phoneListImportText, setPhoneListImportText] = useState('')
+  const [selectedPhoneListId, setSelectedPhoneListId] = useState('')
+  const [savingPhoneList, setSavingPhoneList] = useState(false)
+  const [importingPhoneList, setImportingPhoneList] = useState(false)
+  const [renamingPhoneListId, setRenamingPhoneListId] = useState<number | null>(null)
+  const [deletingPhoneListId, setDeletingPhoneListId] = useState<number | null>(null)
+
+  const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
+  const textsEnabled = Boolean(settingsDraft?.texts_enabled)
+
+  const [message, setMessage] = useState('')
+  const [confirmText, setConfirmText] = useState('')
+  const [preview, setPreview] = useState<SmsPreviewResponse | null>(null)
+  const [sendResult, setSendResult] = useState<SmsSendResponse | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [sending, setSending] = useState(false)
+
+  const confirmOk = confirmText.trim().toUpperCase() === 'SEND'
+  const hasValidTarget = Boolean(selectedPhoneListId)
+
+  const loadAll = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [phoneListRows, settingsResp] = await Promise.all([
+        getSmsPhoneLists(tournamentId),
+        getSmsSettings(tournamentId),
+      ])
+      setPhoneLists(phoneListRows)
+      setSettingsDraft(settingsResp)
+      setSelectedPhoneListId(prev => {
+        if (prev && phoneListRows.some(row => String(row.id) === prev)) return prev
+        return phoneListRows[0] ? String(phoneListRows[0].id) : ''
+      })
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load text lists')
+    } finally {
+      setLoading(false)
+    }
+  }, [tournamentId])
+
+  useEffect(() => {
+    void loadAll()
+  }, [loadAll])
+
+  const handleCreatePhoneList = async () => {
+    if (!newPhoneListName.trim()) {
+      setError('List name is required')
+      return
+    }
+    setSavingPhoneList(true)
+    setError(null)
+    try {
+      const created = await createSmsPhoneList(tournamentId, { name: newPhoneListName.trim() })
+      setPhoneLists(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      setSelectedPhoneListId(String(created.id))
+      setNewPhoneListName('')
+    } catch (e: any) {
+      setError(e?.message || 'Failed to create phone list')
+    } finally {
+      setSavingPhoneList(false)
+    }
+  }
+
+  const handleImportPhoneList = async () => {
+    const phoneListId = parseInt(selectedPhoneListId, 10)
+    if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
+      setError('Choose a phone list first')
+      return
+    }
+    if (!phoneListImportText.trim()) {
+      setError('Paste phone rows to import')
+      return
+    }
+    setImportingPhoneList(true)
+    setError(null)
+    try {
+      const resp = await importSmsPhoneList(tournamentId, phoneListId, { raw_text: phoneListImportText })
+      setPhoneLists(prev => prev.map(list => (list.id === resp.phone_list.id ? resp.phone_list : list)))
+      setPhoneListImportText('')
+      if (resp.rejected_rows.length > 0) {
+        setError(resp.rejected_rows.map(row => `Line ${row.line}: ${row.reason}`).join('\n'))
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to import phone list')
+    } finally {
+      setImportingPhoneList(false)
+    }
+  }
+
+  const handleRenamePhoneList = async (phoneListId: number, nextName: string) => {
+    const trimmed = nextName.trim()
+    if (!trimmed) {
+      setError('List name is required')
+      return
+    }
+    setRenamingPhoneListId(phoneListId)
+    setError(null)
+    try {
+      const updated = await renameSmsPhoneList(tournamentId, phoneListId, { name: trimmed })
+      setPhoneLists(prev => prev.map(list => (list.id === phoneListId ? updated : list)))
+    } catch (e: any) {
+      setError(e?.message || 'Failed to rename phone list')
+    } finally {
+      setRenamingPhoneListId(null)
+    }
+  }
+
+  const handleDeletePhoneList = async (phoneListId: number) => {
+    setDeletingPhoneListId(phoneListId)
+    setError(null)
+    try {
+      await deleteSmsPhoneList(tournamentId, phoneListId)
+      setPhoneLists(prev => prev.filter(list => list.id !== phoneListId))
+      setSelectedPhoneListId(prev => (prev === String(phoneListId) ? '' : prev))
+    } catch (e: any) {
+      setError(e?.message || 'Failed to delete phone list')
+    } finally {
+      setDeletingPhoneListId(null)
+    }
+  }
+
+  const handlePreview = async () => {
+    if (!message.trim()) {
+      setError('Message is required for preview')
+      return
+    }
+    const phoneListId = parseInt(selectedPhoneListId, 10)
+    if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
+      setError('Choose a text list first')
+      return
+    }
+    setPreviewing(true)
+    setError(null)
+    try {
+      const resp = await previewSmsPhoneList(tournamentId, phoneListId, { message })
+      setPreview(resp)
+      setSendResult(null)
+    } catch (e: any) {
+      setError(e?.message || 'Preview failed')
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  const handleSend = async () => {
+    if (!message.trim()) {
+      setError('Message is required to send')
+      return
+    }
+    if (!hasValidTarget) {
+      setError('Choose a text list first')
+      return
+    }
+    if (!confirmOk) {
+      setError('Type SEND to confirm broad-audience send')
+      return
+    }
+    const phoneListId = parseInt(selectedPhoneListId, 10)
+    if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
+      setError('Choose a text list first')
+      return
+    }
+    setSending(true)
+    setError(null)
+    try {
+      const resp = await sendSmsPhoneList(tournamentId, phoneListId, { message })
+      setSendResult(resp)
+    } catch (e: any) {
+      setError(e?.message || 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ padding: 24, fontSize: 14, color: '#666' }}>
+        Loading…
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#333', margin: '0 0 4px 0' }}>
+          Text List
+        </h2>
+        <div style={{ fontSize: 13, color: '#666' }}>
+          Named phone lists for one-off blasts. Manage lists here; sends respect tournament SMS settings (texts on/off, test mode, consent).
+        </div>
+      </div>
+
+      {error && (
+        <div style={{
+          padding: 12,
+          borderRadius: 6,
+          backgroundColor: '#ffebee',
+          color: '#b71c1c',
+          fontSize: 13,
+          whiteSpace: 'pre-wrap',
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Lists</h3>
+        <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
+          Create a named list and paste phone numbers. Then preview and send a message to everyone on the selected list.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 320px) minmax(360px, 1fr)', gap: 12, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <input
+              type="text"
+              value={newPhoneListName}
+              onChange={e => setNewPhoneListName(e.target.value)}
+              placeholder="New list name"
+              style={{ padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+            />
+            <button
+              onClick={() => void handleCreatePhoneList()}
+              disabled={savingPhoneList || !newPhoneListName.trim()}
+              style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
+            >
+              {savingPhoneList ? 'Creating…' : 'Create List'}
+            </button>
+
+            <select
+              value={selectedPhoneListId}
+              onChange={e => setSelectedPhoneListId(e.target.value)}
+              style={{ padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+            >
+              <option value="">Choose list to import into…</option>
+              {phoneLists.map(list => (
+                <option key={list.id} value={String(list.id)}>
+                  {list.name} ({list.member_count})
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={phoneListImportText}
+              onChange={e => setPhoneListImportText(e.target.value)}
+              placeholder={'Name\tPhone\nJohn Smith\t9013593035\nJane Doe\t+19015551234'}
+              rows={6}
+              style={{ width: '100%', boxSizing: 'border-box', padding: 8, borderRadius: 4, border: '1px solid #ccc', fontFamily: 'monospace', fontSize: 12 }}
+            />
+            <button
+              onClick={() => void handleImportPhoneList()}
+              disabled={importingPhoneList || !selectedPhoneListId || !phoneListImportText.trim()}
+              style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
+            >
+              {importingPhoneList ? 'Importing…' : 'Replace List Members'}
+            </button>
+            <div style={{ fontSize: 11, color: '#777' }}>
+              Paste one phone per line, or `Name` + `Phone` tab-separated. Numbers are normalized to E.164 automatically.
+            </div>
+          </div>
+
+          <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid #eee', borderRadius: 6 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ backgroundColor: '#fafafa' }}>
+                  <th style={{ textAlign: 'left', padding: 6 }}>List</th>
+                  <th style={{ textAlign: 'center', padding: 6, width: 80 }}>Members</th>
+                  <th style={{ textAlign: 'left', padding: 6 }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {phoneLists.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} style={{ padding: 10, color: '#777', fontStyle: 'italic' }}>
+                      No lists yet.
+                    </td>
+                  </tr>
+                ) : phoneLists.map(list => (
+                  <tr key={list.id} style={{ borderTop: '1px solid #f0f0f0' }}>
+                    <td style={{ padding: 6 }}>
+                      <div style={{ fontWeight: 700 }}>{list.name}</div>
+                      <div style={{ fontSize: 11, color: '#777', marginTop: 2 }}>
+                        {list.members.slice(0, 2).map(member => member.raw_name || member.phone_number).join(', ')}
+                        {list.member_count > 2 ? '…' : ''}
+                      </div>
+                    </td>
+                    <td style={{ padding: 6, textAlign: 'center' }}>{list.member_count}</td>
+                    <td style={{ padding: 6 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => {
+                            const nextName = window.prompt('Rename list', list.name)
+                            if (nextName && nextName.trim() && nextName.trim() !== list.name) {
+                              void handleRenamePhoneList(list.id, nextName)
+                            }
+                          }}
+                          disabled={renamingPhoneListId === list.id}
+                          style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}
+                        >
+                          {renamingPhoneListId === list.id ? 'Renaming…' : 'Rename'}
+                        </button>
+                        <button
+                          onClick={() => void handleDeletePhoneList(list.id)}
+                          disabled={deletingPhoneListId === list.id}
+                          style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer', color: '#a12626' }}
+                        >
+                          {deletingPhoneListId === list.id ? 'Deleting…' : 'Delete'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff' }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Preview & send</h3>
+        <div style={{ display: 'grid', gap: 10, marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: '#666' }}>Send to list</label>
+          <select
+            value={selectedPhoneListId}
+            onChange={e => setSelectedPhoneListId(e.target.value)}
+            style={{ padding: 7, borderRadius: 4, border: '1px solid #ccc', maxWidth: 400 }}
+          >
+            <option value="">Select list…</option>
+            {phoneLists.map(list => (
+              <option key={list.id} value={String(list.id)}>
+                {list.name} ({list.member_count})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
+          <div style={{ fontSize: 12, color: '#e65100', fontWeight: 700, marginBottom: 6 }}>
+            High-impact send: this can notify many recipients.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 8 }}>
+            <div style={{ fontSize: 12, color: '#666' }}>
+              Confirm intent by typing <strong>SEND</strong> before sending.
+            </div>
+            <input
+              type="text"
+              value={confirmText}
+              onChange={e => setConfirmText(e.target.value)}
+              placeholder="Type SEND"
+              style={{ padding: 6, borderRadius: 4, border: `1px solid ${confirmOk ? '#81c784' : '#ffcc80'}` }}
+            />
+          </div>
+        </div>
+
+        {!textsEnabled && (
+          <div style={{ marginBottom: 8, padding: 10, border: '1px solid #ffcdd2', borderRadius: 6, backgroundColor: '#ffebee', fontSize: 12, color: '#b71c1c' }}>
+            All texts are currently turned off for this tournament. Turn texts on under the SMS tab before sending.
+          </div>
+        )}
+
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          placeholder="Type message..."
+          rows={4}
+          style={{ width: '100%', boxSizing: 'border-box', padding: 8, borderRadius: 4, border: '1px solid #ccc', marginBottom: 8 }}
+        />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => void handlePreview()} disabled={previewing || sending || !textsEnabled} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
+            {previewing ? 'Previewing…' : 'Preview'}
+          </button>
+          <button
+            onClick={() => void handleSend()}
+            disabled={sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk}
+            style={{
+              padding: '7px 14px',
+              fontWeight: 700,
+              backgroundColor: (sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk) ? '#9fa8da' : '#1a237e',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: (sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk) ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+
+        {preview && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
+            <div style={{ fontSize: 13, marginBottom: 6 }}>
+              <strong>Preview:</strong> {preview.total_messages} messages, {preview.teams_without_phone} targets without phone
+            </div>
+            <div style={{ maxHeight: 160, overflowY: 'auto', fontSize: 12 }}>
+              {preview.recipients.slice(0, 25).map((r, idx) => (
+                <div key={`${r.team_id ?? 'p'}-${r.player_id ?? idx}`} style={{ padding: '3px 0', borderBottom: '1px dotted #eee' }}>
+                  {(r.player_name || r.team_name || 'Recipient')} → {r.phones.join(', ')}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {sendResult && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
+            <div style={{ fontSize: 13, marginBottom: 6 }}>
+              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, test-blocked {sendResult.skipped_test_mode}, deduped {sendResult.skipped_dedupe}
+            </div>
+            <div style={{ maxHeight: 180, overflowY: 'auto', fontSize: 12 }}>
+              {sendResult.results.slice(0, 25).map((r, idx) => (
+                <div key={`${r.phone}-${idx}`} style={{ padding: '3px 0', borderBottom: '1px dotted #eee' }}>
+                  {r.phone} — <strong>{r.status}</strong>{r.error ? ` (${r.error})` : ''}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function SmsAdminTab({
@@ -6745,14 +7174,6 @@ function SmsAdminTab({
   const [rrMixedEventId, setRrMixedEventId] = useState('')
   const [events, setEvents] = useState<Event[]>([])
   const [players, setPlayers] = useState<SmsPlayerLookupItem[]>([])
-  const [phoneLists, setPhoneLists] = useState<SmsPhoneList[]>([])
-  const [newPhoneListName, setNewPhoneListName] = useState('')
-  const [phoneListImportText, setPhoneListImportText] = useState('')
-  const [selectedPhoneListId, setSelectedPhoneListId] = useState('')
-  const [savingPhoneList, setSavingPhoneList] = useState(false)
-  const [importingPhoneList, setImportingPhoneList] = useState(false)
-  const [renamingPhoneListId, setRenamingPhoneListId] = useState<number | null>(null)
-  const [deletingPhoneListId, setDeletingPhoneListId] = useState<number | null>(null)
   const [matches, setMatches] = useState<SmsMatchLookupItem[]>([])
   const [matchPhase, setMatchPhase] = useState<'upcoming' | 'completed'>('upcoming')
   const [matchSearch, setMatchSearch] = useState('')
@@ -6824,20 +7245,14 @@ function SmsAdminTab({
   }, [tournamentId])
 
   const loadLookups = useCallback(async () => {
-    const [eventRows, playerRows, phoneListRows, tournament] = await Promise.all([
+    const [eventRows, playerRows, tournament] = await Promise.all([
       getEvents(tournamentId),
       getSmsPlayers(tournamentId),
-      getSmsPhoneLists(tournamentId),
       getTournament(tournamentId),
     ])
     setEvents(eventRows)
     setPlayers(playerRows)
-    setPhoneLists(phoneListRows)
     setTournamentTimezone(tournament.timezone || null)
-    setSelectedPhoneListId(prev => {
-      if (prev && phoneListRows.some(row => String(row.id) === prev)) return prev
-      return phoneListRows[0] ? String(phoneListRows[0].id) : ''
-    })
     if (eventRows.length > 0) {
       const first = eventRows[0]
       setDivisionEventId(prev => prev || String(first.id))
@@ -6888,11 +7303,9 @@ function SmsAdminTab({
     return Number.isFinite(n) && n > 0 ? n : null
   }
 
-  const requiresBroadConfirm = scope === 'blast' || scope === 'event' || scope === 'division' || scope === 'phone_list'
+  const requiresBroadConfirm = scope === 'blast' || scope === 'event' || scope === 'division'
   const hasValidTarget = scope === 'blast'
     ? true
-    : scope === 'phone_list'
-      ? Boolean(selectedPhoneListId)
     : scope === 'division'
       ? Boolean(divisionEventId && division.trim())
       : parseTargetId() !== null
@@ -7132,7 +7545,6 @@ function SmsAdminTab({
     }
     if (
       (scope === 'division' && !division.trim()) ||
-      (scope === 'phone_list' && !selectedPhoneListId) ||
       ((scope === 'event' || scope === 'team' || scope === 'player' || scope === 'match') && parseTargetId() === null)
     ) {
       setError('Target is required for this scope')
@@ -7144,12 +7556,6 @@ function SmsAdminTab({
       let resp: SmsPreviewResponse
       if (scope === 'blast') {
         resp = await previewSmsBlast(tournamentId, { message })
-      } else if (scope === 'phone_list') {
-        const phoneListId = parseInt(selectedPhoneListId, 10)
-        if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
-          throw new Error('Phone list is required')
-        }
-        resp = await previewSmsPhoneList(tournamentId, phoneListId, { message })
       } else if (scope === 'division') {
         const eventId = parseInt(divisionEventId, 10)
         if (!Number.isFinite(eventId) || eventId <= 0 || !division.trim()) {
@@ -7193,12 +7599,6 @@ function SmsAdminTab({
       let resp: SmsSendResponse
       if (scope === 'blast') {
         resp = await sendSmsBlast(tournamentId, payload)
-      } else if (scope === 'phone_list') {
-        const phoneListId = parseInt(selectedPhoneListId, 10)
-        if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
-          throw new Error('Phone list is required')
-        }
-        resp = await sendSmsPhoneList(tournamentId, phoneListId, payload)
       } else if (scope === 'division') {
         const eventId = parseInt(divisionEventId, 10)
         if (!Number.isFinite(eventId) || eventId <= 0 || !division.trim()) {
@@ -7221,83 +7621,6 @@ function SmsAdminTab({
       setError(e?.message || 'Send failed')
     } finally {
       setSending(false)
-    }
-  }
-
-  const handleCreatePhoneList = async () => {
-    if (!newPhoneListName.trim()) {
-      setError('List name is required')
-      return
-    }
-    setSavingPhoneList(true)
-    setError(null)
-    try {
-      const created = await createSmsPhoneList(tournamentId, { name: newPhoneListName.trim() })
-      setPhoneLists(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
-      setSelectedPhoneListId(String(created.id))
-      setNewPhoneListName('')
-    } catch (e: any) {
-      setError(e?.message || 'Failed to create phone list')
-    } finally {
-      setSavingPhoneList(false)
-    }
-  }
-
-  const handleImportPhoneList = async () => {
-    const phoneListId = parseInt(selectedPhoneListId, 10)
-    if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
-      setError('Choose a phone list first')
-      return
-    }
-    if (!phoneListImportText.trim()) {
-      setError('Paste phone rows to import')
-      return
-    }
-    setImportingPhoneList(true)
-    setError(null)
-    try {
-      const resp = await importSmsPhoneList(tournamentId, phoneListId, { raw_text: phoneListImportText })
-      setPhoneLists(prev => prev.map(list => (list.id === resp.phone_list.id ? resp.phone_list : list)))
-      setPhoneListImportText('')
-      if (resp.rejected_rows.length > 0) {
-        resp.rejected_rows.forEach(row => setError(`Line ${row.line}: ${row.reason}`))
-      }
-    } catch (e: any) {
-      setError(e?.message || 'Failed to import phone list')
-    } finally {
-      setImportingPhoneList(false)
-    }
-  }
-
-  const handleRenamePhoneList = async (phoneListId: number, nextName: string) => {
-    const trimmed = nextName.trim()
-    if (!trimmed) {
-      setError('List name is required')
-      return
-    }
-    setRenamingPhoneListId(phoneListId)
-    setError(null)
-    try {
-      const updated = await renameSmsPhoneList(tournamentId, phoneListId, { name: trimmed })
-      setPhoneLists(prev => prev.map(list => (list.id === phoneListId ? updated : list)))
-    } catch (e: any) {
-      setError(e?.message || 'Failed to rename phone list')
-    } finally {
-      setRenamingPhoneListId(null)
-    }
-  }
-
-  const handleDeletePhoneList = async (phoneListId: number) => {
-    setDeletingPhoneListId(phoneListId)
-    setError(null)
-    try {
-      await deleteSmsPhoneList(tournamentId, phoneListId)
-      setPhoneLists(prev => prev.filter(list => list.id !== phoneListId))
-      setSelectedPhoneListId(prev => (prev === String(phoneListId) ? '' : prev))
-    } catch (e: any) {
-      setError(e?.message || 'Failed to delete phone list')
-    } finally {
-      setDeletingPhoneListId(null)
     }
   }
 
@@ -7886,116 +8209,6 @@ function SmsAdminTab({
       </div>
 
       <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', flex: '1 1 560px', minWidth: 460 }}>
-        <h3 style={{ marginTop: 0, fontSize: 15 }}>Phone Lists</h3>
-        <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-          Create a named list, paste phone numbers into it, and then use the manual send tool below with the <strong>Phone List</strong> scope.
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 320px) minmax(360px, 1fr)', gap: 12, alignItems: 'start' }}>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <input
-              type="text"
-              value={newPhoneListName}
-              onChange={e => setNewPhoneListName(e.target.value)}
-              placeholder="New list name"
-              style={{ padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
-            />
-            <button
-              onClick={handleCreatePhoneList}
-              disabled={savingPhoneList || !newPhoneListName.trim()}
-              style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
-            >
-              {savingPhoneList ? 'Creating…' : 'Create List'}
-            </button>
-
-            <select
-              value={selectedPhoneListId}
-              onChange={e => setSelectedPhoneListId(e.target.value)}
-              style={{ padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
-            >
-              <option value="">Choose list to import into…</option>
-              {phoneLists.map(list => (
-                <option key={list.id} value={String(list.id)}>
-                  {list.name} ({list.member_count})
-                </option>
-              ))}
-            </select>
-            <textarea
-              value={phoneListImportText}
-              onChange={e => setPhoneListImportText(e.target.value)}
-              placeholder={'Name\tPhone\nJohn Smith\t9013593035\nJane Doe\t+19015551234'}
-              rows={6}
-              style={{ width: '100%', boxSizing: 'border-box', padding: 8, borderRadius: 4, border: '1px solid #ccc', fontFamily: 'monospace', fontSize: 12 }}
-            />
-            <button
-              onClick={handleImportPhoneList}
-              disabled={importingPhoneList || !selectedPhoneListId || !phoneListImportText.trim()}
-              style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
-            >
-              {importingPhoneList ? 'Importing…' : 'Replace List Members'}
-            </button>
-            <div style={{ fontSize: 11, color: '#777' }}>
-              Paste one phone per line, or `Name` + `Phone` tab-separated. Numbers are normalized to E.164 automatically.
-            </div>
-          </div>
-
-          <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid #eee', borderRadius: 6 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <thead>
-                <tr style={{ backgroundColor: '#fafafa' }}>
-                  <th style={{ textAlign: 'left', padding: 6 }}>List</th>
-                  <th style={{ textAlign: 'center', padding: 6, width: 80 }}>Members</th>
-                  <th style={{ textAlign: 'left', padding: 6 }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {phoneLists.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} style={{ padding: 10, color: '#777', fontStyle: 'italic' }}>
-                      No phone lists yet.
-                    </td>
-                  </tr>
-                ) : phoneLists.map(list => (
-                  <tr key={list.id} style={{ borderTop: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: 6 }}>
-                      <div style={{ fontWeight: 700 }}>{list.name}</div>
-                      <div style={{ fontSize: 11, color: '#777', marginTop: 2 }}>
-                        {list.members.slice(0, 2).map(member => member.raw_name || member.phone_number).join(', ')}
-                        {list.member_count > 2 ? '…' : ''}
-                      </div>
-                    </td>
-                    <td style={{ padding: 6, textAlign: 'center' }}>{list.member_count}</td>
-                    <td style={{ padding: 6 }}>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <button
-                          onClick={() => {
-                            const nextName = window.prompt('Rename phone list', list.name)
-                            if (nextName && nextName.trim() && nextName.trim() !== list.name) {
-                              void handleRenamePhoneList(list.id, nextName)
-                            }
-                          }}
-                          disabled={renamingPhoneListId === list.id}
-                          style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}
-                        >
-                          {renamingPhoneListId === list.id ? 'Renaming…' : 'Rename'}
-                        </button>
-                        <button
-                          onClick={() => void handleDeletePhoneList(list.id)}
-                          disabled={deletingPhoneListId === list.id}
-                          style={{ padding: '4px 8px', fontSize: 12, cursor: 'pointer', color: '#a12626' }}
-                        >
-                          {deletingPhoneListId === list.id ? 'Deleting…' : 'Delete'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', flex: '1 1 560px', minWidth: 460 }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Manual Send / Preview</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 260px) minmax(360px, 1fr)', gap: 8, marginBottom: 8, alignItems: 'start' }}>
           <label style={{ fontSize: 12, color: '#666' }}>Scope</label>
@@ -8006,8 +8219,6 @@ function SmsAdminTab({
                 ? 'Player'
                 : scope === 'match'
                   ? 'Match'
-                : scope === 'phone_list'
-                  ? 'Phone List'
                 : scope === 'event'
                   ? 'Event'
                   : scope === 'division'
@@ -8023,7 +8234,6 @@ function SmsAdminTab({
             <option value="team">Team</option>
             <option value="player">Player</option>
             <option value="match">Match</option>
-            <option value="phone_list">Phone List</option>
             <option value="event">Event</option>
             <option value="division">Division</option>
             <option value="blast">Tournament Blast (ALL teams)</option>
@@ -8134,20 +8344,6 @@ function SmsAdminTab({
                 {loadingMatches ? 'Loading matches…' : `Showing ${filteredMatches.length} of ${matches.length} matches (${matchPhase})`}
               </div>
             </div>
-          ) : scope === 'phone_list' ? (
-            <select
-              value={selectedPhoneListId}
-              onChange={e => setSelectedPhoneListId(e.target.value)}
-              className="sms-compact-control"
-              style={compactControlStyle}
-            >
-              <option value="">Select phone list…</option>
-              {phoneLists.map(list => (
-                <option key={list.id} value={String(list.id)}>
-                  {list.name} ({list.member_count})
-                </option>
-              ))}
-            </select>
           ) : scope === 'event' ? (
             <select
               value={targetId}
@@ -8836,7 +9032,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms'>('checkin')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms' | 'text_list'>('checkin')
   const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
@@ -9060,6 +9256,7 @@ export default function TournamentDeskPage() {
       'weather',
       'teams',
       'sms',
+      'text_list',
     ] as const),
     []
   )
@@ -10462,11 +10659,11 @@ export default function TournamentDeskPage() {
               backgroundColor: 'transparent',
               color: activeTab === tab ? '#1a237e' : '#888',
               cursor: 'pointer',
-              textTransform: tab === 'checkin' || tab === 'sms' ? 'none' : 'capitalize',
+              textTransform: tab === 'checkin' || tab === 'sms' || tab === 'text_list' ? 'none' : 'capitalize',
               marginBottom: -2,
             }}
           >
-            {tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab}
+            {tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab === 'text_list' ? 'Text List' : tab}
           </button>
         ))}
       </div>
@@ -11293,6 +11490,10 @@ export default function TournamentDeskPage() {
             quickTarget={smsQuickTarget}
             managementMode={'checkin_management'}
           />
+        )}
+
+        {activeTab === 'text_list' && (
+          <TextListTab tournamentId={tid!} />
         )}
       </div>
 
