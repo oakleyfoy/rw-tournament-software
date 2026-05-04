@@ -11,7 +11,7 @@ from app.services.wf_pairing import (
     build_wf_r1_pairings,
     _groups_conflict,
     _optimize_wf_r2_adjacency_swaps,
-    _wf_r2_adjacency_penalty,
+    _wf_r2_pod_of_four_penalty,
 )
 
 
@@ -344,22 +344,27 @@ class TestSwapResolution:
 
 
 class TestWfR2AdjacencyRefinement:
-    """Phase after R1 WKWK: reduce letter overlap across WF R2 feeders (adjacent R1 pairs)."""
+    """WKKW refinement: keep letters from spanning multiple R1 matches in the same pod of four."""
 
-    def test_adjacency_optimizer_reduces_overlap_without_r1_conflict(self):
-        # Canonical 8-team slot order: (1,5),(4,8),(2,6),(3,7) — only bottoms carry letters.
+    def test_pod_optimizer_moves_letter_out_of_quad_when_possible(self):
+        # Pod 0 (matches 0–3): two bottoms carry 'a' → pairwise pod penalty ≥ 1.
+        # Pod 1 has neutral bottoms; swapping bottoms between slot 0 and 4 moves one 'a' into pod 1.
         pairs = [
             (TeamSeed(1, 101), TeamSeed(5, 105, avoid_group="a")),
             (TeamSeed(4, 104), TeamSeed(8, 108, avoid_group="a")),
             (TeamSeed(2, 102), TeamSeed(6, 106)),
-            (TeamSeed(3, 103), TeamSeed(7, 107, avoid_group="b")),
+            (TeamSeed(3, 103), TeamSeed(7, 107)),
+            (TeamSeed(9, 109), TeamSeed(13, 113)),
+            (TeamSeed(10, 110), TeamSeed(14, 114)),
+            (TeamSeed(11, 111), TeamSeed(15, 115)),
+            (TeamSeed(12, 112), TeamSeed(16, 116)),
         ]
-        assert _wf_r2_adjacency_penalty(pairs) == 1  # feeders (slot1,slot2) share 'a'
+        assert _wf_r2_pod_of_four_penalty(pairs) >= 1
         refined = _optimize_wf_r2_adjacency_swaps(pairs)
-        assert _wf_r2_adjacency_penalty(refined) == 0
-        # Deterministic tie-break picks the lowest (i,j) among improving swaps: (0,2) before (0,3).
-        assert refined[0][1].seed == 6 and refined[2][1].seed == 5
+        assert _wf_r2_pod_of_four_penalty(refined) == 0
 
+
+class TestMultiGroupSupport:
     """Verify multi-group avoid strings like 'A,B' work correctly."""
 
     def test_groups_conflict_helper(self):

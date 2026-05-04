@@ -9,8 +9,8 @@ Pipeline (never reorder bracket slots; only swap bottom-half opponents):
 2. Resolve WKWK on WF Round 1: swap bottoms with other bottoms at the same
    rating anywhere in the round until stable (clears direct opponent conflicts).
 3. WF Round 2 outlook (optional refinement): same-rating bottom swaps that keep
-   Round 1 clean but reduce shared-letter overlap across consecutive R1 pairs that
-   feed one WF R2 match each (seq 1+2, 3+4, …).
+   Round 1 clean but reduce WKKW letter clustering within each consecutive **pod of
+   four** R1 matches (slots 1–4, 5–8, … — two WF R2 feeder pairs per pod).
 
 Unknown ratings may swap only with each other.
 """
@@ -140,7 +140,7 @@ def _same_level_rating(r_a: Optional[float], r_b: Optional[float]) -> bool:
 
 
 def _avoid_atoms(team: TeamSeed) -> Set[str]:
-    """Lowercase atomic letters from avoid_group (comma-split). Used for WF R2 adjacency."""
+    """Lowercase atomic letters from avoid_group (comma-split). Used for WKKW pod scoring."""
     ag = team.avoid_group
     if not ag:
         return set()
@@ -152,13 +152,23 @@ def _pair_union_atoms(match: Tuple[TeamSeed, TeamSeed]) -> Set[str]:
     return _avoid_atoms(a) | _avoid_atoms(b)
 
 
-def _wf_r2_adjacency_penalty(pairs: List[Tuple[TeamSeed, TeamSeed]]) -> int:
-    """Sum shared-letter overlap across consecutive WF R2 feeders (R1 slots 1+2, 3+4, …)."""
+def _wf_r2_pod_of_four_penalty(pairs: List[Tuple[TeamSeed, TeamSeed]]) -> int:
+    """Penalty when WKKW atoms touch multiple R1 matches inside the same pod of four.
+
+    Pods are consecutive blocks of four R1 slots (1–4, 5–8, …), aligned with two
+    sequential WF R2 winners feeds per quad. For each block, sum pairwise overlap
+    counts ∑_{i<j in block} |atoms(match_i) ∩ atoms(match_j)| so spreading letters
+    across pods is preferred when swaps allow.
+    """
     pen = 0
-    for k in range(0, len(pairs) - 1, 2):
-        ga = _pair_union_atoms(pairs[k])
-        gb = _pair_union_atoms(pairs[k + 1])
-        pen += len(ga & gb)
+    n = len(pairs)
+    for block_start in range(0, n, 4):
+        block_end = min(block_start + 4, n)
+        for i in range(block_start, block_end):
+            for j in range(i + 1, block_end):
+                ga = _pair_union_atoms(pairs[i])
+                gb = _pair_union_atoms(pairs[j])
+                pen += len(ga & gb)
     return pen
 
 
@@ -225,12 +235,15 @@ def _resolve_wkk_r1_bottom_swaps(
 def _optimize_wf_r2_adjacency_swaps(
     pairs: List[Tuple[TeamSeed, TeamSeed]],
 ) -> List[Tuple[TeamSeed, TeamSeed]]:
-    """Reduce WF R2 feeder overlap using same-rating bottom swaps; never introduces R1 WKKW hits."""
+    """Spread WKKW atoms across pods using same-rated bottom swaps when possible.
+
+    Minimizes ``_wf_r2_pod_of_four_penalty`` without introducing R1 opponent WKWK hits.
+    """
     result = list(pairs)
     n = len(result)
     max_rounds = max(1, n * n * n)
     for _ in range(max_rounds):
-        base_pen = _wf_r2_adjacency_penalty(result)
+        base_pen = _wf_r2_pod_of_four_penalty(result)
         best: Optional[Tuple[int, int, int]] = None  # (penalty, i, j)
 
         for i in range(n):
@@ -240,7 +253,7 @@ def _optimize_wf_r2_adjacency_swaps(
                     continue
                 if not all(_pair_clean_opponents(trial[k]) for k in range(n)):
                     continue
-                pen_trial = _wf_r2_adjacency_penalty(trial)
+                pen_trial = _wf_r2_pod_of_four_penalty(trial)
                 if pen_trial >= base_pen:
                     continue
                 cand = (pen_trial, i, j)
@@ -265,8 +278,8 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
 
     Step 1 — Canonical draw: half-split, bracket-safe match order (tops fixed).
     Step 2 — WKKW on WF Round 1: swap bottoms with same-rated bottoms anywhere in the round.
-    Step 3 — WF Round 2 outlook: optional swaps that keep Round 1 clean but reduce letter overlap
-             across consecutive R1 pairs feeding each WF R2 slot.
+    Step 3 — WF Round 2 outlook: optional swaps that keep Round 1 clean but reduce WKKW letter
+             clustering within each consecutive pod of four R1 slots (1–4, 5–8, …).
 
     Step 4 — report any remaining (unavoidable) conflicts.
 
