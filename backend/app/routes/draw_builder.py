@@ -8,6 +8,12 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
+from app.models.match_lock import MatchLock
+from app.models.match_player_checkin import MatchPlayerCheckIn
+from app.models.schedule_version import ScheduleVersion
+from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.utils.match_generation import (
     generate_consolation_matches,
     generate_placement_matches,
@@ -16,6 +22,45 @@ from app.utils.match_generation import (
 )
 
 router = APIRouter()
+
+
+def _purge_matches_for_event_draw_rebuild(session: Session, event_id: int) -> None:
+    """
+    Delete all matches for an event and rows that FK-match them.
+
+    Re-finalizing a draw replaces generated matches; assignments and desk rows
+    must be removed first or the DB raises integrity errors (PostgreSQL) or
+    leaves orphans (SQLite without FK checks).
+    """
+    matches = list(session.exec(select(Match).where(Match.event_id == event_id)).all())
+    ids = [m.id for m in matches if m.id is not None]
+    if not ids:
+        return
+
+    for m in matches:
+        if m.source_match_a_id is not None or m.source_match_b_id is not None:
+            m.source_match_a_id = None
+            m.source_match_b_id = None
+            session.add(m)
+    session.flush()
+
+    for row in session.exec(select(MatchAssignment).where(MatchAssignment.match_id.in_(ids))).all():  # type: ignore[arg-type]
+        session.delete(row)
+    for row in session.exec(select(MatchLock).where(MatchLock.match_id.in_(ids))).all():  # type: ignore[arg-type]
+        session.delete(row)
+    for row in session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.match_id.in_(ids))).all():  # type: ignore[arg-type]
+        session.delete(row)
+    for row in session.exec(select(MatchCheckIn).where(MatchCheckIn.match_id.in_(ids))).all():  # type: ignore[arg-type]
+        session.delete(row)
+    for row in session.exec(
+        select(StartOverBaselineAssignment).where(StartOverBaselineAssignment.match_id.in_(ids))  # type: ignore[arg-type]
+    ).all():
+        session.delete(row)
+    session.flush()
+
+    for m in matches:
+        session.delete(m)
+    session.flush()
 
 
 class DrawPlanUpdate(BaseModel):
@@ -147,23 +192,25 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     event.wf_block_minutes = wf_block_minutes
     event.standard_block_minutes = standard_block_minutes
 
-    # Delete any existing matches for this event (in case re-finalizing)
-    existing_matches = session.exec(select(Match).where(Match.event_id == event_id)).all()
-    for match in existing_matches:
-        session.delete(match)
-    session.flush()
+    # Replace any existing generated matches (re-finalize after schedule/check-in).
+    _purge_matches_for_event_draw_rebuild(session, event_id)
 
-    # Generate matches using the same utilities as Build Schedule
-    # Note: We create matches without a schedule_version_id (will be assigned during Build Schedule)
-    # But for compatibility with match generation functions, we use event_id as placeholder
-    
+    # Match rows require a real schedule_version FK (DB-enforced). Prefer the tournament's
+    # latest version if one exists (e.g. desk draft); otherwise create draft v1.
+    tournament_id = event.tournament_id
+    sv = session.exec(
+        select(ScheduleVersion)
+        .where(ScheduleVersion.tournament_id == tournament_id)
+        .order_by(ScheduleVersion.version_number.desc())
+    ).first()
+    if not sv:
+        sv = ScheduleVersion(tournament_id=tournament_id, version_number=1, status="draft")
+        session.add(sv)
+        session.flush()
+    schedule_version_id = sv.id
+
     all_matches = []
     event_prefix = f"E{event.id}"
-    
-    # For now, create matches without version ID (Build Schedule will handle versioning)
-    # Use 0 as placeholder version_id
-    schedule_version_id = 0
-    tournament_id = event.tournament_id
 
     # Generate WF matches if applicable
     if wf_rounds > 0:
