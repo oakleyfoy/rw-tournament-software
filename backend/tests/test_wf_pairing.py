@@ -100,8 +100,17 @@ class TestHalfSplitMatchups:
     def test_12_teams_pairs(self):
         teams = _make_teams(12)
         result = build_wf_r1_pairings(teams, 12)
-        expected = [(1, 7), (2, 8), (3, 9), (4, 10), (5, 11), (6, 12)]
+        # half=6 non-POT: outside-in [1,6,2,5,3,4]
+        expected = [(1, 7), (6, 12), (2, 8), (5, 11), (3, 9), (4, 10)]
         assert result.pairs == expected
+
+    def test_20_teams_wf_r2_pairs_one_eleven_with_ten_twenty(self):
+        """half=10: R1 match order starts (1v11), (10v20) so those winners meet in WF R2."""
+        teams = _make_teams(20)
+        result = build_wf_r1_pairings(teams, 20)
+        assert result.pairs[0] == (1, 11)
+        assert result.pairs[1] == (10, 20)
+        assert (2, 12) not in result.pairs[:2]
 
 
 class TestNoConflicts:

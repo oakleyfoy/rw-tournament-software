@@ -32,6 +32,29 @@ from app.utils.rr_wiring import wire_rr_match_placeholders
 logger = logging.getLogger(__name__)
 
 
+def _qf_wf_r2_slot_pair(qf_sequence: int, r2_w_feeders: int) -> Tuple[int, int]:
+    """QF placeholder slots within one WF R2 track (W or L), indices 1..r2_w_feeders.
+
+    For 8 feeders (typical 32-team divisions), use classic bracket shell pairing.
+    For 4 feeders (16-team field), use a fixed rotation so each QF hits valid codes.
+    """
+    if not 1 <= qf_sequence <= 4:
+        raise ValueError(f"qf_sequence must be 1..4, got {qf_sequence}")
+    if r2_w_feeders >= 8:
+        pairs = [(1, 8), (4, 5), (3, 6), (2, 7)]
+        return pairs[qf_sequence - 1]
+    if r2_w_feeders == 4:
+        pairs = [(1, 2), (3, 4), (2, 3), (4, 1)]
+        return pairs[qf_sequence - 1]
+    if r2_w_feeders == 3:
+        pairs = [(1, 2), (2, 3), (1, 3), (3, 1)]
+        return pairs[qf_sequence - 1]
+    if r2_w_feeders == 2:
+        pairs = [(1, 2), (1, 2), (1, 2), (1, 2)]
+        return pairs[qf_sequence - 1]
+    raise ValueError(f"Unsupported WF R2 feeder count: {r2_w_feeders}")
+
+
 def _get_wf_r1_pairing(
     session,
     event_id: int,
@@ -1257,47 +1280,32 @@ def _generate_wf_to_brackets_8(
     def get_qf_wf_r2_tokens(event_prefix: str, bracket_label: str, qf_sequence: int) -> tuple[str, str]:
         """
         Generate WF R2 tokens for a QF match based on bracket label and QF sequence.
-        
-        Args:
-            event_prefix: Event prefix (e.g., "WOM_WOM_E7_")
-            bracket_label: One of "WW", "WL", "LW", "LL"
-            qf_sequence: QF match number (1-4)
-            
-        Returns:
-            Tuple of (token_a, token_b) for the two sides of the QF match
-            
-        Rules:
-            - WW/WL reference W-track R2 matches (W01-W08)
-            - LW/LL reference L-track R2 matches (L01-L08)
-            - WW/LW take WINNER of the R2 match
-            - WL/LL take LOSER of the R2 match
-        """
-        block_start = 1
 
-        # token_type selects the R2 track: W-track for Div I/II, L-track for Div III/IV
-        if bracket_label in ("WW", "WL"):
+        Division tracks:
+            - WW / LW → winners bracket feed (W01…)
+            - WL / LL → losers bracket feed (L01…)
+
+        For 32-team events, LW/LL divisions reference the second WF R2 octet (W09… / L09…).
+        """
+        # WW & LW feed from WF R2 winners; WL & LL from WF R2 losers.
+        if bracket_label in ("WW", "LW"):
             token_type = "W"
-        elif bracket_label in ("LW", "LL"):
+        elif bracket_label in ("WL", "LL"):
             token_type = "L"
         else:
             raise ValueError(f"Unknown bracket_label: {bracket_label}")
-        
-        # Sequential pairing: the bracket fold is already embedded in the
-        # waterfall R1 ordering via bracket_fold_positions(), so QFs pair
-        # straight A vs B, C vs D, E vs F, G vs H.
-        slot_a = (qf_sequence - 1) * 2 + 1
-        slot_b = (qf_sequence - 1) * 2 + 2
-        
-        # Convert those slots to WF R2 overall sequence numbers
-        wf_seq_a = block_start + (slot_a - 1)
-        wf_seq_b = block_start + (slot_b - 1)
-        
-        # Format token with 2-digit padding
-        # event_prefix already has trailing underscore removed, so add it back for consistency
-        token_a = f"{event_prefix}_WF_R2_{token_type}{wf_seq_a:02d}"
-        token_b = f"{event_prefix}_WF_R2_{token_type}{wf_seq_b:02d}"
-        
-        return token_a, token_b
+
+        slot_offset = 8 if n == 32 and bracket_label in ("LW", "LL") else 0
+
+        wf_r2_feeders = n // 4 if wf_rounds >= 2 else 0
+        sa, sb = _qf_wf_r2_slot_pair(qf_sequence, wf_r2_feeders)
+        ta = slot_offset + sa
+        tb = slot_offset + sb
+
+        return (
+            f"{event_prefix}_WF_R2_{token_type}{ta:02d}",
+            f"{event_prefix}_WF_R2_{token_type}{tb:02d}",
+        )
     
     bracket_labels = ["WW", "WL", "LW", "LL"][:bracket_count]
     matches_per_bracket = bracket_matches_for_guarantee(spec.guarantee)
@@ -1383,8 +1391,7 @@ def _generate_wf_to_brackets_8(
                 
                 # Determine placeholders based on bracket round
                 if match_idx < 4:
-                    # QF matches: use WF2-based tokens via helper function (bracket fold)
-                    # WW QF1 → W01 vs W08, QF2 → W04 vs W05, QF3 → W03 vs W06, QF4 → W02 vs W07
+                    # QF matches: WF R2 tokens via get_qf_wf_r2_tokens (bracket shell when 8 feeders)
                     qf_sequence = match_idx + 1  # 1..4 for QF
                     placeholder_a, placeholder_b = get_qf_wf_r2_tokens(event_prefix, bracket_label, qf_sequence)
                 elif match_idx == 4:

@@ -1248,38 +1248,38 @@ class TestWF2BracketWiring:
 
         assert len(ww_qf_matches) == 4, f"Expected 4 WW QF matches, got {len(ww_qf_matches)}"
 
-        # Bracket fold: QF1=1v8, QF2=4v5, QF3=3v6, QF4=2v7
+        # 16-team → 4 WF R2 winners per track; QF slots from _qf_wf_r2_slot_pair (4-feeder rotation)
         qf1 = ww_qf_matches[0]
-        expected_token_1 = f"{event_prefix}_WF_R2_W01"
-        expected_token_8 = f"{event_prefix}_WF_R2_W08"
-        assert expected_token_1 in qf1.placeholder_side_a or expected_token_1 in qf1.placeholder_side_b, \
-            f"QF1 missing {expected_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_token_8 in qf1.placeholder_side_a or expected_token_8 in qf1.placeholder_side_b, \
-            f"QF1 missing {expected_token_8}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        expected_a = f"{event_prefix}_WF_R2_W01"
+        expected_b = f"{event_prefix}_WF_R2_W02"
+        assert expected_a in qf1.placeholder_side_a or expected_a in qf1.placeholder_side_b, \
+            f"QF1 missing {expected_a}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        assert expected_b in qf1.placeholder_side_a or expected_b in qf1.placeholder_side_b, \
+            f"QF1 missing {expected_b}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
 
         qf2 = ww_qf_matches[1]
-        expected_token_4 = f"{event_prefix}_WF_R2_W04"
-        expected_token_5 = f"{event_prefix}_WF_R2_W05"
-        assert expected_token_4 in qf2.placeholder_side_a or expected_token_4 in qf2.placeholder_side_b, \
-            f"QF2 missing {expected_token_4}, got {qf2.placeholder_side_a} / {qf2.placeholder_side_b}"
-        assert expected_token_5 in qf2.placeholder_side_a or expected_token_5 in qf2.placeholder_side_b, \
-            f"QF2 missing {expected_token_5}, got {qf2.placeholder_side_a} / {qf2.placeholder_side_b}"
+        expected_a = f"{event_prefix}_WF_R2_W03"
+        expected_b = f"{event_prefix}_WF_R2_W04"
+        assert expected_a in qf2.placeholder_side_a or expected_a in qf2.placeholder_side_b, \
+            f"QF2 missing {expected_a}, got {qf2.placeholder_side_a} / {qf2.placeholder_side_b}"
+        assert expected_b in qf2.placeholder_side_a or expected_b in qf2.placeholder_side_b, \
+            f"QF2 missing {expected_b}, got {qf2.placeholder_side_a} / {qf2.placeholder_side_b}"
 
         qf3 = ww_qf_matches[2]
-        expected_token_3 = f"{event_prefix}_WF_R2_W03"
-        expected_token_6 = f"{event_prefix}_WF_R2_W06"
-        assert expected_token_3 in qf3.placeholder_side_a or expected_token_3 in qf3.placeholder_side_b, \
-            f"QF3 missing {expected_token_3}, got {qf3.placeholder_side_a} / {qf3.placeholder_side_b}"
-        assert expected_token_6 in qf3.placeholder_side_a or expected_token_6 in qf3.placeholder_side_b, \
-            f"QF3 missing {expected_token_6}, got {qf3.placeholder_side_a} / {qf3.placeholder_side_b}"
+        expected_a = f"{event_prefix}_WF_R2_W02"
+        expected_b = f"{event_prefix}_WF_R2_W03"
+        assert expected_a in qf3.placeholder_side_a or expected_a in qf3.placeholder_side_b, \
+            f"QF3 missing {expected_a}, got {qf3.placeholder_side_a} / {qf3.placeholder_side_b}"
+        assert expected_b in qf3.placeholder_side_a or expected_b in qf3.placeholder_side_b, \
+            f"QF3 missing {expected_b}, got {qf3.placeholder_side_a} / {qf3.placeholder_side_b}"
 
         qf4 = ww_qf_matches[3]
-        expected_token_2 = f"{event_prefix}_WF_R2_W02"
-        expected_token_7 = f"{event_prefix}_WF_R2_W07"
-        assert expected_token_2 in qf4.placeholder_side_a or expected_token_2 in qf4.placeholder_side_b, \
-            f"QF4 missing {expected_token_2}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
-        assert expected_token_7 in qf4.placeholder_side_a or expected_token_7 in qf4.placeholder_side_b, \
-            f"QF4 missing {expected_token_7}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        expected_a = f"{event_prefix}_WF_R2_W04"
+        expected_b = f"{event_prefix}_WF_R2_W01"
+        assert expected_a in qf4.placeholder_side_a or expected_a in qf4.placeholder_side_b, \
+            f"QF4 missing {expected_a}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        assert expected_b in qf4.placeholder_side_a or expected_b in qf4.placeholder_side_b, \
+            f"QF4 missing {expected_b}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
 
         # Verify no "TBD" placeholders in WW bracket QFs
         for qf in ww_qf_matches:
@@ -1364,15 +1364,14 @@ class TestWF2BracketWiring:
 
         assert len(wl_qf_matches) == 4, f"Expected 4 WL QF matches, got {len(wl_qf_matches)}"
 
-        # Check that WL QF1 references loser tokens (L01 vs L08 — bracket fold)
-        # WL uses losers of WF R2 sequence 1-8 → L01-L08
+        # 16-team: 4 WF R2 losers per track — same slot pairing as winners (4-feeder rotation)
         qf1 = wl_qf_matches[0]
         expected_l_token_1 = f"{event_prefix}_WF_R2_L01"
-        expected_l_token_8 = f"{event_prefix}_WF_R2_L08"
+        expected_l_token_2 = f"{event_prefix}_WF_R2_L02"
         assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, \
             f"WL QF1 missing {expected_l_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_l_token_8 in qf1.placeholder_side_a or expected_l_token_8 in qf1.placeholder_side_b, \
-            f"WL QF1 missing {expected_l_token_8}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, \
+            f"WL QF1 missing {expected_l_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
         
         # Verify WL uses L tokens (losers), not W tokens
         assert "_WF_R2_W" not in qf1.placeholder_side_a and "_WF_R2_W" not in qf1.placeholder_side_b, \

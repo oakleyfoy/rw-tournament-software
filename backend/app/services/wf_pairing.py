@@ -84,6 +84,30 @@ def bracket_fold_positions(n: int) -> List[int]:
     return top + bot
 
 
+def _wf_r1_top_half_fold_order(half: int) -> List[int]:
+    """Permutation of seeds 1..half for WF R1 *match list* order (half-split opponents).
+
+    Power-of-two half sizes use ``bracket_fold_positions(half)`` (same as standard brackets).
+
+    Non-power-of-two halves use outside-in order ``[1, half, 2, half-1, …]`` so WF R2 wiring
+    (block_size=2: winners of consecutive R1 matches meet) pairs mirror feeders:
+    e.g. half=10 → (1 vs 11) then (10 vs 20); those winners play each other in WF R2.
+    """
+    if half <= 1:
+        return [1] if half == 1 else []
+    if half & (half - 1) == 0:
+        return bracket_fold_positions(half)
+    out: List[int] = []
+    lo, hi = 1, half
+    while lo <= hi:
+        out.append(lo)
+        if lo < hi:
+            out.append(hi)
+        lo += 1
+        hi -= 1
+    return out
+
+
 # ── Avoid-group helpers ──────────────────────────────────────────────
 
 
@@ -164,8 +188,8 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     """Build WF R1 pairings for *n* teams.
 
     Step 1 — half-split matchups: seed i vs seed (i + n/2).
-    Step 2 — order the matches by bracket_fold_positions(n/2)
-             so the bracket plays out correctly when chalk holds.
+    Step 2 — order matches by bracket-safe permutation of top-half seeds
+             (_wf_r1_top_half_fold_order), including non-power-of-two fields.
     Step 3 — resolve Who Knows Who (avoid_group) conflicts by swapping
              bottom-half teams within each bracket quarter, only with
              opponents at the same Level (rating).
@@ -185,11 +209,8 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     for i in range(1, half + 1):
         matchups_by_top_seed[i] = (by_seed[i], by_seed[i + half])
 
-    # Step 2: Order by bracket fold
-    if half == 1:
-        fold_order = [1]
-    else:
-        fold_order = bracket_fold_positions(half)
+    # Step 2: Order by bracket fold (embed non-POT halves into next POT bracket)
+    fold_order = _wf_r1_top_half_fold_order(half)
 
     ordered_pairs = [matchups_by_top_seed[s] for s in fold_order]
 
