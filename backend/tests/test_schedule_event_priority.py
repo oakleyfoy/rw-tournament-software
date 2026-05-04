@@ -3,6 +3,7 @@ import json
 from app.models.event import Event
 from app.services.schedule_policy_plan import _build_rotated_event_list, _event_has_wf
 from app.services.schedule_sequence import _rotate_events, _sort_events_for_sequence
+from app.utils.event_schedule_orders import event_ids_for_day
 
 
 def _event(event_id: int, name: str, team_count: int, schedule_order: int | None = None) -> Event:
@@ -87,3 +88,25 @@ def test_wf_events_follow_tournament_day_order():
     full = _build_rotated_event_list([e1, e2], 0, orders)
     wf_ordered = [e for e in full if _event_has_wf(e)]
     assert [e.id for e in wf_ordered] == [2, 1]
+
+
+def test_event_ids_for_day_reuses_row_when_matrix_shorter_than_slot_days():
+    orders = [[2, 1]]
+    assert event_ids_for_day(orders, 0) == [2, 1]
+    assert event_ids_for_day(orders, 1) == [2, 1]
+    assert event_ids_for_day(orders, 99) == [2, 1]
+
+
+def test_event_ids_for_day_skips_empty_middle_row():
+    orders = [[2, 1], [], [3, 2]]
+    assert event_ids_for_day(orders, 1) == [2, 1]
+    assert event_ids_for_day(orders, 2) == [3, 2]
+
+
+def test_draw_builder_config_disables_profile_schedule_order_in_legacy_tail():
+    """When tournament day_orders exist, leftover events use draw-size rotation, not Women's-first profile defaults."""
+    womens = _event(1, "Womens", 16, schedule_order=1)
+    mixed = _event(2, "Mixed", 32, schedule_order=2)
+    orders = [[99999]]
+    ordered = _build_rotated_event_list([mixed, womens], 0, orders)
+    assert [e.id for e in ordered] == [2, 1]

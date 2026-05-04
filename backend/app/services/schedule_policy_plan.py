@@ -177,10 +177,19 @@ def _get_manual_schedule_order(event: Event) -> Optional[int]:
     return None
 
 
-def _legacy_build_rotated_event_list(events: List[Event], day_index: int) -> List[Event]:
+def _legacy_build_rotated_event_list(
+    events: List[Event],
+    day_index: int,
+    *,
+    ignore_profile_schedule_order: bool = False,
+) -> List[Event]:
     """
-    Deterministic event ordering: per-event schedule_order, then largest-draw-first
-    with same-size daily rotation. Used for the tail after tournament day_orders prefix.
+    Deterministic event ordering: per-event schedule_order (unless ignored), then
+    largest-draw-first with same-size daily rotation. Used for the tail after
+    tournament day_orders prefix.
+
+    When the tournament has Draw Builder day_orders configured, per-event
+    schedule_profile schedule_order must not override that intent for leftover events.
     """
     if not events:
         return []
@@ -188,7 +197,7 @@ def _legacy_build_rotated_event_list(events: List[Event], day_index: int) -> Lis
     manual_events: List[Tuple[int, Event]] = []
     automatic_events: List[Event] = []
     for event in events:
-        manual_order = _get_manual_schedule_order(event)
+        manual_order = None if ignore_profile_schedule_order else _get_manual_schedule_order(event)
         if manual_order is None:
             automatic_events.append(event)
         else:
@@ -223,12 +232,18 @@ def _build_rotated_event_list(
     """
     Event order for schedule batches.
 
-    If tournament_day_orders has a non-empty row for this day_index, those event IDs
-    are placed first (in list order; unknown IDs skipped). Remaining events use
-    _legacy_build_rotated_event_list (schedule_order + size buckets + rotation).
+    If tournament_day_orders has rows (see event_ids_for_day), those event IDs are
+    placed first for this day (in list order; unknown IDs skipped). Remaining events use
+    _legacy_build_rotated_event_list. When any tournament row exists, legacy ordering ignores
+    per-event schedule_profile schedule_order so largest-draw rotation applies instead of
+    Women's-before-Mixed from stale profile defaults.
     """
     if not events:
         return []
+
+    use_draw_builder_orders = bool(
+        tournament_day_orders and any(len(row) > 0 for row in tournament_day_orders)
+    )
 
     prefix_ids = event_ids_for_day(tournament_day_orders, day_index)
     id_to_event: Dict[int, Event] = {}
@@ -245,7 +260,11 @@ def _build_rotated_event_list(
             used.add(ev.id)
 
     remaining = [e for e in events if e.id is not None and e.id not in used]
-    legacy_tail = _legacy_build_rotated_event_list(remaining, day_index)
+    legacy_tail = _legacy_build_rotated_event_list(
+        remaining,
+        day_index,
+        ignore_profile_schedule_order=use_draw_builder_orders,
+    )
     return prefix_events + legacy_tail
 
 
@@ -1453,8 +1472,8 @@ def _build_day3_plan(
         5. All Finals (MAIN + CONS together) — after rest gap from SFs
         6. Placement matches
 
-      Within each batch, catch-up sorted: events with fewest total rounds
-      across all prior days go first, then by event priority.
+    Within each batch, sorted by Draw Builder event priority first, then by fewest
+    total rounds played across prior days (catch-up), then stage and round keys.
     """
     batches: List[PlacementBatch] = []
     unassigned = [m for m in all_matches if m.id not in assigned_match_ids]
@@ -1480,12 +1499,12 @@ def _build_day3_plan(
     main_classified = _classify_bracket_matches(main_matches)
     cons_classified = _classify_bracket_matches(cons_matches)
 
-    # Catch-up sort: fewest total rounds first, then event priority
+    # Sort: Draw Builder / rotation event priority first, then catch-up by rounds played.
     def _catchup_sort_key(m: Match) -> Tuple:
         rounds_played = event_rounds_total.get(m.event_id, 0)
         ep = event_priority.get(m.event_id, 999)
         sp = STAGE_PRECEDENCE.get(m.match_type, 999)
-        return (rounds_played, ep, sp, m.round_index or 999, m.sequence_in_round or 999, m.id or 999)
+        return (ep, rounds_played, sp, m.round_index or 999, m.sequence_in_round or 999, m.id or 999)
 
     # ── Batch 1: Remaining WF (catch-up from prior days) ──
     if wf_matches:

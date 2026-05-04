@@ -149,6 +149,18 @@ function buildEventPlacementRankForPolicyDay(row: number[] | undefined, gridEven
   return rank
 }
 
+/** Mirror backend event_ids_for_day: clamp row index and skip empty rows. */
+function eventIdsRowForPolicyDay(matrix: number[][] | null, dayIndex: number): number[] {
+  if (!matrix || matrix.length === 0 || dayIndex < 0) return []
+  let idx = Math.min(dayIndex, matrix.length - 1)
+  while (idx >= 0) {
+    const row = matrix[idx]
+    if (row && row.length > 0) return row
+    idx -= 1
+  }
+  return []
+}
+
 /** Align phased placement with planner-style layering: WF → RR → MAIN → CONSOLATION → PLACEMENT */
 const PLACE_STAGE_ORDER: Record<string, number> = {
   WF: 0,
@@ -830,7 +842,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
 
       if (usePerDay && matrix) {
         for (let di = 0; di < policyDays.length; di++) {
-          const row = matrix[di] ?? []
+          const row = eventIdsRowForPolicyDay(matrix, di)
           const rank = buildEventPlacementRankForPolicyDay(row, gridIds)
           const ids = sortIds(rank)
           if (ids.length === 0) continue
@@ -894,7 +906,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
 
       if (usePerDay && matrix) {
         for (let di = 0; di < policyDays.length; di++) {
-          const row = matrix[di] ?? []
+          const row = eventIdsRowForPolicyDay(matrix, di)
           const rank = buildEventPlacementRankForPolicyDay(row, gridIds)
           const ids = buildTierOrderedIds(rank)
           if (ids.length === 0) continue

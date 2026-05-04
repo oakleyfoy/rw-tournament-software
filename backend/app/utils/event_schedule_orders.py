@@ -88,7 +88,20 @@ def remap_event_schedule_day_orders_json(
 
 
 def event_ids_for_day(day_orders: Optional[List[List[int]]], day_index: int) -> List[int]:
-    """Ordered event IDs for scheduling day_index (0-based)."""
-    if not day_orders or day_index < 0 or day_index >= len(day_orders):
+    """
+    Ordered event IDs for scheduling day_index (0-based).
+
+    If the matrix has fewer rows than slot days, or a row is empty (common after
+    adding a tournament day before re-saving Draw Builder), fall back to the
+    nearest earlier non-empty row so Mixed/Women's order is not lost to legacy
+    schedule_profile ordering.
+    """
+    if not day_orders or day_index < 0:
         return []
-    return list(day_orders[day_index])
+    idx = min(day_index, len(day_orders) - 1)
+    while idx >= 0:
+        row = day_orders[idx]
+        if row:
+            return list(row)
+        idx -= 1
+    return []
