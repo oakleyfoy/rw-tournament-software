@@ -2,23 +2,24 @@
 WF Round 1 Pairing — half-split matchups in bracket-fold order,
 with Who Knows Who (avoid_group) conflict resolution.
 
-Matchups: seed i vs seed (i + n/2) — standard top-half vs bottom-half.
-Ordering: bracket fold positions determine which match goes in which
-bracket slot, so that if chalk holds seed 1 meets seed 2 in the final.
+Pipeline (never reorder bracket slots; only swap bottom-half opponents):
 
-The only intentional deviation from half-split is Who Knows Who: when two
-opponents share an avoid group, we try swapping bottom-half teams within
-the same bracket quarter (aligned with WF R2 blocks of two consecutive R1
-matches). Swaps are allowed only between opponents at the same skill level
-(CSV Level → Team.rating); unknown levels (null rating) may swap only with
-each other.
+1. Build the canonical draw — half-split pairs ordered by
+   ``_wf_r1_top_half_fold_order`` (tops fixed in bracket slots).
+2. Resolve WKWK on WF Round 1: swap bottoms with other bottoms at the same
+   rating anywhere in the round until stable (clears direct opponent conflicts).
+3. WF Round 2 outlook (optional refinement): same-rating bottom swaps that keep
+   Round 1 clean but reduce shared-letter overlap across consecutive R1 pairs that
+   feed one WF R2 match each (seq 1+2, 3+4, …).
+
+Unknown ratings may swap only with each other.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -130,7 +131,7 @@ def _groups_conflict(group_a: Optional[str], group_b: Optional[str]) -> Optional
 
 
 def _same_level_rating(r_a: Optional[float], r_b: Optional[float]) -> bool:
-    """True if two ratings qualify as the same Level for WKWK-only swaps."""
+    """True if two ratings qualify as the same Level for WKKW-only swaps."""
     if r_a is None and r_b is None:
         return True
     if r_a is None or r_b is None:
@@ -138,47 +139,120 @@ def _same_level_rating(r_a: Optional[float], r_b: Optional[float]) -> bool:
     return math.isclose(r_a, r_b, rel_tol=0.0, abs_tol=1e-9)
 
 
-def _resolve_quarter_conflicts(
+def _avoid_atoms(team: TeamSeed) -> Set[str]:
+    """Lowercase atomic letters from avoid_group (comma-split). Used for WF R2 adjacency."""
+    ag = team.avoid_group
+    if not ag:
+        return set()
+    return {x.strip().lower() for x in ag.split(",") if x.strip()}
+
+
+def _pair_union_atoms(match: Tuple[TeamSeed, TeamSeed]) -> Set[str]:
+    a, b = match
+    return _avoid_atoms(a) | _avoid_atoms(b)
+
+
+def _wf_r2_adjacency_penalty(pairs: List[Tuple[TeamSeed, TeamSeed]]) -> int:
+    """Sum shared-letter overlap across consecutive WF R2 feeders (R1 slots 1+2, 3+4, …)."""
+    pen = 0
+    for k in range(0, len(pairs) - 1, 2):
+        ga = _pair_union_atoms(pairs[k])
+        gb = _pair_union_atoms(pairs[k + 1])
+        pen += len(ga & gb)
+    return pen
+
+
+def _wf_r1_draw_ordered_pairs(by_seed: Dict[int, TeamSeed], half: int) -> List[Tuple[TeamSeed, TeamSeed]]:
+    """Canonical WF R1 draw: half-split with bracket-safe match-list order (tops fixed)."""
+    matchups_by_top_seed = {
+        i: (by_seed[i], by_seed[i + half]) for i in range(1, half + 1)
+    }
+    fold_order = _wf_r1_top_half_fold_order(half)
+    return [matchups_by_top_seed[s] for s in fold_order]
+
+
+def _pair_clean_opponents(match: Tuple[TeamSeed, TeamSeed]) -> bool:
+    a, b = match
+    return _groups_conflict(a.avoid_group, b.avoid_group) is None
+
+
+def _try_bottom_swap(
+    pairs: List[Tuple[TeamSeed, TeamSeed]], i: int, j: int
+) -> Optional[List[Tuple[TeamSeed, TeamSeed]]]:
+    """If swapping bottoms between slots i and j keeps both pairs WKWK-clean, return new list."""
+    if i == j:
+        return None
+    a_i, b_i = pairs[i]
+    a_j, b_j = pairs[j]
+    if not _same_level_rating(b_i.rating, b_j.rating):
+        return None
+    if _groups_conflict(a_i.avoid_group, b_j.avoid_group):
+        return None
+    if _groups_conflict(a_j.avoid_group, b_i.avoid_group):
+        return None
+    out = list(pairs)
+    out[i] = (a_i, b_j)
+    out[j] = (a_j, b_i)
+    return out
+
+
+def _resolve_wkk_r1_bottom_swaps(
     pairs: List[Tuple[TeamSeed, TeamSeed]],
 ) -> List[Tuple[TeamSeed, TeamSeed]]:
-    """Resolve Who Knows Who (avoid_group) conflicts within a bracket quarter.
-
-    Half-split is preserved except for these swaps: exchange bottom-half
-    opponents only with another bottom-half team at the same Level (rating).
-
-    For each conflicting pair (scanning in order), try swapping its
-    bottom-half team with another bottom-half team in the quarter at the
-    same rating. Apply the first swap that resolves the conflict without
-    introducing any new ones. Deterministic: same inputs always produce same swaps.
-    """
-    n = len(pairs)
-    if n < 2:
-        return list(pairs)
-
+    """Clear WF R1 opponent WKWK conflicts via same-rating bottom swaps (whole round)."""
     result = list(pairs)
-
-    for i in range(n):
-        a_i, b_i = result[i]
-        if not _groups_conflict(a_i.avoid_group, b_i.avoid_group):
-            continue  # no conflict at position i
-
-        # Try swapping b_i with b_j for each j != i in this quarter
-        for j in range(n):
-            if j == i:
+    n = len(result)
+    max_rounds = max(1, n * n * n)
+    for _ in range(max_rounds):
+        progressed = False
+        for i in range(n):
+            if _pair_clean_opponents(result[i]):
                 continue
-            a_j, b_j = result[j]
+            for j in range(n):
+                trial = _try_bottom_swap(result, i, j)
+                if trial is None:
+                    continue
+                result = trial
+                progressed = True
+                break
+            if progressed:
+                break
+        if not progressed:
+            break
+    return result
 
-            if not _same_level_rating(b_i.rating, b_j.rating):
-                continue
 
-            # Only swap if it resolves i without breaking j
-            new_conflict_i = _groups_conflict(a_i.avoid_group, b_j.avoid_group)
-            new_conflict_j = _groups_conflict(a_j.avoid_group, b_i.avoid_group)
+def _optimize_wf_r2_adjacency_swaps(
+    pairs: List[Tuple[TeamSeed, TeamSeed]],
+) -> List[Tuple[TeamSeed, TeamSeed]]:
+    """Reduce WF R2 feeder overlap using same-rating bottom swaps; never introduces R1 WKKW hits."""
+    result = list(pairs)
+    n = len(result)
+    max_rounds = max(1, n * n * n)
+    for _ in range(max_rounds):
+        base_pen = _wf_r2_adjacency_penalty(result)
+        best: Optional[Tuple[int, int, int]] = None  # (penalty, i, j)
 
-            if not new_conflict_i and not new_conflict_j:
-                result[i] = (a_i, b_j)
-                result[j] = (a_j, b_i)
-                break  # conflict resolved, move on
+        for i in range(n):
+            for j in range(n):
+                trial = _try_bottom_swap(result, i, j)
+                if trial is None:
+                    continue
+                if not all(_pair_clean_opponents(trial[k]) for k in range(n)):
+                    continue
+                pen_trial = _wf_r2_adjacency_penalty(trial)
+                if pen_trial >= base_pen:
+                    continue
+                cand = (pen_trial, i, j)
+                if best is None or cand < best:
+                    best = cand
+
+        if best is None:
+            break
+        _, bi, bj = best
+        trial = _try_bottom_swap(result, bi, bj)
+        assert trial is not None
+        result = trial
 
     return result
 
@@ -189,12 +263,11 @@ def _resolve_quarter_conflicts(
 def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     """Build WF R1 pairings for *n* teams.
 
-    Step 1 — half-split matchups: seed i vs seed (i + n/2).
-    Step 2 — order matches by bracket-safe permutation of top-half seeds
-             (_wf_r1_top_half_fold_order), including non-power-of-two fields.
-    Step 3 — resolve Who Knows Who (avoid_group) conflicts by swapping
-             bottom-half teams within each bracket quarter, only with
-             opponents at the same Level (rating).
+    Step 1 — Canonical draw: half-split, bracket-safe match order (tops fixed).
+    Step 2 — WKKW on WF Round 1: swap bottoms with same-rated bottoms anywhere in the round.
+    Step 3 — WF Round 2 outlook: optional swaps that keep Round 1 clean but reduce letter overlap
+             across consecutive R1 pairs feeding each WF R2 slot.
+
     Step 4 — report any remaining (unavoidable) conflicts.
 
     Multi-group support: avoid_group "A,B" conflicts with any team
@@ -206,25 +279,9 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     by_seed = {t.seed: t for t in teams}
     half = n // 2
 
-    # Step 1: Standard half-split
-    matchups_by_top_seed = {}
-    for i in range(1, half + 1):
-        matchups_by_top_seed[i] = (by_seed[i], by_seed[i + half])
-
-    # Step 2: Order by bracket fold (embed non-POT halves into next POT bracket)
-    fold_order = _wf_r1_top_half_fold_order(half)
-
-    ordered_pairs = [matchups_by_top_seed[s] for s in fold_order]
-
-    # Step 3: Resolve conflicts within bracket quarters (quarter size = n_matches/4,
-    # minimum 2 so adjacent WF R2 pairs can swap bottoms independently).
-    num_matches = len(ordered_pairs)
-    quarter_size = max(2, num_matches // 4)
-
-    resolved_pairs: List[Tuple[TeamSeed, TeamSeed]] = []
-    for start in range(0, num_matches, quarter_size):
-        quarter = ordered_pairs[start:start + quarter_size]
-        resolved_pairs.extend(_resolve_quarter_conflicts(quarter))
+    ordered_pairs = _wf_r1_draw_ordered_pairs(by_seed, half)
+    resolved_r1 = _resolve_wkk_r1_bottom_swaps(ordered_pairs)
+    resolved_pairs = _optimize_wf_r2_adjacency_swaps(resolved_r1)
 
     # Step 4: Build result with remaining (unavoidable) conflicts
     seed_pairs: List[Tuple[int, int]] = []

@@ -10,6 +10,8 @@ from app.services.wf_pairing import (
     bracket_fold_positions,
     build_wf_r1_pairings,
     _groups_conflict,
+    _optimize_wf_r2_adjacency_swaps,
+    _wf_r2_adjacency_penalty,
 )
 
 
@@ -130,8 +132,7 @@ class TestNoConflicts:
 
 
 class TestConflictsReported:
-    """Conflicts are reported when half-split opponents share avoid_group
-    and cannot be resolved by swapping within the bracket quarter."""
+    """Conflicts when opponents share avoid_group and swaps cannot fix."""
 
     def test_single_conflict_resolved_by_swap(self):
         # Seed 1 and seed 5 both in group 'a' — half-split opponents.
@@ -249,8 +250,7 @@ class TestEdgeCases:
 
 
 class TestSwapResolution:
-    """Who Knows Who (avoid_group): swap bottom-half opponents within a quarter,
-    only when both bottom halves share the same Level (rating)."""
+    """WKKW: swap bottom-half opponents with same-rated bottoms across the WF R1 round."""
 
     def test_swap_resolves_conflict(self):
         # 8 teams, seed 1 & 5 both group 'a' (half-split opponents).
@@ -273,17 +273,13 @@ class TestSwapResolution:
         result = build_wf_r1_pairings(teams, 8)
         assert len(result.conflicts) == 0
 
-    def test_swap_rejected_if_creates_new_conflict(self):
-        # Seed 1 & 5 both 'a'. Seed 4 & 8 both 'a' too.
-        # Swap (1,5)↔(4,8) → (1,8) still group 'a' vs 'a'. Can't resolve.
-        # Both pairs remain conflicting.
+    def test_global_bottom_swaps_clear_dense_partial_groups(self):
+        # Seeds 1,5 and 4,8 share 'a'; other bottoms have no group — swaps across the
+        # whole round can fix both R1 conflicts (not possible with tiny quarters only).
         groups = {1: "a", 5: "a", 4: "a", 8: "a"}
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)
-        # First quarter has 2 unavoidable conflicts
-        quarter_conflicts = [c for c in result.conflicts
-                             if c.seed_a in (1, 4) or c.seed_b in (5, 8)]
-        assert len(quarter_conflicts) >= 2
+        assert len(result.conflicts) == 0
 
     def test_all_seeds_present_after_swap(self):
         # After any swaps, every seed must still appear exactly once
@@ -347,7 +343,23 @@ class TestSwapResolution:
         assert len(result.conflicts) >= 1
 
 
-class TestMultiGroupSupport:
+class TestWfR2AdjacencyRefinement:
+    """Phase after R1 WKWK: reduce letter overlap across WF R2 feeders (adjacent R1 pairs)."""
+
+    def test_adjacency_optimizer_reduces_overlap_without_r1_conflict(self):
+        # Canonical 8-team slot order: (1,5),(4,8),(2,6),(3,7) — only bottoms carry letters.
+        pairs = [
+            (TeamSeed(1, 101), TeamSeed(5, 105, avoid_group="a")),
+            (TeamSeed(4, 104), TeamSeed(8, 108, avoid_group="a")),
+            (TeamSeed(2, 102), TeamSeed(6, 106)),
+            (TeamSeed(3, 103), TeamSeed(7, 107, avoid_group="b")),
+        ]
+        assert _wf_r2_adjacency_penalty(pairs) == 1  # feeders (slot1,slot2) share 'a'
+        refined = _optimize_wf_r2_adjacency_swaps(pairs)
+        assert _wf_r2_adjacency_penalty(refined) == 0
+        # Deterministic tie-break picks the lowest (i,j) among improving swaps: (0,2) before (0,3).
+        assert refined[0][1].seed == 6 and refined[2][1].seed == 5
+
     """Verify multi-group avoid strings like 'A,B' work correctly."""
 
     def test_groups_conflict_helper(self):
