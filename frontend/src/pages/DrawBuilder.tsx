@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, type CSSProperties } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   DndContext,
@@ -144,6 +144,24 @@ function resolveCalendarScheduleVersionId(tournament: Tournament, versions: Sche
     return b.id - a.id
   })
   return sorted[0]?.id
+}
+
+function wfR1LookupTeam(teams: TeamListItem[] | undefined, teamId: number | null | undefined): TeamListItem | undefined {
+  if (teamId == null) return undefined
+  return teams?.find((t) => t.id === teamId)
+}
+
+/** Doubles pair rating stored on the team row (combined). */
+function formatTeamRating(rating: number | null | undefined): string {
+  if (rating == null || Number.isNaN(rating)) return '—'
+  const x = Math.round(rating * 100) / 100
+  return Number.isInteger(x) ? String(x) : x.toFixed(2).replace(/\.?0+$/, '')
+}
+
+/** Avoid-group / who-knows-who letters from roster import. */
+function formatAvoidGroup(raw: string | null | undefined): string {
+  if (raw == null || !String(raw).trim()) return '—'
+  return String(raw).trim().toUpperCase()
 }
 
 function SortableDayEventRow({ id, label }: { id: string; label: string }) {
@@ -419,10 +437,14 @@ function DrawBuilder() {
     if (!tournamentId || calendarScheduleVersionId == null) return
     setWfR1MatchesLoading((prev) => ({ ...prev, [eventId]: true }))
     try {
-      const rows = await getMatches(tournamentId, calendarScheduleVersionId, eventId)
+      const [rows, teams] = await Promise.all([
+        getMatches(tournamentId, calendarScheduleVersionId, eventId),
+        getEventTeams(eventId),
+      ])
       const wfR1 = rows
         .filter((m) => m.match_type === 'WF' && (m.round_index ?? 0) === 1)
         .sort((a, b) => a.sequence_in_round - b.sequence_in_round)
+      setEventTeams((prev) => ({ ...prev, [eventId]: teams }))
       setWfR1MatchesByEvent((prev) => ({ ...prev, [eventId]: wfR1 }))
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to load WF matches', 'error')
@@ -1215,7 +1237,7 @@ function DrawBuilder() {
           >
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>WF round 1 pairings (before play)</label>
             <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
-              Swap teams between sides on generated WF round 1 matches: click one side, then another. Uses the schedule version the calendar prefers (draft when available).
+              Swap teams between sides on generated WF round 1 matches: click one side, then another. Columns Rt / Avoid show combined pair rating and avoid-group letters when roster data exists. Uses the schedule version the calendar prefers (draft when available).
             </p>
             {calendarScheduleVersionId == null && (
               <div style={{ fontSize: '13px', color: '#856404' }}>No schedule version available yet — generate matches from Schedule first.</div>
@@ -1252,7 +1274,19 @@ function DrawBuilder() {
                           <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--theme-input-border)' }}>
                             <th style={{ padding: '6px 8px' }}>Match</th>
                             <th style={{ padding: '6px 8px' }}>Side A</th>
+                            <th style={{ padding: '6px 8px', width: 56, textAlign: 'right' }} title="Combined doubles rating">
+                              Rt
+                            </th>
+                            <th style={{ padding: '6px 8px', width: 52 }} title="Avoid group (who-knows-who letters)">
+                              Avoid
+                            </th>
                             <th style={{ padding: '6px 8px' }}>Side B</th>
+                            <th style={{ padding: '6px 8px', width: 56, textAlign: 'right' }} title="Combined doubles rating">
+                              Rt
+                            </th>
+                            <th style={{ padding: '6px 8px', width: 52 }} title="Avoid group (who-knows-who letters)">
+                              Avoid
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1261,6 +1295,17 @@ function DrawBuilder() {
                               wfR1SwapPick?.eventId === event.id && wfR1SwapPick.matchId === m.id && wfR1SwapPick.slot === 'A'
                             const pickB =
                               wfR1SwapPick?.eventId === event.id && wfR1SwapPick.matchId === m.id && wfR1SwapPick.slot === 'B'
+                            const teamsRow = eventTeams[event.id]
+                            const ta = wfR1LookupTeam(teamsRow, m.team_a_id)
+                            const tb = wfR1LookupTeam(teamsRow, m.team_b_id)
+                            const metaCell: CSSProperties = {
+                              padding: '6px 8px',
+                              fontSize: '12px',
+                              color: 'var(--theme-text)',
+                              opacity: 0.85,
+                              verticalAlign: 'middle',
+                              whiteSpace: 'nowrap',
+                            }
                             return (
                               <tr key={m.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
                                 <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{m.match_code}</td>
@@ -1284,6 +1329,8 @@ function DrawBuilder() {
                                     {m.placeholder_side_a}
                                   </button>
                                 </td>
+                                <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(ta?.rating)}</td>
+                                <td style={metaCell}>{formatAvoidGroup(ta?.avoid_group)}</td>
                                 <td style={{ padding: '6px 8px' }}>
                                   <button
                                     type="button"
@@ -1304,6 +1351,8 @@ function DrawBuilder() {
                                     {m.placeholder_side_b}
                                   </button>
                                 </td>
+                                <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(tb?.rating)}</td>
+                                <td style={metaCell}>{formatAvoidGroup(tb?.avoid_group)}</td>
                               </tr>
                             )
                           })}
