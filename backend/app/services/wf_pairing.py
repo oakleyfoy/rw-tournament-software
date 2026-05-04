@@ -1,18 +1,21 @@
 """
 WF Round 1 Pairing — half-split matchups in bracket-fold order,
-with avoid-group conflict resolution.
+with Who Knows Who (avoid_group) conflict resolution.
 
 Matchups: seed i vs seed (i + n/2) — standard top-half vs bottom-half.
 Ordering: bracket fold positions determine which match goes in which
 bracket slot, so that if chalk holds seed 1 meets seed 2 in the final.
 
-After generating the standard pairings, the algorithm checks for
-avoid-group conflicts and tries to resolve them by swapping bottom-half
-teams within the same bracket quarter.
+The only intentional deviation from half-split is Who Knows Who: when two
+opponents share an avoid group, we try swapping bottom-half teams within
+the same bracket quarter. Swaps are allowed only between opponents at the
+same skill level (CSV Level → Team.rating); unknown levels (null rating)
+may swap only with each other.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -25,6 +28,7 @@ class TeamSeed:
     avoid_group: Optional[str] = None
     display_name: Optional[str] = None
     name: Optional[str] = None
+    rating: Optional[float] = None  # import "Level" — used only for WKWK swap eligibility
 
 
 @dataclass
@@ -99,15 +103,27 @@ def _groups_conflict(group_a: Optional[str], group_b: Optional[str]) -> Optional
     return None
 
 
+def _same_level_rating(r_a: Optional[float], r_b: Optional[float]) -> bool:
+    """True if two ratings qualify as the same Level for WKWK-only swaps."""
+    if r_a is None and r_b is None:
+        return True
+    if r_a is None or r_b is None:
+        return False
+    return math.isclose(r_a, r_b, rel_tol=0.0, abs_tol=1e-9)
+
+
 def _resolve_quarter_conflicts(
     pairs: List[Tuple[TeamSeed, TeamSeed]],
 ) -> List[Tuple[TeamSeed, TeamSeed]]:
-    """Resolve avoid-group conflicts within a bracket quarter.
+    """Resolve Who Knows Who (avoid_group) conflicts within a bracket quarter.
+
+    Half-split is preserved except for these swaps: exchange bottom-half
+    opponents only with another bottom-half team at the same Level (rating).
 
     For each conflicting pair (scanning in order), try swapping its
-    bottom-half team with another bottom-half team in the quarter.
-    Apply the first swap that resolves the conflict without introducing
-    any new ones.  Deterministic: same inputs always produce same swaps.
+    bottom-half team with another bottom-half team in the quarter at the
+    same rating. Apply the first swap that resolves the conflict without
+    introducing any new ones. Deterministic: same inputs always produce same swaps.
     """
     n = len(pairs)
     if n < 2:
@@ -125,6 +141,9 @@ def _resolve_quarter_conflicts(
             if j == i:
                 continue
             a_j, b_j = result[j]
+
+            if not _same_level_rating(b_i.rating, b_j.rating):
+                continue
 
             # Only swap if it resolves i without breaking j
             new_conflict_i = _groups_conflict(a_i.avoid_group, b_j.avoid_group)
@@ -147,8 +166,9 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     Step 1 — half-split matchups: seed i vs seed (i + n/2).
     Step 2 — order the matches by bracket_fold_positions(n/2)
              so the bracket plays out correctly when chalk holds.
-    Step 3 — resolve avoid-group conflicts by swapping bottom-half
-             teams within each bracket quarter.
+    Step 3 — resolve Who Knows Who (avoid_group) conflicts by swapping
+             bottom-half teams within each bracket quarter, only with
+             opponents at the same Level (rating).
     Step 4 — report any remaining (unavoidable) conflicts.
 
     Multi-group support: avoid_group "A,B" conflicts with any team

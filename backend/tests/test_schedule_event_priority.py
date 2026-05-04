@@ -108,6 +108,14 @@ def test_event_ids_for_day_skips_empty_middle_row():
     assert event_ids_for_day(orders, 2) == [3, 2]
 
 
+def test_event_ids_for_day_forward_fallback_when_only_later_rows_filled():
+    """Day 0–N rows empty but Sunday (later row) set → reuse that order for earlier days."""
+    orders = [[], [], [10, 5]]
+    assert event_ids_for_day(orders, 0) == [10, 5]
+    assert event_ids_for_day(orders, 1) == [10, 5]
+    assert event_ids_for_day(orders, 2) == [10, 5]
+
+
 def test_mixed_listed_first_beats_womens_even_when_womens_event_id_lower():
     """Regression: template schedule_order often favors Womens; Draw Builder must win."""
     womens = Event(

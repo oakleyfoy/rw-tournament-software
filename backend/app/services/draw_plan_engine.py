@@ -67,6 +67,7 @@ def _get_wf_r1_pairing(
             avoid_group=getattr(t, "avoid_group", None),
             display_name=getattr(t, "display_name", None),
             name=getattr(t, "name", None),
+            rating=getattr(t, "rating", None),
         ))
 
     seed_teams.sort(key=lambda x: x.seed)

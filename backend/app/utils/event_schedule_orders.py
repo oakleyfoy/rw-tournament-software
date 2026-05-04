@@ -91,17 +91,33 @@ def event_ids_for_day(day_orders: Optional[List[List[int]]], day_index: int) -> 
     """
     Ordered event IDs for scheduling day_index (0-based).
 
-    If the matrix has fewer rows than slot days, or a row is empty (common after
-    adding a tournament day before re-saving Draw Builder), fall back to the
-    nearest earlier non-empty row so Mixed/Women's order is not lost to legacy
-    schedule_profile ordering.
+    Resolution order:
+    1. Walk backward from clamped index (same calendar row or last row if day_index
+       exceeds the matrix), using the first non-empty row found — inherits from an
+       earlier day when today's row is empty.
+    2. If still empty (e.g. day 0 row blank but day 2 Draw Builder row is filled),
+       walk forward from the clamped index for the first non-empty row so Saturday
+       can reuse Sunday's explicit order without duplicating rows in the UI.
+
+    If the matrix has fewer rows than slot days, the clamp reuses the last row for
+    overflow days (unchanged).
     """
     if not day_orders or day_index < 0:
         return []
-    idx = min(day_index, len(day_orders) - 1)
+    capped = min(day_index, len(day_orders) - 1)
+
+    idx = capped
     while idx >= 0:
         row = day_orders[idx]
         if row:
             return list(row)
         idx -= 1
+
+    idx = capped + 1
+    while idx < len(day_orders):
+        row = day_orders[idx]
+        if row:
+            return list(row)
+        idx += 1
+
     return []

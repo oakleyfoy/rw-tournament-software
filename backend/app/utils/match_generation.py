@@ -342,15 +342,60 @@ def generate_wf_matches(
     bind_wf = len(linked_teams_for_wf) == n_teams_binding and n_teams_binding % 2 == 0
     wf_pairs_by_round = []
     if bind_wf:
-        # Circle method: round r uses positions rotated (r-1) times; pairs (pos[0],pos[n-1]), (pos[1],pos[n-2]), ...
         half = n_teams_binding // 2
-        for r in range(1, wf_rounds + 1):
+        team_by_id = {t.id: t for t in linked_teams_for_wf}
+
+        # WF R1: half-split (seed i vs i+n/2), bracket-fold match order, avoid-group swaps —
+        # same semantics as draw_plan_engine / wf_pairing.build_wf_r1_pairings.
+        # The legacy circle/Berger schedule paired seed i vs seed (n+1-i) in round 1,
+        # which is wrong for waterfall draws (e.g. 1v32 instead of 1v17 when n=32).
+        from app.services.wf_pairing import TeamSeed, build_wf_r1_pairings
+
+        seed_teams: List[TeamSeed] = []
+        pairing_ok = True
+        for tm in linked_teams_for_wf:
+            if tm.seed is None:
+                pairing_ok = False
+                break
+            seed_teams.append(
+                TeamSeed(
+                    seed=tm.seed,
+                    team_id=tm.id,
+                    avoid_group=getattr(tm, "avoid_group", None),
+                    display_name=getattr(tm, "display_name", None),
+                    name=getattr(tm, "name", None),
+                    rating=getattr(tm, "rating", None),
+                )
+            )
+        seed_teams.sort(key=lambda x: x.seed)
+        if pairing_ok and [t.seed for t in seed_teams] == list(range(1, n_teams_binding + 1)):
+            pairing = build_wf_r1_pairings(seed_teams, n_teams_binding)
+            r1_pairs = [
+                (team_by_id[ta_id], team_by_id[tb_id])
+                for ta_id, tb_id in pairing.team_id_pairs
+            ]
+        else:
+            # Deterministic order already seed-primary; pair top half vs bottom half by slot.
+            r1_pairs = [
+                (linked_teams_for_wf[i], linked_teams_for_wf[i + half])
+                for i in range(half)
+            ]
+
+        wf_pairs_by_round.append(r1_pairs)
+
+        # Rounds 2+: keep Berger rotation on deterministic team order (historical behavior).
+        for r in range(2, wf_rounds + 1):
             positions = list(range(n_teams_binding))
             for _ in range(r - 1):
                 positions = [positions[0]] + [positions[-1]] + positions[1:-1]
             round_pairs = []
             for seq in range(half):
-                round_pairs.append((linked_teams_for_wf[positions[seq]], linked_teams_for_wf[positions[n_teams_binding - 1 - seq]]))
+                round_pairs.append(
+                    (
+                        linked_teams_for_wf[positions[seq]],
+                        linked_teams_for_wf[positions[n_teams_binding - 1 - seq]],
+                    )
+                )
             wf_pairs_by_round.append(round_pairs)
 
     match_num = 1

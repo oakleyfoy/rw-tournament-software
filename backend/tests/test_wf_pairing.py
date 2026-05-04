@@ -18,11 +18,13 @@ def _make_teams(
     groups: dict[int, str] | None = None,
     names: dict[int, str] | None = None,
     display_names: dict[int, str] | None = None,
+    ratings: dict[int, float] | None = None,
 ) -> list[TeamSeed]:
-    """Helper: create n teams with seeds 1..n, optional avoid_group/name/display_name maps."""
+    """Helper: create n teams with seeds 1..n, optional avoid_group/name/display_name/rating."""
     groups = groups or {}
     names = names or {}
     display_names = display_names or {}
+    ratings = ratings or {}
     return [
         TeamSeed(
             seed=s,
@@ -30,6 +32,7 @@ def _make_teams(
             avoid_group=groups.get(s),
             name=names.get(s),
             display_name=display_names.get(s),
+            rating=ratings.get(s),
         )
         for s in range(1, n + 1)
     ]
@@ -237,8 +240,8 @@ class TestEdgeCases:
 
 
 class TestSwapResolution:
-    """Verify that avoid-group conflicts are resolved by swapping
-    bottom-half teams within the same bracket quarter."""
+    """Who Knows Who (avoid_group): swap bottom-half opponents within a quarter,
+    only when both bottom halves share the same Level (rating)."""
 
     def test_swap_resolves_conflict(self):
         # 8 teams, seed 1 & 5 both group 'a' (half-split opponents).
@@ -303,6 +306,36 @@ class TestSwapResolution:
         for sa, sb in result.pairs:
             if sa == 1 or sb == 1:
                 assert sb != 9 and sa != 9
+
+
+    def test_swap_blocked_when_bottom_halves_different_level(self):
+        # Quarter [(1,5), (4,8)]; WKWK conflict on (1,5). Fixing requires 5↔8 swap.
+        # Different Level (rating) on bottom halves → swap disallowed; conflict stays.
+        groups = {1: "a", 5: "a"}
+        ratings = {5: 8.5, 8: 9.0}
+        teams = _make_teams(8, groups, ratings=ratings)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) >= 1
+        pair_with_1 = next((p for p in result.pairs if 1 in p), None)
+        assert pair_with_1 is not None
+        assert 5 in pair_with_1
+
+    def test_swap_allowed_when_bottom_halves_same_level(self):
+        groups = {1: "a", 5: "a"}
+        ratings = {5: 8.5, 8: 8.5}
+        teams = _make_teams(8, groups, ratings=ratings)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) == 0
+        for sa, sb in result.pairs:
+            if sa == 1 or sb == 1:
+                assert sb != 5 and sa != 5
+
+    def test_swap_blocked_when_one_bottom_half_has_no_level(self):
+        groups = {1: "a", 5: "a"}
+        ratings = {5: 8.5}  # seed 8 → rating None
+        teams = _make_teams(8, groups, ratings=ratings)
+        result = build_wf_r1_pairings(teams, 8)
+        assert len(result.conflicts) >= 1
 
 
 class TestMultiGroupSupport:
