@@ -105,7 +105,7 @@ class TestHalfSplitMatchups:
         assert result.pairs == expected
 
     def test_20_teams_wf_r2_pairs_one_eleven_with_ten_twenty(self):
-        """half=10: R1 match order starts (1v11), (10v20) so those winners meet in WF R2."""
+        """half=10 non-POT: outside-in R1 order begins (1v11), (10v20)."""
         teams = _make_teams(20)
         result = build_wf_r1_pairings(teams, 20)
         assert result.pairs[0] == (1, 11)
@@ -249,8 +249,8 @@ class TestEdgeCases:
 
 
 class TestSwapResolution:
-    """Who Knows Who (avoid_group): swap bottom-half opponents within a quarter,
-    only when both bottom halves share the same Level (rating)."""
+    """Who Knows Who (avoid_group): swap bottom-half opponents within a pod
+    (up to four R1 matches), only when both bottoms share the same Level (rating)."""
 
     def test_swap_resolves_conflict(self):
         # 8 teams, seed 1 & 5 both group 'a' (half-split opponents).
@@ -273,17 +273,14 @@ class TestSwapResolution:
         result = build_wf_r1_pairings(teams, 8)
         assert len(result.conflicts) == 0
 
-    def test_swap_rejected_if_creates_new_conflict(self):
-        # Seed 1 & 5 both 'a'. Seed 4 & 8 both 'a' too.
-        # Swap (1,5)↔(4,8) → (1,8) still group 'a' vs 'a'. Can't resolve.
-        # Both pairs remain conflicting.
+    def test_pod_of_four_resolves_two_pairs_that_small_quarters_could_not(self):
+        # Seeds 1&5 and 4&8 both group 'a'. With quarters of 2, swapping (1,5)
+        # with (4,8) only yields another 'a' vs 'a'. In a pod of 4, bottoms can
+        # swap with (2,6)/(3,7) so both conflicts clear.
         groups = {1: "a", 5: "a", 4: "a", 8: "a"}
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)
-        # First quarter has 2 unavoidable conflicts
-        quarter_conflicts = [c for c in result.conflicts
-                             if c.seed_a in (1, 4) or c.seed_b in (5, 8)]
-        assert len(quarter_conflicts) >= 2
+        assert len(result.conflicts) == 0
 
     def test_all_seeds_present_after_swap(self):
         # After any swaps, every seed must still appear exactly once

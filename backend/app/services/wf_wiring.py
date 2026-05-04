@@ -29,16 +29,24 @@ class WiringPlan:
 
 
 def groups_for_r1_match(match: Any, team_by_id: Dict[int, Any]) -> Set[str]:
-    """Return set of non-null avoid_group values for the two teams in an R1 match."""
-    groups: Set[str] = set()
+    """Atomic avoid-group letters for both teams (comma-split, lowercased).
+
+    Matches ``wf_pairing._groups_conflict`` semantics so multi-group strings
+    such as ``"a,b"`` overlap correctly with ``"b,c"``.
+    """
+    atoms: Set[str] = set()
     for tid in (getattr(match, "team_a_id", None), getattr(match, "team_b_id", None)):
         if tid is not None:
             team = team_by_id.get(tid)
             if team:
                 ag = getattr(team, "avoid_group", None)
                 if ag:
-                    groups.add(ag)
-    return groups
+                    atoms |= {
+                        x.strip().lower()
+                        for x in ag.split(",")
+                        if x.strip()
+                    }
+    return atoms
 
 
 # The 3 ways to partition indices [0,1,2,3] into 2 unordered pairs.

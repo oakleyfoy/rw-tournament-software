@@ -120,8 +120,9 @@ def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
     """
     Load teams for the event and compute WF R2 wiring.
 
-    Uses block_size=2 so sequential R1 pairs (seq 1+2, 3+4, ...)
-    advance into the same R2 match.
+    Uses blocks of four R1 matches (default of ``build_wf_r2_wiring``) so pairing
+    into WF R2 can alternate feeders (e.g. 1+4 and 2+3) and reduce avoid_group
+    overlap across potential WF R2 matchups.
     """
     from app.models.team import Team
     from sqlmodel import select
@@ -138,7 +139,7 @@ def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
         r1_matches,
         key=lambda m: (getattr(m, "sequence_in_round", 0) or 0, m.id or 0),
     )
-    return build_wf_r2_wiring(r1_sorted, team_by_id, block_size=2)
+    return build_wf_r2_wiring(r1_sorted, team_by_id)
 
 
 # -----------------------------------------------------------------------------

@@ -85,6 +85,16 @@ class TestGroupsForR1Match:
         teams = {10: FakeTeam(10, "a"), 20: FakeTeam(20, "a")}
         assert groups_for_r1_match(m, teams) == {"a"}
 
+    def test_comma_separated_groups_expand_atoms(self):
+        m = FakeMatch(1, team_a_id=10, team_b_id=20)
+        teams = {10: FakeTeam(10, "a,b"), 20: FakeTeam(20, "b,c")}
+        assert groups_for_r1_match(m, teams) == {"a", "b", "c"}
+
+    def test_uppercase_normalized_to_lowercase(self):
+        m = FakeMatch(1, team_a_id=10, team_b_id=20)
+        teams = {10: FakeTeam(10, "A"), 20: FakeTeam(20, "b")}
+        assert groups_for_r1_match(m, teams) == {"a", "b"}
+
 
 # ---------------------------------------------------------------------------
 # best_pairing_for_block
