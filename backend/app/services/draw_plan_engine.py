@@ -35,13 +35,16 @@ logger = logging.getLogger(__name__)
 def _qf_wf_r2_slot_pair(qf_sequence: int, r2_w_feeders: int) -> Tuple[int, int]:
     """QF placeholder slots within one WF R2 track (W or L), indices 1..r2_w_feeders.
 
-    For 8 feeders (typical 32-team divisions), use classic bracket shell pairing.
+    For 8 feeders (typical 32-team divisions), pair consecutive WF R2 slots so public
+    labels (W01→Winner A, W02→Winner B, …) read straight down the waterfall order:
+    QF1=(1,2), QF2=(3,4), QF3=(5,6), QF4=(7,8).
+
     For 4 feeders (16-team field), use a fixed rotation so each QF hits valid codes.
     """
     if not 1 <= qf_sequence <= 4:
         raise ValueError(f"qf_sequence must be 1..4, got {qf_sequence}")
     if r2_w_feeders >= 8:
-        pairs = [(1, 8), (4, 5), (3, 6), (2, 7)]
+        pairs = [(1, 2), (3, 4), (5, 6), (7, 8)]
         return pairs[qf_sequence - 1]
     if r2_w_feeders == 4:
         pairs = [(1, 2), (3, 4), (2, 3), (4, 1)]
@@ -1337,8 +1340,8 @@ def _generate_wf_to_brackets_8(
     # Token prefix format: "{cat}_{name}_E{event_id}" (no trailing underscore)
     event_prefix = prefix.rstrip('_') if prefix.endswith('_') else prefix
 
-    # QF pairing uses standard bracket fold (1v8, 4v5, 3v6, 2v7)
-    # Placeholders are generated from WF2 tokens via get_qf_wf_r2_tokens
+    # QF pairing for 8 WF R2 feeders: sequential (1v2, 3v4, 5v6, 7v8) — matches waterfall order / Winner A,B,C… labels.
+    # For 4 feeders, get_qf_wf_r2_tokens uses the fixed rotation in _qf_wf_r2_slot_pair.
 
     for bracket_idx, bracket_label in enumerate(bracket_labels):
         # Check if WF2 tokens are available for bracket generation
