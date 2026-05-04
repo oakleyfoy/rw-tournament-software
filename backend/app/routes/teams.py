@@ -772,6 +772,141 @@ def _make_display_name(full_name: str) -> str:
     return " / ".join(firsts) if firsts else name
 
 
+def _blocked_team_ids_for_finalized_matches(
+    session: Session,
+    event: Event,
+    team_ids: List[int],
+) -> set[int]:
+    """Team IDs that cannot be removed because they appear on finalized schedule versions or FINAL matches."""
+    if not team_ids:
+        return set()
+    stale_set = set(team_ids)
+    blocked: set[int] = set()
+    stale_matches = session.exec(
+        select(Match, ScheduleVersion.status)
+        .join(ScheduleVersion, ScheduleVersion.id == Match.schedule_version_id)
+        .where(
+            Match.event_id == event.id,
+            or_(
+                Match.team_a_id.in_(team_ids),  # type: ignore[arg-type]
+                Match.team_b_id.in_(team_ids),  # type: ignore[arg-type]
+                Match.winner_team_id.in_(team_ids),  # type: ignore[arg-type]
+            ),
+        )
+    ).all()
+    for match, version_status in stale_matches:
+        referenced_ids = {
+            tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id)
+            if tid in stale_set
+        }
+        if not referenced_ids:
+            continue
+        is_final_match = (match.runtime_status or "").upper() == "FINAL"
+        if (version_status or "").lower() == "final" or is_final_match:
+            blocked.update(referenced_ids)
+    return blocked
+
+
+def _safe_remove_teams_from_event(
+    session: Session,
+    event: Event,
+    team_ids: List[int],
+    *,
+    removal_summary: str = "stale team(s) not present in imported seeds",
+) -> List[str]:
+    """
+    Detach teams from non-final matches, then delete teams + related edges/links where allowed.
+    Teams referenced only from finalized matches are left in place (with warnings).
+    """
+    warnings: List[str] = []
+    if not team_ids:
+        return warnings
+
+    stale_team_ids = list(dict.fromkeys(team_ids))
+    stale_set = set(stale_team_ids)
+    blocked_stale_ids = _blocked_team_ids_for_finalized_matches(session, event, stale_team_ids)
+
+    stale_matches = session.exec(
+        select(Match, ScheduleVersion.status)
+        .join(ScheduleVersion, ScheduleVersion.id == Match.schedule_version_id)
+        .where(
+            Match.event_id == event.id,
+            or_(
+                Match.team_a_id.in_(stale_team_ids),  # type: ignore[arg-type]
+                Match.team_b_id.in_(stale_team_ids),  # type: ignore[arg-type]
+                Match.winner_team_id.in_(stale_team_ids),  # type: ignore[arg-type]
+            ),
+        )
+    ).all()
+    for match, version_status in stale_matches:
+        referenced_ids = {
+            tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id)
+            if tid in stale_set
+        }
+        if not referenced_ids:
+            continue
+        is_final_match = (match.runtime_status or "").upper() == "FINAL"
+        if (version_status or "").lower() == "final" or is_final_match:
+            continue
+
+        if match.team_a_id in referenced_ids:
+            match.team_a_id = None
+        if match.team_b_id in referenced_ids:
+            match.team_b_id = None
+        if match.winner_team_id in referenced_ids:
+            match.winner_team_id = None
+        session.add(match)
+
+    removable_stale_ids = [tid for tid in stale_team_ids if tid not in blocked_stale_ids]
+    removable_set = set(removable_stale_ids)
+
+    if blocked_stale_ids:
+        blocked_teams = session.exec(
+            select(Team).where(Team.id.in_(list(blocked_stale_ids)))  # type: ignore[arg-type]
+        ).all()
+        for team in blocked_teams:
+            warnings.append(
+                f"Skipped removing stale team seed={team.seed or '—'} "
+                f"('{team.display_name or team.name}') because it appears in finalized matches."
+            )
+
+    if removable_stale_ids:
+        stale_sms_logs = session.exec(
+            select(SmsLog).where(SmsLog.team_id.in_(removable_stale_ids))  # type: ignore[arg-type]
+        ).all()
+        for row in stale_sms_logs:
+            row.team_id = None
+            session.add(row)
+
+        stale_edges = session.exec(
+            select(TeamAvoidEdge).where(
+                TeamAvoidEdge.event_id == event.id,
+                or_(
+                    TeamAvoidEdge.team_id_a.in_(removable_stale_ids),  # type: ignore[arg-type]
+                    TeamAvoidEdge.team_id_b.in_(removable_stale_ids),  # type: ignore[arg-type]
+                ),
+            )
+        ).all()
+        stale_player_links = session.exec(
+            select(TeamPlayer).where(TeamPlayer.team_id.in_(removable_stale_ids))  # type: ignore[arg-type]
+        ).all()
+        for edge in stale_edges:
+            session.delete(edge)
+        for link in stale_player_links:
+            session.delete(link)
+        teams_to_delete = session.exec(
+            select(Team).where(Team.id.in_(removable_stale_ids))  # type: ignore[arg-type]
+        ).all()
+        for team in teams_to_delete:
+            session.delete(team)
+        session.flush()
+        warnings.append(
+            f"Removed {len(removable_stale_ids)} {removal_summary}."
+        )
+
+    return warnings
+
+
 def _upsert_seeded_rows_for_event(
     session: Session,
     event: Event,
@@ -788,87 +923,11 @@ def _upsert_seeded_rows_for_event(
     for team in existing_teams:
         if team.seed in incoming_seeds:
             continue
-        stale_team_ids.append(team.id)
+        if team.id is not None:
+            stale_team_ids.append(team.id)
 
     if stale_team_ids:
-        stale_set = set(stale_team_ids)
-        blocked_stale_ids: set[int] = set()
-        stale_matches = session.exec(
-            select(Match, ScheduleVersion.status)
-            .join(ScheduleVersion, ScheduleVersion.id == Match.schedule_version_id)
-            .where(
-                Match.event_id == event.id,
-                or_(
-                    Match.team_a_id.in_(stale_team_ids),  # type: ignore[arg-type]
-                    Match.team_b_id.in_(stale_team_ids),  # type: ignore[arg-type]
-                    Match.winner_team_id.in_(stale_team_ids),  # type: ignore[arg-type]
-                ),
-            )
-        ).all()
-        for match, version_status in stale_matches:
-            referenced_ids = {
-                tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id)
-                if tid in stale_set
-            }
-            if not referenced_ids:
-                continue
-            is_final_match = (match.runtime_status or "").upper() == "FINAL"
-            if (version_status or "").lower() == "final" or is_final_match:
-                blocked_stale_ids.update(referenced_ids)
-                continue
-
-            if match.team_a_id in referenced_ids:
-                match.team_a_id = None
-            if match.team_b_id in referenced_ids:
-                match.team_b_id = None
-            if match.winner_team_id in referenced_ids:
-                match.winner_team_id = None
-            session.add(match)
-
-        removable_stale_ids = [tid for tid in stale_team_ids if tid not in blocked_stale_ids]
-        removable_set = set(removable_stale_ids)
-
-        if blocked_stale_ids:
-            blocked_teams = session.exec(
-                select(Team).where(Team.id.in_(list(blocked_stale_ids)))  # type: ignore[arg-type]
-            ).all()
-            for team in blocked_teams:
-                warnings.append(
-                    f"Skipped removing stale team seed={team.seed or '—'} "
-                    f"('{team.display_name or team.name}') because it appears in finalized matches."
-                )
-
-        if removable_stale_ids:
-            stale_sms_logs = session.exec(
-                select(SmsLog).where(SmsLog.team_id.in_(removable_stale_ids))  # type: ignore[arg-type]
-            ).all()
-            for row in stale_sms_logs:
-                row.team_id = None
-                session.add(row)
-
-            stale_edges = session.exec(
-                select(TeamAvoidEdge).where(
-                    TeamAvoidEdge.event_id == event.id,
-                    or_(
-                        TeamAvoidEdge.team_id_a.in_(removable_stale_ids),  # type: ignore[arg-type]
-                        TeamAvoidEdge.team_id_b.in_(removable_stale_ids),  # type: ignore[arg-type]
-                    ),
-                )
-            ).all()
-            stale_player_links = session.exec(
-                select(TeamPlayer).where(TeamPlayer.team_id.in_(removable_stale_ids))  # type: ignore[arg-type]
-            ).all()
-            for edge in stale_edges:
-                session.delete(edge)
-            for link in stale_player_links:
-                session.delete(link)
-            for team in existing_teams:
-                if team.id in removable_set:
-                    session.delete(team)
-            session.flush()
-            warnings.append(
-                f"Removed {len(removable_stale_ids)} stale team(s) not present in imported seeds."
-            )
+        warnings.extend(_safe_remove_teams_from_event(session, event, stale_team_ids))
 
     existing_teams = session.exec(
         select(Team).where(Team.event_id == event.id)
@@ -1121,6 +1180,8 @@ def import_combined_teams(
     touched_teams: List[Team] = []
     accepted_lookup_rows: List[dict] = []
 
+    work_items: List[tuple[Event, List[dict]]] = []
+
     for event in events:
         rows = grouped_rows.get(event.id) or []
         if not rows:
@@ -1160,6 +1221,35 @@ def import_combined_teams(
             warnings.append(
                 f"{event.name} seeds not contiguous: missing {sorted(missing)}. "
                 f"Got {len(valid_rows)} teams for seeds 1..{max_seed}."
+            )
+
+        work_items.append((event, valid_rows))
+
+    for event, _valid_rows in work_items:
+        existing_for_event = session.exec(select(Team).where(Team.event_id == event.id)).all()
+        wipe_ids = [t.id for t in existing_for_event if t.id is not None]
+        blocked = _blocked_team_ids_for_finalized_matches(session, event, wipe_ids)
+        if blocked:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot replace roster for \"{event.name}\": "
+                    f"{len(blocked)} team(s) are still assigned to finalized matches or a finalized schedule version. "
+                    "Clear those assignments before re-importing."
+                ),
+            )
+
+    for event, valid_rows in work_items:
+        existing_for_event = session.exec(select(Team).where(Team.event_id == event.id)).all()
+        wipe_ids = [t.id for t in existing_for_event if t.id is not None]
+        if wipe_ids:
+            warnings.extend(
+                _safe_remove_teams_from_event(
+                    session,
+                    event,
+                    wipe_ids,
+                    removal_summary="existing team(s) cleared before combined import",
+                )
             )
 
         imported, updated, event_warnings, event_teams = _upsert_seeded_rows_for_event(session, event, valid_rows)
