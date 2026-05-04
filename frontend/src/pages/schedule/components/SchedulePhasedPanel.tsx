@@ -28,6 +28,8 @@ import {
   QualityReport,
   PolicyRunSummary,
   PolicyRunDiffResponse,
+  getTournament,
+  Tournament,
 } from '../../../api/client'
 import { showToast } from '../../../utils/toast'
 import type { InventoryTab } from './ScheduleInventoryPanel'
@@ -65,17 +67,80 @@ function formatPolicyDayLabel(isoDate: string, dayIndex: number): string {
   return `Day ${dayIndex + 1} (${wd} ${m}/${d})`
 }
 
-/** Sort match IDs deterministically before sending to backend */
-function sortedMatchIds(matches: GridMatch[]): number[] {
+/** Parse tournament.event_schedule_day_orders_json → matrix of event IDs per policy day column */
+function parseStoredDayOrdersMatrix(raw: string | null | undefined): number[][] | null {
+  if (!raw?.trim()) return null
+  try {
+    const data = JSON.parse(raw) as { day_orders?: unknown }
+    if (!Array.isArray(data.day_orders)) return null
+    const rows: number[][] = []
+    for (const row of data.day_orders) {
+      if (!Array.isArray(row)) {
+        rows.push([])
+        continue
+      }
+      const ids: number[] = []
+      const seen = new Set<number>()
+      for (const x of row) {
+        let id: number | null = null
+        if (typeof x === 'number' && Number.isInteger(x) && x > 0) id = x
+        else if (typeof x === 'string' && /^\d+$/.test(x.trim())) id = parseInt(x.trim(), 10)
+        if (id != null && !seen.has(id)) {
+          seen.add(id)
+          ids.push(id)
+        }
+      }
+      rows.push(ids)
+    }
+    return rows
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Rank events for assign-subset ordering. Honors Draw Builder day columns: earlier day and higher in
+ * list beats later/lower. Matches backend honoring caller match_id order.
+ */
+function buildEventPlacementRank(dayOrders: number[][] | null, gridEventIds: number[]): Map<number, number> {
+  const rank = new Map<number, number>()
+  const hasConfigured = dayOrders != null && dayOrders.some((row) => row.length > 0)
+
+  if (hasConfigured && dayOrders) {
+    dayOrders.forEach((row, dayIdx) => {
+      row.forEach((eid, pos) => {
+        const score = dayIdx * 10000 + pos
+        const prev = rank.get(eid)
+        if (prev === undefined || score < prev) rank.set(eid, score)
+      })
+    })
+  }
+
+  const fallbackSorted = [...new Set(gridEventIds)].sort((a, b) => a - b)
+  let tail = 0
+  for (const eid of fallbackSorted) {
+    if (!rank.has(eid)) {
+      rank.set(eid, hasConfigured ? 5_000_000 + tail++ : eid)
+    }
+  }
+  return rank
+}
+
+/** Sort match IDs for placement: tournament day orders when configured, else legacy event_id order */
+function sortedMatchIds(matches: GridMatch[], rankByEventId: Map<number, number>): number[] {
   return [...matches]
-    .sort(
-      (a, b) =>
+    .sort((a, b) => {
+      const ra = rankByEventId.get(a.event_id) ?? 99_999_999
+      const rb = rankByEventId.get(b.event_id) ?? 99_999_999
+      if (ra !== rb) return ra - rb
+      return (
         a.event_id - b.event_id ||
         a.stage.localeCompare(b.stage) ||
         a.round_index - b.round_index ||
         a.sequence_in_round - b.sequence_in_round ||
         a.match_id - b.match_id
-    )
+      )
+    })
     .map((m) => m.match_id)
 }
 
@@ -248,6 +313,32 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null)
   const [showQualityModal, setShowQualityModal] = useState(false)
   const [loadingQuality, setLoadingQuality] = useState(false)
+
+  const [tournamentRow, setTournamentRow] = useState<Tournament | null>(null)
+
+  useEffect(() => {
+    if (!tournamentId) {
+      setTournamentRow(null)
+      return
+    }
+    let cancelled = false
+    getTournament(tournamentId)
+      .then((t) => {
+        if (!cancelled) setTournamentRow(t)
+      })
+      .catch(() => {
+        if (!cancelled) setTournamentRow(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [tournamentId])
+
+  const placementRankByEventId = useMemo(() => {
+    const matrix = parseStoredDayOrdersMatrix(tournamentRow?.event_schedule_day_orders_json)
+    const ids = gridMatches.map((m) => m.event_id)
+    return buildEventPlacementRank(matrix, ids)
+  }, [tournamentRow?.event_schedule_day_orders_json, gridMatches])
 
   // Load policy days when version changes
   useEffect(() => {
@@ -639,6 +730,12 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     try {
       await fn()
       onRefresh()
+      try {
+        const t = await getTournament(tournamentId)
+        setTournamentRow(t)
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : `${label} failed`, 'error')
     } finally {
@@ -649,7 +746,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
   /** Place a subset of matches by IDs and show a toast */
   const placeSubset = async (label: string, matches: GridMatch[]) => {
     if (!tournamentId || !activeVersion) return
-    const ids = sortedMatchIds(matches)
+    const ids = sortedMatchIds(matches, placementRankByEventId)
     if (ids.length === 0) {
       showToast(`No unassigned matches for ${label}`, 'warning')
       return

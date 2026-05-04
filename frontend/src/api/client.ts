@@ -1268,7 +1268,7 @@ export interface AssignSubsetResponse {
 /**
  * Place a specific list of matches by ID.
  * Used by per-round buttons (RR Round 1, Bracket QFs, etc.)
- * Match IDs should be sorted deterministically before sending.
+ * Match ID order is preserved by the backend; SchedulePhasedPanel orders by tournament day lists when set.
  */
 export async function placeMatchSubset(
   tournamentId: number,
