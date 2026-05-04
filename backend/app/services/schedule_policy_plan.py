@@ -10,7 +10,8 @@ Policy rules implemented
 
 A. Daily match cap: no team > 2 matches / day.
 B. Everyone plays match #1 before match #2 (fairness layering).
-C. Event priority: descending team_count; rotation ONLY within same-size buckets.
+C. Event priority: descending team_count; rotation ONLY within same-size buckets
+    (optional tournament-level day_orders prefix per calendar day).
 D. Day 1 layering: WF R1 → no-WF firsts → WF R2 → remaining.
 E. Spare-court reservation: ≥1 spare per time-bucket (except first).
    Deterministic court ordering: court_number asc, court_label asc, slot.id asc.
@@ -36,6 +37,11 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.models.tournament import Tournament
+from app.utils.event_schedule_orders import (
+    event_ids_for_day,
+    parse_event_schedule_day_orders_raw,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,17 +177,10 @@ def _get_manual_schedule_order(event: Event) -> Optional[int]:
     return None
 
 
-def _build_rotated_event_list(events: List[Event], day_index: int) -> List[Event]:
+def _legacy_build_rotated_event_list(events: List[Event], day_index: int) -> List[Event]:
     """
-    Build a deterministic event ordering with manual overrides first.
-
-    If an event has schedule_profile_json.schedule_order, that explicit order
-    wins and stays fixed across days. Remaining events continue to use the
-    existing largest-draw-first rule with same-size daily rotation.
-
-    1. Manual-order events sorted by schedule_order ASC.
-    2. Unordered events bucketed by team_count DESC.
-    3. Within each unordered bucket, rotate by day_index.
+    Deterministic event ordering: per-event schedule_order, then largest-draw-first
+    with same-size daily rotation. Used for the tail after tournament day_orders prefix.
     """
     if not events:
         return []
@@ -202,27 +201,62 @@ def _build_rotated_event_list(events: List[Event], day_index: int) -> List[Event
     if not automatic_events:
         return ordered
 
-    # Step 1: group by team_count
     buckets: Dict[int, List[Event]] = {}
     for e in automatic_events:
         buckets.setdefault(e.team_count, []).append(e)
 
-    # Step 2: process buckets largest → smallest
     for team_count in sorted(buckets.keys(), reverse=True):
         bucket = sorted(buckets[team_count], key=lambda e: e.id or 0)
-        # Rotate ONLY inside this bucket
         n = len(bucket)
-        offset = day_index % n
+        offset = day_index % n if n else 0
         rotated = bucket[offset:] + bucket[:offset]
         ordered.extend(rotated)
 
     return ordered
 
 
-def _build_event_priority_map(events: List[Event], day_index: int) -> Dict[int, int]:
+def _build_rotated_event_list(
+    events: List[Event],
+    day_index: int,
+    tournament_day_orders: Optional[List[List[int]]] = None,
+) -> List[Event]:
+    """
+    Event order for schedule batches.
+
+    If tournament_day_orders has a non-empty row for this day_index, those event IDs
+    are placed first (in list order; unknown IDs skipped). Remaining events use
+    _legacy_build_rotated_event_list (schedule_order + size buckets + rotation).
+    """
+    if not events:
+        return []
+
+    prefix_ids = event_ids_for_day(tournament_day_orders, day_index)
+    id_to_event: Dict[int, Event] = {}
+    for e in events:
+        if e.id is not None:
+            id_to_event[e.id] = e
+
+    prefix_events: List[Event] = []
+    used: Set[int] = set()
+    for eid in prefix_ids:
+        ev = id_to_event.get(eid)
+        if ev is not None and ev.id is not None and ev.id not in used:
+            prefix_events.append(ev)
+            used.add(ev.id)
+
+    remaining = [e for e in events if e.id is not None and e.id not in used]
+    legacy_tail = _legacy_build_rotated_event_list(remaining, day_index)
+    return prefix_events + legacy_tail
+
+
+def _build_event_priority_map(
+    events: List[Event],
+    day_index: int,
+    tournament_day_orders: Optional[List[List[int]]] = None,
+) -> Dict[int, int]:
     """Map event_id → priority rank (0 = highest) for a given day."""
-    rotated = _build_rotated_event_list(events, day_index)
-    return {e.id: idx for idx, e in enumerate(rotated)}
+    rotated = _build_rotated_event_list(events, day_index, tournament_day_orders)
+    return {e.id: idx for idx, e in enumerate(rotated) if e.id is not None}
 
 
 def _match_sort_key(m: Match, event_priority: Dict[int, int]) -> Tuple:
@@ -970,6 +1004,7 @@ def _build_day1_plan(
     event_priority: Dict[int, int],
     day_date: date,
     schedule_version_id: int,
+    tournament_day_orders: Optional[List[List[int]]] = None,
 ) -> List[PlacementBatch]:
     """
     Day 1 layering:
@@ -985,7 +1020,7 @@ def _build_day1_plan(
     team_day_counts = _build_team_match_count_on_day(session, schedule_version_id, day_date)
 
     # Sort events by priority (largest draw first)
-    events_ordered = _build_rotated_event_list(events, 0)  # day_index=0 for Day 1
+    events_ordered = _build_rotated_event_list(events, 0, tournament_day_orders)
 
     wf_events = [e for e in events_ordered if _event_has_wf(e)]
     wf_event_ids = {e.id for e in wf_events}
@@ -1135,6 +1170,7 @@ def _build_day2plus_plan(
     day_index: int,
     schedule_version_id: int,
     reserved_slot_ids: Set[int],
+    tournament_day_orders: Optional[List[List[int]]] = None,
 ) -> Tuple[List[PlacementBatch], List[int]]:
     """
     Day 2+ per-event batch ordering (same principle as Day 1).
@@ -1170,7 +1206,7 @@ def _build_day2plus_plan(
     planned_so_far = 0
 
     # Rotated event ordering: largest draws first, rotated within same-size
-    events_ordered = _build_rotated_event_list(events, day_index)
+    events_ordered = _build_rotated_event_list(events, day_index, tournament_day_orders)
     event_ids_ordered = [e.id for e in events_ordered]
     event_name_map = {e.id: e.name for e in events_ordered}
 
@@ -1620,8 +1656,13 @@ def build_daily_plan(
 
     plan = DailyPlan(day_date=day_date, day_index=day_index)
 
-    # Event priority for this day (true rotation)
-    event_priority = _build_event_priority_map(events, day_index)
+    tournament_row = session.get(Tournament, tournament_id)
+    tournament_day_orders = parse_event_schedule_day_orders_raw(
+        getattr(tournament_row, "event_schedule_day_orders_json", None) if tournament_row else None
+    )
+
+    # Event priority for this day (true rotation + optional tournament day_orders prefix)
+    event_priority = _build_event_priority_map(events, day_index, tournament_day_orders)
 
     # Load all matches for this version
     all_matches = session.exec(
@@ -1662,6 +1703,7 @@ def build_daily_plan(
             session, events, all_matches, assigned_match_ids,
             event_priority, day_date, day_index, schedule_version_id,
             reserved_slot_ids=set(),  # No spares yet
+            tournament_day_orders=tournament_day_orders,
         )
         total_matches_planned = sum(len(b.match_ids) for b in plan.batches)
         
@@ -1698,12 +1740,14 @@ def build_daily_plan(
             plan.batches = _build_day1_plan(
                 session, events, all_matches, assigned_match_ids,
                 event_priority, day_date, schedule_version_id,
+                tournament_day_orders=tournament_day_orders,
             )
         else:
             plan.batches, plan.deferred_final_ids = _build_day2plus_plan(
                 session, events, all_matches, assigned_match_ids,
                 event_priority, day_date, day_index, schedule_version_id,
                 reserved_slot_ids=set(reserved_slot_ids),
+                tournament_day_orders=tournament_day_orders,
             )
 
     return plan

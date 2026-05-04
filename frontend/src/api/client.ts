@@ -29,6 +29,8 @@ export interface Tournament {
   court_names?: string[] | null;
   public_schedule_version_id: number | null;
   shared_screen_config_json?: string | null;
+  /** JSON `{"day_orders":[[event_id,...],...]}` — schedule policy prefix per calendar day */
+  event_schedule_day_orders_json?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,6 +55,7 @@ export interface TournamentUpdate {
   use_time_windows?: boolean;
   court_names?: string[] | null;
   shared_screen_config_json?: string | null;
+  event_schedule_day_orders_json?: string | null;
 }
 
 export interface TournamentStartOverResponse {

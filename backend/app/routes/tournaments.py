@@ -32,6 +32,7 @@ from app.models.tournament_day import TournamentDay
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.utils.courts import parse_court_names
+from app.utils.event_schedule_orders import remap_event_schedule_day_orders_json
 
 router = APIRouter()
 
@@ -115,6 +116,7 @@ class TournamentUpdate(BaseModel):
     use_time_windows: Optional[bool] = None
     court_names: Optional[List[str]] = None
     shared_screen_config_json: Optional[str] = None
+    event_schedule_day_orders_json: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_date_range(self):
@@ -136,6 +138,7 @@ class TournamentResponse(BaseModel):
     court_names: Optional[List[str]] = None
     public_schedule_version_id: Optional[int] = None
     shared_screen_config_json: Optional[str] = None
+    event_schedule_day_orders_json: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -1177,6 +1180,14 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             session.add(cloned)
             session.flush()
             event_id_map[event.id] = cloned.id  # type: ignore[index]
+
+        remapped_day_orders = remap_event_schedule_day_orders_json(
+            getattr(source_tournament, "event_schedule_day_orders_json", None),
+            event_id_map,
+        )
+        if remapped_day_orders:
+            new_tournament.event_schedule_day_orders_json = remapped_day_orders
+            session.add(new_tournament)
 
         team_id_map: dict[int, int] = {}
         used_team_name_keys_by_event: dict[int, set[str]] = {}

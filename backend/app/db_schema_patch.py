@@ -24,6 +24,7 @@ REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("is_archived", "INTEGER", "BOOLEAN"),
     ("desk_management_mode", "TEXT", "TEXT"),
     ("shared_screen_config_json", "TEXT", "TEXT"),
+    ("event_schedule_day_orders_json", "TEXT", "TEXT"),
 ]
 
 REQUIRED_TOURNAMENT_TIME_WINDOW_COLUMNS: List[Tuple[str, str, str]] = [
@@ -213,6 +214,8 @@ def ensure_tournament_columns(engine: Engine) -> None:
                         default = "DEFAULT NULL"
                     elif name == "desk_management_mode":
                         default = "DEFAULT 'checkin_management'"
+                    elif name in ("shared_screen_config_json", "event_schedule_day_orders_json"):
+                        default = "DEFAULT NULL"
                     else:
                         default = "DEFAULT 0"
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} {default};"))
@@ -239,6 +242,8 @@ def ensure_tournament_columns(engine: Engine) -> None:
                         default = "DEFAULT NULL"
                     elif name == "desk_management_mode":
                         default = "DEFAULT 'checkin_management'"
+                    elif name in ("shared_screen_config_json", "event_schedule_day_orders_json"):
+                        default = "DEFAULT NULL"
                     else:
                         default = "DEFAULT FALSE"
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type} {default};"))

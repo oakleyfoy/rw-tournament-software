@@ -25,6 +25,8 @@ class Tournament(SQLModel, table=True):
     use_time_windows: bool = Field(default=False)
     desk_management_mode: str = Field(default="checkin_management")
     shared_screen_config_json: Optional[str] = None
+    # JSON: {"day_orders": [[event_id, ...], ...]} — per calendar-day event priority for scheduling/WF batches.
+    event_schedule_day_orders_json: Optional[str] = None
     court_names: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     public_schedule_version_id: Optional[int] = Field(
         default=None,

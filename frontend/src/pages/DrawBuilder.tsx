@@ -1,11 +1,28 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
   getTournament,
   getEvents,
   getPhase1Status,
   getScheduleBuilder,
   getPlanReport,
+  getTournamentDays,
   importSeededTeams,
   importCombinedTeams,
   getEventTeams,
@@ -14,7 +31,9 @@ import {
   updateDrawPlan,
   finalizeDrawPlan,
   updateEvent,
+  updateTournament,
   Tournament,
+  TournamentDay,
   Event,
   Phase1Status,
   TeamListItem,
@@ -39,6 +58,156 @@ import {
   isTeamCountValidForFamily,
 } from '../utils/drawPlanRules'
 import './TournamentSetup.css'
+
+function parseStoredDayOrders(raw: string | null | undefined): number[][] | null {
+  if (!raw?.trim()) return null
+  try {
+    const data = JSON.parse(raw) as unknown
+    if (!data || typeof data !== 'object') return null
+    const obj = data as { day_orders?: unknown }
+    if (!Array.isArray(obj.day_orders)) return null
+    return obj.day_orders.map((row): number[] => {
+      if (!Array.isArray(row)) return []
+      const seen = new Set<number>()
+      const ids: number[] = []
+      for (const x of row) {
+        let id: number | null = null
+        if (typeof x === 'number' && Number.isInteger(x) && x > 0) id = x
+        else if (typeof x === 'string' && /^\d+$/.test(x.trim())) id = parseInt(x.trim(), 10)
+        if (id != null && !seen.has(id)) {
+          seen.add(id)
+          ids.push(id)
+        }
+      }
+      return ids
+    })
+  } catch {
+    return null
+  }
+}
+
+function defaultEventOrder(events: Event[]): number[] {
+  return [...events].sort((a, b) => a.id - b.id).map((e) => e.id)
+}
+
+function mergeDayRow(stored: number[], allIds: number[]): number[] {
+  const allowed = new Set(allIds)
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const id of stored) {
+    if (allowed.has(id) && !seen.has(id)) {
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  for (const id of allIds) {
+    if (!seen.has(id)) out.push(id)
+  }
+  return out
+}
+
+function buildInitialDayOrders(
+  daysCount: number,
+  events: Event[],
+  stored: number[][] | null,
+): number[][] {
+  const allIds = defaultEventOrder(events)
+  const rows: number[][] = []
+  for (let i = 0; i < daysCount; i++) {
+    const row = stored?.[i]
+    rows.push(row?.length ? mergeDayRow(row, allIds) : [...allIds])
+  }
+  return rows
+}
+
+function formatTournamentDayLabel(isoDate: string): string {
+  try {
+    const d = new Date(`${isoDate}T12:00:00`)
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  } catch {
+    return isoDate
+  }
+}
+
+function SortableDayEventRow({ id, label }: { id: string; label: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.88 : 1,
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        ...style,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 10px',
+        marginBottom: 6,
+        backgroundColor: 'var(--theme-table-row-hover)',
+        borderRadius: 6,
+        cursor: 'grab',
+        touchAction: 'none',
+        border: '1px solid rgba(0,0,0,0.06)',
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      <span style={{ flex: 1, fontSize: 14 }}>{label}</span>
+    </div>
+  )
+}
+
+function DayEventOrderColumn({
+  title,
+  orderedIds,
+  eventNames,
+  onReorder,
+  onClear,
+}: {
+  title: string
+  orderedIds: number[]
+  eventNames: Map<number, string>
+  onReorder: (next: number[]) => void
+  onClear: () => void
+}) {
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor))
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const oldIndex = orderedIds.indexOf(Number(active.id))
+    const newIndex = orderedIds.indexOf(Number(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    onReorder(arrayMove(orderedIds, oldIndex, newIndex))
+  }
+
+  const items = orderedIds.map(String)
+
+  return (
+    <div style={{ flex: '1 1 220px', minWidth: 200 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontWeight: 600 }}>{title}</div>
+        <button type="button" className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 12 }} onClick={onClear}>
+          Clear
+        </button>
+      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={items} strategy={verticalListSortingStrategy}>
+          {orderedIds.map((eid) => (
+            <SortableDayEventRow
+              key={eid}
+              id={String(eid)}
+              label={eventNames.get(eid) ?? `Event #${eid}`}
+            />
+          ))}
+        </SortableContext>
+      </DndContext>
+    </div>
+  )
+}
 
 // Match length options for dropdown (value in minutes, label in H:MM format)
 // Supported: 1:00, 1:30, 1:45, 2:00
@@ -110,6 +279,9 @@ function DrawBuilder() {
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
+  const [tournamentDays, setTournamentDays] = useState<TournamentDay[]>([])
+  const [dayOrdersLocal, setDayOrdersLocal] = useState<number[][]>([])
+  const [dayOrdersSaving, setDayOrdersSaving] = useState(false)
 
   // Scroll to top when component mounts
   useEffect(() => {
@@ -127,16 +299,22 @@ function DrawBuilder() {
     
     try {
       setLoading(true)
-      const [tournamentData, eventsData, statusData, sbData, planReportData] = await Promise.all([
+      const [tournamentData, eventsData, statusData, sbData, planReportData, daysData] = await Promise.all([
         getTournament(tournamentId),
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
         getScheduleBuilder(tournamentId).catch(() => ({ tournament_id: tournamentId, events: [] } as ScheduleBuilderResponse)),
         getPlanReport(tournamentId).catch(() => null),
+        getTournamentDays(tournamentId).catch(() => [] as TournamentDay[]),
       ])
       
       setTournament(tournamentData)
       setEvents(eventsData)
+      setTournamentDays(daysData)
+      const sortedDayRows = [...daysData].sort((a, b) => a.date.localeCompare(b.date))
+      const dayColumnCount = Math.max(1, sortedDayRows.length)
+      const parsedOrders = parseStoredDayOrders(tournamentData.event_schedule_day_orders_json)
+      setDayOrdersLocal(buildInitialDayOrders(dayColumnCount, eventsData, parsedOrders))
       setPhase1Status(statusData)
       const inv: Record<number, { total_matches: number }> = {}
       sbData.events?.forEach((e: { event_id: number; total_matches: number }) => {
@@ -176,6 +354,46 @@ function DrawBuilder() {
     } catch {
       /* ignore */
     }
+  }
+
+  const sortedTournamentDays = useMemo(
+    () => [...tournamentDays].sort((a, b) => a.date.localeCompare(b.date)),
+    [tournamentDays],
+  )
+
+  const eventNameById = useMemo(() => {
+    const m = new Map<number, string>()
+    events.forEach((e) => m.set(e.id, e.name))
+    return m
+  }, [events])
+
+  const handleSaveDayOrders = async () => {
+    if (!tournamentId || dayOrdersSaving) return
+    try {
+      setDayOrdersSaving(true)
+      const updated = await updateTournament(tournamentId, {
+        event_schedule_day_orders_json: JSON.stringify({ day_orders: dayOrdersLocal }),
+      })
+      setTournament(updated)
+      showToast('Event order by tournament day saved.', 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to save event order', 'error')
+    } finally {
+      setDayOrdersSaving(false)
+    }
+  }
+
+  const reorderDayOrders = (dayIdx: number, next: number[]) => {
+    setDayOrdersLocal((prev) => prev.map((row, i) => (i === dayIdx ? [...next] : [...row])))
+  }
+
+  const clearDayOrdersRow = (dayIdx: number) => {
+    const allIds = defaultEventOrder(events)
+    setDayOrdersLocal((prev) => {
+      const copy = [...prev]
+      copy[dayIdx] = [...allIds]
+      return copy
+    })
   }
 
   const initializeEditorState = (event: Event): EventEditorState => {
@@ -853,7 +1071,8 @@ function DrawBuilder() {
         </div>
 
         <div style={{ marginTop: '-8px', marginBottom: '16px', fontSize: '12px', color: '#666' }}>
-          Lower order schedules earlier. Leave blank to keep the automatic larger-draw-first order.
+          Lower values schedule earlier among unordered draws. Leave blank for automatic larger-draw-first order.
+          Tournament-level “event order by day” (below) overrides this per calendar day when that list is saved.
         </div>
 
         {errors.length > 0 && (
@@ -1144,6 +1363,47 @@ function DrawBuilder() {
           Note: This is informational only. Day-level scheduling happens on the Schedule page.
         </div>
       </div>
+
+      {/* Per-day event ranking for schedule / WF ordering */}
+      {events.length > 0 && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <h2 className="section-title">Event order by tournament day</h2>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 16, maxWidth: 900 }}>
+            Drag events to set placement priority for each tournament day. When a day&apos;s list is saved, scheduling uses
+            this order first (including WF round batches), then fills remaining events using automatic rules. Lists align with
+            tournament days from Setup (or a single column when no days exist yet). Slot-based scheduling uses the same day index
+            as sorted schedule dates.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' }}>
+            {(sortedTournamentDays.length > 0 ? sortedTournamentDays : [null]).map((day, idx) => {
+              const title = day
+                ? formatTournamentDayLabel(day.date)
+                : `Day 1 (${formatTournamentDayLabel(tournament.start_date)})`
+              const orderedIds = dayOrdersLocal[idx]?.length ? dayOrdersLocal[idx] : defaultEventOrder(events)
+              return (
+                <DayEventOrderColumn
+                  key={day?.date ?? `fallback-${idx}`}
+                  title={title}
+                  orderedIds={orderedIds}
+                  eventNames={eventNameById}
+                  onReorder={(next) => reorderDayOrders(idx, next)}
+                  onClear={() => clearDayOrdersRow(idx)}
+                />
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 20 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={dayOrdersSaving}
+              onClick={() => void handleSaveDayOrders()}
+            >
+              {dayOrdersSaving ? 'Saving…' : 'Save event order'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Event Cards */}
       <div>
