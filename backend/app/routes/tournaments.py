@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import date, datetime, time, timedelta
 from io import BytesIO
@@ -978,6 +979,27 @@ def download_print_packet_pdf(
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
+def _strip_schedule_order_from_tournament_events(session: Session, tournament_id: int) -> None:
+    """Drop legacy per-draw schedule_order when tournament day event lists are updated."""
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    for event in events:
+        raw = event.schedule_profile_json
+        if not raw or not str(raw).strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict) or "schedule_order" not in data:
+            continue
+        data = dict(data)
+        data.pop("schedule_order", None)
+        new_json = json.dumps(data)
+        if new_json != raw:
+            event.schedule_profile_json = new_json
+            session.add(event)
+
+
 @router.put("/tournaments/{tournament_id}", response_model=TournamentResponse)
 def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, session: Session = Depends(get_session)):
     """Update a tournament and manage days based on date range changes"""
@@ -992,6 +1014,9 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
     update_data = tournament_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(tournament, field, value)
+
+    if "event_schedule_day_orders_json" in update_data:
+        _strip_schedule_order_from_tournament_events(session, tournament_id)
 
     tournament.updated_at = datetime.utcnow()
     session.add(tournament)

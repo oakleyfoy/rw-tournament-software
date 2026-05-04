@@ -23,6 +23,7 @@ import {
   getScheduleBuilder,
   getPlanReport,
   getTournamentDays,
+  getScheduleVersions,
   importSeededTeams,
   importCombinedTeams,
   getEventTeams,
@@ -33,6 +34,7 @@ import {
   updateEvent,
   updateTournament,
   Tournament,
+  ScheduleVersion,
   Event,
   Phase1Status,
   TeamListItem,
@@ -126,6 +128,19 @@ function formatTournamentDayLabel(isoDate: string): string {
   } catch {
     return isoDate
   }
+}
+
+/** Same schedule version the Schedule page prefers for editing: draft first, else published, else newest. */
+function resolveCalendarScheduleVersionId(tournament: Tournament, versions: ScheduleVersion[]): number | undefined {
+  const draft = versions.find((v) => (v.status || '').toLowerCase() === 'draft')
+  if (draft?.id != null) return draft.id
+  const pub = tournament.public_schedule_version_id
+  if (pub != null) return pub
+  const sorted = [...versions].sort((a, b) => {
+    if (b.version_number !== a.version_number) return b.version_number - a.version_number
+    return b.id - a.id
+  })
+  return sorted[0]?.id
 }
 
 function SortableDayEventRow({ id, label }: { id: string; label: string }) {
@@ -300,20 +315,18 @@ function DrawBuilder() {
     try {
       setLoading(true)
       const tournamentData = await getTournament(tournamentId)
-      const scheduleVersionOpt =
-        tournamentData.public_schedule_version_id != null
-          ? { scheduleVersionId: tournamentData.public_schedule_version_id }
-          : undefined
-
-      const [eventsData, statusData, sbData, planReportData, daysData] = await Promise.all([
+      const [eventsData, statusData, versionsData, planReportData, daysData] = await Promise.all([
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
-        getScheduleBuilder(tournamentId, scheduleVersionOpt).catch(
-          () => ({ tournament_id: tournamentId, events: [] } as ScheduleBuilderResponse),
-        ),
+        getScheduleVersions(tournamentId).catch(() => [] as ScheduleVersion[]),
         getPlanReport(tournamentId).catch(() => null),
         getTournamentDays(tournamentId).catch(() => []),
       ])
+      const calendarVid = resolveCalendarScheduleVersionId(tournamentData, versionsData)
+      const sbData = await getScheduleBuilder(
+        tournamentId,
+        calendarVid != null ? { scheduleVersionId: calendarVid } : undefined,
+      ).catch(() => ({ tournament_id: tournamentId, events: [] } as ScheduleBuilderResponse))
       
       setTournament(tournamentData)
       setEvents(eventsData)
@@ -357,12 +370,13 @@ function DrawBuilder() {
   const refetchInventory = async () => {
     if (!tournamentId) return
     try {
-      const scheduleVersionOpt =
-        tournament?.public_schedule_version_id != null
-          ? { scheduleVersionId: tournament.public_schedule_version_id }
-          : undefined
+      const [tData, vs] = await Promise.all([
+        tournament ? Promise.resolve(tournament) : getTournament(tournamentId),
+        getScheduleVersions(tournamentId).catch(() => [] as ScheduleVersion[]),
+      ])
+      const calendarVid = resolveCalendarScheduleVersionId(tData, vs)
       const [sb, pr] = await Promise.all([
-        getScheduleBuilder(tournamentId, scheduleVersionOpt),
+        getScheduleBuilder(tournamentId, calendarVid != null ? { scheduleVersionId: calendarVid } : undefined),
         getPlanReport(tournamentId).catch(() => null),
       ])
       const inv: Record<number, { total_matches: number }> = {}
@@ -1321,10 +1335,10 @@ function DrawBuilder() {
           <p style={{ fontSize: 13, color: '#666', marginBottom: 16, maxWidth: 900 }}>
             Drag events to set placement priority for each calendar day that appears on your schedule. When a day&apos;s list is
             saved, scheduling uses this order first (including WF round batches), then fills remaining events using automatic
-            rules. Column dates match the sorted slot dates for your published schedule version (same{' '}
-            <code style={{ fontSize: 12 }}>day_index</code> as the policy planner). If you have no slots yet, we fall back to
-            tournament Setup days. After changing slot dates or switching schedule versions, confirm columns still match and
-            click Save again if needed.
+            rules. Column dates match the sorted slot dates for the schedule version you are editing (
+            <strong>draft version first</strong>, otherwise the published version), which is the same{' '}
+            <code style={{ fontSize: 12 }}>day_index</code> the policy planner uses when you run auto-assign on that draft.
+            If there are no slots yet, we fall back to Setup days; generate slots, reload, verify columns, then Save event order again.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' }}>
             {schedulePolicyDayIsoDates.map((iso, idx) => {
