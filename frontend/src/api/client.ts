@@ -531,10 +531,20 @@ export interface ScheduleBuilderEvent {
 export interface ScheduleBuilderResponse {
   tournament_id: number;
   events: ScheduleBuilderEvent[];
+  /** Sorted ISO dates; same ordering as schedule policy day_index for policy_calendar_version_id. */
+  policy_calendar_days?: string[];
+  policy_calendar_version_id?: number | null;
 }
 
-export async function getScheduleBuilder(tournamentId: number): Promise<ScheduleBuilderResponse> {
-  return fetchJson<ScheduleBuilderResponse>(`${API_BASE_URL}/tournaments/${tournamentId}/schedule-builder`);
+export async function getScheduleBuilder(
+  tournamentId: number,
+  options?: { scheduleVersionId?: number | null },
+): Promise<ScheduleBuilderResponse> {
+  let url = `${API_BASE_URL}/tournaments/${tournamentId}/schedule-builder`;
+  if (options?.scheduleVersionId != null) {
+    url += `?schedule_version_id=${options.scheduleVersionId}`;
+  }
+  return fetchJson<ScheduleBuilderResponse>(url);
 }
 
 // Time Windows interfaces and functions

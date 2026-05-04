@@ -33,7 +33,6 @@ import {
   updateEvent,
   updateTournament,
   Tournament,
-  TournamentDay,
   Event,
   Phase1Status,
   TeamListItem,
@@ -279,7 +278,8 @@ function DrawBuilder() {
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
-  const [tournamentDays, setTournamentDays] = useState<TournamentDay[]>([])
+  /** ISO dates; order matches backend schedule policy day_index for the resolved schedule version. */
+  const [schedulePolicyDayIsoDates, setSchedulePolicyDayIsoDates] = useState<string[]>([])
   const [dayOrdersLocal, setDayOrdersLocal] = useState<number[][]>([])
   const [dayOrdersSaving, setDayOrdersSaving] = useState(false)
 
@@ -299,20 +299,37 @@ function DrawBuilder() {
     
     try {
       setLoading(true)
-      const [tournamentData, eventsData, statusData, sbData, planReportData, daysData] = await Promise.all([
-        getTournament(tournamentId),
+      const tournamentData = await getTournament(tournamentId)
+      const scheduleVersionOpt =
+        tournamentData.public_schedule_version_id != null
+          ? { scheduleVersionId: tournamentData.public_schedule_version_id }
+          : undefined
+
+      const [eventsData, statusData, sbData, planReportData, daysData] = await Promise.all([
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
-        getScheduleBuilder(tournamentId).catch(() => ({ tournament_id: tournamentId, events: [] } as ScheduleBuilderResponse)),
+        getScheduleBuilder(tournamentId, scheduleVersionOpt).catch(
+          () => ({ tournament_id: tournamentId, events: [] } as ScheduleBuilderResponse),
+        ),
         getPlanReport(tournamentId).catch(() => null),
-        getTournamentDays(tournamentId).catch(() => [] as TournamentDay[]),
+        getTournamentDays(tournamentId).catch(() => []),
       ])
       
       setTournament(tournamentData)
       setEvents(eventsData)
-      setTournamentDays(daysData)
-      const sortedDayRows = [...daysData].sort((a, b) => a.date.localeCompare(b.date))
-      const dayColumnCount = Math.max(1, sortedDayRows.length)
+
+      const policyDays = sbData.policy_calendar_days ?? []
+      let calendarIsoDates: string[]
+      if (policyDays.length > 0) {
+        calendarIsoDates = policyDays
+      } else {
+        const sortedDayRows = [...daysData].sort((a, b) => a.date.localeCompare(b.date))
+        calendarIsoDates =
+          sortedDayRows.length > 0 ? sortedDayRows.map((d) => d.date) : [tournamentData.start_date]
+      }
+      setSchedulePolicyDayIsoDates(calendarIsoDates)
+
+      const dayColumnCount = Math.max(1, calendarIsoDates.length)
       const parsedOrders = parseStoredDayOrders(tournamentData.event_schedule_day_orders_json)
       setDayOrdersLocal(buildInitialDayOrders(dayColumnCount, eventsData, parsedOrders))
       setPhase1Status(statusData)
@@ -340,8 +357,12 @@ function DrawBuilder() {
   const refetchInventory = async () => {
     if (!tournamentId) return
     try {
+      const scheduleVersionOpt =
+        tournament?.public_schedule_version_id != null
+          ? { scheduleVersionId: tournament.public_schedule_version_id }
+          : undefined
       const [sb, pr] = await Promise.all([
-        getScheduleBuilder(tournamentId),
+        getScheduleBuilder(tournamentId, scheduleVersionOpt),
         getPlanReport(tournamentId).catch(() => null),
       ])
       const inv: Record<number, { total_matches: number }> = {}
@@ -351,15 +372,14 @@ function DrawBuilder() {
       setInventoryByEventId(inv)
       setScheduleBuilderData(sb)
       setPlanReport(pr)
+      const pc = sb.policy_calendar_days ?? []
+      if (pc.length > 0) {
+        setSchedulePolicyDayIsoDates(pc)
+      }
     } catch {
       /* ignore */
     }
   }
-
-  const sortedTournamentDays = useMemo(
-    () => [...tournamentDays].sort((a, b) => a.date.localeCompare(b.date)),
-    [tournamentDays],
-  )
 
   const eventNameById = useMemo(() => {
     const m = new Map<number, string>()
@@ -471,50 +491,6 @@ function DrawBuilder() {
         ...updates,
       },
     }))
-  }
-
-  const persistScheduleOrder = async (event: Event) => {
-    const state = eventEditorStates[event.id]
-    if (!state) return
-
-    const normalizedProfile = {
-      ...state.scheduleProfile,
-      schedule_order: normalizeScheduleOrder(state.scheduleProfile.schedule_order),
-    }
-    let currentProfile = createDefaultScheduleProfile()
-    if (event.schedule_profile_json) {
-      try {
-        currentProfile = normalizeScheduleProfile(JSON.parse(event.schedule_profile_json))
-      } catch {
-        currentProfile = createDefaultScheduleProfile()
-      }
-    }
-
-    if (currentProfile.schedule_order === normalizedProfile.schedule_order) {
-      updateEventEditorState(event.id, { scheduleProfile: normalizedProfile })
-      return
-    }
-
-    updateEventEditorState(event.id, { scheduleProfile: normalizedProfile })
-
-    try {
-      await updateEvent(event.id, {
-        schedule_profile_json: JSON.stringify(normalizedProfile),
-      })
-      setEvents(prev => prev.map(ev => (
-        ev.id === event.id
-          ? { ...ev, schedule_profile_json: JSON.stringify(normalizedProfile) }
-          : ev
-      )))
-      showToast(
-        normalizedProfile.schedule_order
-          ? `Schedule order saved: ${normalizedProfile.schedule_order}`
-          : 'Schedule order cleared; using auto order',
-        'success'
-      )
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to save schedule order', 'error')
-    }
   }
 
   const validateEvent = (event: Event, state: EventEditorState): string[] => {
@@ -1023,33 +999,6 @@ function DrawBuilder() {
               <option value={5}>5</option>
             </select>
           </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label style={{ marginRight: '8px' }}>Schedule Order:</label>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={state.scheduleProfile.schedule_order ?? ''}
-              placeholder="Auto"
-              onChange={(e) => {
-                const value = e.target.value.trim()
-                const parsed = parseInt(value, 10)
-                updateEventEditorState(event.id, {
-                  scheduleProfile: {
-                    ...state.scheduleProfile,
-                    schedule_order: value === '' || Number.isNaN(parsed) ? null : parsed,
-                  },
-                })
-              }}
-              onBlur={() => void persistScheduleOrder(event)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.currentTarget.blur()
-                }
-              }}
-              style={{ padding: '4px 8px', fontSize: '14px', width: '96px', boxSizing: 'border-box' }}
-            />
-          </div>
           {event.draw_status === 'final' && state.templateType !== 'RR_ONLY' && (
             <Link
               to={`/t/${tournamentId}/draws/${event.id}/waterfall`}
@@ -1071,8 +1020,9 @@ function DrawBuilder() {
         </div>
 
         <div style={{ marginTop: '-8px', marginBottom: '16px', fontSize: '12px', color: '#666' }}>
-          Lower values schedule earlier among unordered draws. Leave blank for automatic larger-draw-first order.
-          Tournament-level “event order by day” (below) overrides this per calendar day when that list is saved.
+          Per-draw schedule order was removed from this screen. Use{' '}
+          <strong>Event order by tournament day</strong> below; column dates match your schedule grid (published schedule version)
+          when slots exist.
         </div>
 
         {errors.length > 0 && (
@@ -1369,20 +1319,20 @@ function DrawBuilder() {
         <div className="card" style={{ marginBottom: '24px' }}>
           <h2 className="section-title">Event order by tournament day</h2>
           <p style={{ fontSize: 13, color: '#666', marginBottom: 16, maxWidth: 900 }}>
-            Drag events to set placement priority for each tournament day. When a day&apos;s list is saved, scheduling uses
-            this order first (including WF round batches), then fills remaining events using automatic rules. Lists align with
-            tournament days from Setup (or a single column when no days exist yet). Slot-based scheduling uses the same day index
-            as sorted schedule dates.
+            Drag events to set placement priority for each calendar day that appears on your schedule. When a day&apos;s list is
+            saved, scheduling uses this order first (including WF round batches), then fills remaining events using automatic
+            rules. Column dates match the sorted slot dates for your published schedule version (same{' '}
+            <code style={{ fontSize: 12 }}>day_index</code> as the policy planner). If you have no slots yet, we fall back to
+            tournament Setup days. After changing slot dates or switching schedule versions, confirm columns still match and
+            click Save again if needed.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' }}>
-            {(sortedTournamentDays.length > 0 ? sortedTournamentDays : [null]).map((day, idx) => {
-              const title = day
-                ? formatTournamentDayLabel(day.date)
-                : `Day 1 (${formatTournamentDayLabel(tournament.start_date)})`
+            {schedulePolicyDayIsoDates.map((iso, idx) => {
+              const title = formatTournamentDayLabel(iso)
               const orderedIds = dayOrdersLocal[idx]?.length ? dayOrdersLocal[idx] : defaultEventOrder(events)
               return (
                 <DayEventOrderColumn
-                  key={day?.date ?? `fallback-${idx}`}
+                  key={`${iso}-${idx}`}
                   title={title}
                   orderedIds={orderedIds}
                   eventNames={eventNameById}
