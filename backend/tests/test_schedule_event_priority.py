@@ -1,7 +1,11 @@
 import json
 
-from app.models.event import Event
-from app.services.schedule_policy_plan import _build_rotated_event_list, _event_has_wf
+from app.models.event import Event, EventCategory
+from app.services.schedule_policy_plan import (
+    _build_event_priority_map,
+    _build_rotated_event_list,
+    _event_has_wf,
+)
 from app.services.schedule_sequence import _rotate_events, _sort_events_for_sequence
 from app.utils.event_schedule_orders import event_ids_for_day
 
@@ -101,6 +105,31 @@ def test_event_ids_for_day_skips_empty_middle_row():
     orders = [[2, 1], [], [3, 2]]
     assert event_ids_for_day(orders, 1) == [2, 1]
     assert event_ids_for_day(orders, 2) == [3, 2]
+
+
+def test_mixed_listed_first_beats_womens_even_when_womens_event_id_lower():
+    """Regression: template schedule_order often favors Womens; Draw Builder must win."""
+    womens = Event(
+        id=5,
+        tournament_id=1,
+        name="Womens",
+        category=EventCategory.mixed,
+        team_count=16,
+        schedule_profile_json=json.dumps({"schedule_order": 1}),
+    )
+    mixed = Event(
+        id=10,
+        tournament_id=1,
+        name="Mixed",
+        category=EventCategory.mixed,
+        team_count=16,
+        schedule_profile_json=json.dumps({"schedule_order": 2}),
+    )
+    orders = [[10, 5], [10, 5]]
+    for di in (0, 1):
+        pr = _build_event_priority_map([mixed, womens], di, orders)
+        assert pr[10] < pr[5]
+        assert [e.id for e in _build_rotated_event_list([mixed, womens], di, orders)] == [10, 5]
 
 
 def test_draw_builder_config_disables_profile_schedule_order_in_legacy_tail():
