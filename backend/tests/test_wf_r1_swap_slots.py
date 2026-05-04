@@ -131,6 +131,32 @@ def test_wf_r1_swap_cross_matches(client: TestClient, session: Session, wf_swap_
     assert m2.placeholder_side_a == "Team Alpha"
 
 
+def test_wf_r1_swap_prefers_roster_name_over_short_display_name(client: TestClient, session: Session, wf_swap_fixture):
+    """WF R1 placeholders must match match-generation R1: full name, not display_name-only."""
+    fx = wf_swap_fixture
+    t1 = session.get(Team, fx["t1_id"])
+    assert t1 is not None
+    t1.display_name = "Will"
+    t1.name = "William Example, Houston, TX"
+    session.add(t1)
+    session.commit()
+
+    body = {
+        "schedule_version_id": fx["version_id"],
+        "event_id": fx["event_id"],
+        "match_id_a": fx["m1_id"],
+        "slot_a": "A",
+        "match_id_b": fx["m2_id"],
+        "slot_b": "A",
+    }
+    res = client.post(f"/api/tournaments/{fx['tournament_id']}/schedule/wf-r1-swap-slots", json=body)
+    assert res.status_code == 200, res.text
+
+    m2 = session.get(Match, fx["m2_id"])
+    assert m2 is not None
+    assert m2.placeholder_side_a == "William Example, Houston, TX"
+
+
 def test_wf_r1_swap_same_match_flips_sides(client: TestClient, session: Session, wf_swap_fixture):
     fx = wf_swap_fixture
     body = {

@@ -1760,13 +1760,14 @@ def update_match(tournament_id: int, match_id: int, update_data: MatchUpdate, se
     )
 
 
-def _placeholder_for_team(session: Session, team_id: Optional[int]) -> str:
+def _wf_r1_placeholder_for_team(session: Session, team_id: Optional[int]) -> str:
+    """WF R1 labels match generate_wf_matches (round 1): full roster name, not short display_name."""
     if team_id is None:
         return "TBD"
     team = session.get(Team, team_id)
     if not team:
         return "TBD"
-    return getattr(team, "display_name", None) or team.name or f"Team {team.id}"
+    return team.name or getattr(team, "display_name", None) or f"Team {team.id}"
 
 
 def _wf_slot_read_team_id(match: Match, slot: Literal["A", "B"]) -> Optional[int]:
@@ -1774,7 +1775,7 @@ def _wf_slot_read_team_id(match: Match, slot: Literal["A", "B"]) -> Optional[int
 
 
 def _wf_slot_write(session: Session, match: Match, slot: Literal["A", "B"], team_id: Optional[int]) -> None:
-    ph = _placeholder_for_team(session, team_id)
+    ph = _wf_r1_placeholder_for_team(session, team_id)
     if slot == "A":
         match.team_a_id = team_id
         match.placeholder_side_a = ph
