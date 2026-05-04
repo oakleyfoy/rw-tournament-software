@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 from datetime import date, datetime, time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -1758,6 +1758,92 @@ def update_match(tournament_id: int, match_id: int, update_data: MatchUpdate, se
         team_b_id=match.team_b_id,
         preferred_day=match.preferred_day,
     )
+
+
+def _placeholder_for_team(session: Session, team_id: Optional[int]) -> str:
+    if team_id is None:
+        return "TBD"
+    team = session.get(Team, team_id)
+    if not team:
+        return "TBD"
+    return getattr(team, "display_name", None) or team.name or f"Team {team.id}"
+
+
+def _wf_slot_read_team_id(match: Match, slot: Literal["A", "B"]) -> Optional[int]:
+    return match.team_a_id if slot == "A" else match.team_b_id
+
+
+def _wf_slot_write(session: Session, match: Match, slot: Literal["A", "B"], team_id: Optional[int]) -> None:
+    ph = _placeholder_for_team(session, team_id)
+    if slot == "A":
+        match.team_a_id = team_id
+        match.placeholder_side_a = ph
+    else:
+        match.team_b_id = team_id
+        match.placeholder_side_b = ph
+
+
+class WfR1SwapSlotsRequest(BaseModel):
+    schedule_version_id: int
+    event_id: int
+    match_id_a: int
+    slot_a: Literal["A", "B"]
+    match_id_b: int
+    slot_b: Literal["A", "B"]
+
+
+@router.post("/tournaments/{tournament_id}/schedule/wf-r1-swap-slots")
+def wf_r1_swap_slots(
+    tournament_id: int,
+    body: WfR1SwapSlotsRequest,
+    session: Session = Depends(get_session),
+):
+    """Swap team assignments between two sides on WF round-1 matches (TD pre-play adjustment)."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, body.schedule_version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status == "final":
+        raise HTTPException(status_code=400, detail="Cannot modify finalized schedule version")
+
+    event = session.get(Event, body.event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    ma = session.get(Match, body.match_id_a)
+    mb = session.get(Match, body.match_id_b)
+    if not ma or ma.tournament_id != tournament_id or ma.schedule_version_id != body.schedule_version_id:
+        raise HTTPException(status_code=404, detail="Match A not found")
+    if not mb or mb.tournament_id != tournament_id or mb.schedule_version_id != body.schedule_version_id:
+        raise HTTPException(status_code=404, detail="Match B not found")
+    if ma.event_id != body.event_id or mb.event_id != body.event_id:
+        raise HTTPException(status_code=400, detail="Matches must belong to the requested event")
+
+    for label, m in (("A", ma), ("B", mb)):
+        if (m.match_type or "").upper() != "WF":
+            raise HTTPException(status_code=400, detail=f"Match {label} is not a waterfall match")
+        if m.round_index != 1:
+            raise HTTPException(status_code=400, detail=f"Match {label} is not WF round 1 (round_index must be 1)")
+        if (m.runtime_status or "") == "FINAL" or m.winner_team_id is not None:
+            raise HTTPException(status_code=400, detail=f"Match {label} has already been completed; swap not allowed")
+
+    if body.match_id_a == body.match_id_b and body.slot_a == body.slot_b:
+        raise HTTPException(status_code=400, detail="Select two different sides to swap")
+
+    ta = _wf_slot_read_team_id(ma, body.slot_a)
+    tb = _wf_slot_read_team_id(mb, body.slot_b)
+
+    _wf_slot_write(session, ma, body.slot_a, tb)
+    _wf_slot_write(session, mb, body.slot_b, ta)
+
+    session.add(ma)
+    session.add(mb)
+    session.commit()
+
+    return {"ok": True, "match_ids": [ma.id, mb.id]}
 
 
 # ============================================================================

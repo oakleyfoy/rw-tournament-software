@@ -675,6 +675,8 @@ export interface Match {
   status: 'unscheduled' | 'scheduled' | 'complete' | 'cancelled';
   created_at: string;
   slot_id?: number | null;
+  team_a_id?: number | null;
+  team_b_id?: number | null;
 }
 
 export interface MatchGenerateRequest {
@@ -796,6 +798,23 @@ export async function getMatches(tournamentId: number, scheduleVersionId?: numbe
   if (status) params.append('status', status);
   const query = params.toString();
   return fetchJson<Match[]>(`${API_BASE_URL}/tournaments/${tournamentId}/schedule/matches${query ? `?${query}` : ''}`);
+}
+
+export interface WfR1SwapSlotsRequest {
+  schedule_version_id: number;
+  event_id: number;
+  match_id_a: number;
+  slot_a: 'A' | 'B';
+  match_id_b: number;
+  slot_b: 'A' | 'B';
+}
+
+/** Swap teams between two WF round-1 sides (draft / non-final schedule version only). */
+export async function wfR1SwapSlots(tournamentId: number, body: WfR1SwapSlotsRequest): Promise<{ ok: boolean; match_ids: number[] }> {
+  return fetchJson<{ ok: boolean; match_ids: number[] }>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/wf-r1-swap-slots`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
 }
 
 // Assignment functions

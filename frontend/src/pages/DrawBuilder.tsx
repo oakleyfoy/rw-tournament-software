@@ -38,6 +38,9 @@ import {
   Event,
   Phase1Status,
   TeamListItem,
+  getMatches,
+  wfR1SwapSlots,
+  Match,
 } from '../api/client'
 import { showToast } from '../utils/toast'
 import {
@@ -297,6 +300,13 @@ function DrawBuilder() {
   const [schedulePolicyDayIsoDates, setSchedulePolicyDayIsoDates] = useState<string[]>([])
   const [dayOrdersLocal, setDayOrdersLocal] = useState<number[][]>([])
   const [dayOrdersSaving, setDayOrdersSaving] = useState(false)
+  const [calendarScheduleVersionId, setCalendarScheduleVersionId] = useState<number | null>(null)
+  const [scheduleVersions, setScheduleVersions] = useState<ScheduleVersion[]>([])
+  const [wfR1MatchesByEvent, setWfR1MatchesByEvent] = useState<Record<number, Match[]>>({})
+  const [wfR1MatchesLoading, setWfR1MatchesLoading] = useState<Record<number, boolean>>({})
+  const [wfR1SwapPick, setWfR1SwapPick] = useState<{ eventId: number; matchId: number; slot: 'A' | 'B' } | null>(
+    null,
+  )
 
   // Scroll to top when component mounts
   useEffect(() => {
@@ -323,6 +333,8 @@ function DrawBuilder() {
         getTournamentDays(tournamentId).catch(() => []),
       ])
       const calendarVid = resolveCalendarScheduleVersionId(tournamentData, versionsData)
+      setCalendarScheduleVersionId(calendarVid ?? null)
+      setScheduleVersions(versionsData)
       const sbData = await getScheduleBuilder(
         tournamentId,
         calendarVid != null ? { scheduleVersionId: calendarVid } : undefined,
@@ -375,6 +387,8 @@ function DrawBuilder() {
         getScheduleVersions(tournamentId).catch(() => [] as ScheduleVersion[]),
       ])
       const calendarVid = resolveCalendarScheduleVersionId(tData, vs)
+      setCalendarScheduleVersionId(calendarVid ?? null)
+      setScheduleVersions(vs)
       const [sb, pr] = await Promise.all([
         getScheduleBuilder(tournamentId, calendarVid != null ? { scheduleVersionId: calendarVid } : undefined),
         getPlanReport(tournamentId).catch(() => null),
@@ -400,6 +414,55 @@ function DrawBuilder() {
     events.forEach((e) => m.set(e.id, e.name))
     return m
   }, [events])
+
+  const fetchWfR1Matches = async (eventId: number) => {
+    if (!tournamentId || calendarScheduleVersionId == null) return
+    setWfR1MatchesLoading((prev) => ({ ...prev, [eventId]: true }))
+    try {
+      const rows = await getMatches(tournamentId, calendarScheduleVersionId, eventId)
+      const wfR1 = rows
+        .filter((m) => m.match_type === 'WF' && (m.round_index ?? 0) === 1)
+        .sort((a, b) => a.sequence_in_round - b.sequence_in_round)
+      setWfR1MatchesByEvent((prev) => ({ ...prev, [eventId]: wfR1 }))
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load WF matches', 'error')
+    } finally {
+      setWfR1MatchesLoading((prev) => ({ ...prev, [eventId]: false }))
+    }
+  }
+
+  const handleWfR1SlotClick = async (eventId: number, matchId: number, slot: 'A' | 'B') => {
+    if (!tournamentId || calendarScheduleVersionId == null) return
+    const versFinal =
+      (scheduleVersions.find((v) => v.id === calendarScheduleVersionId)?.status || '').toLowerCase() === 'final'
+    if (versFinal) return
+
+    const pick = wfR1SwapPick
+    if (!pick || pick.eventId !== eventId) {
+      setWfR1SwapPick({ eventId, matchId, slot })
+      return
+    }
+    if (pick.matchId === matchId && pick.slot === slot) {
+      setWfR1SwapPick(null)
+      return
+    }
+    try {
+      await wfR1SwapSlots(tournamentId, {
+        schedule_version_id: calendarScheduleVersionId,
+        event_id: eventId,
+        match_id_a: pick.matchId,
+        slot_a: pick.slot,
+        match_id_b: matchId,
+        slot_b: slot,
+      })
+      setWfR1SwapPick(null)
+      await fetchWfR1Matches(eventId)
+      await refetchInventory()
+      showToast('Sides swapped.', 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Swap failed', 'error')
+    }
+  }
 
   const handleSaveDayOrders = async () => {
     if (!tournamentId || dayOrdersSaving) return
@@ -1136,6 +1199,120 @@ function DrawBuilder() {
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8') && state.wfRounds > 0 && (
+          <div
+            className="form-group"
+            style={{
+              marginBottom: '16px',
+              padding: '12px',
+              borderRadius: '8px',
+              border: '1px solid var(--theme-input-border)',
+              backgroundColor: 'var(--theme-card-bg)',
+            }}
+          >
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>WF round 1 pairings (before play)</label>
+            <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
+              Swap teams between sides on generated WF round 1 matches: click one side, then another. Uses the schedule version the calendar prefers (draft when available).
+            </p>
+            {calendarScheduleVersionId == null && (
+              <div style={{ fontSize: '13px', color: '#856404' }}>No schedule version available yet — generate matches from Schedule first.</div>
+            )}
+            {calendarScheduleVersionId != null &&
+              (scheduleVersions.find((v) => v.id === calendarScheduleVersionId)?.status || '').toLowerCase() === 'final' && (
+                <div style={{ fontSize: '13px', color: '#856404' }}>The active calendar version is finalized; swaps are blocked.</div>
+              )}
+            {calendarScheduleVersionId != null &&
+              (scheduleVersions.find((v) => v.id === calendarScheduleVersionId)?.status || '').toLowerCase() !== 'final' && (
+                <>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={!!wfR1MatchesLoading[event.id]}
+                      onClick={() => void fetchWfR1Matches(event.id)}
+                    >
+                      {wfR1MatchesLoading[event.id] ? 'Loading…' : 'Load WF R1 rows'}
+                    </button>
+                    {wfR1SwapPick?.eventId === event.id && (
+                      <button type="button" className="btn btn-secondary" onClick={() => setWfR1SwapPick(null)}>
+                        Clear selection
+                      </button>
+                    )}
+                  </div>
+                  {(wfR1MatchesByEvent[event.id]?.length ?? 0) === 0 && !wfR1MatchesLoading[event.id] && (
+                    <div style={{ fontSize: '13px', opacity: 0.8 }}>Load rows after matches exist for this event.</div>
+                  )}
+                  {(wfR1MatchesByEvent[event.id]?.length ?? 0) > 0 && (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--theme-input-border)' }}>
+                            <th style={{ padding: '6px 8px' }}>Match</th>
+                            <th style={{ padding: '6px 8px' }}>Side A</th>
+                            <th style={{ padding: '6px 8px' }}>Side B</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {wfR1MatchesByEvent[event.id]!.map((m) => {
+                            const pickA =
+                              wfR1SwapPick?.eventId === event.id && wfR1SwapPick.matchId === m.id && wfR1SwapPick.slot === 'A'
+                            const pickB =
+                              wfR1SwapPick?.eventId === event.id && wfR1SwapPick.matchId === m.id && wfR1SwapPick.slot === 'B'
+                            return (
+                              <tr key={m.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+                                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{m.match_code}</td>
+                                <td style={{ padding: '6px 8px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleWfR1SlotClick(event.id, m.id, 'A')}
+                                    style={{
+                                      display: 'block',
+                                      width: '100%',
+                                      textAlign: 'left',
+                                      padding: '6px 8px',
+                                      borderRadius: '6px',
+                                      border: '1px solid var(--theme-input-border)',
+                                      backgroundColor: 'var(--theme-table-row-hover)',
+                                      cursor: 'pointer',
+                                      fontSize: '13px',
+                                      boxShadow: pickA ? '0 0 0 2px var(--theme-primary-btn-bg, #1a237e)' : undefined,
+                                    }}
+                                  >
+                                    {m.placeholder_side_a}
+                                  </button>
+                                </td>
+                                <td style={{ padding: '6px 8px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleWfR1SlotClick(event.id, m.id, 'B')}
+                                    style={{
+                                      display: 'block',
+                                      width: '100%',
+                                      textAlign: 'left',
+                                      padding: '6px 8px',
+                                      borderRadius: '6px',
+                                      border: '1px solid var(--theme-input-border)',
+                                      backgroundColor: 'var(--theme-table-row-hover)',
+                                      cursor: 'pointer',
+                                      fontSize: '13px',
+                                      boxShadow: pickB ? '0 0 0 2px var(--theme-primary-btn-bg, #1a237e)' : undefined,
+                                    }}
+                                  >
+                                    {m.placeholder_side_b}
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
           </div>
         )}
 
