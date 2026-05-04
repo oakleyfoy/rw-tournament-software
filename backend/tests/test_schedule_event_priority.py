@@ -5,6 +5,7 @@ from app.services.schedule_policy_plan import (
     _build_event_priority_map,
     _build_rotated_event_list,
     _event_has_wf,
+    _interleave_match_lists_round_robin,
 )
 from app.services.schedule_sequence import _rotate_events, _sort_events_for_sequence
 from app.utils.event_schedule_orders import event_ids_for_day
@@ -139,3 +140,53 @@ def test_draw_builder_config_disables_profile_schedule_order_in_legacy_tail():
     orders = [[99999]]
     ordered = _build_rotated_event_list([mixed, womens], 0, orders)
     assert [e.id for e in ordered] == [2, 1]
+
+
+def test_interleave_match_lists_round_robin_alternates_events():
+    """Day 2+ policy merges RR + MAIN tiers without exhausting event A before B."""
+    from app.models.match import Match
+
+    rr_mixed_a = Match(
+        id=101,
+        tournament_id=1,
+        event_id=2,
+        schedule_version_id=1,
+        match_code="MX_RR_01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="a",
+        placeholder_side_b="b",
+    )
+    rr_mixed_b = Match(
+        id=102,
+        tournament_id=1,
+        event_id=2,
+        schedule_version_id=1,
+        match_code="MX_RR_02",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        placeholder_side_a="a",
+        placeholder_side_b="b",
+    )
+    main_womens = Match(
+        id=201,
+        tournament_id=1,
+        event_id=1,
+        schedule_version_id=1,
+        match_code="W_MAIN_01",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        placeholder_side_a="a",
+        placeholder_side_b="b",
+    )
+    merged = _interleave_match_lists_round_robin([[rr_mixed_a, rr_mixed_b], [main_womens]])
+    assert [m.id for m in merged[:3]] == [101, 201, 102]
