@@ -99,8 +99,9 @@ function parseStoredDayOrdersMatrix(raw: string | null | undefined): number[][] 
 }
 
 /**
- * Rank events for assign-subset ordering. Honors Draw Builder day columns: earlier day and higher in
- * list beats later/lower. Matches backend honoring caller match_id order.
+ * Rank events by merging all Draw Builder columns via minimum score (dayIdx * 10000 + pos).
+ * Legacy fallback when assign-subset runs without per-day targeting: events listed only on later days
+ * get penalized vs events on earlier days. Prefer {@link buildEventPlacementRankForPolicyDay} + target_day.
  */
 function buildEventPlacementRank(dayOrders: number[][] | null, gridEventIds: number[]): Map<number, number> {
   const rank = new Map<number, number>()
@@ -121,6 +122,28 @@ function buildEventPlacementRank(dayOrders: number[][] | null, gridEventIds: num
   for (const eid of fallbackSorted) {
     if (!rank.has(eid)) {
       rank.set(eid, hasConfigured ? 5_000_000 + tail++ : eid)
+    }
+  }
+  return rank
+}
+
+/**
+ * Rank using one Draw Builder column (matches backend policy day_index row).
+ * Pair with assign-subset target_day so Saturday priority does not inherit Friday ordering.
+ */
+function buildEventPlacementRankForPolicyDay(row: number[] | undefined, gridEventIds: number[]): Map<number, number> {
+  const rank = new Map<number, number>()
+  const hasConfigured = row != null && row.length > 0
+  if (hasConfigured && row) {
+    row.forEach((eid, pos) => {
+      if (!rank.has(eid)) rank.set(eid, pos)
+    })
+  }
+  const fallbackSorted = [...new Set(gridEventIds)].sort((a, b) => a - b)
+  let tail = 0
+  for (const eid of fallbackSorted) {
+    if (!rank.has(eid)) {
+      rank.set(eid, hasConfigured ? 1_000_000 + tail++ : eid)
     }
   }
   return rank
@@ -367,11 +390,15 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     }
   }, [tournamentId])
 
+  const eventScheduleDayOrdersMatrix = useMemo(
+    () => parseStoredDayOrdersMatrix(tournamentRow?.event_schedule_day_orders_json),
+    [tournamentRow?.event_schedule_day_orders_json],
+  )
+
   const placementRankByEventId = useMemo(() => {
-    const matrix = parseStoredDayOrdersMatrix(tournamentRow?.event_schedule_day_orders_json)
     const ids = gridMatches.map((m) => m.event_id)
-    return buildEventPlacementRank(matrix, ids)
-  }, [tournamentRow?.event_schedule_day_orders_json, gridMatches])
+    return buildEventPlacementRank(eventScheduleDayOrdersMatrix, ids)
+  }, [eventScheduleDayOrdersMatrix, gridMatches])
 
   // Load policy days when version changes
   useEffect(() => {
@@ -782,41 +809,115 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
   /** Place a subset of matches by IDs and show a toast */
   const placeSubset = async (label: string, matches: GridMatch[]) => {
     if (!tournamentId || !activeVersion) return
-    const ids = sortedMatchIds(matches, placementRankByEventId, bracketSlices.matchBracketTierByMatchId)
-    if (ids.length === 0) {
+    const tierMap = bracketSlices.matchBracketTierByMatchId
+    const gridIds = [...new Set(gridMatches.map((m) => m.event_id))]
+    const matrix = eventScheduleDayOrdersMatrix
+    const usePerDay =
+      policyDays.length > 0 &&
+      matrix != null &&
+      matrix.some((row) => row.length > 0)
+
+    const sortIds = (rank: Map<number, number>) => sortedMatchIds(matches, rank, tierMap)
+
+    if (matches.length === 0) {
       showToast(`No unassigned matches for ${label}`, 'warning')
       return
     }
+
     await run(label, async () => {
-      const r = await placeMatchSubset(tournamentId, activeVersion.id, ids)
-      showToast(
-        `Placed ${r.assigned_count} ${label} matches, ${r.unassigned_count_remaining} could not be placed.`,
-        r.unassigned_count_remaining > 0 ? 'warning' : 'success'
-      )
+      let sumAssigned = 0
+      let lastRemain = 0
+
+      if (usePerDay && matrix) {
+        for (let di = 0; di < policyDays.length; di++) {
+          const row = matrix[di] ?? []
+          const rank = buildEventPlacementRankForPolicyDay(row, gridIds)
+          const ids = sortIds(rank)
+          if (ids.length === 0) continue
+          const r = await placeMatchSubset(tournamentId, activeVersion.id, ids, {
+            targetDay: policyDays[di],
+          })
+          sumAssigned += r.assigned_count
+          lastRemain = r.unassigned_count_remaining
+        }
+        showToast(
+          `Placed ${sumAssigned} ${label} matches (${policyDays.length} schedule days), ${lastRemain} could not be placed.`,
+          lastRemain > 0 ? 'warning' : 'success',
+        )
+      } else {
+        const ids = sortIds(placementRankByEventId)
+        if (ids.length === 0) {
+          showToast(`No unassigned matches for ${label}`, 'warning')
+          return
+        }
+        const r = await placeMatchSubset(tournamentId, activeVersion.id, ids)
+        sumAssigned = r.assigned_count
+        lastRemain = r.unassigned_count_remaining
+        showToast(
+          `Placed ${sumAssigned} ${label} matches, ${lastRemain} could not be placed.`,
+          lastRemain > 0 ? 'warning' : 'success',
+        )
+      }
       onInventoryAction?.('unassigned')
     })
   }
 
-  /** One assign-subset pass: all bracket tiers in order (policy-like layering within each tier). */
+  /** One assign-subset pass per calendar day: QF→SF→Final ordering within each day (matches daily policy). */
   const placeBracketMainSequence = async () => {
     if (!tournamentId || !activeVersion) return
     const tierMap = bracketSlices.matchBracketTierByMatchId
-    const rank = placementRankByEventId
-    const ids = [
-      ...sortedMatchIds(bracketSlices.qf.matches, rank, tierMap),
-      ...sortedMatchIds(bracketSlices.sf.matches, rank, tierMap),
-      ...sortedMatchIds(bracketSlices.finals.matches, rank, tierMap),
-    ]
-    if (ids.length === 0) {
+    const gridIds = [...new Set(gridMatches.map((m) => m.event_id))]
+    const matrix = eventScheduleDayOrdersMatrix
+    const usePerDay =
+      policyDays.length > 0 &&
+      matrix != null &&
+      matrix.some((row) => row.length > 0)
+
+    const totalBracketMatches =
+      bracketSlices.qf.matches.length +
+      bracketSlices.sf.matches.length +
+      bracketSlices.finals.matches.length
+    if (totalBracketMatches === 0) {
       showToast('No unassigned bracket matches', 'warning')
       return
     }
+
     await run('Bracket QF→SF→Final', async () => {
-      const r = await placeMatchSubset(tournamentId, activeVersion.id, ids)
-      showToast(
-        `Placed ${r.assigned_count} bracket matches (QF→SF→Final order), ${r.unassigned_count_remaining} could not be placed.`,
-        r.unassigned_count_remaining > 0 ? 'warning' : 'success'
-      )
+      let sumAssigned = 0
+      let lastRemain = 0
+
+      const buildTierOrderedIds = (rank: Map<number, number>) => [
+        ...sortedMatchIds(bracketSlices.qf.matches, rank, tierMap),
+        ...sortedMatchIds(bracketSlices.sf.matches, rank, tierMap),
+        ...sortedMatchIds(bracketSlices.finals.matches, rank, tierMap),
+      ]
+
+      if (usePerDay && matrix) {
+        for (let di = 0; di < policyDays.length; di++) {
+          const row = matrix[di] ?? []
+          const rank = buildEventPlacementRankForPolicyDay(row, gridIds)
+          const ids = buildTierOrderedIds(rank)
+          if (ids.length === 0) continue
+          const r = await placeMatchSubset(tournamentId, activeVersion.id, ids, {
+            targetDay: policyDays[di],
+          })
+          sumAssigned += r.assigned_count
+          lastRemain = r.unassigned_count_remaining
+        }
+        showToast(
+          `Placed ${sumAssigned} bracket matches (QF→SF→Final × ${policyDays.length} days), ${lastRemain} could not be placed.`,
+          lastRemain > 0 ? 'warning' : 'success',
+        )
+      } else {
+        const ids = buildTierOrderedIds(placementRankByEventId)
+        const r = await placeMatchSubset(tournamentId, activeVersion.id, ids)
+        sumAssigned = r.assigned_count
+        lastRemain = r.unassigned_count_remaining
+        showToast(
+          `Placed ${sumAssigned} bracket matches (QF→SF→Final order), ${lastRemain} could not be placed.`,
+          lastRemain > 0 ? 'warning' : 'success',
+        )
+      }
       onInventoryAction?.('unassigned')
     })
   }
@@ -1090,8 +1191,8 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
           <div style={{ marginBottom: 12 }}>
             <span style={sectionLabelStyle}>Bracket</span>
             <div style={{ fontSize: 12, color: '#888', marginBottom: 6, maxWidth: 640 }}>
-              Within each round wave (QF, then SF, then finals), matches follow your Draw Builder day order. Mixed can
-              lead Women&apos;s even when Women&apos;s event id is lower.
+              Within each round wave and each calendar day, order follows the matching Draw Builder column (same index as
+              schedule days). Mixed can lead Women&apos;s on Saturday without inheriting Friday priorities from Women&apos;s.
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <PlaceButton

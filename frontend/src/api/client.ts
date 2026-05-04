@@ -1269,17 +1269,23 @@ export interface AssignSubsetResponse {
  * Place a specific list of matches by ID.
  * Used by per-round buttons (RR Round 1, Bracket QFs, etc.)
  * Match ID order is preserved by the backend; SchedulePhasedPanel orders by tournament day lists when set.
+ * Optional targetDay restricts placement to slots on that calendar day (same as daily policy runs).
  */
 export async function placeMatchSubset(
   tournamentId: number,
   versionId: number,
-  matchIds: number[]
+  matchIds: number[],
+  options?: { targetDay?: string }
 ): Promise<AssignSubsetResponse> {
+  const body: { match_ids: number[]; target_day?: string } = { match_ids: matchIds }
+  if (options?.targetDay?.trim()) {
+    body.target_day = options.targetDay.trim()
+  }
   return fetchJson<AssignSubsetResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/assign-subset`,
     {
       method: 'POST',
-      body: JSON.stringify({ match_ids: matchIds }),
+      body: JSON.stringify(body),
     }
   )
 }

@@ -8,7 +8,7 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlmodel import Session, func, select
 
 from app.database import get_session
@@ -3095,6 +3095,10 @@ def assign_matches_by_scope(
 
 class AssignSubsetRequest(BaseModel):
     match_ids: List[int]
+    target_day: Optional[str] = Field(
+        default=None,
+        description="ISO date YYYY-MM-DD. When set, only slots on that calendar day are used.",
+    )
 
 
 class AssignSubsetResponse(BaseModel):
@@ -3139,6 +3143,16 @@ def assign_matches_by_ids(
     if not body.match_ids:
         return AssignSubsetResponse(assigned_count=0, unassigned_count_remaining=0)
 
+    target_day_date: Optional[date] = None
+    if body.target_day is not None and str(body.target_day).strip():
+        try:
+            target_day_date = date.fromisoformat(str(body.target_day).strip())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid target_day: {body.target_day}. Use YYYY-MM-DD.",
+            )
+
     try:
         from app.utils.auto_assign import assign_by_match_ids
 
@@ -3146,6 +3160,7 @@ def assign_matches_by_ids(
             session=session,
             schedule_version_id=version_id,
             match_ids=body.match_ids,
+            target_day=target_day_date,
         )
         session.commit()
         return AssignSubsetResponse(
