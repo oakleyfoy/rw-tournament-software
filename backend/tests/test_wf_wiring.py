@@ -188,33 +188,37 @@ class TestBestPairingForBlock:
 
 class TestBuildWfR2Wiring:
 
-    def test_8_matches_two_blocks(self):
-        """8 R1 matches → 2 blocks of 4 → 4 R2 pairs."""
+    def test_8_matches_four_pairs_sequential(self):
+        """8 R1 matches → default block_size 2 → 4 feeder pairs."""
         matches, teams = _make_matches_and_teams(8, [(None, None)] * 8)
         plan = build_wf_r2_wiring(matches, teams)
         assert len(plan.pairs) == 4
         assert len(plan.warnings) == 0
 
-    def test_4_matches_single_block(self):
-        """4 R1 matches → 1 block of 4 → 2 R2 pairs."""
+    def test_4_matches_two_pairs_sequential(self):
+        """4 R1 matches → 2 consecutive pairs."""
         matches, teams = _make_matches_and_teams(4, [(None, None)] * 4)
         plan = build_wf_r2_wiring(matches, teams)
         assert len(plan.pairs) == 2
         assert len(plan.warnings) == 0
 
-    def test_6_matches_block_of_4_plus_2(self):
-        """6 R1 matches → 1 block of 4 + 1 block of 2 → 3 R2 pairs."""
+    def test_6_matches_three_pairs_sequential(self):
+        """6 R1 matches → 3 blocks of 2 → 3 R2 pairs."""
         matches, teams = _make_matches_and_teams(6, [(None, None)] * 6)
         plan = build_wf_r2_wiring(matches, teams)
         assert len(plan.pairs) == 3
         assert len(plan.warnings) == 0
 
-    def test_default_block_fold_pairing(self):
-        """With no avoid_groups, default pairing is fold within each block."""
+    def test_default_sequential_pairing(self):
+        """Default wiring pairs consecutive R1 matches (bracket-standard paths)."""
         matches, teams = _make_matches_and_teams(8, [(None, None)] * 8)
         plan = build_wf_r2_wiring(matches, teams)
-        # Block 0 [1,2,3,4]: pattern (0,3),(1,2) → (1,4),(2,3)
-        # Block 1 [5,6,7,8]: pattern (0,3),(1,2) → (5,8),(6,7)
+        assert plan.pairs == [(1, 2), (3, 4), (5, 6), (7, 8)]
+
+    def test_block_size_four_fold_pairing_when_opt_in(self):
+        """block_size=4 uses fold-style pairing within each quad when no groups."""
+        matches, teams = _make_matches_and_teams(8, [(None, None)] * 8)
+        plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert plan.pairs == [(1, 4), (2, 3), (5, 8), (6, 7)]
 
     def test_zero_score_wiring_selected(self):
@@ -224,7 +228,7 @@ class TestBuildWfR2Wiring:
         matches, teams = _make_matches_and_teams(4, [
             ("a", "a"), ("b", "b"), ("a", "a"), ("b", "b"),
         ])
-        plan = build_wf_r2_wiring(matches, teams)
+        plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) == 0
         assert plan.pairs == [(1, 4), (2, 3)]
 
@@ -233,7 +237,7 @@ class TestBuildWfR2Wiring:
         matches, teams = _make_matches_and_teams(4, [
             ("x", "x"), ("x", "x"), ("x", "x"), ("x", "x"),
         ])
-        plan = build_wf_r2_wiring(matches, teams)
+        plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) > 0
         w = plan.warnings[0]
         assert w.block_index == 0
@@ -246,8 +250,8 @@ class TestBuildWfR2Wiring:
             ("a", "b"), ("c", "a"), ("b", "c"), ("a", "b"),
             ("c", "a"), ("b", "c"), ("a", "b"), ("c", "a"),
         ])
-        plan1 = build_wf_r2_wiring(matches, teams)
-        plan2 = build_wf_r2_wiring(matches, teams)
+        plan1 = build_wf_r2_wiring(matches, teams, block_size=4)
+        plan2 = build_wf_r2_wiring(matches, teams, block_size=4)
         assert plan1.pairs == plan2.pairs
         assert len(plan1.warnings) == len(plan2.warnings)
 
@@ -259,13 +263,13 @@ class TestBuildWfR2Wiring:
         # Reverse the list — build_wf_r2_wiring should NOT re-sort
         # (draw_plan_engine uses _get_wf_r2_wiring which sorts)
         # But best_pairing_for_block processes them as given.
-        plan_normal = build_wf_r2_wiring(matches, teams)
+        plan_normal = build_wf_r2_wiring(matches, teams, block_size=4)
         # Same matches, same order → same result
-        plan_again = build_wf_r2_wiring(list(matches), teams)
+        plan_again = build_wf_r2_wiring(list(matches), teams, block_size=4)
         assert plan_normal.pairs == plan_again.pairs
 
-    def test_16_matches_four_blocks(self):
-        """16 R1 matches (32-team event) → 4 blocks of 4 → 8 R2 pairs."""
+    def test_16_matches_eight_pairs_sequential(self):
+        """16 R1 matches → 8 consecutive pairs (default block_size 2)."""
         matches, teams = _make_matches_and_teams(16, [(None, None)] * 16)
         plan = build_wf_r2_wiring(matches, teams)
         assert len(plan.pairs) == 8
@@ -276,7 +280,7 @@ class TestBuildWfR2Wiring:
         matches, teams = _make_matches_and_teams(4, [
             ("z", "z"), ("z", "z"), ("z", "z"), ("z", "z"),
         ])
-        plan = build_wf_r2_wiring(matches, teams)
+        plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) > 0
         w = plan.warnings[0]
         assert "WF_R1_01" in w.r1_match_codes[0]
@@ -291,6 +295,6 @@ class TestBuildWfR2Wiring:
             ("a", "b"), ("c", "d"), ("e", "f"), ("g", "h"),  # block 1
         ]
         matches, teams = _make_matches_and_teams(8, group_assignments)
-        plan = build_wf_r2_wiring(matches, teams)
+        plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) == 1
         assert plan.warnings[0].block_index == 0

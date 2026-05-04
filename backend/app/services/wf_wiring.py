@@ -1,9 +1,11 @@
 """
-WF Round 2 Wiring Optimizer — avoid-group-aware, deterministic.
+WF Round 2 wiring — maps WF R1 matches into WF R2 feeder pairs.
 
-Optimizes WF R1 -> R2 source wiring within blocks of 4 matches,
-evaluating all 3 possible pairing patterns to minimize potential
-avoid_group conflicts.
+Default ``block_size=2`` is production semantics: winners (or losers) of
+consecutive R1 matches meet — e.g. W(R1_1) vs W(R1_2), then W(R1_3) vs W(R1_4).
+
+Optional ``block_size=4`` evaluates three pairing patterns per quad to reduce
+avoid_group overlap when callers explicitly opt in.
 """
 
 from __future__ import annotations
@@ -101,14 +103,16 @@ def best_pairing_for_block(
 def build_wf_r2_wiring(
     r1_matches_ordered: List[Any],
     team_by_id: Dict[int, Any],
-    block_size: int = 4,
+    block_size: int = 2,
 ) -> WiringPlan:
     """
-    Build optimized WF R2 wiring from ordered WF R1 matches.
+    Build WF R2 source wiring from ordered WF R1 matches.
 
-    Splits into blocks of block_size, optimizes each block independently,
-    returns ordered (source_a_id, source_b_id) pairs for filling R2
-    sequences and warnings for unavoidable overlaps.
+    With ``block_size=2`` (default), each R2 match feeds from two consecutive
+    R1 slots in order — bracket-standard winner/winner and loser/loser paths.
+
+    With ``block_size=4``, each quad is wired using ``best_pairing_for_block``
+    to minimize avoid_group overlap across merged pairs.
     """
     all_pairs: List[Tuple[int, int]] = []
     warnings: List[WiringWarning] = []

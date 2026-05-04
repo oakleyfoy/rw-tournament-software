@@ -120,9 +120,9 @@ def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
     """
     Load teams for the event and compute WF R2 wiring.
 
-    Uses blocks of four R1 matches (default of ``build_wf_r2_wiring``) so pairing
-    into WF R2 can alternate feeders (e.g. 1+4 and 2+3) and reduce avoid_group
-    overlap across potential WF R2 matchups.
+    Uses consecutive R1 pairs (``block_size=2``): WF R2 winners are W(R1_k) vs
+    W(R1_{k+1}) for k = 1,3,5,…; losers bracket uses the same adjacency on the
+    prior WF round. R1 ``sequence_in_round`` order must match the intended bracket.
     """
     from app.models.team import Team
     from sqlmodel import select
@@ -139,7 +139,7 @@ def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
         r1_matches,
         key=lambda m: (getattr(m, "sequence_in_round", 0) or 0, m.id or 0),
     )
-    return build_wf_r2_wiring(r1_sorted, team_by_id)
+    return build_wf_r2_wiring(r1_sorted, team_by_id, block_size=2)
 
 
 # -----------------------------------------------------------------------------
@@ -806,7 +806,7 @@ def _generate_wf_to_pools_4(
 
     # -------------------------------------------------------------------------
     # WF Round 2: 8 matches (4 winners bracket + 4 losers bracket)
-    # Wiring optimized for avoid_group separation within blocks of 4
+    # WF Round 2: consecutive R1 pairs → same WF R2 match (W then L brackets)
     # -------------------------------------------------------------------------
     wiring = _get_wf_r2_wiring(session, spec.event_id, r1_matches)
     r1_by_id = {m.id: m for m in r1_matches}
@@ -1006,7 +1006,7 @@ def _generate_wf_to_pools_dynamic(
 
     # -------------------------------------------------------------------------
     # WF Round 2 (if wf_rounds >= 2): n/2 matches
-    # Wiring optimized for avoid_group separation within blocks of 4
+    # WF Round 2: consecutive R1 pairs → same WF R2 match (W then L brackets)
     # -------------------------------------------------------------------------
     if wf_rounds >= 2:
         wiring = _get_wf_r2_wiring(session, spec.event_id, r1_matches)
@@ -1206,7 +1206,7 @@ def _generate_wf_to_brackets_8(
             session.add_all(prev_round_matches)
             session.flush()
 
-            # Use block-based wiring optimizer for avoid_group separation
+            # WF R2+: consecutive prev-round matches feed each WF match (block_size=2)
             wiring = _get_wf_r2_wiring(session, spec.event_id, prev_round_matches)
             r1_by_id = {m.id: m for m in prev_round_matches}
             r2_half = len(wiring.pairs)

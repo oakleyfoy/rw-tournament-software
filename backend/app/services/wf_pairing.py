@@ -8,9 +8,10 @@ bracket slot, so that if chalk holds seed 1 meets seed 2 in the final.
 
 The only intentional deviation from half-split is Who Knows Who: when two
 opponents share an avoid group, we try swapping bottom-half teams within
-the same pod (up to four R1 slots). Swaps are allowed only between opponents at the
-same skill level (CSV Level → Team.rating); unknown levels (null rating)
-may swap only with each other.
+the same bracket quarter (aligned with WF R2 blocks of two consecutive R1
+matches). Swaps are allowed only between opponents at the same skill level
+(CSV Level → Team.rating); unknown levels (null rating) may swap only with
+each other.
 """
 
 from __future__ import annotations
@@ -89,9 +90,10 @@ def _wf_r1_top_half_fold_order(half: int) -> List[int]:
 
     Power-of-two half sizes use ``bracket_fold_positions(half)`` (same as standard brackets).
 
-    Non-power-of-two halves use outside-in order ``[1, half, 2, half-1, …]`` (e.g. half=10 →
-    (1 vs 11) then (10 vs 20)). WF R2 feeder pairing is chosen separately by
-    ``build_wf_r2_wiring`` (blocks of four R1 matches when possible).
+    Non-power-of-two halves use outside-in order ``[1, half, 2, half-1, …]`` so that
+    with sequential WF R2 wiring (winners of R1 slots 1+2, 3+4, … meet), feeders
+    mirror the bracket (e.g. half=10 → (1 vs 11) then (10 vs 20); those winners
+    meet in WF R2).
     """
     if half <= 1:
         return [1] if half == 1 else []
@@ -139,13 +141,13 @@ def _same_level_rating(r_a: Optional[float], r_b: Optional[float]) -> bool:
 def _resolve_quarter_conflicts(
     pairs: List[Tuple[TeamSeed, TeamSeed]],
 ) -> List[Tuple[TeamSeed, TeamSeed]]:
-    """Resolve Who Knows Who (avoid_group) conflicts within one R1 pod.
+    """Resolve Who Knows Who (avoid_group) conflicts within a bracket quarter.
 
     Half-split is preserved except for these swaps: exchange bottom-half
     opponents only with another bottom-half team at the same Level (rating).
 
     For each conflicting pair (scanning in order), try swapping its
-    bottom-half team with another bottom-half team in the pod at the
+    bottom-half team with another bottom-half team in the quarter at the
     same rating. Apply the first swap that resolves the conflict without
     introducing any new ones. Deterministic: same inputs always produce same swaps.
     """
@@ -160,7 +162,7 @@ def _resolve_quarter_conflicts(
         if not _groups_conflict(a_i.avoid_group, b_i.avoid_group):
             continue  # no conflict at position i
 
-        # Try swapping b_i with b_j for each j != i in this pod
+        # Try swapping b_i with b_j for each j != i in this quarter
         for j in range(n):
             if j == i:
                 continue
@@ -191,7 +193,7 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     Step 2 — order matches by bracket-safe permutation of top-half seeds
              (_wf_r1_top_half_fold_order), including non-power-of-two fields.
     Step 3 — resolve Who Knows Who (avoid_group) conflicts by swapping
-             bottom-half teams within each pod (up to four R1 matches), only with
+             bottom-half teams within each bracket quarter, only with
              opponents at the same Level (rating).
     Step 4 — report any remaining (unavoidable) conflicts.
 
@@ -214,15 +216,15 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
 
     ordered_pairs = [matchups_by_top_seed[s] for s in fold_order]
 
-    # Step 3: Resolve conflicts within pods of up to four R1 matches (aligned with
-    # WF R2 wiring blocks) so swaps can separate letters before R2 pairing.
+    # Step 3: Resolve conflicts within bracket quarters (quarter size = n_matches/4,
+    # minimum 2 so adjacent WF R2 pairs can swap bottoms independently).
     num_matches = len(ordered_pairs)
-    pod_size = min(4, num_matches)
+    quarter_size = max(2, num_matches // 4)
 
     resolved_pairs: List[Tuple[TeamSeed, TeamSeed]] = []
-    for start in range(0, num_matches, pod_size):
-        pod = ordered_pairs[start:start + pod_size]
-        resolved_pairs.extend(_resolve_quarter_conflicts(pod))
+    for start in range(0, num_matches, quarter_size):
+        quarter = ordered_pairs[start:start + quarter_size]
+        resolved_pairs.extend(_resolve_quarter_conflicts(quarter))
 
     # Step 4: Build result with remaining (unavoidable) conflicts
     seed_pairs: List[Tuple[int, int]] = []
