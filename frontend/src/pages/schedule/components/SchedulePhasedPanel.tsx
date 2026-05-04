@@ -126,16 +126,49 @@ function buildEventPlacementRank(dayOrders: number[][] | null, gridEventIds: num
   return rank
 }
 
-/** Sort match IDs for placement: tournament day orders when configured, else legacy event_id order */
-function sortedMatchIds(matches: GridMatch[], rankByEventId: Map<number, number>): number[] {
+/** Align phased placement with planner-style layering: WF → RR → MAIN → CONSOLATION → PLACEMENT */
+const PLACE_STAGE_ORDER: Record<string, number> = {
+  WF: 0,
+  RR: 1,
+  MAIN: 2,
+  CONSOLATION: 3,
+  PLACEMENT: 4,
+}
+
+function bracketTierSortKey(m: GridMatch, tierMap: Map<number, 'qf' | 'sf' | 'final'>): number {
+  if (m.stage !== 'MAIN' && m.stage !== 'CONSOLATION') return 0
+  const b = tierMap.get(m.match_id)
+  if (b === 'qf') return 0
+  if (b === 'sf') return 1
+  if (b === 'final') return 2
+  return 9
+}
+
+/**
+ * Sort match IDs for placement: stage → bracket tier (QF < SF < Final) → tournament day order → round keys.
+ * Tier map comes from bracket classification on grid matches (same logic as QF/SF/Finals buttons).
+ */
+function sortedMatchIds(
+  matches: GridMatch[],
+  rankByEventId: Map<number, number>,
+  bracketTierByMatchId: Map<number, 'qf' | 'sf' | 'final'>,
+): number[] {
   return [...matches]
     .sort((a, b) => {
+      const sa = PLACE_STAGE_ORDER[a.stage] ?? 99
+      const sb = PLACE_STAGE_ORDER[b.stage] ?? 99
+      if (sa !== sb) return sa - sb
+
+      const ta = bracketTierSortKey(a, bracketTierByMatchId)
+      const tb = bracketTierSortKey(b, bracketTierByMatchId)
+      if (ta !== tb) return ta - tb
+
       const ra = rankByEventId.get(a.event_id) ?? 99_999_999
       const rb = rankByEventId.get(b.event_id) ?? 99_999_999
       if (ra !== rb) return ra - rb
+
       return (
         a.event_id - b.event_id ||
-        a.stage.localeCompare(b.stage) ||
         a.round_index - b.round_index ||
         a.sequence_in_round - b.sequence_in_round ||
         a.match_id - b.match_id
@@ -640,10 +673,12 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
 
     if (!hasMain && !hasCons && !hasPlacement) {
       const empty: GridMatch[] = []
+      const emptyTier = new Map<number, 'qf' | 'sf' | 'final'>()
       return {
         hasMain: false,
         hasCons: false,
         hasPlacement: false,
+        matchBracketTierByMatchId: emptyTier,
         qf: { matches: empty, exists: false },
         sf: { matches: empty, exists: false },
         finals: { matches: empty, exists: false },
@@ -716,6 +751,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
       hasMain,
       hasCons,
       hasPlacement,
+      matchBracketTierByMatchId: matchBucket,
       qf: { matches: qfMatches, exists: hasMain },
       sf: { matches: sfMatches, exists: anyMainSf || hasCons },
       finals: { matches: finalsMatches, exists: anyMainFinal || hasCons },
@@ -746,7 +782,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
   /** Place a subset of matches by IDs and show a toast */
   const placeSubset = async (label: string, matches: GridMatch[]) => {
     if (!tournamentId || !activeVersion) return
-    const ids = sortedMatchIds(matches, placementRankByEventId)
+    const ids = sortedMatchIds(matches, placementRankByEventId, bracketSlices.matchBracketTierByMatchId)
     if (ids.length === 0) {
       showToast(`No unassigned matches for ${label}`, 'warning')
       return
@@ -755,6 +791,30 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
       const r = await placeMatchSubset(tournamentId, activeVersion.id, ids)
       showToast(
         `Placed ${r.assigned_count} ${label} matches, ${r.unassigned_count_remaining} could not be placed.`,
+        r.unassigned_count_remaining > 0 ? 'warning' : 'success'
+      )
+      onInventoryAction?.('unassigned')
+    })
+  }
+
+  /** One assign-subset pass: all bracket tiers in order (policy-like layering within each tier). */
+  const placeBracketMainSequence = async () => {
+    if (!tournamentId || !activeVersion) return
+    const tierMap = bracketSlices.matchBracketTierByMatchId
+    const rank = placementRankByEventId
+    const ids = [
+      ...sortedMatchIds(bracketSlices.qf.matches, rank, tierMap),
+      ...sortedMatchIds(bracketSlices.sf.matches, rank, tierMap),
+      ...sortedMatchIds(bracketSlices.finals.matches, rank, tierMap),
+    ]
+    if (ids.length === 0) {
+      showToast('No unassigned bracket matches', 'warning')
+      return
+    }
+    await run('Bracket QF→SF→Final', async () => {
+      const r = await placeMatchSubset(tournamentId, activeVersion.id, ids)
+      showToast(
+        `Placed ${r.assigned_count} bracket matches (QF→SF→Final order), ${r.unassigned_count_remaining} could not be placed.`,
         r.unassigned_count_remaining > 0 ? 'warning' : 'success'
       )
       onInventoryAction?.('unassigned')
@@ -931,6 +991,38 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
           >
             {busy === 'Generate Slots' ? '...' : 'Generate Slots'}
           </button>
+          <button
+            className="btn"
+            disabled={anyBusy || slotsCount === 0}
+            title={
+              assignedCount > 0
+                ? 'Rebuilds all slots from time windows and clears every match assignment.'
+                : 'Rebuild slots from current time windows and court rules.'
+            }
+            onClick={async () => {
+              if (!tournamentId || !versionId) return
+              const warn =
+                assignedCount > 0
+                  ? `This deletes all ${slotsCount} slots and clears ALL ${assignedCount} assignments, then rebuilds slots. Continue?`
+                  : `Wipe all ${slotsCount} slots and regenerate from current time windows/courts?`
+              if (!window.confirm(warn)) return
+              await run('Regenerating Slots', async () => {
+                const r = await regenerateSlots(tournamentId, versionId)
+                showToast(`Regenerated ${r.slots_generated} slots`, 'success')
+                onInventoryAction?.('slots')
+              })
+            }}
+            style={{
+              fontSize: 13,
+              padding: '8px 14px',
+              backgroundColor: '#e65100',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+            }}
+          >
+            {busy === 'Regenerating Slots' ? '...' : 'Regenerate Slots'}
+          </button>
         </div>
       </div>
 
@@ -997,7 +1089,23 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
         {(bracketSlices.hasMain || bracketSlices.hasCons) && (
           <div style={{ marginBottom: 12 }}>
             <span style={sectionLabelStyle}>Bracket</span>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 6, maxWidth: 640 }}>
+              Within each round wave (QF, then SF, then finals), matches follow your Draw Builder day order. Mixed can
+              lead Women&apos;s even when Women&apos;s event id is lower.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <PlaceButton
+                label="Place bracket (QF→SF→Final)"
+                count={
+                  bracketSlices.qf.matches.length +
+                  bracketSlices.sf.matches.length +
+                  bracketSlices.finals.matches.length
+                }
+                busy={busy}
+                busyLabel="Bracket QF→SF→Final"
+                disabled={anyBusy || !canPlace}
+                onClick={() => placeBracketMainSequence()}
+              />
               {bracketSlices.qf.exists && (
                 <PlaceButton
                   label="Place Bracket QFs"
@@ -1343,29 +1451,6 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
           <span>Matches: {matchesCount}</span>
           <span>Assigned: {assignedCount}</span>
           <span>Unassigned: {unassignedCount}</span>
-          {slotsCount > 0 && assignedCount === 0 && (
-            <button
-              className="btn"
-              disabled={busy !== null}
-              onClick={async () => {
-                if (!tournamentId || !versionId) return
-                if (!window.confirm(`Wipe all ${slotsCount} slots and regenerate from current time windows/courts?`)) return
-                setBusy('Regenerating Slots')
-                try {
-                  const r = await regenerateSlots(tournamentId, versionId)
-                  showToast(`Regenerated ${r.slots_generated} slots (was ${slotsCount})`, 'success')
-                  onRefresh()
-                } catch (e) {
-                  showToast(e instanceof Error ? e.message : 'Slot regeneration failed', 'error')
-                } finally {
-                  setBusy(null)
-                }
-              }}
-              style={{ fontSize: 12, padding: '2px 10px', backgroundColor: '#e65100', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
-            >
-              {busy === 'Regenerating Slots' ? 'Regenerating...' : 'Regenerate Slots'}
-            </button>
-          )}
         </div>
       </div>
 
