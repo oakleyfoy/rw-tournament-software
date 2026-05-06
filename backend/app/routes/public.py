@@ -59,7 +59,6 @@ class WaterfallRow(BaseModel):
     r2_winner_bracket_loser_name: Optional[str] = None
     r2_loser_bracket_winner_name: Optional[str] = None
     r2_loser_bracket_loser_name: Optional[str] = None
-    bracket_compass_dest: Optional[str] = None
 
 
 class WaterfallResponse(BaseModel):
@@ -387,19 +386,6 @@ def _r2_dest_lines(event_name: str, r2_role: str, r2_seq: int, r2_winner_count: 
     )
 
 
-def _bracket_pair_compass_dest(event_name: str, letter: str) -> str:
-    """Four-outcome legend for one R1 pair (WW/WL/LW/LL) after both WF Round 2 matches.
-
-    Maps to: winners' R2 winner→I, losers' of that→II; losers' R2 winner→III, loser→IV.
-    """
-    return (
-        f"Round 2 winners' bracket: Match winner → {event_name} Division I — {letter}\n"
-        f"Round 2 winners' bracket: Match loser → {event_name} Division II — {letter}\n"
-        f"Round 2 losers' bracket: Match winner → {event_name} Division III — {letter}\n"
-        f"Round 2 losers' bracket: Match loser → {event_name} Division IV — {letter}"
-    )
-
-
 def _rr_pool_dest_lines(event_name: str, pool_count: int, teams_per_pool: int) -> str:
     """Destination label for WF_TO_POOLS dynamic events."""
     return (
@@ -680,12 +666,6 @@ def public_waterfall(
                     r2_winner_count,
                 )
 
-        bracket_compass = None
-        if div_type == "bracket" and winner_match:
-            seq = winner_match.sequence_in_round or 1
-            letter = chr(ord("A") + seq - 1)
-            bracket_compass = _bracket_pair_compass_dest(event.name, letter)
-
         r2_ww, r2_wl = _wf_r2_final_winner_loser_names(winner_match, team_map)
         r2_lw, r2_ll = _wf_r2_final_winner_loser_names(loser_match, team_map)
         r2_winner_name = r2_ww
@@ -703,7 +683,6 @@ def public_waterfall(
             r2_winner_bracket_loser_name=r2_wl,
             r2_loser_bracket_winner_name=r2_lw,
             r2_loser_bracket_loser_name=r2_ll,
-            bracket_compass_dest=bracket_compass,
         ))
 
     return WaterfallResponse(
