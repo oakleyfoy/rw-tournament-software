@@ -1258,6 +1258,11 @@ class TestWF2BracketWiring:
         assert expected_b in qf1.placeholder_side_a or expected_b in qf1.placeholder_side_b, \
             f"QF1 missing {expected_b}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
 
+        w01 = next(m for m in matches if m.match_code == expected_a)
+        w02 = next(m for m in matches if m.match_code == expected_b)
+        assert {qf1.source_match_a_id, qf1.source_match_b_id} == {w01.id, w02.id}
+        assert qf1.source_a_role == "WINNER" and qf1.source_b_role == "WINNER"
+
         qf2 = ww_qf_matches[1]
         expected_a = f"{event_prefix}_WF_R2_W03"
         expected_b = f"{event_prefix}_WF_R2_W04"
@@ -1290,7 +1295,7 @@ class TestWF2BracketWiring:
             assert "Division" not in qf.placeholder_side_b, f"QF {qf.match_code} has 'Division' in placeholder_b"
 
     def test_wf2_wiring_for_16_teams_wl_bracket(self, session):
-        """Test that WL bracket QF placeholders reference WF2 losers correctly."""
+        """BWL (Division II) QF slots feed losers of WF R2 *winners* matches (same W.. as BWW, LOSER role)."""
         from app.services.draw_plan_engine import generate_matches_for_event
 
         # Create tournament and event (same as above)
@@ -1365,18 +1370,22 @@ class TestWF2BracketWiring:
 
         assert len(wl_qf_matches) == 4, f"Expected 4 WL QF matches, got {len(wl_qf_matches)}"
 
-        # 16-team: 4 WF R2 losers per track — same slot pairing as winners (4-feeder rotation)
+        # 16-team: same green R2 feeders as Division I (W01/W02…), wired as LOSER for BWL.
         qf1 = wl_qf_matches[0]
-        expected_l_token_1 = f"{event_prefix}_WF_R2_L01"
-        expected_l_token_2 = f"{event_prefix}_WF_R2_L02"
-        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, \
-            f"WL QF1 missing {expected_l_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, \
-            f"WL QF1 missing {expected_l_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        
-        # Verify WL uses L tokens (losers), not W tokens
-        assert "_WF_R2_W" not in qf1.placeholder_side_a and "_WF_R2_W" not in qf1.placeholder_side_b, \
-            f"WL QF1 should use L tokens (losers), but found W token: {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        expected_w_token_1 = f"{event_prefix}_WF_R2_W01"
+        expected_w_token_2 = f"{event_prefix}_WF_R2_W02"
+        assert expected_w_token_1 in qf1.placeholder_side_a or expected_w_token_1 in qf1.placeholder_side_b, \
+            f"WL QF1 missing {expected_w_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        assert expected_w_token_2 in qf1.placeholder_side_a or expected_w_token_2 in qf1.placeholder_side_b, \
+            f"WL QF1 missing {expected_w_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+
+        assert "_WF_R2_L" not in qf1.placeholder_side_a and "_WF_R2_L" not in qf1.placeholder_side_b, \
+            f"BWL QF1 must not use orange L tokens; got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        w01 = next(m for m in matches if m.match_code == expected_w_token_1)
+        w02 = next(m for m in matches if m.match_code == expected_w_token_2)
+        assert {qf1.source_match_a_id, qf1.source_match_b_id} == {w01.id, w02.id}
+        assert qf1.source_a_role == "LOSER" and qf1.source_b_role == "LOSER", \
+            f"BWL QF1 expects LOSER of green R2; got roles {qf1.source_a_role!r} / {qf1.source_b_role!r}"
 
         # Verify no "TBD" or "Division" placeholders
         for qf in wl_qf_matches:
@@ -1386,7 +1395,7 @@ class TestWF2BracketWiring:
             assert "Division" not in qf.placeholder_side_b, f"QF {qf.match_code} has 'Division' in placeholder_b"
 
     def test_wf2_wiring_for_32_teams_blw_bracket(self, session):
-        """Test that BLW (Division III) bracket QF placeholders reference WF2 winners bracket tokens W09–W16."""
+        """BLW (Division III) QF slots reference orange WF R2 matches L01–L08 (WINNER role)."""
 
         from app.services.draw_plan_engine import generate_matches_for_event
 
@@ -1461,27 +1470,28 @@ class TestWF2BracketWiring:
 
         assert len(blw_qf_matches) == 4, f"Expected 4 BLW QF matches, got {len(blw_qf_matches)}"
 
-        # BLW QF1: sequential WF R2 slots 9+10 → W09 vs W10 (Winner I vs J in global letter map)
+        # BLW QF1: same ordinal slots as BWW (1+2) on the orange L track
         qf1 = blw_qf_matches[0]
-        expected_w_token_9 = f"{event_prefix}_WF_R2_W09"
-        expected_w_token_10 = f"{event_prefix}_WF_R2_W10"
-        assert expected_w_token_9 in qf1.placeholder_side_a or expected_w_token_9 in qf1.placeholder_side_b, \
-            f"BLW QF1 missing {expected_w_token_9}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_w_token_10 in qf1.placeholder_side_a or expected_w_token_10 in qf1.placeholder_side_b, \
-            f"BLW QF1 missing {expected_w_token_10}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        expected_l_token_1 = f"{event_prefix}_WF_R2_L01"
+        expected_l_token_2 = f"{event_prefix}_WF_R2_L02"
+        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, \
+            f"BLW QF1 missing {expected_l_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, \
+            f"BLW QF1 missing {expected_l_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
 
-        # BLW QF4: slots 15+16 → W15 vs W16
+        # BLW QF4: 8-feeder rotation slot pair (7, 8) -> L07 vs L08
         qf4 = blw_qf_matches[3]
-        expected_w_token_15 = f"{event_prefix}_WF_R2_W15"
-        expected_w_token_16 = f"{event_prefix}_WF_R2_W16"
-        assert expected_w_token_15 in qf4.placeholder_side_a or expected_w_token_15 in qf4.placeholder_side_b, \
-            f"BLW QF4 missing {expected_w_token_15}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
-        assert expected_w_token_16 in qf4.placeholder_side_a or expected_w_token_16 in qf4.placeholder_side_b, \
-            f"BLW QF4 missing {expected_w_token_16}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        expected_l_token_7 = f"{event_prefix}_WF_R2_L07"
+        expected_l_token_8 = f"{event_prefix}_WF_R2_L08"
+        assert expected_l_token_7 in qf4.placeholder_side_a or expected_l_token_7 in qf4.placeholder_side_b, \
+            f"BLW QF4 missing {expected_l_token_7}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        assert expected_l_token_8 in qf4.placeholder_side_a or expected_l_token_8 in qf4.placeholder_side_b, \
+            f"BLW QF4 missing {expected_l_token_8}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
 
-        # Verify BLW uses W tokens (winners), not L tokens
-        assert "_WF_R2_L" not in qf1.placeholder_side_a and "_WF_R2_L" not in qf1.placeholder_side_b, \
-            f"BLW QF1 should use W tokens (winners), but found L token: {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        l01 = next(m for m in matches if m.match_code == expected_l_token_1)
+        l02 = next(m for m in matches if m.match_code == expected_l_token_2)
+        assert {qf1.source_match_a_id, qf1.source_match_b_id} == {l01.id, l02.id}
+        assert qf1.source_a_role == "WINNER" and qf1.source_b_role == "WINNER"
 
         # Verify no legacy placeholders
         for qf in blw_qf_matches:
@@ -1491,7 +1501,7 @@ class TestWF2BracketWiring:
             assert "Division" not in qf.placeholder_side_b, f"QF {qf.match_code} has 'Division' in placeholder_b"
 
     def test_wf2_wiring_for_32_teams_bll_bracket(self, session):
-        """Test that BLL (Division IV) bracket QF placeholders reference WF2 losers bracket tokens L09-L16."""
+        """BLL (Division IV) QF slots reference orange WF R2 L01–L08 (LOSER role)."""
         from app.services.draw_plan_engine import generate_matches_for_event
 
         tournament = Tournament(
@@ -1565,23 +1575,28 @@ class TestWF2BracketWiring:
 
         assert len(bll_qf_matches) == 4, f"Expected 4 BLL QF matches, got {len(bll_qf_matches)}"
 
-        # BLL QF1: sequential losers slots 9+10 → L09 vs L10
+        # BLL QF1: same L feeders as BLW, LOSER role when wired
         qf1 = bll_qf_matches[0]
-        expected_l_token_9 = f"{event_prefix}_WF_R2_L09"
-        expected_l_token_10 = f"{event_prefix}_WF_R2_L10"
-        assert expected_l_token_9 in qf1.placeholder_side_a or expected_l_token_9 in qf1.placeholder_side_b, \
-            f"BLL QF1 missing {expected_l_token_9}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_l_token_10 in qf1.placeholder_side_a or expected_l_token_10 in qf1.placeholder_side_b, \
-            f"BLL QF1 missing {expected_l_token_10}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        expected_l_token_1 = f"{event_prefix}_WF_R2_L01"
+        expected_l_token_2 = f"{event_prefix}_WF_R2_L02"
+        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, \
+            f"BLL QF1 missing {expected_l_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, \
+            f"BLL QF1 missing {expected_l_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
 
-        # BLL QF4: slots 15+16 → L15 vs L16
+        # BLL QF4: (7, 8) -> L07 vs L08
         qf4 = bll_qf_matches[3]
-        expected_l_token_15 = f"{event_prefix}_WF_R2_L15"
-        expected_l_token_16 = f"{event_prefix}_WF_R2_L16"
-        assert expected_l_token_15 in qf4.placeholder_side_a or expected_l_token_15 in qf4.placeholder_side_b, \
-            f"BLL QF4 missing {expected_l_token_15}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
-        assert expected_l_token_16 in qf4.placeholder_side_a or expected_l_token_16 in qf4.placeholder_side_b, \
-            f"BLL QF4 missing {expected_l_token_16}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        expected_l_token_7 = f"{event_prefix}_WF_R2_L07"
+        expected_l_token_8 = f"{event_prefix}_WF_R2_L08"
+        assert expected_l_token_7 in qf4.placeholder_side_a or expected_l_token_7 in qf4.placeholder_side_b, \
+            f"BLL QF4 missing {expected_l_token_7}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        assert expected_l_token_8 in qf4.placeholder_side_a or expected_l_token_8 in qf4.placeholder_side_b, \
+            f"BLL QF4 missing {expected_l_token_8}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+
+        lb01 = next(m for m in matches if m.match_code == expected_l_token_1)
+        lb02 = next(m for m in matches if m.match_code == expected_l_token_2)
+        assert {qf1.source_match_a_id, qf1.source_match_b_id} == {lb01.id, lb02.id}
+        assert qf1.source_a_role == "LOSER" and qf1.source_b_role == "LOSER"
 
         # Verify BLL uses L tokens (losers), not W tokens
         assert "_WF_R2_W" not in qf1.placeholder_side_a and "_WF_R2_W" not in qf1.placeholder_side_b, \
@@ -1595,7 +1610,7 @@ class TestWF2BracketWiring:
             assert "Division" not in qf.placeholder_side_b, f"QF {qf.match_code} has 'Division' in placeholder_b"
 
     def test_wf2_wiring_all_divisions_use_correct_tokens(self, session):
-        """Test that all 4 divisions use correct WF2 token sequences: WW/WL use 1-8, LW/LL use 9-16."""
+        """n=32: WW/BWL share green W01–08; BLW/BLL share orange L01–08 (WIN vs LOSER)."""
         from app.services.draw_plan_engine import generate_matches_for_event
 
         tournament = Tournament(
@@ -1660,12 +1675,12 @@ class TestWF2BracketWiring:
         event_prefix = any_match.match_code.split("_B")[0].rstrip('_')
 
         # Each division QF1: first two WF R2 feeders in that track (sequential; matches waterfall labels).
-        # WW/WL: slots 1–8 → W01 vs W02 / L01 vs L02; LW/LL: slots 9–16 → W09 vs W10 / L09 vs L10
+        # WW/WL: green W01–W08; LW/LL: orange L01–L08 (WIN vs LOSER).
         expected_mappings = [
             ("BWW", "W", "01", "02"),
-            ("BWL", "L", "01", "02"),
-            ("BLW", "W", "09", "10"),
-            ("BLL", "L", "09", "10"),
+            ("BWL", "W", "01", "02"),
+            ("BLW", "L", "01", "02"),
+            ("BLL", "L", "01", "02"),
         ]
         
         for bracket_label, token_type, seq_a, seq_b in expected_mappings:
@@ -1865,7 +1880,7 @@ class TestWF2BracketWiring:
 
 
 def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Session):
-    """Missing source_match FKs on BWL QF rows should be rebuilt from WF R2 loser placeholders."""
+    """Missing source_match FKs on BWL QF rows rebuild from WF R2 green (W..) placeholders with LOSER role."""
     from app.services.draw_plan_engine import generate_matches_for_event
 
     tournament = Tournament(
@@ -1924,22 +1939,22 @@ def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Sessi
 
     rows = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
     bwl_m1 = next(m for m in rows if m.match_code and m.match_code.endswith("_BWL_M1"))
-    wf_l01 = session.exec(
+    wf_w01 = session.exec(
         select(Match).where(
             Match.schedule_version_id == version.id,
             Match.match_type == "WF",
-            Match.match_code.contains("WF_R2_L01"),
+            Match.match_code.contains("WF_R2_W01"),
         )
     ).first()
-    wf_l02 = session.exec(
+    wf_w02 = session.exec(
         select(Match).where(
             Match.schedule_version_id == version.id,
             Match.match_type == "WF",
-            Match.match_code.contains("WF_R2_L02"),
+            Match.match_code.contains("WF_R2_W02"),
         )
     ).first()
-    assert wf_l01 is not None and wf_l02 is not None
-    assert "WF_R2_L01" in (bwl_m1.placeholder_side_a or "") or "WF_R2_L01" in (bwl_m1.placeholder_side_b or "")
+    assert wf_w01 is not None and wf_w02 is not None
+    assert "WF_R2_W01" in (bwl_m1.placeholder_side_a or "") or "WF_R2_W01" in (bwl_m1.placeholder_side_b or "")
 
     bwl_m1.source_match_a_id = None
     bwl_m1.source_match_b_id = None
@@ -1953,8 +1968,7 @@ def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Sessi
 
     assert wired >= 2
     session.refresh(bwl_m1)
-    assert bwl_m1.source_match_a_id == wf_l01.id
-    assert bwl_m1.source_match_b_id == wf_l02.id
+    assert {bwl_m1.source_match_a_id, bwl_m1.source_match_b_id} == {wf_w01.id, wf_w02.id}
     assert bwl_m1.source_a_role == "LOSER"
     assert bwl_m1.source_b_role == "LOSER"
 

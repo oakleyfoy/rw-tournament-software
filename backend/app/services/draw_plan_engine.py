@@ -1277,38 +1277,43 @@ def _generate_wf_to_brackets_8(
 
         prev_round_matches = round_matches
 
+    # WF R2+ rows are created after the prior round flush but never flushed in the
+    # last loop iteration; bracket _wire_placeholder needs real IDs in code_to_match.
+    wf_pending = [m for m in matches if m.match_type == "WF" and m.id is None]
+    if wf_pending:
+        session.add_all(wf_pending)
+        session.flush()
+
     # -------------------------------------------------------------------------
     # Generate Bracket Matches (8-team brackets with G4/G5 consolation)
     # -------------------------------------------------------------------------
     
     def get_qf_wf_r2_tokens(event_prefix: str, bracket_label: str, qf_sequence: int) -> tuple[str, str]:
         """
-        Generate WF R2 tokens for a QF match based on bracket label and QF sequence.
+        Generate WF R2 match_code tokens for a division bracket QF.
 
-        Division tracks:
-            - WW / LW → winners bracket feed (W01…)
-            - WL / LL → losers bracket feed (L01…)
+        Feeds (WF Round 2 = one winners-bracket column ``W..`` + one losers ``L..``):
+            - BWW (WW): winners of green R2 matches → token_type W, role WINNER when wired.
+            - BWL (WL): losers of those same green R2 matches → token_type W, role LOSER.
+            - BLW (LW): winners of orange R2 matches → token_type L, role WINNER.
+            - BLL (LL): losers of orange R2 matches → token_type L, role LOSER.
 
-        For 32-team events, LW/LL divisions reference the second WF R2 octet (W09… / L09…).
+        For 32-team fields, WW/WL still use ``W01``–``W08`` and LW/LL use ``L01``–``L08``
+        (same ordinal slots as the green track; there is no second R2 octet in inventory).
         """
-        # WW & LW feed from WF R2 winners; WL & LL from WF R2 losers.
-        if bracket_label in ("WW", "LW"):
+        if bracket_label in ("WW", "WL"):
             token_type = "W"
-        elif bracket_label in ("WL", "LL"):
+        elif bracket_label in ("LW", "LL"):
             token_type = "L"
         else:
             raise ValueError(f"Unknown bracket_label: {bracket_label}")
 
-        slot_offset = 8 if n == 32 and bracket_label in ("LW", "LL") else 0
-
         wf_r2_feeders = n // 4 if wf_rounds >= 2 else 0
         sa, sb = _qf_wf_r2_slot_pair(qf_sequence, wf_r2_feeders)
-        ta = slot_offset + sa
-        tb = slot_offset + sb
 
         return (
-            f"{event_prefix}_WF_R2_{token_type}{ta:02d}",
-            f"{event_prefix}_WF_R2_{token_type}{tb:02d}",
+            f"{event_prefix}_WF_R2_{token_type}{sa:02d}",
+            f"{event_prefix}_WF_R2_{token_type}{sb:02d}",
         )
     
     bracket_labels = ["WW", "WL", "LW", "LL"][:bracket_count]
@@ -1521,7 +1526,7 @@ def _generate_wf_to_brackets_8(
     # are not set.  We need to:
     #   1. Flush bracket matches to get database IDs
     #   2. Resolve placeholder references to actual match IDs
-    # WF matches were already flushed earlier in this function.
+    # WF matches were flushed after the waterfall loop (including R2+ IDs).
     bracket_only = [
         m for m in matches
         if m.match_type in ("MAIN", "CONSOLATION") and m.id is None
@@ -1751,7 +1756,7 @@ def repair_bracket_placeholder_source_wiring(
     Populate source_match_a_id / source_match_b_id from placeholders when missing.
 
     Bracket rows often store placeholders like ``WINNER:..._M1`` or a raw
-    ``{prefix}_WF_R2_W09`` token equal to a WF match_code. If the FK wiring
+    ``{prefix}_WF_R2_W01`` token equal to a WF match_code. If the FK wiring
     step never ran (older builds, partial migrations, or clone quirks), the
     public bracket shows generic "Winner I" text and consolation layout
     breaks because source ids are absent.
