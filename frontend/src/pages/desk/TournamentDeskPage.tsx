@@ -168,14 +168,14 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const TIME_SLOT_TINTS = [
-  { bg: '#fff8e1', border: '#ffe082' },
-  { bg: '#e8f5e9', border: '#a5d6a7' },
-  { bg: '#e3f2fd', border: '#90caf9' },
-  { bg: '#f3e5f5', border: '#ce93d8' },
-  { bg: '#fce4ec', border: '#f8bbd0' },
-  { bg: '#e0f7fa', border: '#80deea' },
-  { bg: '#f9fbe7', border: '#dce775' },
-  { bg: '#efebe9', border: '#bcaaa4' },
+  { bg: '#fff8e1', border: '#ffe082', accent: '#f57f17' },
+  { bg: '#e8f5e9', border: '#a5d6a7', accent: '#2e7d32' },
+  { bg: '#e3f2fd', border: '#90caf9', accent: '#1565c0' },
+  { bg: '#f3e5f5', border: '#ce93d8', accent: '#6a1b9a' },
+  { bg: '#fce4ec', border: '#f8bbd0', accent: '#ad1457' },
+  { bg: '#e0f7fa', border: '#80deea', accent: '#00695c' },
+  { bg: '#f9fbe7', border: '#dce775', accent: '#558b2f' },
+  { bg: '#efebe9', border: '#bcaaa4', accent: '#4e342e' },
 ] as const
 
 function _hashSlotKey(key: string): number {
@@ -186,9 +186,9 @@ function _hashSlotKey(key: string): number {
   return h
 }
 
-function getTimeSlotTint(match: DeskMatchItem): { bg: string; border: string } {
+function getTimeSlotTint(match: DeskMatchItem): { bg: string; border: string; accent: string } {
   const time = (match.scheduled_time || '').trim()
-  if (!time) return { bg: '#fafafa', border: '#e8e8e8' }
+  if (!time) return { bg: '#fafafa', border: '#e8e8e8', accent: '#546e7a' }
   const day = (match.day_label || '').trim()
   const key = `${day}|${time}`
   return TIME_SLOT_TINTS[_hashSlotKey(key) % TIME_SLOT_TINTS.length]
@@ -227,19 +227,6 @@ function eventAbbrev(name: string): string {
 
 const EVENT_COLORS: Record<string, string> = {
   W: '#9c27b0', M: '#1565c0', MX: '#00796b',
-}
-
-const EVENT_TINTS: Record<string, { bg: string; border: string; accent: string }> = {
-  W: { bg: '#f3e5f5', border: '#ce93d8', accent: '#8e24aa' },
-  M: { bg: '#e3f2fd', border: '#90caf9', accent: '#1565c0' },
-  MX: { bg: '#e8f5e9', border: '#a5d6a7', accent: '#2e7d32' },
-}
-
-function getEventTint(name: string): { bg: string; border: string; accent: string } | null {
-  const abbr = eventAbbrev(name)
-  if (!abbr) return null
-  const prefix = abbr.replace(/[A-D]$/, '')
-  return EVENT_TINTS[prefix] || null
 }
 
 function EventBadge({ name }: { name: string }) {
@@ -8726,7 +8713,8 @@ function CheckInCourtBoardCard({
   nativeDragOverCourt: string | null
 }) {
   const match = row.displayMatch
-  const tint = (match ? getEventTint(match.event_name) : null) || getSlotTint(slotTintIndex)
+  // Tint by scheduled start (day + time) so staff can spot long-running early slots at a glance.
+  const tint = match ? getTimeSlotTint(match) : getSlotTint(slotTintIndex)
   const canReceiveReady =
     row.lane === 'open' &&
     !match &&
