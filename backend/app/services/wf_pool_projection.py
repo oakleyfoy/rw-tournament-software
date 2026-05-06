@@ -18,6 +18,7 @@ from app.models.match import Match
 from app.models.team import Team
 from app.services.draw_plan_rules import pool_config, required_wf_rounds
 from app.services.score_parser import parse_score
+from app.utils.team_injection import get_deterministic_teams
 from app.utils.wf_seeding import (
     BUCKET_L,
     BUCKET_LL,
@@ -44,6 +45,44 @@ POOL_DISPLAY = {
 
 BUCKET_NAMES_2R = {BUCKET_WW: "WW", BUCKET_WL: "WL", BUCKET_LW: "LW", BUCKET_LL: "LL"}
 BUCKET_NAMES_1R = {BUCKET_W: "W", BUCKET_L: "L"}
+
+_SEED_PLACEHOLDER = re.compile(r"^\s*Seed\s+(\d+)\s*$", re.IGNORECASE)
+
+
+def _resolve_original_seeds_for_projection(
+    session: Session,
+    event_id: int,
+    r1_matches: List[Match],
+    all_team_ids: set,
+    team_map: Dict[int, Team],
+) -> Dict[int, int]:
+    """
+    Tournament seed for pool tiebreak / UI: prefer Team.seed, else WF R1 ``Seed N``
+    placeholders, else deterministic event order (same as team injection).
+    """
+    original: Dict[int, int] = {}
+    for tid in all_team_ids:
+        t = team_map.get(tid)
+        if t is not None and t.seed is not None:
+            original[tid] = t.seed
+
+    for m in sorted(
+        r1_matches,
+        key=lambda x: (x.round_number or 0, x.sequence_in_round or 0, x.match_code or ""),
+    ):
+        for tid, ph in ((m.team_a_id, m.placeholder_side_a), (m.team_b_id, m.placeholder_side_b)):
+            if not tid or tid in original:
+                continue
+            ph_s = (ph or "").strip()
+            md = _SEED_PLACEHOLDER.match(ph_s)
+            if md:
+                original[tid] = int(md.group(1))
+
+    synthetic = {t.id: i + 1 for i, t in enumerate(get_deterministic_teams(session, event_id))}
+    for tid in all_team_ids:
+        if tid not in original:
+            original[tid] = synthetic.get(tid, 999999)
+    return original
 
 
 def _is_retired_score(score_json: Optional[Dict[str, Any]]) -> bool:
@@ -151,10 +190,9 @@ def compute_wf_projection(
 
     teams = session.exec(select(Team).where(Team.id.in_(list(all_team_ids)))).all() if all_team_ids else []
     team_map = {t.id: t for t in teams}
-    original_seed_by_team = {
-        t.id: (t.seed if t.seed is not None else 999999)
-        for t in teams
-    }
+    original_seed_by_team = _resolve_original_seeds_for_projection(
+        session, event_id, r1_matches, all_team_ids, team_map
+    )
 
     def _disp(tid: int) -> str:
         t = team_map.get(tid)

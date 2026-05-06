@@ -834,6 +834,114 @@ def test_wf_projection_interprets_winner_first_score_for_side_b_winner(session: 
     assert bravo.wf_game_diff == 8
 
 
+def test_wf_projection_seed_reason_without_db_seed_uses_deterministic_order(session: Session):
+    """When Team.seed is null, pool projection uses same ordering as team injection (not 999999)."""
+    tournament = Tournament(
+        name="WF Projection Seed Fallback",
+        location="Beach",
+        timezone="America/New_York",
+        start_date=date(2026, 4, 1),
+        end_date=date(2026, 4, 1),
+        court_names=["1", "2"],
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="draft",
+        notes="Desk Draft",
+    )
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        category="mixed",
+        name="Mixed WF",
+        team_count=4,
+        draw_plan_json=json.dumps({
+            "template_type": "WF_TO_POOLS_DYNAMIC",
+            "wf_rounds": 2,
+        }),
+    )
+    session.add(event)
+    session.flush()
+
+    teams = []
+    for name in ["Alpha", "Bravo", "Charlie", "Delta"]:
+        team = Team(event_id=event.id, name=name, display_name=name, seed=None)
+        session.add(team)
+        session.flush()
+        teams.append(team)
+
+    r1_m1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="Alpha",
+        placeholder_side_b="Delta",
+        winner_team_id=teams[0].id,
+        runtime_status="FINAL",
+        score_json={"display": "8-4"},
+    )
+    r1_m2 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="Bravo",
+        placeholder_side_b="Charlie",
+        winner_team_id=teams[1].id,
+        runtime_status="FINAL",
+        score_json={"display": "8-6"},
+    )
+    r2_m1 = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_WF_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        winner_team_id=teams[1].id,
+        runtime_status="FINAL",
+        score_json={"display": "8-2"},
+        placeholder_side_a="WINNER M1",
+        placeholder_side_b="WINNER M2",
+    )
+    session.add_all([r1_m1, r1_m2, r2_m1])
+    session.commit()
+
+    projection = compute_wf_projection(session, tournament.id, version.id, event.id)
+    assert projection is not None
+    for pool in projection.pools:
+        for row in pool.teams:
+            if row.status in ("projected", "confirmed"):
+                assert "999999" not in row.placement_reason, row.placement_reason
+                assert "seed #" in row.placement_reason
+
+
 # -----------------------------------------------------------------------------
 # compute_inventory tests: RR_ONLY
 # -----------------------------------------------------------------------------
