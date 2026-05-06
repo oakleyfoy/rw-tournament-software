@@ -2013,6 +2013,12 @@ export interface PublicWaterfallRow {
   loser_dest: string | null
   r2_winner_team_name: string | null
   r2_loser_team_name: string | null
+  /** Populated when WF R2 winner-bracket match is FINAL (Division I vs II names). */
+  r2_winner_bracket_winner_name?: string | null
+  r2_winner_bracket_loser_name?: string | null
+  /** Populated when WF R2 loser-bracket match is FINAL (Division III vs IV names). */
+  r2_loser_bracket_winner_name?: string | null
+  r2_loser_bracket_loser_name?: string | null
 }
 
 export interface PublicWaterfallResponse {

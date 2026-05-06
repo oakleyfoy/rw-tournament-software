@@ -194,3 +194,144 @@ def test_public_waterfall_hides_match_and_court_info_in_checkin_management(clien
     top_line = body["rows"][0]["center_box"]["top_line"]
     assert "Match #" in top_line
     assert "Court" not in top_line
+
+
+def test_public_waterfall_bracket_four_division_names_from_final_r2(client, session):
+    """Destination API lists both outcomes for each R2 track (I/II and III/IV)."""
+    from app.models.team import Team
+
+    tournament = Tournament(
+        name="WF Bracket Public",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 5, 15),
+        end_date=date(2026, 5, 17),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="final",
+    )
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=8,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_TO_BRACKETS_8","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.flush()
+
+    t1 = Team(event_id=event.id, name="Alice / Ann", seed=1)
+    t2 = Team(event_id=event.id, name="Bob / Ben", seed=2)
+    t3 = Team(event_id=event.id, name="Cara / Cyd", seed=3)
+    t4 = Team(event_id=event.id, name="Dana / Dee", seed=4)
+    session.add_all([t1, t2, t3, t4])
+    session.flush()
+
+    r1a = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_WF_R1_01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+        team_a_id=t1.id,
+        team_b_id=t2.id,
+        winner_team_id=t1.id,
+        runtime_status="FINAL",
+    )
+    r1b = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_WF_R1_02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        placeholder_side_a="Seed 3",
+        placeholder_side_b="Seed 4",
+        team_a_id=t3.id,
+        team_b_id=t4.id,
+        winner_team_id=t3.id,
+        runtime_status="FINAL",
+    )
+    session.add(r1a)
+    session.add(r1b)
+    session.flush()
+
+    r2w = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_WF_R2_W01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="W(R1_1)",
+        placeholder_side_b="W(R1_2)",
+        source_match_a_id=r1a.id,
+        source_a_role="WINNER",
+        source_match_b_id=r1b.id,
+        source_b_role="WINNER",
+        team_a_id=t1.id,
+        team_b_id=t3.id,
+        winner_team_id=t1.id,
+        runtime_status="FINAL",
+    )
+    r2l = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_WF_R2_L01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=2,
+        duration_minutes=60,
+        placeholder_side_a="L(R1_1)",
+        placeholder_side_b="L(R1_2)",
+        source_match_a_id=r1a.id,
+        source_a_role="LOSER",
+        source_match_b_id=r1b.id,
+        source_b_role="LOSER",
+        team_a_id=t2.id,
+        team_b_id=t4.id,
+        winner_team_id=t2.id,
+        runtime_status="FINAL",
+    )
+    session.add(r2w)
+    session.add(r2l)
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(
+        f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["division_type"] == "bracket"
+    row = body["rows"][0]
+    assert row["r2_winner_bracket_winner_name"] == "Alice / Ann"
+    assert row["r2_winner_bracket_loser_name"] == "Cara / Cyd"
+    assert row["r2_loser_bracket_winner_name"] == "Bob / Ben"
+    assert row["r2_loser_bracket_loser_name"] == "Dana / Dee"
+    assert row["r2_winner_team_name"] == "Alice / Ann"
+    assert row["r2_loser_team_name"] == "Bob / Ben"

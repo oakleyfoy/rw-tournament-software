@@ -346,9 +346,25 @@ const DIV_CODE_MAP: Record<string, string> = {
   'Division IV': 'BLL',
 }
 
-function DestinationBox({ label, teamName, tournamentId, eventId, divisionType, layout, widthOverride }: {
+function DestinationBox({
+  label,
+  teamName,
+  winnerPathTeamName,
+  loserPathTeamName,
+  tournamentId,
+  eventId,
+  divisionType,
+  layout,
+  widthOverride,
+}: {
   label: string
+  /** Round-robin pool dest, or legacy single name when path names omitted */
+  /** Round-robin / legacy: single name above destination lines. */
   teamName: string | null
+  /** Bracket: team for the "Winner to Division …" line (under that line). */
+  winnerPathTeamName?: string | null
+  /** Bracket: team for the "Loser to Division …" line (under that line). */
+  loserPathTeamName?: string | null
   tournamentId: number | null
   eventId: number | null
   divisionType: 'bracket' | 'roundrobin'
@@ -357,6 +373,9 @@ function DestinationBox({ label, teamName, tournamentId, eventId, divisionType, 
 }) {
   const navigate = useNavigate()
   const lines = label.split('\n')
+  const useBracketPaths =
+    divisionType === 'bracket' &&
+    (Boolean(winnerPathTeamName?.trim()) || Boolean(loserPathTeamName?.trim()))
 
   const handleClick = (line: string) => {
     if (!tournamentId || !eventId) return
@@ -388,8 +407,8 @@ function DestinationBox({ label, teamName, tournamentId, eventId, divisionType, 
       display: 'flex',
       flexDirection: 'column',
       gap: layout.headerGap,
-    }} data-dest-box>
-      {teamName && (
+    }}       data-dest-box>
+      {!useBracketPaths && teamName && (
         <div style={{
           color: '#1b5e20',
           fontWeight: 700,
@@ -402,18 +421,42 @@ function DestinationBox({ label, teamName, tournamentId, eventId, divisionType, 
         </div>
       )}
       {lines.map((line, i) => (
-        <div
-          key={i}
-          onClick={() => handleClick(line)}
-          style={{
-            color: '#1a237e',
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            textDecorationColor: '#ccc',
-            lineHeight: 1.4,
-          }}
-        >
-          {line}
+        <div key={i}>
+          <div
+            onClick={() => handleClick(line)}
+            style={{
+              color: '#1a237e',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              textDecorationColor: '#ccc',
+              lineHeight: 1.4,
+            }}
+          >
+            {line}
+          </div>
+          {useBracketPaths && i === 0 && winnerPathTeamName?.trim() && (
+            <div style={{
+              color: '#1b5e20',
+              fontWeight: 700,
+              fontSize: layout.destTeamFontSize,
+              lineHeight: 1.3,
+              marginTop: 2,
+              marginBottom: Math.max(4, Math.round(layout.destPaddingY / 2)),
+            }}>
+              {winnerPathTeamName}
+            </div>
+          )}
+          {useBracketPaths && i === 1 && loserPathTeamName?.trim() && (
+            <div style={{
+              color: '#1b5e20',
+              fontWeight: 700,
+              fontSize: layout.destTeamFontSize,
+              lineHeight: 1.3,
+              marginTop: 2,
+            }}>
+              {loserPathTeamName}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -431,6 +474,10 @@ interface RowPair {
   loser_dest: string | null
   r2_winner_team_name: string | null
   r2_loser_team_name: string | null
+  r2_winner_bracket_winner_name: string | null
+  r2_winner_bracket_loser_name: string | null
+  r2_loser_bracket_winner_name: string | null
+  r2_loser_bracket_loser_name: string | null
 }
 
 function splitIntoBalancedColumns<T>(items: T[], columnCount: number): T[][] {
@@ -470,7 +517,18 @@ function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }:
         width: layout.destBoxWidth,
         flexShrink: 0,
       }}>
-        {pair.loser_dest && <DestinationBox label={pair.loser_dest} teamName={pair.r2_loser_team_name} tournamentId={tournamentId} eventId={eventId} divisionType={divisionType} layout={layout} />}
+        {pair.loser_dest && (
+          <DestinationBox
+            label={pair.loser_dest}
+            teamName={pair.r2_loser_team_name}
+            winnerPathTeamName={pair.r2_loser_bracket_winner_name}
+            loserPathTeamName={pair.r2_loser_bracket_loser_name}
+            tournamentId={tournamentId}
+            eventId={eventId}
+            divisionType={divisionType}
+            layout={layout}
+          />
+        )}
       </div>
 
       {/* Arrow: destination ← loser box */}
@@ -527,7 +585,18 @@ function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }:
         width: layout.destBoxWidth,
         flexShrink: 0,
       }}>
-        {pair.winner_dest && <DestinationBox label={pair.winner_dest} teamName={pair.r2_winner_team_name} tournamentId={tournamentId} eventId={eventId} divisionType={divisionType} layout={layout} />}
+        {pair.winner_dest && (
+          <DestinationBox
+            label={pair.winner_dest}
+            teamName={pair.r2_winner_team_name}
+            winnerPathTeamName={pair.r2_winner_bracket_winner_name}
+            loserPathTeamName={pair.r2_winner_bracket_loser_name}
+            tournamentId={tournamentId}
+            eventId={eventId}
+            divisionType={divisionType}
+            layout={layout}
+          />
+        )}
       </div>
     </div>
   )
@@ -586,6 +655,8 @@ function WaterfallRowPairCompact({
             <DestinationBox
               label={pair.loser_dest}
               teamName={pair.r2_loser_team_name}
+              winnerPathTeamName={pair.r2_loser_bracket_winner_name}
+              loserPathTeamName={pair.r2_loser_bracket_loser_name}
               tournamentId={tournamentId}
               eventId={eventId}
               divisionType={divisionType}
@@ -604,6 +675,8 @@ function WaterfallRowPairCompact({
             <DestinationBox
               label={pair.winner_dest}
               teamName={pair.r2_winner_team_name}
+              winnerPathTeamName={pair.r2_winner_bracket_winner_name}
+              loserPathTeamName={pair.r2_winner_bracket_loser_name}
               tournamentId={tournamentId}
               eventId={eventId}
               divisionType={divisionType}
@@ -776,6 +849,10 @@ export default function PublicWaterfallPage() {
         loser_dest: rowA.loser_dest ?? null,
         r2_winner_team_name: rowA.r2_winner_team_name ?? null,
         r2_loser_team_name: rowA.r2_loser_team_name ?? null,
+        r2_winner_bracket_winner_name: rowA.r2_winner_bracket_winner_name ?? null,
+        r2_winner_bracket_loser_name: rowA.r2_winner_bracket_loser_name ?? null,
+        r2_loser_bracket_winner_name: rowA.r2_loser_bracket_winner_name ?? null,
+        r2_loser_bracket_loser_name: rowA.r2_loser_bracket_loser_name ?? null,
       })
     }
 

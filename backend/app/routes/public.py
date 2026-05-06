@@ -52,6 +52,13 @@ class WaterfallRow(BaseModel):
     loser_dest: Optional[str] = None
     r2_winner_team_name: Optional[str] = None
     r2_loser_team_name: Optional[str] = None
+    # WF→four brackets: each destination box lists Winner-to / Loser-to lines; expose
+    # both teams once the corresponding R2 match is FINAL (legacy fields above = winner
+    # of each R2 track only, which hid Div II / IV names).
+    r2_winner_bracket_winner_name: Optional[str] = None
+    r2_winner_bracket_loser_name: Optional[str] = None
+    r2_loser_bracket_winner_name: Optional[str] = None
+    r2_loser_bracket_loser_name: Optional[str] = None
 
 
 class WaterfallResponse(BaseModel):
@@ -335,6 +342,26 @@ _DIV_LABELS = {
     "BLW": "Division III",
     "BLL": "Division IV",
 }
+
+
+def _wf_r2_final_winner_loser_names(
+    match: Optional[Match],
+    team_map: Dict[int, Team],
+) -> Tuple[Optional[str], Optional[str]]:
+    """If R2 match is FINAL with both sides filled, return (winner_display, loser_display)."""
+    if not match:
+        return None, None
+    if (match.runtime_status or "").upper() != "FINAL":
+        return None, None
+    if not match.winner_team_id or match.team_a_id is None or match.team_b_id is None:
+        return None, None
+    wid = match.winner_team_id
+    lid = match.team_b_id if wid == match.team_a_id else match.team_a_id
+    wt = team_map.get(wid)
+    lt = team_map.get(lid)
+    wn = _public_team_name(wt) if wt else None
+    ln = _public_team_name(lt) if lt else None
+    return wn, ln
 
 
 def _r2_dest_lines(event_name: str, r2_role: str, r2_seq: int, r2_winner_count: int) -> str:
@@ -639,16 +666,10 @@ def public_waterfall(
                     r2_winner_count,
                 )
 
-        r2_winner_name = None
-        r2_loser_name = None
-        if winner_match and winner_match.winner_team_id:
-            t = team_map.get(winner_match.winner_team_id)
-            if t:
-                r2_winner_name = _public_team_name(t)
-        if loser_match and loser_match.winner_team_id:
-            t = team_map.get(loser_match.winner_team_id)
-            if t:
-                r2_loser_name = _public_team_name(t)
+        r2_ww, r2_wl = _wf_r2_final_winner_loser_names(winner_match, team_map)
+        r2_lw, r2_ll = _wf_r2_final_winner_loser_names(loser_match, team_map)
+        r2_winner_name = r2_ww
+        r2_loser_name = r2_lw
 
         rows.append(WaterfallRow(
             center_box=center,
@@ -658,6 +679,10 @@ def public_waterfall(
             loser_dest=loser_dest,
             r2_winner_team_name=r2_winner_name,
             r2_loser_team_name=r2_loser_name,
+            r2_winner_bracket_winner_name=r2_ww,
+            r2_winner_bracket_loser_name=r2_wl,
+            r2_loser_bracket_winner_name=r2_lw,
+            r2_loser_bracket_loser_name=r2_ll,
         ))
 
     return WaterfallResponse(
