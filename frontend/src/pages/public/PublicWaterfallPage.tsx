@@ -337,14 +337,81 @@ function ArrowConnector({ direction, layout }: { direction: 'left' | 'right'; la
   )
 }
 
-// ── Destination label box ───────────────────────────────────────────────
-
 const DIV_CODE_MAP: Record<string, string> = {
   'Division I': 'BWW',
   'Division II': 'BWL',
   'Division III': 'BLW',
   'Division IV': 'BLL',
 }
+
+// ── Bracket compass (all four divisions for one R1 pair) ─────────────
+
+function BracketCompassStrip({
+  text,
+  tournamentId,
+  eventId,
+  layout,
+  widthOverride,
+}: {
+  text: string
+  tournamentId: number | null
+  eventId: number | null
+  layout: WaterfallLayout
+  widthOverride?: number | string
+}) {
+  const navigate = useNavigate()
+  const lines = text.split('\n').filter(Boolean)
+
+  const handleClick = (line: string) => {
+    if (!tournamentId || !eventId) return
+    const divMatch = line.match(/Division\s+(I{1,3}V?|IV)/)
+    if (divMatch) {
+      const divName = `Division ${divMatch[1]}`
+      const code = DIV_CODE_MAP[divName]
+      if (code) {
+        navigate(`/t/${tournamentId}/draws/${eventId}/bracket/${code}`)
+      }
+    }
+  }
+
+  return (
+    <div
+      style={{
+        width: widthOverride ?? '100%',
+        maxWidth: widthOverride ?? 720,
+        marginLeft: 'auto',
+        marginRight: 'auto',
+        padding: `${Math.max(4, layout.destPaddingY)}px ${layout.destPaddingX}px`,
+        fontSize: Math.max(layout.destFontSize - 0.5, 8),
+        fontWeight: 600,
+        color: '#37474f',
+        backgroundColor: '#eceff1',
+        border: '1px solid #cfd8dc',
+        borderRadius: 4,
+        textAlign: 'left',
+        boxSizing: 'border-box',
+        lineHeight: 1.45,
+      }}
+      data-bracket-compass
+    >
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          onClick={() => handleClick(line)}
+          style={{
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            textDecorationColor: '#b0bec5',
+          }}
+        >
+          {line}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Destination label box ───────────────────────────────────────────────
 
 function DestinationBox({
   label,
@@ -407,7 +474,7 @@ function DestinationBox({
       display: 'flex',
       flexDirection: 'column',
       gap: layout.headerGap,
-    }}       data-dest-box>
+    }} data-dest-box>
       {!useBracketPaths && teamName && (
         <div style={{
           color: '#1b5e20',
@@ -478,6 +545,7 @@ interface RowPair {
   r2_winner_bracket_loser_name: string | null
   r2_loser_bracket_winner_name: string | null
   r2_loser_bracket_loser_name: string | null
+  bracket_compass_dest: string | null
 }
 
 function splitIntoBalancedColumns<T>(items: T[], columnCount: number): T[][] {
@@ -503,11 +571,31 @@ function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }:
   layout: WaterfallLayout
 }) {
   return (
+    <div style={{ marginBottom: layout.rowMarginBottom }}>
+      {divisionType === 'bracket' && pair.bracket_compass_dest && (
+        <div style={{
+          marginBottom: Math.max(layout.headerGap, 8),
+          display: 'flex',
+          justifyContent: 'center',
+          width: '100%',
+        }}>
+          <BracketCompassStrip
+            text={pair.bracket_compass_dest}
+            tournamentId={tournamentId}
+            eventId={eventId}
+            layout={layout}
+            widthOverride={Math.min(
+              (DEST_BOX_WIDTH * 2) + (SIDE_BOX_WIDTH * 2) + CENTER_BOX_WIDTH + (CONNECTOR_WIDTH * 4),
+              920,
+            )}
+          />
+        </div>
+      )}
     <div data-row-pair style={{
       display: 'flex',
       alignItems: 'stretch',
       justifyContent: 'center',
-      marginBottom: layout.rowMarginBottom,
+      marginBottom: 0,
       minHeight: layout.rowMinHeight,
     }}>
       {/* Loser destination (far left) */}
@@ -599,6 +687,7 @@ function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }:
         )}
       </div>
     </div>
+    </div>
   )
 }
 
@@ -646,6 +735,16 @@ function WaterfallRowPairCompact({
         <MatchBoxCard box={pair.r1_a} variant="center" layout={layout} widthOverride={laneWidth} />
         {pair.r1_b && <MatchBoxCard box={pair.r1_b} variant="center" layout={layout} widthOverride={laneWidth} />}
       </div>
+
+      {divisionType === 'bracket' && pair.bracket_compass_dest && (
+        <BracketCompassStrip
+          text={pair.bracket_compass_dest}
+          tournamentId={tournamentId}
+          eventId={eventId}
+          layout={layout}
+          widthOverride={laneWidth}
+        />
+      )}
 
       {pair.loser && (
         <div style={{ display: 'grid', gap: Math.max(layout.headerGap, 6), justifyItems: 'center', width: '100%' }}>
@@ -853,6 +952,7 @@ export default function PublicWaterfallPage() {
         r2_winner_bracket_loser_name: rowA.r2_winner_bracket_loser_name ?? null,
         r2_loser_bracket_winner_name: rowA.r2_loser_bracket_winner_name ?? null,
         r2_loser_bracket_loser_name: rowA.r2_loser_bracket_loser_name ?? null,
+        bracket_compass_dest: rowA.bracket_compass_dest ?? null,
       })
     }
 

@@ -335,3 +335,7 @@ def test_public_waterfall_bracket_four_division_names_from_final_r2(client, sess
     assert row["r2_loser_bracket_loser_name"] == "Dana / Dee"
     assert row["r2_winner_team_name"] == "Alice / Ann"
     assert row["r2_loser_team_name"] == "Bob / Ben"
+    bc = row.get("bracket_compass_dest") or ""
+    assert "Division I" in bc and "Division II" in bc
+    assert "Division III" in bc and "Division IV" in bc
+    assert "winners' bracket" in bc.lower() or "winners'" in bc

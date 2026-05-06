@@ -2019,6 +2019,7 @@ export interface PublicWaterfallRow {
   /** Populated when WF R2 loser-bracket match is FINAL (Division III vs IV names). */
   r2_loser_bracket_winner_name?: string | null
   r2_loser_bracket_loser_name?: string | null
+  bracket_compass_dest?: string | null
 }
 
 export interface PublicWaterfallResponse {
