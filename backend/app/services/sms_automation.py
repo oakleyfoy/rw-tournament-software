@@ -1080,11 +1080,19 @@ class SmsAutomationEngine:
         exclude_match_id: int,
         after_slot: Optional[ScheduleSlot],
     ) -> Optional[tuple[Match, ScheduleSlot]]:
+        """
+        Next scheduled appearance for this team after finalizing exclude_match_id.
+
+        Prefer matches strictly after the completed match's slot in calendar order
+        (day, time, court). If none qualify — common when the bracket places the
+        winner's next round earlier on the clock than the match just finished —
+        fall back to the earliest remaining non-FINAL match for the team so both
+        sides still get post-match "next match" texts when scheduled.
+        """
         matches = self.session.exec(
             select(Match).where(Match.schedule_version_id == self.version_id)
         ).all()
-        candidates: list[tuple[tuple[date, time, int], Match, ScheduleSlot]] = []
-        after_key = self._slot_sort_key(after_slot) if after_slot else None
+        candidates: list[tuple[tuple[date, time, int, int], Match, ScheduleSlot]] = []
         for m in matches:
             if m.id == exclude_match_id:
                 continue
@@ -1096,13 +1104,14 @@ class SmsAutomationEngine:
             if not slot:
                 continue
             key = self._slot_sort_key(slot)
-            if after_key is not None and key <= after_key:
-                continue
             candidates.append((key, m, slot))
         if not candidates:
             return None
-        candidates.sort(key=lambda row: row[0])
-        _key, match, slot = candidates[0]
+        after_key = self._slot_sort_key(after_slot) if after_slot else None
+        preferred = [row for row in candidates if after_key is None or row[0] > after_key]
+        pool = preferred if preferred else candidates
+        pool.sort(key=lambda row: row[0])
+        _key, match, slot = pool[0]
         return match, slot
 
     def _first_match_rows_by_team(self) -> Dict[int, Dict[str, Any]]:
@@ -1198,10 +1207,12 @@ class SmsAutomationEngine:
             return time(hour=hour, minute=minute)
         return time(23, 59)
 
-    def _slot_sort_key(self, slot: ScheduleSlot) -> tuple[date, time, int]:
+    def _slot_sort_key(self, slot: ScheduleSlot) -> tuple[date, time, int, int]:
+        """Order slots by day, start time, court, then id (stable tie-break)."""
         return (
             slot.day_date,
             self._coerce_time(slot.start_time),
+            int(slot.court_number or 0),
             slot.id or 0,
         )
 
