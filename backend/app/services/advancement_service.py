@@ -174,9 +174,13 @@ def apply_advancement_for_final_match(session: Session, match_id: int) -> int:
     version_id = match.schedule_version_id
     updated_count = 0
 
-    from app.services.draw_plan_engine import repair_existing_drop_in_wiring
+    from app.services.draw_plan_engine import (
+        repair_bracket_placeholder_source_wiring,
+        repair_existing_drop_in_wiring,
+    )
 
     repair_existing_drop_in_wiring(session, version_id, match.event_id)
+    repair_bracket_placeholder_source_wiring(session, version_id, match.event_id)
 
     def _resolve_team(role: str) -> Optional[int]:
         if role == ROLE_WINNER:
@@ -283,9 +287,13 @@ def apply_advancement_with_details(
     updates: List[Dict[str, Any]] = []
     warnings: List[Dict[str, Any]] = []
 
-    from app.services.draw_plan_engine import repair_existing_drop_in_wiring
+    from app.services.draw_plan_engine import (
+        repair_bracket_placeholder_source_wiring,
+        repair_existing_drop_in_wiring,
+    )
 
     repair_existing_drop_in_wiring(session, version_id, match.event_id)
+    repair_bracket_placeholder_source_wiring(session, version_id, match.event_id)
 
     def _resolve_team(role: str) -> Optional[int]:
         if role == ROLE_WINNER:

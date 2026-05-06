@@ -26,6 +26,7 @@ from app.services.draw_plan_engine import (
     bracket_matches_for_guarantee,
     compute_inventory,
     normalize_template_key,
+    repair_bracket_placeholder_source_wiring,
     repair_existing_drop_in_wiring,
     resolve_event_family,
     validate_spec,
@@ -1861,3 +1862,99 @@ class TestWF2BracketWiring:
         assert c5.source_match_b_id == match_by_code[f"{event_prefix}_BWW_M6"].id
         assert c5.placeholder_side_a == f"LOSER:{event_prefix}_BWW_M5"
         assert c5.placeholder_side_b == f"LOSER:{event_prefix}_BWW_M6"
+
+
+def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Session):
+    """Missing source_match FKs on BWL QF rows should be rebuilt from WF R2 loser placeholders."""
+    from app.services.draw_plan_engine import generate_matches_for_event
+
+    tournament = Tournament(
+        name="Bracket Wiring Repair Test",
+        location="Test Location",
+        timezone="America/New_York",
+        start_date=date(2026, 1, 15),
+        end_date=date(2026, 1, 17),
+        use_time_windows=False,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        category="mixed",
+        name="Test Event",
+        team_count=16,
+        guarantee_selected=5,
+    )
+    event.draw_plan_json = json.dumps({
+        "template_type": "WF_TO_BRACKETS_8",
+        "wf_rounds": 2,
+    })
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1)
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    spec = DrawPlanSpec(
+        event_id=event.id,
+        event_name=event.name,
+        division="Mixed",
+        team_count=16,
+        template_type="WF_TO_BRACKETS_8",
+        template_key="WF_TO_BRACKETS_8",
+        guarantee=5,
+        waterfall_rounds=2,
+        waterfall_minutes=60,
+        standard_minutes=105,
+        tournament_id=tournament.id,
+        event_category="mixed",
+    )
+
+    session._allow_match_generation = True
+    matches, _warnings = generate_matches_for_event(
+        session, version.id, spec, list(range(1, 17)), set()
+    )
+    session.add_all(matches)
+    session.commit()
+
+    rows = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
+    bwl_m1 = next(m for m in rows if m.match_code and m.match_code.endswith("_BWL_M1"))
+    wf_l01 = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.match_type == "WF",
+            Match.match_code.contains("WF_R2_L01"),
+        )
+    ).first()
+    wf_l02 = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.match_type == "WF",
+            Match.match_code.contains("WF_R2_L02"),
+        )
+    ).first()
+    assert wf_l01 is not None and wf_l02 is not None
+    assert "WF_R2_L01" in (bwl_m1.placeholder_side_a or "") or "WF_R2_L01" in (bwl_m1.placeholder_side_b or "")
+
+    bwl_m1.source_match_a_id = None
+    bwl_m1.source_match_b_id = None
+    bwl_m1.source_a_role = None
+    bwl_m1.source_b_role = None
+    session.add(bwl_m1)
+    session.commit()
+
+    wired = repair_bracket_placeholder_source_wiring(session, version.id, event.id)
+    session.commit()
+
+    assert wired >= 2
+    session.refresh(bwl_m1)
+    assert bwl_m1.source_match_a_id == wf_l01.id
+    assert bwl_m1.source_match_b_id == wf_l02.id
+    assert bwl_m1.source_a_role == "LOSER"
+    assert bwl_m1.source_b_role == "LOSER"
+

@@ -280,9 +280,13 @@ def build_schedule_v1(
 
         if existing_match_count > 0:
             # Matches already exist - skip generation (idempotent)
-            from app.services.draw_plan_engine import repair_existing_drop_in_wiring
+            from app.services.draw_plan_engine import (
+                repair_bracket_placeholder_source_wiring,
+                repair_existing_drop_in_wiring,
+            )
 
             repair_existing_drop_in_wiring(session, version_id)
+            repair_bracket_placeholder_source_wiring(session, version_id)
             result.summary.matches_generated = existing_match_count
             logger.info(
                 f"BUILD: Matches already exist for version {version_id} ({existing_match_count} matches). "

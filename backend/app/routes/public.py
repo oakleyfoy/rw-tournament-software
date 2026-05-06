@@ -798,9 +798,17 @@ def public_bracket(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
-    from app.services.draw_plan_engine import repair_existing_drop_in_wiring
+    from app.services.draw_plan_engine import (
+        repair_bracket_placeholder_source_wiring,
+        repair_existing_drop_in_wiring,
+    )
 
+    wiring_changed = False
     if repair_existing_drop_in_wiring(session, version.id, event_id):
+        wiring_changed = True
+    if repair_bracket_placeholder_source_wiring(session, version.id, event_id):
+        wiring_changed = True
+    if wiring_changed:
         session.commit()
 
     div_upper = division_code.upper()

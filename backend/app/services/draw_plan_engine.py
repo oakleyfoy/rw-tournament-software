@@ -1740,3 +1740,100 @@ def repair_existing_drop_in_wiring(
         )
 
     return repaired
+
+
+def repair_bracket_placeholder_source_wiring(
+    session,
+    schedule_version_id: int,
+    event_id: Optional[int] = None,
+) -> int:
+    """
+    Populate source_match_a_id / source_match_b_id from placeholders when missing.
+
+    Bracket rows often store placeholders like ``WINNER:..._M1`` or a raw
+    ``{prefix}_WF_R2_W09`` token equal to a WF match_code. If the FK wiring
+    step never ran (older builds, partial migrations, or clone quirks), the
+    public bracket shows generic "Winner I" text and consolation layout
+    breaks because source ids are absent.
+
+    Idempotent: only fills sides where the corresponding source_*_id is NULL.
+    """
+    from sqlmodel import select
+
+    from app.models.match import Match
+
+    query = select(Match).where(Match.schedule_version_id == schedule_version_id)
+    if event_id is not None:
+        query = query.where(Match.event_id == event_id)
+
+    matches = session.exec(query).all()
+    if not matches:
+        return 0
+
+    code_to_match = {m.match_code: m for m in matches if m.match_code}
+    sides_wired = 0
+
+    def wire_side(m: Match, placeholder: Optional[str], side: str) -> None:
+        nonlocal sides_wired
+        ph = (placeholder or "").strip()
+        if not ph:
+            return
+        if side == "A" and m.source_match_a_id is not None:
+            return
+        if side == "B" and m.source_match_b_id is not None:
+            return
+
+        ref_match: Optional[Match] = None
+        role: Optional[str] = None
+
+        if ":" in ph:
+            parts = ph.split(":", 1)
+            role_candidate = parts[0].strip().upper()
+            ref_code = parts[1].strip() if len(parts) > 1 else ""
+            if role_candidate in ("WINNER", "LOSER") and ref_code in code_to_match:
+                ref_match = code_to_match[ref_code]
+                role = role_candidate
+        elif ph in code_to_match:
+            ref_match = code_to_match[ph]
+            mc = m.match_code or ""
+            bracket_label = ""
+            # Longer codes first so BWW does not pair with BWL, etc.
+            for bl in ("BLL", "BLW", "BWL", "BWW"):
+                if bl in mc:
+                    bracket_label = bl[1:]
+                    break
+            if bracket_label in ("WW", "LW"):
+                role = "WINNER"
+            elif bracket_label in ("WL", "LL"):
+                role = "LOSER"
+
+        if ref_match and ref_match.id is not None and role in ("WINNER", "LOSER"):
+            if side == "A":
+                m.source_match_a_id = ref_match.id
+                m.source_a_role = role
+            else:
+                m.source_match_b_id = ref_match.id
+                m.source_b_role = role
+            sides_wired += 1
+
+    for m in matches:
+        mt = (m.match_type or "").upper()
+        if mt not in ("MAIN", "CONSOLATION"):
+            continue
+        before_a = m.source_match_a_id
+        before_b = m.source_match_b_id
+        wire_side(m, m.placeholder_side_a, "A")
+        wire_side(m, m.placeholder_side_b, "B")
+        if m.source_match_a_id != before_a or m.source_match_b_id != before_b:
+            session.add(m)
+
+    if sides_wired:
+        session.flush()
+        logger.info(
+            "Repaired bracket placeholder wiring: %s sides for version %s event %s",
+            sides_wired,
+            schedule_version_id,
+            event_id,
+        )
+
+    return sides_wired
