@@ -10399,6 +10399,7 @@ export default function TournamentDeskPage() {
 
   const getCompactDivisionLabel = (matchCode?: string | null): string => {
     const code = (matchCode || '').toUpperCase()
+    if (code.includes('_WF_')) return 'WF'
     if (code.includes('BWW') || code.includes('POOLA')) return 'DIV I'
     if (code.includes('BWL') || code.includes('POOLB')) return 'DIV II'
     if (code.includes('BLW') || code.includes('POOLC')) return 'DIV III'
@@ -10464,59 +10465,67 @@ export default function TournamentDeskPage() {
     })
     const leftPlayer = playerSlots[0]
     const rightPlayer = playerSlots[1]
+    const teamControl = (
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'auto auto auto auto auto',
+        gap: 6,
+        alignItems: 'center',
+        minWidth: 0,
+      }}>
+        {leftPlayer.towelColor ? (
+          <TowelColorPill colorName={leftPlayer.towelColor} reportUrl={leftPlayer.reportUrl} labelMode="swatch" />
+        ) : <span style={{ width: 24, height: 14, display: 'inline-block' }} />}
+        {renderCheckInPlayerCircle(leftPlayer.checked, leftPlayer.disabled, leftPlayer.onClick)}
+        <span style={{
+          minWidth: 0,
+          whiteSpace: 'nowrap',
+          fontSize: 11,
+          color: '#37474f',
+          fontWeight: 700,
+          textAlign: 'center',
+        }}>
+          {teamLabel}
+        </span>
+        {renderCheckInPlayerCircle(rightPlayer.checked, rightPlayer.disabled, rightPlayer.onClick)}
+        {rightPlayer.towelColor ? (
+          <TowelColorPill colorName={rightPlayer.towelColor} reportUrl={rightPlayer.reportUrl} labelMode="swatch" />
+        ) : <span style={{ width: 24, height: 14, display: 'inline-block' }} />}
+      </div>
+    )
+    const checkInButton = (
+      <button
+        type="button"
+        disabled={!entry.checkinEnabled}
+        onClick={() => entry.checkinEnabled && cm && handleSideTeamCheckIn(cm, side, state)}
+        style={{
+          padding: '4px 8px',
+          fontSize: 10,
+          fontWeight: 700,
+          borderRadius: 6,
+          border: '1px solid #90a4ae',
+          backgroundColor: fullTeamChecked ? '#2e7d32' : '#fff',
+          color: fullTeamChecked ? '#fff' : '#455a64',
+          cursor: entry.checkinEnabled ? 'pointer' : 'default',
+          opacity: entry.checkinEnabled ? 1 : 0.5,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        CHECK-IN
+      </button>
+    )
+
     return (
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'minmax(0,1fr) auto',
+        gridTemplateColumns: side === 'B' ? 'auto minmax(0,1fr)' : 'minmax(0,1fr) auto',
         gap: 10,
         alignItems: 'center',
         minWidth: 0,
       }}>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'auto auto auto auto auto',
-          gap: 6,
-          alignItems: 'center',
-          minWidth: 0,
-        }}>
-          {leftPlayer.towelColor ? (
-            <TowelColorPill colorName={leftPlayer.towelColor} reportUrl={leftPlayer.reportUrl} labelMode="swatch" />
-          ) : <span style={{ width: 24, height: 14, display: 'inline-block' }} />}
-          {renderCheckInPlayerCircle(leftPlayer.checked, leftPlayer.disabled, leftPlayer.onClick)}
-          <span style={{
-            minWidth: 0,
-            whiteSpace: 'nowrap',
-            fontSize: 11,
-            color: '#37474f',
-            fontWeight: 700,
-            textAlign: 'center',
-          }}>
-            {teamLabel}
-          </span>
-          {renderCheckInPlayerCircle(rightPlayer.checked, rightPlayer.disabled, rightPlayer.onClick)}
-          {rightPlayer.towelColor ? (
-            <TowelColorPill colorName={rightPlayer.towelColor} reportUrl={rightPlayer.reportUrl} labelMode="swatch" />
-          ) : <span style={{ width: 24, height: 14, display: 'inline-block' }} />}
-        </div>
-        <button
-          type="button"
-          disabled={!entry.checkinEnabled}
-          onClick={() => entry.checkinEnabled && cm && handleSideTeamCheckIn(cm, side, state)}
-          style={{
-            padding: '4px 8px',
-            fontSize: 10,
-            fontWeight: 700,
-            borderRadius: 6,
-            border: '1px solid #90a4ae',
-            backgroundColor: fullTeamChecked ? '#2e7d32' : '#fff',
-            color: fullTeamChecked ? '#fff' : '#455a64',
-            cursor: entry.checkinEnabled ? 'pointer' : 'default',
-            opacity: entry.checkinEnabled ? 1 : 0.5,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          CHECK-IN
-        </button>
+        {side === 'B' && checkInButton}
+        {teamControl}
+        {side !== 'B' && checkInButton}
       </div>
     )
   }
@@ -10967,15 +10976,14 @@ export default function TournamentDeskPage() {
                                     }}>
                                       <div style={{
                                         display: 'grid',
-                                        gridTemplateColumns: 'auto auto auto',
-                                        gap: 10,
+                                        gridTemplateColumns: 'minmax(0, 1fr) 68px minmax(0, 1fr)',
+                                        gap: 8,
                                         alignItems: 'center',
-                                        justifyContent: 'space-between',
                                       }}>
                                         <div>
                                           {renderCheckInTeamInline(entry, 'B', entry.sideB)}
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, whiteSpace: 'nowrap' }}>
                                           <EventBadge name={entry.match.event_name} />
                                           <Badge label={getCompactDivisionLabel(entry.match.match_code)} bg="#455a64" color="#fff" />
                                         </div>
