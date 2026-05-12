@@ -10475,7 +10475,7 @@ export default function TournamentDeskPage() {
         gridTemplateColumns: 'auto auto auto auto auto',
         gap: 4,
         alignItems: 'center',
-        justifyContent: side === 'B' ? 'end' : 'start',
+        justifyContent: 'center',
         minWidth: 0,
       }}>
         {leftPlayer.towelColor ? (
