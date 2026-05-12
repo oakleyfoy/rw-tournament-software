@@ -1187,18 +1187,27 @@ def _build_checkin_snapshot(
                     fallback_name = slot_candidates[0] if slot_candidates else None
                     if not fallback_name:
                         continue
+                    fallback_player_id = lookup_row.player_id if lookup_row else None
+                    fallback_checkin = (
+                        player_checkin_map.get((m.id, side_key, fallback_player_id))
+                        if fallback_player_id is not None else None
+                    )
+                    fallback_checked = bool(fallback_checkin and fallback_checkin.checked_in)
+                    fallback_checked_at = fallback_checkin.checked_in_at if fallback_checkin else None
+                    if fallback_checked and fallback_checked_at:
+                        side_player_times.append(fallback_checked_at)
                     player_states.append(
                         PlayerCheckInState(
-                            player_id=None,
+                            player_id=fallback_player_id,
                             player_display=fallback_name,
-                            checked_in=False,
-                            checked_in_at=None,
+                            checked_in=fallback_checked,
+                            checked_in_at=fallback_checked_at.isoformat() if fallback_checked_at else None,
                             towel_color=lookup_row.towel_color if lookup_row else None,
                             report_url=lookup_row.report_url if lookup_row else None,
                         )
                     )
 
-            players_total = len(side_players)
+            players_total = len(side_players) or len([p for p in player_states if p.player_id is not None])
             players_checked = len([p for p in player_states if p.checked_in])
             side_ready = team_checked or (players_total > 0 and players_checked == players_total)
             ready_at_dt: Optional[datetime] = None
@@ -2128,7 +2137,14 @@ def set_player_checkin(
         )
     ).first()
     if not valid_link:
-        raise HTTPException(status_code=400, detail="Player is not on this team roster")
+        lookup_link = session.exec(
+            select(TemporaryPlayerLookup).where(
+                TemporaryPlayerLookup.tournament_id == tournament_id,
+                TemporaryPlayerLookup.player_id == payload.player_id,
+            )
+        ).first()
+        if not lookup_link:
+            raise HTTPException(status_code=400, detail="Player is not on this team roster")
 
     row = session.exec(
         select(MatchPlayerCheckIn).where(

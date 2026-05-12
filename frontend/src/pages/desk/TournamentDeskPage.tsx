@@ -10457,9 +10457,13 @@ export default function TournamentDeskPage() {
         towelColor: player?.towel_color || null,
         reportUrl: player?.report_url || null,
         checked: Boolean(state.team_checked_in || player?.checked_in),
-        disabled: !entry.checkinEnabled || player?.player_id == null || !cm,
-        onClick: (entry.checkinEnabled && cm && player?.player_id != null)
-          ? () => handlePlayerCheckIn(cm, side, player.player_id!, !Boolean(state.team_checked_in || player.checked_in))
+        disabled: !entry.checkinEnabled || !cm,
+        onClick: (entry.checkinEnabled && cm)
+          ? () => (
+              player?.player_id != null
+                ? handlePlayerCheckIn(cm, side, player.player_id, !Boolean(state.team_checked_in || player.checked_in))
+                : handleSideTeamCheckIn(cm, side, state)
+            )
           : undefined,
       }
     })
@@ -10469,8 +10473,9 @@ export default function TournamentDeskPage() {
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'auto auto auto auto auto',
-        gap: 6,
+        gap: 4,
         alignItems: 'center',
+        justifyContent: side === 'B' ? 'end' : 'start',
         minWidth: 0,
       }}>
         {leftPlayer.towelColor ? (

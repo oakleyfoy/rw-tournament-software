@@ -3558,6 +3558,51 @@ def test_temporary_player_lookup_matches_team_roster_names_without_player_rows(c
     assert side_b_players[1]["towel_color"] == "Lime"
 
 
+def test_checkin_player_lookup_slots_without_team_player_links_are_clickable(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    teams[0].name = "Venitta Reeves / Partner One"
+    teams[0].display_name = "Venitta Reeves / Partner One"
+    session.add(teams[0])
+    venitta = Player(tournament_id=t.id, full_name="Venitta Reeves")
+    session.add(venitta)
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Venitta Reeves\tBlack\thttps://example.com/reports/venitta\n"
+            )
+        },
+    )
+    assert import_resp.status_code == 200
+    assert import_resp.json()["items"][0]["player_id"] == venitta.id
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    player_state = match_state["side_a"]["players"][0]
+    assert player_state["player_id"] == venitta.id
+    assert player_state["checked_in"] is False
+
+    checked = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{matches[0].id}/checkin/player",
+        json={"version_id": v.id, "side": "A", "player_id": venitta.id, "checked_in": True},
+    )
+    assert checked.status_code == 200
+    checked_match = next(m for m in checked.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    checked_player = checked_match["side_a"]["players"][0]
+    assert checked_player["player_id"] == venitta.id
+    assert checked_player["checked_in"] is True
+
+
 def test_temporary_player_lookup_matches_last_first_roster_names(client, session):
     t, v, ev, teams, matches, _slots = _setup_draft_for_move(session)
     teams[0].name = "Reeves, Venitta / Partner, Sample"
