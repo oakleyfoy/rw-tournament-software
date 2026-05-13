@@ -1917,6 +1917,54 @@ def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
     assert outside_data["sent"] == 3
 
 
+def test_first_match_dry_run_reports_recipients_when_checkin_template_inactive(
+    client, session, setup_tournament_with_teams
+):
+    """Manual TEST should project recipients even when the template was saved inactive."""
+    tournament, event, teams = setup_tournament_with_teams
+
+    _create_single_match_schedule(
+        session=session,
+        tournament_id=tournament.id,
+        event_id=event.id,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        day_date=date(2026, 3, 15),
+        start_time_local=time(10, 0),
+        end_time_local=time(11, 0),
+    )
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=tournament.id,
+            auto_checkin_first_match=False,
+            test_mode=False,
+        )
+    )
+    session.add(
+        SmsTemplate(
+            tournament_id=tournament.id,
+            message_type="checkin_first_match",
+            template_body=DEFAULT_SMS_TEMPLATES["checkin_first_match"],
+            is_active=False,
+        )
+    )
+    session.commit()
+
+    dry = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-first-match-reminders",
+        params={
+            "dry_run": "true",
+            "template_mode": "checkin_management",
+        },
+    )
+    assert dry.status_code == 200
+    dry_data = dry.json()
+    assert dry_data["template_inactive"] is True
+    assert dry_data["considered_teams"] == 2
+    assert dry_data["eligible_teams"] == 2
+    assert dry_data["sent"] == 3
+
+
 def test_first_match_runner_endpoint_window_param_is_ignored(
     client, session, setup_tournament_with_teams
 ):

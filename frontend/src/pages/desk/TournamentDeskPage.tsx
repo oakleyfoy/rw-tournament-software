@@ -7156,7 +7156,10 @@ function SmsAdminTab({
   const [lastRrReminderRun, setLastRrReminderRun] = useState<SmsRrAutomationRunResponse | null>(null)
   const [smsTemplateMode, setSmsTemplateMode] = useState<'court_management' | 'checkin_management'>('court_management')
   const [quickTestPhone, setQuickTestPhone] = useState('')
-  const onlyActiveCheckinTemplateType = 'checkin_post_match_next'
+  const activeCheckinTemplateTypes = useMemo(
+    () => new Set(['checkin_first_match', 'checkin_rr_first_match', 'checkin_post_match_next']),
+    []
+  )
   const [savingQuickTestPhone, setSavingQuickTestPhone] = useState(false)
   const [rrMixedEventId, setRrMixedEventId] = useState('')
   const [events, setEvents] = useState<Event[]>([])
@@ -7841,7 +7844,7 @@ function SmsAdminTab({
         )
       : false
     const hasMismatch = rows.some(row => {
-      const shouldBeActive = row.message_type === onlyActiveCheckinTemplateType
+      const shouldBeActive = activeCheckinTemplateTypes.has(row.message_type)
       return row.is_active !== shouldBeActive
     })
     if (settingsDraft) {
@@ -7851,7 +7854,7 @@ function SmsAdminTab({
     setApplyingTemplateMode(true)
     setError(null)
     const nextTemplates = rows.map(row => {
-      const shouldBeActive = row.message_type === onlyActiveCheckinTemplateType
+      const shouldBeActive = activeCheckinTemplateTypes.has(row.message_type)
       return { ...row, is_active: shouldBeActive }
     })
     setTemplates(nextTemplates)
@@ -7925,7 +7928,7 @@ function SmsAdminTab({
     checkin_post_match_next: 'Check-In: Post-match next (no court)',
     checkin_court_assigned: 'Check-In: Court assigned (go to your court)',
   }
-  const checkinTemplateRows = templates.filter(row => row.message_type === onlyActiveCheckinTemplateType)
+  const checkinTemplateRows = templates.filter(row => activeCheckinTemplateTypes.has(row.message_type))
   const textsEnabled = settingsDraft?.texts_enabled ?? true
   const visibleLogs = logs.filter(l => {
     const status = String(l.status || '').trim().toLowerCase()
@@ -7981,7 +7984,7 @@ function SmsAdminTab({
         </div>
         <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
           Selected template set: <strong>Check-In Management</strong>.
-          {' '}Send anytime. TEST mode + allowlist is the active safety check.
+          {' '}First-match texts are manual only. TEST mode + allowlist is the active safety check.
         </div>
         {settingsDraft && (
           <div style={{ marginTop: 10, padding: 10, border: `1px solid ${textsEnabled ? '#dcedc8' : '#ffcdd2'}`, borderRadius: 6, backgroundColor: textsEnabled ? '#f9fff1' : '#fff5f5' }}>
@@ -8609,14 +8612,14 @@ function SmsAdminTab({
                     </button>
                   </div>
                   <div style={{ marginTop: 6, fontSize: 11, color: '#666' }}>
-                    All other SMS templates are hidden here and kept inactive.
+                    First-match and post-match check-in templates are available here; other automatic SMS templates stay inactive.
                   </div>
                 </div>
               ))}
             </div>
           ) : (
             <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic' }}>
-              Template is hidden. Click "Show templates" to edit the post-match check-in message.
+              Templates are hidden. Click "Show templates" to edit the manual first-match or post-match check-in messages.
             </div>
           )}
         </div>

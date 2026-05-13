@@ -459,9 +459,6 @@ class SmsAutomationEngine:
             else "first_match"
         )
         active, _template = self._template_for(message_type)
-        if not active:
-            stats["template_inactive"] = True
-            return stats
 
         tournament_tz_name = (self.tournament.timezone or "UTC").strip() or "UTC"
         try:
@@ -473,6 +470,10 @@ class SmsAutomationEngine:
 
         first_rows = self._first_match_rows_by_team()
         stats["considered_teams"] = len(first_rows)
+        if not active:
+            stats["template_inactive"] = True
+            if not dry_run:
+                return stats
         # Manual first-match runs are intentionally repeatable; each live run
         # gets a unique dedupe suffix so users can re-send whenever needed.
         key = (resend_run_key or "").strip()
@@ -563,12 +564,13 @@ class SmsAutomationEngine:
             else "rr_first_match"
         )
         active, _template = self._template_for(message_type)
-        if not active:
-            stats["template_inactive"] = True
-            return stats
 
         first_rows = self._first_rr_match_rows_by_team(event_id=event_id)
         stats["considered_teams"] = len(first_rows)
+        if not active:
+            stats["template_inactive"] = True
+            if not dry_run:
+                return stats
         # Manual RR first-match runs are intentionally repeatable; each live run
         # gets a unique dedupe suffix so users can re-send whenever needed.
         key = (resend_run_key or "").strip()
