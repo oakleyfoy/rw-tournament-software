@@ -685,9 +685,13 @@ export default function PublicRoundRobinPage() {
     }
     return pairs
   }, [poolsSorted])
+  const tvPoolParam = searchParams.get('tv_pool')?.toUpperCase() || null
+  const tvPoolsSorted = tvPoolParam
+    ? poolsSorted.filter((pool) => pool.pool_code.toUpperCase() === tvPoolParam)
+    : poolsSorted
   const poolPages: RRPool[][] = []
-  for (let i = 0; i < poolsSorted.length; i += 4) {
-    poolPages.push(poolsSorted.slice(i, i + 4))
+  for (let i = 0; i < tvPoolsSorted.length; i += 4) {
+    poolPages.push(tvPoolsSorted.slice(i, i + 4))
   }
   const tvPageParam = searchParams.get('tv_page')
   const tvRotationParam = searchParams.get('tv_rotation')
@@ -698,6 +702,7 @@ export default function PublicRoundRobinPage() {
     ? Math.min(tvRequestedPage, tvPageCount - 1)
     : tvRotation % tvPageCount
   const tvActivePools = poolPages[tvPageIndex] || []
+  const tvSinglePool = tvPoolParam ? tvActivePools[0] || null : null
   const tvMatchColumns = [
     tvActivePools[0] || null,
     tvActivePools[1] || null,
@@ -739,7 +744,7 @@ export default function PublicRoundRobinPage() {
 
   if (!data) return null
 
-  const headerText = `${data.event_name} Round Robin`.toUpperCase()
+  const headerText = `${data.event_name} Round Robin${tvSinglePool ? ` ${tvSinglePool.pool_label}` : ''}`.toUpperCase()
 
   return (
     <div className="rr-print-root" style={{
@@ -835,13 +840,43 @@ export default function PublicRoundRobinPage() {
       }}>
         <div data-rr-inner>
           {tvMode ? (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr)',
-              gap: 10,
-              height: '100%',
-              alignItems: 'start',
-            }}>
+            tvSinglePool ? (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
+                gap: 12,
+                height: '100%',
+                alignItems: 'start',
+              }}>
+                <PoolMatchesTv pool={tvSinglePool} showCourtInfo={showCourtInfo} />
+                {standingsByCode.get(tvSinglePool.pool_code) ? (
+                  <PoolStandingsTableTv standings={standingsByCode.get(tvSinglePool.pool_code)!} />
+                ) : (
+                  <div style={{
+                    border: '1px solid #d9deeb',
+                    borderRadius: 8,
+                    backgroundColor: '#fcfdff',
+                    minHeight: 120,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#90a4ae',
+                    fontSize: 12,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.6,
+                  }}>
+                    No Standings
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr)',
+                gap: 10,
+                height: '100%',
+                alignItems: 'start',
+              }}>
               <div style={{ minWidth: 0, minHeight: 0 }}>
                 {tvMatchColumns[0] ? (
                   <PoolMatchesTv pool={tvMatchColumns[0]} showCourtInfo={showCourtInfo} />
@@ -959,6 +994,7 @@ export default function PublicRoundRobinPage() {
                 )}
               </div>
             </div>
+            )
           ) : (
             <>
               {poolPairs.map((pair, pi) => (

@@ -2042,6 +2042,7 @@ export interface PublicEventItem {
   has_waterfall: boolean
   has_round_robin: boolean
   divisions: DivisionItem[]
+  round_robin_divisions?: DivisionItem[]
 }
 
 export interface PublicDrawsListResponse {

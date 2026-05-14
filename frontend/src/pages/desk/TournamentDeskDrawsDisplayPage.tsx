@@ -210,16 +210,6 @@ export default function TournamentDeskDrawsDisplayPage() {
           sequence: sequence++,
         })
       }
-      if (event.has_round_robin) {
-        panels.push({
-          key: `roundrobin:${event.event_id}`,
-          label: `${event.name} Round Robin`,
-          path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1`,
-          categoryOrder,
-          panelOrder: 1,
-          sequence: sequence++,
-        })
-      }
       event.divisions.forEach((division) => {
         panels.push({
           key: `bracket:${event.event_id}:${division.code}`,
@@ -230,6 +220,28 @@ export default function TournamentDeskDrawsDisplayPage() {
           sequence: sequence++,
         })
       })
+      const rrDivisions = event.round_robin_divisions || []
+      if (rrDivisions.length > 0) {
+        rrDivisions.forEach((division) => {
+          panels.push({
+            key: `roundrobin:${event.event_id}:${division.code}`,
+            label: `${event.name} Round Robin ${division.label}`,
+            path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1&tv_pool=${division.code}`,
+            categoryOrder,
+            panelOrder: 2,
+            sequence: sequence++,
+          })
+        })
+      } else if (event.has_round_robin) {
+        panels.push({
+          key: `roundrobin:${event.event_id}`,
+          label: `${event.name} Round Robin`,
+          path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1`,
+          categoryOrder,
+          panelOrder: 2,
+          sequence: sequence++,
+        })
+      }
     })
     return panels.sort((a, b) =>
       (a.categoryOrder - b.categoryOrder) ||

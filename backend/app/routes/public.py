@@ -109,6 +109,7 @@ class PublicEventItem(BaseModel):
     has_waterfall: bool
     has_round_robin: bool = False
     divisions: List[DivisionItem] = []
+    round_robin_divisions: List[DivisionItem] = []
 
 
 class NotPublishedResponse(BaseModel):
@@ -441,6 +442,7 @@ def public_draws_list(
         has_rr = rr_count > 0
 
         divs: List[DivisionItem] = []
+        rr_divs: List[DivisionItem] = []
         bracket_codes = session.exec(
             select(Match.match_code).where(
                 Match.event_id == e.id,
@@ -459,6 +461,19 @@ def public_draws_list(
         for dc in _DIV_ORDER:
             if dc in found:
                 divs.append(DivisionItem(code=dc, label=_DIV_LABELS[dc]))
+        rr_found = set()
+        for mc in bracket_codes:
+            if not mc:
+                continue
+            upper_code = mc.upper()
+            if "_RR_" not in upper_code:
+                continue
+            for pool_code in _POOL_LABELS:
+                if f"_{pool_code}_" in upper_code:
+                    rr_found.add(pool_code)
+        for pool_code, label in _POOL_LABELS.items():
+            if pool_code in rr_found:
+                rr_divs.append(DivisionItem(code=pool_code, label=label))
 
         items.append(PublicEventItem(
             event_id=e.id,
@@ -468,6 +483,7 @@ def public_draws_list(
             has_waterfall=has_wf,
             has_round_robin=has_rr,
             divisions=divs,
+            round_robin_divisions=rr_divs,
         ))
 
     return PublicDrawsListResponse(
