@@ -205,8 +205,17 @@ export default function TournamentDeskDrawsDisplayPage() {
         })
       })
       const rrDivisions = event.round_robin_divisions || []
-      if (rrDivisions.length > 0) {
-        rrDivisions.forEach((division) => {
+      if (rrDivisions.length > 4) {
+        const extraDivisions = rrDivisions.slice(4)
+        panels.push({
+          key: `roundrobin:${event.event_id}:combined`,
+          label: `${event.name} Round Robin Divisions I-IV`,
+          path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1&tv_page=0`,
+          categoryOrder,
+          panelOrder: 2,
+          sequence: sequence++,
+        })
+        extraDivisions.forEach((division) => {
           panels.push({
             key: `roundrobin:${event.event_id}:${division.code}`,
             label: `${event.name} Round Robin ${division.label}`,
@@ -215,6 +224,15 @@ export default function TournamentDeskDrawsDisplayPage() {
             panelOrder: 2,
             sequence: sequence++,
           })
+        })
+      } else if (rrDivisions.length > 0) {
+        panels.push({
+          key: `roundrobin:${event.event_id}`,
+          label: `${event.name} Round Robin`,
+          path: `/t/${tid}/draws/${event.event_id}/roundrobin?tv=1&tv_page=0`,
+          categoryOrder,
+          panelOrder: 2,
+          sequence: sequence++,
         })
       } else if (event.has_round_robin) {
         panels.push({
