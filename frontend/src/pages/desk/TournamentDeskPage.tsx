@@ -10575,24 +10575,31 @@ export default function TournamentDeskPage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            onClick={() => {
-              if (!tid) return
-              window.open(`/desk/t/${tid}/draws-display?kiosk=1`, '_blank', 'noopener,noreferrer')
-            }}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: tid ? 'pointer' : 'default',
-            }}
-          >
-            Draws Display
-          </button>
+          {[1, 2, 3].map(screenNumber => (
+            <button
+              key={screenNumber}
+              onClick={() => {
+                if (!tid) return
+                window.open(
+                  `/desk/t/${tid}/draws-display?kiosk=1&screen=${screenNumber}&screens=3`,
+                  '_blank',
+                  'noopener,noreferrer'
+                )
+              }}
+              style={{
+                padding: '6px 10px',
+                fontSize: 12,
+                fontWeight: 600,
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                cursor: tid ? 'pointer' : 'default',
+              }}
+            >
+              Draws {screenNumber}
+            </button>
+          ))}
           <button
             onClick={() => {
               if (!tid) return

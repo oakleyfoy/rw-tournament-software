@@ -14,6 +14,21 @@ type DrawPanel = {
 const ROTATION_MS = 20_000
 const PANEL_GAP_PX = 10
 
+function getDrawScreenConfig(): { screen: number; screens: number; enabled: boolean } {
+  if (typeof window === 'undefined') {
+    return { screen: 1, screens: 1, enabled: false }
+  }
+  const params = new URLSearchParams(window.location.search)
+  const rawScreen = parseInt(params.get('screen') || '', 10)
+  const rawScreens = parseInt(params.get('screens') || '', 10)
+  if (!Number.isFinite(rawScreen) || !Number.isFinite(rawScreens) || rawScreens <= 1) {
+    return { screen: 1, screens: 1, enabled: false }
+  }
+  const screens = Math.min(Math.max(rawScreens, 1), 12)
+  const screen = Math.min(Math.max(rawScreen, 1), screens)
+  return { screen, screens, enabled: true }
+}
+
 function EmptyPanel() {
   return (
     <div style={{
@@ -157,6 +172,7 @@ export default function TournamentDeskDrawsDisplayPage() {
   const [kioskMode, setKioskMode] = useState<boolean>(initialKiosk)
   const [rotationTick, setRotationTick] = useState(0)
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const screenConfig = useMemo(() => getDrawScreenConfig(), [])
 
   const setKiosk = useCallback((enabled: boolean) => {
     setKioskMode(enabled)
@@ -223,9 +239,13 @@ export default function TournamentDeskDrawsDisplayPage() {
   }, [draws, tid])
 
   const panelsPerPage = 1
+  const screenPanels = useMemo(() => {
+    if (!screenConfig.enabled) return drawPanels
+    return drawPanels.filter((_panel, index) => index % screenConfig.screens === screenConfig.screen - 1)
+  }, [drawPanels, screenConfig])
 
   useEffect(() => {
-    if (drawPanels.length <= panelsPerPage) {
+    if (screenPanels.length <= panelsPerPage) {
       if (refreshRef.current) clearInterval(refreshRef.current)
       refreshRef.current = null
       return
@@ -237,7 +257,7 @@ export default function TournamentDeskDrawsDisplayPage() {
       if (refreshRef.current) clearInterval(refreshRef.current)
       refreshRef.current = null
     }
-  }, [drawPanels.length, panelsPerPage])
+  }, [screenPanels.length, panelsPerPage])
 
   useEffect(() => {
     const el = document.documentElement
@@ -250,13 +270,13 @@ export default function TournamentDeskDrawsDisplayPage() {
   }, [kioskMode])
 
   const visiblePanels = useMemo(() => {
-    if (drawPanels.length === 0) return [] as (DrawPanel | null)[]
-    if (drawPanels.length <= panelsPerPage) {
-      return drawPanels.slice(0, panelsPerPage)
+    if (screenPanels.length === 0) return [] as (DrawPanel | null)[]
+    if (screenPanels.length <= panelsPerPage) {
+      return screenPanels.slice(0, panelsPerPage)
     }
-    const start = (rotationTick * panelsPerPage) % drawPanels.length
-    return Array.from({ length: panelsPerPage }, (_value, index) => drawPanels[(start + index) % drawPanels.length])
-  }, [drawPanels, rotationTick, panelsPerPage])
+    const start = (rotationTick * panelsPerPage) % screenPanels.length
+    return Array.from({ length: panelsPerPage }, (_value, index) => screenPanels[(start + index) % screenPanels.length])
+  }, [screenPanels, rotationTick, panelsPerPage])
 
   if (loading) {
     return <div style={{ padding: 24, color: '#666' }}>Loading draws display...</div>
@@ -290,9 +310,11 @@ export default function TournamentDeskDrawsDisplayPage() {
           <div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{draws?.tournament_name || 'Draws Display'}</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-              {drawPanels.length > panelsPerPage
-                ? `Rotating ${panelsPerPage} draw panels every 20 seconds.`
-                : `Showing up to ${panelsPerPage} draw panel${panelsPerPage === 1 ? '' : 's'} at a time.`}
+              {screenConfig.enabled
+                ? `Draw Screen ${screenConfig.screen} of ${screenConfig.screens}: ${screenPanels.length} of ${drawPanels.length} panels assigned.`
+                : drawPanels.length > panelsPerPage
+                  ? `Rotating ${panelsPerPage} draw panels every 20 seconds.`
+                  : `Showing up to ${panelsPerPage} draw panel${panelsPerPage === 1 ? '' : 's'} at a time.`}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
