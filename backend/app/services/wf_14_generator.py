@@ -221,7 +221,9 @@ def generate_wf_14_matches(
     # -------------------------------------------------------------------------
     # Consolation flight — ranks 1–6 by original seed among WF R1 losers
     # -------------------------------------------------------------------------
+    cons_round_by_tag = {"FRI": 1, "SAT1": 2, "SAT2": 3}
     for cp in CONS_REGULAR_PAIRINGS:
+        cons_round = cons_round_by_tag[cp.schedule_tag]
         matches.append(
             Match(
                 tournament_id=spec.tournament_id,
@@ -229,8 +231,8 @@ def generate_wf_14_matches(
                 schedule_version_id=version_id,
                 match_code=f"{prefix}CONS_{cp.schedule_tag}_{cp.sequence:02d}",
                 match_type="MAIN",
-                round_number=1,
-                round_index=1,
+                round_number=cons_round,
+                round_index=cons_round,
                 sequence_in_round=cp.sequence,
                 placeholder_side_a=cons_loser_placeholder(cp.rank_a),
                 placeholder_side_b=cons_loser_placeholder(cp.rank_b),

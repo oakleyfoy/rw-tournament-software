@@ -241,6 +241,16 @@ function getBracketGroupKey(m: GridMatch): string {
   return `${m.event_id}|${m.stage}|${getDivisionCode(m)}`
 }
 
+/** WF_14 consolation MAIN matches (not Sunday cross-division placement). */
+function isWf14ConsMainMatch(m: GridMatch): boolean {
+  return m.stage === 'MAIN' && /_CONS_(FRI|SAT1|SAT2)_/.test(m.match_code)
+}
+
+function wf14ConsScheduleTag(match: GridMatch): 'FRI' | 'SAT1' | 'SAT2' | null {
+  const m = match.match_code.match(/_CONS_(FRI|SAT1|SAT2)_/)
+  return m ? (m[1] as 'FRI' | 'SAT1' | 'SAT2') : null
+}
+
 interface BracketBuckets {
   qf: GridMatch[]
   sf: GridMatch[]
@@ -702,6 +712,36 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     return [...new Set(rr.map((m) => m.round_index))].sort((a, b) => a - b)
   }, [gridMatches])
 
+  const wf14ConsGroups = useMemo(() => {
+    const tags: Array<{ tag: 'FRI' | 'SAT1' | 'SAT2'; label: string }> = [
+      { tag: 'FRI', label: 'Place Cons Fri (1v6, 2v5)' },
+      { tag: 'SAT1', label: 'Place Cons Sat block 1 (3v6, 4v5)' },
+      { tag: 'SAT2', label: 'Place Cons Sat block 2 (1v3, 2v4)' },
+    ]
+    const unassigned = unassignedMatches.filter(isWf14ConsMainMatch)
+    const all = gridMatches.filter(isWf14ConsMainMatch)
+    return tags
+      .map(({ tag, label }) => ({
+        tag,
+        label,
+        matches: unassigned.filter((m) => wf14ConsScheduleTag(m) === tag),
+        exists: all.some((m) => wf14ConsScheduleTag(m) === tag),
+      }))
+      .filter((g) => g.exists)
+  }, [unassignedMatches, gridMatches])
+
+  const wf14SunPlacementUnassigned = useMemo(
+    () =>
+      unassignedMatches.filter(
+        (m) => m.stage === 'PLACEMENT' && m.match_code.includes('_CONS_SUN_')
+      ),
+    [unassignedMatches]
+  )
+  const hasWf14SunPlacement = useMemo(
+    () => gridMatches.some((m) => m.stage === 'PLACEMENT' && m.match_code.includes('_CONS_SUN_')),
+    [gridMatches]
+  )
+
   // ── Bracket breakdown — grouped by event/stage/division, classified by position ──
   const bracketSlices = useMemo(() => {
     const bracketStages = new Set(['MAIN', 'CONSOLATION', 'PLACEMENT'])
@@ -729,6 +769,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     const allGroups = new Map<string, GridMatch[]>()
     for (const m of allBracket) {
       if (m.stage === 'PLACEMENT') continue
+      if (isWf14ConsMainMatch(m)) continue
       const key = getBracketGroupKey(m)
       if (!allGroups.has(key)) allGroups.set(key, [])
       allGroups.get(key)!.push(m)
@@ -1198,6 +1239,29 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
           </div>
         )}
 
+        {/* ── B2b: WF_14 consolation (by day block) ── */}
+        {wf14ConsGroups.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <span style={sectionLabelStyle}>Consolation (14-team WF)</span>
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 6, maxWidth: 640 }}>
+              Fri: 2 matches · Sat: 4 matches (two blocks of 2) · Sun cross-division placement is below.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {wf14ConsGroups.map((g) => (
+                <PlaceButton
+                  key={`cons-${g.tag}`}
+                  label={g.label}
+                  count={g.matches.length}
+                  busy={busy}
+                  busyLabel={`Cons ${g.tag}`}
+                  disabled={anyBusy || !canPlace}
+                  onClick={() => placeSubset(`Cons ${g.tag}`, g.matches)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── B3: Bracket (QFs / SFs+ConsSFs / Finals+Remaining) ── */}
         {(bracketSlices.hasMain || bracketSlices.hasCons) && (
           <div style={{ marginBottom: 12 }}>
@@ -1254,18 +1318,30 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
         )}
 
         {/* ── B4: Placement matches ── */}
-        {bracketSlices.hasPlacement && (
+        {(bracketSlices.hasPlacement || hasWf14SunPlacement) && (
           <div style={{ marginBottom: 12 }}>
             <span style={sectionLabelStyle}>Placement</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <PlaceButton
-                label="Place Placement Matches"
-                count={bracketSlices.placement.matches.length}
-                busy={busy}
-                busyLabel="Placement"
-                disabled={anyBusy || !canPlace}
-                onClick={() => placeSubset('Placement', bracketSlices.placement.matches)}
-              />
+              {hasWf14SunPlacement && (
+                <PlaceButton
+                  label="Place Cons Sun (A1–B1, A2–B2, A3–B3)"
+                  count={wf14SunPlacementUnassigned.length}
+                  busy={busy}
+                  busyLabel="Cons Sun"
+                  disabled={anyBusy || !canPlace}
+                  onClick={() => placeSubset('Cons Sun', wf14SunPlacementUnassigned)}
+                />
+              )}
+              {bracketSlices.hasPlacement && (
+                <PlaceButton
+                  label="Place Placement Matches"
+                  count={bracketSlices.placement.matches.length}
+                  busy={busy}
+                  busyLabel="Placement"
+                  disabled={anyBusy || !canPlace}
+                  onClick={() => placeSubset('Placement', bracketSlices.placement.matches)}
+                />
+              )}
             </div>
           </div>
         )}
