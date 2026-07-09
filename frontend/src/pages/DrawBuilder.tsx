@@ -56,7 +56,8 @@ import { EVENT_SUMMARY_HELP } from '../constants/eventSummaryHelp'
 // Import Phase 1 rules from single source of truth
 import {
   ALLOWED_TEAM_COUNTS,
-  PHASE1_SUPPORTED_TEAM_COUNTS,
+  PHASE1_SUPPORTED_TEAM_COUNTS_SORTED,
+  isPhase1TeamCount,
   requiredWfRounds,
   getValidFamilyForTeamCount,
   isTeamCountValidForFamily,
@@ -551,6 +552,9 @@ function DrawBuilder() {
         if (isValidTemplate) {
           templateType = savedTemplate
           wfRounds = savedWfRounds
+        } else if (validFamily) {
+          templateType = validFamily as TemplateType
+          wfRounds = requiredWfRounds(validFamily, n)
         }
       } catch (e) {
         // Invalid JSON, use auto-selected defaults
@@ -572,6 +576,12 @@ function DrawBuilder() {
     // Fallback to event.wf_block_minutes only when timing is absent from draw_plan_json.
     if (!event.draw_plan_json && event.wf_block_minutes) {
       waterfallMinutes = event.wf_block_minutes
+    }
+
+    // 14-team events always use the dedicated WF template (ignore stale RR_ONLY drafts).
+    if (n === 14) {
+      templateType = 'WF_14_TOP2_BYE'
+      wfRounds = requiredWfRounds('WF_14_TOP2_BYE', 14)
     }
 
     return {
@@ -603,8 +613,16 @@ function DrawBuilder() {
     }
 
     // Phase 1 supported team counts (using rules module)
-    if (!PHASE1_SUPPORTED_TEAM_COUNTS.includes(n)) {
-      errors.push(`Team count ${n} is not supported in Phase 1 (supported: ${PHASE1_SUPPORTED_TEAM_COUNTS.join(', ')})`)
+    if (!isPhase1TeamCount(n)) {
+      errors.push(
+        `Team count ${n} is not supported in Phase 1 (supported: ${PHASE1_SUPPORTED_TEAM_COUNTS_SORTED.join(', ')})`,
+      )
+    }
+
+    if (n === 14 && state.templateType !== 'WF_14_TOP2_BYE') {
+      errors.push(
+        '14 teams require template "14-team WF (top-2 rating byes + consolation flight)"',
+      )
     }
 
     // Template-specific validations using rules module

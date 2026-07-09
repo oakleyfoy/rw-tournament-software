@@ -24,6 +24,15 @@ export const PHASE1_SUPPORTED_TEAM_COUNTS = [
   ...ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE,
 ] as const;
 
+/** Sorted for stable UI error messages (includes 14 when WF_14_TOP2_BYE is enabled). */
+export const PHASE1_SUPPORTED_TEAM_COUNTS_SORTED = [...PHASE1_SUPPORTED_TEAM_COUNTS].sort(
+  (a, b) => a - b,
+);
+
+export function isPhase1TeamCount(teamCount: number): boolean {
+  return (PHASE1_SUPPORTED_TEAM_COUNTS as readonly number[]).includes(teamCount);
+}
+
 // Unsupported in Phase 1 (Phase 2 candidates)
 export const PHASE2_TEAM_COUNTS = [18, 22, 26, 30] as const;
 
