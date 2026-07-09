@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, delete
 
 from app.database import get_session
 from app.main import app
@@ -37,12 +37,12 @@ def session_fixture():
     Tables persist across tests within a session but are isolated per test run.
     """
     # Import all models to ensure they're registered BEFORE create_all
-    from app.models.event import Event  # noqa: F401
     from app.models.auth_session import AuthSession  # noqa: F401
+    from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
     from app.models.match_assignment import MatchAssignment  # noqa: F401
-    from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.player import Player  # noqa: F401
+    from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.schedule_slot import ScheduleSlot  # noqa: F401
     from app.models.schedule_version import ScheduleVersion  # noqa: F401
     from app.models.sms_consent_event import SmsConsentEvent  # noqa: F401
@@ -60,7 +60,16 @@ def session_fixture():
     with Session(test_engine) as session:
         yield session
 
-    # Note: With StaticPool + :memory:, data persists across tests in same run
+    # Shared in-memory DB: clear auth so tests after test_auth.py are not forced to send Bearer tokens.
+    with Session(test_engine) as cleanup:
+        from app.models.auth_session import AuthSession
+        from app.models.user_account import UserAccount
+
+        cleanup.exec(delete(AuthSession))
+        cleanup.exec(delete(UserAccount))
+        cleanup.commit()
+
+    # Note: With StaticPool + :memory:, other table data persists across tests in same run
     # but is isolated per pytest invocation. This matches previous behavior.
 
 

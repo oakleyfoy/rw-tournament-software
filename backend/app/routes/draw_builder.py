@@ -8,13 +8,13 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
-from app.models.team import Team
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
 from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.schedule_version import ScheduleVersion
 from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
+from app.models.team import Team
 from app.utils.match_generation import (
     generate_consolation_matches,
     generate_placement_matches,
@@ -129,7 +129,7 @@ class FinalizeRequest(BaseModel):
 def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session = Depends(get_session)):
     """
     Finalize draw plan - validates, generates matches, and sets status to final
-    
+
     This creates match records based on the draw plan configuration:
     - WF matches (waterfall rounds)
     - Standard matches (main bracket or round robin)
@@ -163,8 +163,9 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
         compute_inventory,
         generate_matches_for_event,
         normalize_draw_plan_for_team_count,
+        normalize_template_key,
     )
-    from app.services.draw_plan_rules import normalize_template_key, validate_template_config
+    from app.services.draw_plan_rules import validate_template_config
 
     draw_plan = normalize_draw_plan_for_team_count(event.team_count or 0, draw_plan)
     template_type = draw_plan.get("template_type")  # Snake case from frontend
@@ -177,20 +178,18 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     config_err = validate_template_config(template_key, event.team_count, wf_rounds)
     if config_err:
         raise HTTPException(status_code=422, detail=config_err)
-    
+
     # Validate template_type matches team_count constraints
     if template_type == "WF_TO_POOLS_4" and event.team_count % 4 != 0:
         raise HTTPException(
-            status_code=422,
-            detail=f"WF_TO_POOLS_4 requires team_count divisible by 4, got {event.team_count}"
+            status_code=422, detail=f"WF_TO_POOLS_4 requires team_count divisible by 4, got {event.team_count}"
         )
-    
+
     if template_type == "WF_TO_BRACKETS_8" and event.team_count not in [8, 12, 16, 32]:
         raise HTTPException(
-            status_code=422,
-            detail=f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,32}}, got {event.team_count}"
+            status_code=422, detail=f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,32}}, got {event.team_count}"
         )
-    
+
     # Ensure draw_plan_json is persisted (full replace, not partial)
     # This ensures we don't have stale fields from old plans
     event.draw_plan_json = json.dumps(draw_plan)
@@ -233,15 +232,10 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
         if inventory.has_errors():
             raise HTTPException(status_code=422, detail="; ".join(inventory.errors))
         linked_team_ids = [
-            t.id
-            for t in session.exec(
-                select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)
-            ).all()
+            t.id for t in session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)).all()
         ]
         existing_codes: set[str] = set(
-            session.exec(
-                select(Match.match_code).where(Match.schedule_version_id == schedule_version_id)
-            ).all()
+            session.exec(select(Match.match_code).where(Match.schedule_version_id == schedule_version_id)).all()
         )
         session._allow_match_generation = True
         try:
@@ -342,7 +336,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     event.guarantee_selected = request.guarantee_selected
     event.draw_status = "final"
     session.add(event)
-    
+
     # Commit everything
     session.commit()
     session.refresh(event)
