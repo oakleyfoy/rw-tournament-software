@@ -34,6 +34,41 @@ def _team_display_name(team) -> str:
     return team.name or getattr(team, "display_name", None) or f"Team {team.id}"
 
 
+def _participating_teams_for_draw(
+    all_teams: list,
+    linked_team_ids: List[int],
+    warnings: List[str],
+) -> list:
+    """Use exactly TEAM_COUNT teams; ignore extra rows on the event (bad imports / duplicates)."""
+    if linked_team_ids:
+        by_id = {t.id: t for t in all_teams}
+        picked = []
+        for tid in linked_team_ids:
+            if len(picked) >= TEAM_COUNT:
+                break
+            t = by_id.get(tid)
+            if t is not None:
+                picked.append(t)
+        if len(picked) >= TEAM_COUNT:
+            if len(all_teams) > TEAM_COUNT:
+                warnings.append(
+                    f"WF_14_TOP2_BYE: using {TEAM_COUNT} linked teams; "
+                    f"{len(all_teams)} team rows on this event"
+                )
+            return picked[:TEAM_COUNT]
+
+    ordered = sorted(
+        all_teams,
+        key=lambda t: (t.seed if t.seed is not None else 9999, t.id),
+    )
+    if len(ordered) > TEAM_COUNT:
+        warnings.append(
+            f"WF_14_TOP2_BYE: using seeds 1–{TEAM_COUNT}; "
+            f"{len(ordered)} team rows on this event"
+        )
+    return ordered[:TEAM_COUNT]
+
+
 def generate_wf_14_matches(
     session,
     version_id: int,
@@ -54,21 +89,26 @@ def generate_wf_14_matches(
 
     prefix = spec.match_code_prefix
     all_teams = _load_event_teams(session, spec.event_id)
-    if len(all_teams) < TEAM_COUNT:
-        warnings.append(f"WF_14_TOP2_BYE: expected {TEAM_COUNT} teams, found {len(all_teams)}")
+    participating = _participating_teams_for_draw(all_teams, linked_team_ids, warnings)
+    if len(participating) < TEAM_COUNT:
+        warnings.append(
+            f"WF_14_TOP2_BYE: expected {TEAM_COUNT} teams, found {len(participating)} "
+            f"({len(all_teams)} rows on event)"
+        )
 
-    bye_a, bye_b = select_top_two_bye_teams(all_teams)
+    bye_a, bye_b = select_top_two_bye_teams(participating)
     bye_ids = frozenset(t.id for t in (bye_a, bye_b) if t and t.id is not None)
-    r1_teams = teams_for_wf_r1(all_teams, bye_ids)
+    r1_teams = teams_for_wf_r1(participating, bye_ids)
+    r1_field = r1_teams[: WF_R1_MATCHES * 2]
 
     # -------------------------------------------------------------------------
     # WF R1 — 12 teams, 6 matches (seeds 1–12 within playing field for pairing)
     # -------------------------------------------------------------------------
     r1_matches: List[Match] = []
     pairing = None
-    if len(r1_teams) >= 12:
+    if len(r1_field) >= WF_R1_MATCHES * 2:
         seed_teams: List[TeamSeed] = []
-        for idx, t in enumerate(r1_teams, start=1):
+        for idx, t in enumerate(r1_field, start=1):
             seed_teams.append(
                 TeamSeed(
                     seed=idx,
@@ -79,7 +119,7 @@ def generate_wf_14_matches(
                     rating=getattr(t, "rating", None),
                 )
             )
-        pairing = build_wf_r1_pairings(seed_teams, 12)
+        pairing = build_wf_r1_pairings(seed_teams, len(r1_field))
     team_by_seed = {idx: t for idx, t in enumerate(r1_teams, start=1)}
 
     for i in range(WF_R1_MATCHES):
