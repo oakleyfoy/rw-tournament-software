@@ -163,7 +163,7 @@ DIVISION_DISPLAY_NAMES = {
 }
 
 # Supported event families (includes legacy WF_TO_POOLS_4)
-EventFamily = Literal["RR_ONLY", "WF_TO_POOLS_4", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "UNSUPPORTED"]
+EventFamily = Literal["RR_ONLY", "WF_TO_POOLS_4", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE", "UNSUPPORTED"]
 
 # Re-export for backwards compatibility
 WF_TO_POOLS_DYNAMIC_TEAM_COUNTS = ALLOWED_TEAM_COUNTS["WF_TO_POOLS_DYNAMIC"]
@@ -296,6 +296,9 @@ def resolve_event_family(spec: DrawPlanSpec) -> EventFamily:
     # Supports: 8, 10, 12, 16, 20, 24, 28 teams
     if key == "WF_TO_POOLS_DYNAMIC":
         return "WF_TO_POOLS_DYNAMIC"
+
+    if key == "WF_14_TOP2_BYE":
+        return "WF_14_TOP2_BYE"
 
     # WF_TO_POOLS_4: 16 teams, 2 WF rounds, 4 pools of 4 (legacy, deprecated)
     if key == "WF_TO_POOLS_4":
@@ -450,6 +453,38 @@ def _compute_wf_to_brackets_8(spec: DrawPlanSpec) -> InventoryCounts:
     )
 
 
+def _compute_wf_14_top2_bye(spec: DrawPlanSpec) -> InventoryCounts:
+    from app.services.wf_14_format import (
+        REQUIRED_WF_ROUNDS,
+        TEAM_COUNT,
+        wf_14_total_consolation_matches,
+        wf_14_total_matches,
+        wf_14_total_rr_pool_matches,
+        wf_14_total_wf_matches,
+    )
+
+    errors: List[str] = []
+    if spec.team_count != TEAM_COUNT:
+        errors.append(f"WF_14_TOP2_BYE requires team_count={TEAM_COUNT}, got {spec.team_count}")
+    if spec.waterfall_rounds != REQUIRED_WF_ROUNDS:
+        errors.append(
+            f"WF_14_TOP2_BYE requires waterfall_rounds={REQUIRED_WF_ROUNDS}, got {spec.waterfall_rounds}"
+        )
+    if errors:
+        return InventoryCounts(errors=errors)
+
+    wf = wf_14_total_wf_matches()
+    rr = wf_14_total_rr_pool_matches()
+    cons = wf_14_total_consolation_matches()
+    return InventoryCounts(
+        wf_matches=wf,
+        bracket_matches=0,
+        rr_matches=rr,
+        total_matches=wf_14_total_matches(),
+        counts_by_stage={"WF": wf, "RR_POOL": rr, "MAIN": cons},
+    )
+
+
 def compute_inventory(spec: DrawPlanSpec) -> InventoryCounts:
     """
     Main entry point: compute match inventory for a DrawPlanSpec.
@@ -476,6 +511,9 @@ def compute_inventory(spec: DrawPlanSpec) -> InventoryCounts:
 
     if family == "WF_TO_POOLS_DYNAMIC":
         return _compute_wf_to_pools_dynamic(spec)
+
+    if family == "WF_14_TOP2_BYE":
+        return _compute_wf_14_top2_bye(spec)
 
     if family == "WF_TO_BRACKETS_8":
         return _compute_wf_to_brackets_8(spec)
@@ -543,7 +581,12 @@ def _assign_preferred_days(session, spec: DrawPlanSpec, matches: list) -> None:
                 m.preferred_day = day_weekdays[1]
 
         elif m.match_type == "MAIN":
-            if day_count >= 3:
+            code = m.match_code or ""
+            if "CONS_FRI" in code and day_count >= 1:
+                m.preferred_day = day_weekdays[0]
+            elif "CONS_SAT" in code and day_count >= 2:
+                m.preferred_day = day_weekdays[1]
+            elif day_count >= 3:
                 # Classify by round_index within bracket:
                 # QFs (round_index 1-4) -> day 1, SFs (5-6) -> day 1, Finals (7) -> day 2
                 if m.round_index is not None and m.round_index <= 6:
@@ -613,6 +656,10 @@ def generate_matches_for_event(
         matches, warnings = _generate_wf_to_pools_4(session, version_id, spec, linked_team_ids)
     elif family == "WF_TO_POOLS_DYNAMIC":
         matches, warnings = _generate_wf_to_pools_dynamic(session, version_id, spec, linked_team_ids)
+    elif family == "WF_14_TOP2_BYE":
+        from app.services.wf_14_generator import generate_wf_14_matches
+
+        matches, warnings = generate_wf_14_matches(session, version_id, spec, linked_team_ids)
     elif family == "WF_TO_BRACKETS_8":
         matches, warnings = _generate_wf_to_brackets_8(session, version_id, spec, linked_team_ids)
     else:

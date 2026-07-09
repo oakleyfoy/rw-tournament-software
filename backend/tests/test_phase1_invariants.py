@@ -109,7 +109,7 @@ class TestPhase1AllowedMatrix:
 class TestPhase1RejectsUnsupported:
     """Verify unsupported team counts produce errors."""
 
-    @pytest.mark.parametrize("team_count", [14, 18, 22, 26, 30])
+    @pytest.mark.parametrize("team_count", [18, 22, 26, 30])
     def test_phase2_team_counts_rejected(self, team_count: int):
         """Phase 2 team counts should error when using WF_TO_POOLS_DYNAMIC."""
         spec = make_spec_for_team_count(team_count, "WF_TO_POOLS_DYNAMIC")

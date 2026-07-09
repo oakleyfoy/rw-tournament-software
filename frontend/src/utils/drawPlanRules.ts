@@ -6,13 +6,14 @@
  */
 
 // Template families
-export type TemplateFamily = 'RR_ONLY' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8';
+export type TemplateFamily = 'RR_ONLY' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8' | 'WF_14_TOP2_BYE';
 
 // Allowed team counts per family
 export const ALLOWED_TEAM_COUNTS: Record<TemplateFamily, readonly number[]> = {
   RR_ONLY: [4, 6],
   WF_TO_POOLS_DYNAMIC: [8, 10, 12, 16, 20, 24, 28],
   WF_TO_BRACKETS_8: [32],
+  WF_14_TOP2_BYE: [14],
 } as const;
 
 // All Phase 1 supported team counts (union of all families)
@@ -20,10 +21,11 @@ export const PHASE1_SUPPORTED_TEAM_COUNTS = [
   ...ALLOWED_TEAM_COUNTS.RR_ONLY,
   ...ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC,
   ...ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8,
+  ...ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE,
 ] as const;
 
 // Unsupported in Phase 1 (Phase 2 candidates)
-export const PHASE2_TEAM_COUNTS = [14, 18, 22, 26, 30] as const;
+export const PHASE2_TEAM_COUNTS = [18, 22, 26, 30] as const;
 
 /**
  * Return the required number of waterfall rounds for a given family and team count.
@@ -35,6 +37,8 @@ export function requiredWfRounds(family: TemplateFamily, teamCount: number): num
     case 'WF_TO_POOLS_DYNAMIC':
       return teamCount === 8 || teamCount === 10 ? 1 : 2;
     case 'WF_TO_BRACKETS_8':
+      return 2;
+    case 'WF_14_TOP2_BYE':
       return 2;
     default:
       return 0;
@@ -57,6 +61,9 @@ export function poolConfig(teamCount: number): [number, number] {
 export function getValidFamilyForTeamCount(teamCount: number): TemplateFamily | null {
   if (ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.includes(teamCount)) {
     return 'WF_TO_BRACKETS_8';
+  }
+  if (ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE.includes(teamCount)) {
+    return 'WF_14_TOP2_BYE';
   }
   if (ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.includes(teamCount)) {
     return 'WF_TO_POOLS_DYNAMIC';

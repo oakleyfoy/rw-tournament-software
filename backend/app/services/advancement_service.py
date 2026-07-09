@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session, select
 
+from app.models.event import Event
 from app.models.match import Match
 
 ROLE_WINNER = "WINNER"
@@ -262,6 +263,15 @@ def apply_advancement_for_final_match(session: Session, match_id: int) -> int:
 
     if updated_count:
         session.commit()
+
+    event = session.get(Event, match.event_id)
+    if event:
+        from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
+
+        updated_count += refresh_wf14_consolation_after_advancement(
+            session, match.event_id, version_id
+        )
+
     return updated_count
 
 

@@ -1,6 +1,6 @@
 // Draw estimation utilities for Phase 2
 
-export type TemplateType = 'RR_ONLY' | 'WF_TO_POOLS_4' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8' | 'CANONICAL_32' | 'SPLIT_FLIGHTS';
+export type TemplateType = 'RR_ONLY' | 'WF_TO_POOLS_4' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8' | 'WF_14_TOP2_BYE' | 'CANONICAL_32' | 'SPLIT_FLIGHTS';
 
 export interface DrawPlan {
   version: string;
@@ -189,6 +189,28 @@ export function calculateMatches(
         standardMatches: standardFor5, // Default for guarantee 5
         standardMatchesFor4: standardFor4,
         standardMatchesFor5: standardFor5,
+      }
+    }
+
+    case 'WF_14_TOP2_BYE': {
+      if (teamCount !== 14) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_14_TOP2_BYE requires exactly 14 teams, got ${teamCount}`,
+        }
+      }
+      if (wfRounds !== 2) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_14_TOP2_BYE requires 2 waterfall rounds, got ${wfRounds}`,
+        }
+      }
+      // 6 + 4 WF; 12 pool RR; 9 consolation (6 reg + 3 Sun placement)
+      return {
+        wfMatches: 10,
+        standardMatches: 21,
       }
     }
 

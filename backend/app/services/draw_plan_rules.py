@@ -12,13 +12,14 @@ from typing import Dict, FrozenSet, Literal, Optional, Tuple
 # =============================================================================
 
 # Template families
-TemplateFamily = Literal["RR_ONLY", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8"]
+TemplateFamily = Literal["RR_ONLY", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE"]
 
 # Allowed team counts per family
 ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
     "RR_ONLY": frozenset({4, 6}),
     "WF_TO_POOLS_DYNAMIC": frozenset({8, 10, 12, 16, 20, 24, 28}),
     "WF_TO_BRACKETS_8": frozenset({32}),
+    "WF_14_TOP2_BYE": frozenset({14}),
 }
 
 # All Phase 1 supported team counts (union of all families)
@@ -27,7 +28,7 @@ PHASE1_SUPPORTED_TEAM_COUNTS: FrozenSet[int] = frozenset().union(
 )
 
 # Unsupported in Phase 1 (Phase 2 candidates)
-PHASE2_TEAM_COUNTS: FrozenSet[int] = frozenset({14, 18, 22, 26, 30})
+PHASE2_TEAM_COUNTS: FrozenSet[int] = frozenset({18, 22, 26, 30})
 
 
 # =============================================================================
@@ -49,6 +50,10 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
         return 1 if team_count in (8, 10) else 2
     elif family == "WF_TO_BRACKETS_8":
         return 2
+    elif family == "WF_14_TOP2_BYE":
+        from app.services.wf_14_format import REQUIRED_WF_ROUNDS
+
+        return REQUIRED_WF_ROUNDS
     return 0
 
 
@@ -145,11 +150,14 @@ def get_valid_family_for_team_count(team_count: int) -> Optional[TemplateFamily]
     
     Priority order (most specific first):
     1. WF_TO_BRACKETS_8 (32 only)
-    2. WF_TO_POOLS_DYNAMIC (8, 10, 12, 16, 20, 24, 28)
-    3. RR_ONLY (4, 6)
+    2. WF_14_TOP2_BYE (14 only)
+    3. WF_TO_POOLS_DYNAMIC (8, 10, 12, 16, 20, 24, 28)
+    4. RR_ONLY (4, 6)
     """
     if team_count in ALLOWED_TEAM_COUNTS["WF_TO_BRACKETS_8"]:
         return "WF_TO_BRACKETS_8"
+    if team_count in ALLOWED_TEAM_COUNTS["WF_14_TOP2_BYE"]:
+        return "WF_14_TOP2_BYE"
     if team_count in ALLOWED_TEAM_COUNTS["WF_TO_POOLS_DYNAMIC"]:
         return "WF_TO_POOLS_DYNAMIC"
     if team_count in ALLOWED_TEAM_COUNTS["RR_ONLY"]:
