@@ -38,10 +38,16 @@ import type { InventoryTab } from './ScheduleInventoryPanel'
 
 function formatGenerateToast(r: MatchesGenerateOnlyResponse): string {
   const base = `Generated ${r.matches_generated} matches`
+  const failedDetails =
+    r.events_expected
+      ?.filter((e) => e.decision === 'skipped_error')
+      .map((e) => (e.reason ? `${e.event_name} (${e.reason})` : e.event_name)) ?? []
   if (r.events_included?.length) {
     const included = r.events_included.join(', ')
     if (r.events_skipped?.length) {
-      return `${base} from ${included}. Failed: ${r.events_skipped.join(', ')} — check Draw Builder config.`
+      const detail =
+        failedDetails.length > 0 ? failedDetails.join('; ') : r.events_skipped.join(', ')
+      return `${base} from ${included}. Failed: ${detail} — check Draw Builder config.`
     }
     if (r.events_not_finalized?.length) {
       return `${base} from ${included}. Finalize ${r.events_not_finalized.join(', ')} in Draw Builder.`

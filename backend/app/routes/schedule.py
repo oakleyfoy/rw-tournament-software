@@ -2983,12 +2983,22 @@ def generate_matches_only(
         session.commit()
 
         per_event = result.get("per_event", {}) or {}
-        events_included = [p["event_name"] for p in per_event.values() if p.get("matches", 0) > 0]
-        events_skipped = [p["event_name"] for p in per_event.values() if p.get("matches", 0) == 0]
-        if result.get("warnings"):
-            for w in result["warnings"]:
-                if isinstance(w, dict) and w.get("event_name") and w["event_name"] not in events_skipped:
-                    events_skipped.append(w["event_name"])
+        events_expected_raw = result.get("events_expected", []) or []
+        events_included = sorted(
+            {
+                p["event_name"]
+                for p in per_event.values()
+                if p.get("matches", 0) > 0
+            }
+        )
+        # Only true failures — not idempotent skip_complete or already-complete inventory.
+        events_skipped = sorted(
+            {
+                ev["event_name"]
+                for ev in events_expected_raw
+                if ev.get("decision") == "skipped_error" and ev.get("event_name")
+            }
+        )
 
         events_not_finalized = [
             e.name for e in session.exec(
@@ -2996,7 +3006,6 @@ def generate_matches_only(
             ).all()
         ]
         finalized_events_found = result.get("finalized_events_found", [])
-        events_expected_raw = result.get("events_expected", [])
         events_expected = [EventExpectedItem(**e) for e in events_expected_raw]
         already_complete = result.get("already_complete", False)
         total_added = result.get("total_matches_created", 0)

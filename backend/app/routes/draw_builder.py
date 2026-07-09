@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
+from app.models.team import Team
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
@@ -154,13 +155,28 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     # Parse draw plan to get template type and WF rounds
     try:
         draw_plan = json.loads(event.draw_plan_json)
-        template_type = draw_plan.get("template_type")  # Snake case from frontend
-        wf_rounds = draw_plan.get("wf_rounds", 0)  # Snake case from frontend
     except (json.JSONDecodeError, AttributeError) as e:
         raise HTTPException(status_code=422, detail=f"Invalid draw_plan_json: {str(e)}")
 
+    from app.services.draw_plan_engine import (
+        build_spec_from_event,
+        compute_inventory,
+        generate_matches_for_event,
+        normalize_draw_plan_for_team_count,
+    )
+    from app.services.draw_plan_rules import normalize_template_key, validate_template_config
+
+    draw_plan = normalize_draw_plan_for_team_count(event.team_count or 0, draw_plan)
+    template_type = draw_plan.get("template_type")  # Snake case from frontend
+    wf_rounds = draw_plan.get("wf_rounds", 0)  # Snake case from frontend
+
     if not template_type:
         raise HTTPException(status_code=422, detail="draw_plan_json must contain template_type")
+
+    template_key = normalize_template_key(template_type)
+    config_err = validate_template_config(template_key, event.team_count, wf_rounds)
+    if config_err:
+        raise HTTPException(status_code=422, detail=config_err)
     
     # Validate template_type matches team_count constraints
     if template_type == "WF_TO_POOLS_4" and event.team_count % 4 != 0:
@@ -210,6 +226,49 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     schedule_version_id = sv.id
 
     all_matches = []
+
+    if template_key == "WF_14_TOP2_BYE":
+        spec = build_spec_from_event(event, draw_plan)
+        inventory = compute_inventory(spec)
+        if inventory.has_errors():
+            raise HTTPException(status_code=422, detail="; ".join(inventory.errors))
+        linked_team_ids = [
+            t.id
+            for t in session.exec(
+                select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)
+            ).all()
+        ]
+        existing_codes: set[str] = set(
+            session.exec(
+                select(Match.match_code).where(Match.schedule_version_id == schedule_version_id)
+            ).all()
+        )
+        session._allow_match_generation = True
+        try:
+            to_add, _warnings = generate_matches_for_event(
+                session, schedule_version_id, spec, linked_team_ids, existing_codes
+            )
+        finally:
+            session._allow_match_generation = False
+        for match in to_add:
+            session.add(match)
+        all_matches.extend(to_add)
+        event.draw_plan_json = json.dumps(draw_plan)
+        event.draw_plan_version = "1.0"
+        event.wf_block_minutes = wf_block_minutes
+        event.standard_block_minutes = standard_block_minutes
+        event.guarantee_selected = request.guarantee_selected
+        event.draw_status = "final"
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+        return {
+            "id": event.id,
+            "draw_status": event.draw_status,
+            "guarantee_selected": event.guarantee_selected,
+            "matches_created": len(all_matches),
+        }
+
     event_prefix = f"E{event.id}"
 
     # Generate WF matches if applicable

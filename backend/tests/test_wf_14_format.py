@@ -111,3 +111,73 @@ def test_wf_14_generates_match_codes(session):
 
     cons = [m for m in matches if "CONS_" in m.match_code]
     assert len(cons) == 9
+
+
+def test_wf_14_stale_draw_plan_coerced_on_generate(session, client):
+    """14-team event with legacy WF_TO_POOLS_DYNAMIC JSON still generates via WF_14."""
+    from sqlmodel import select
+
+    from app.models.match import Match
+
+    tournament = Tournament(
+        name="Waterville",
+        location="L",
+        timezone="America/New_York",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+        use_time_windows=False,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    womens = Event(
+        tournament_id=tournament.id,
+        category="womens",
+        name="Women's",
+        team_count=14,
+        draw_plan_json=json.dumps(
+            {"template_type": "WF_TO_POOLS_DYNAMIC", "wf_rounds": 2, "guarantee": 5}
+        ),
+        draw_status="final",
+        wf_block_minutes=60,
+        standard_block_minutes=105,
+    )
+    session.add(womens)
+    session.commit()
+    session.refresh(womens)
+
+    for seed in range(1, 15):
+        session.add(
+            Team(
+                event_id=womens.id,
+                name=f"W {seed}",
+                seed=seed,
+                rating=float(1500 - seed),
+            )
+        )
+    session.commit()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/generate"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["matches_generated"] == wf_14_total_matches()
+    assert "Women's" in (body.get("events_included") or [])
+    assert body.get("events_skipped") in (None, [])
+
+    count = len(
+        session.exec(
+            select(Match).where(
+                Match.schedule_version_id == version.id,
+                Match.event_id == womens.id,
+            )
+        ).all()
+    )
+    assert count == wf_14_total_matches()

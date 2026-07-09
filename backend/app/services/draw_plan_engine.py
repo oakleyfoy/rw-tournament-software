@@ -1649,6 +1649,21 @@ def _generate_wf_to_brackets_8(
 # Spec Builder Helper
 # -----------------------------------------------------------------------------
 
+def normalize_draw_plan_for_team_count(team_count: int, draw_plan: Optional[dict]) -> dict:
+    """
+    Align template_type / wf_rounds with Phase-1 rules for team_count.
+    Fixes stale draw_plan_json (e.g. WF_TO_POOLS_DYNAMIC saved before 14-team template existed).
+    """
+    from app.services.draw_plan_rules import get_valid_family_for_team_count, required_wf_rounds
+
+    plan = dict(draw_plan or {})
+    family = get_valid_family_for_team_count(team_count)
+    if family == "WF_14_TOP2_BYE":
+        plan["template_type"] = "WF_14_TOP2_BYE"
+        plan["wf_rounds"] = required_wf_rounds("WF_14_TOP2_BYE", team_count)
+    return plan
+
+
 def build_spec_from_event(event, draw_plan: Optional[dict] = None) -> DrawPlanSpec:
     """
     Build a DrawPlanSpec from an Event model and optional parsed draw_plan.
@@ -1661,7 +1676,7 @@ def build_spec_from_event(event, draw_plan: Optional[dict] = None) -> DrawPlanSp
         except (json.JSONDecodeError, TypeError, AttributeError):
             draw_plan = {}
 
-    draw_plan = draw_plan or {}
+    draw_plan = normalize_draw_plan_for_team_count(event.team_count or 0, draw_plan or {})
 
     template_type = draw_plan.get("template_type", "RR_ONLY")
     wf_rounds = draw_plan.get("wf_rounds", 0)
