@@ -68,9 +68,7 @@ def setup_test_tournament(client: TestClient, session: Session):
     assert gen_resp.status_code == 200
 
     # Get the schedule version
-    version = session.exec(
-        select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament["id"])
-    ).first()
+    version = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament["id"])).first()
 
     return {"tournament": tournament, "event": event, "version": version}
 
@@ -252,10 +250,7 @@ def test_bracket_injection_8_teams(client: TestClient, session: Session, setup_t
             [
                 m
                 for m in matches
-                if m.match_type == "WF"
-                and m.round_number == 1
-                and not m.source_match_a_id
-                and not m.source_match_b_id
+                if m.match_type == "WF" and m.round_number == 1 and not m.source_match_a_id and not m.source_match_b_id
             ],
             key=lambda m: (m.sequence_in_round or 0, m.match_code or ""),
         )
@@ -493,12 +488,7 @@ def test_full_workflow(client: TestClient, session: Session, setup_test_tourname
     qf_matches = [m for m in grid["matches"] if "QF" in m.get("match_code", "")]
     if len(qf_matches) < 4:
         qf_matches = sorted(
-            [
-                m
-                for m in grid["matches"]
-                if m.get("stage") == "WF"
-                and m.get("round_index") == 1
-            ],
+            [m for m in grid["matches"] if m.get("stage") == "WF" and m.get("round_index") == 1],
             key=lambda m: (m.get("sequence_in_round") or 0, m.get("match_code") or ""),
         )
     assert len(qf_matches) == 4
