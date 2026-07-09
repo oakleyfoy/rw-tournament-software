@@ -41,23 +41,36 @@ def setup_test_tournament(client: TestClient, session: Session):
         "category": "mixed",
         "name": "8-Team Bracket",
         "team_count": 8,
-        "draw_plan_json": json.dumps({"template_type": "CANONICAL_32", "wf_rounds": 2, "guarantee": 4}),
-        "draw_status": "final",
-        "wf_block_minutes": 60,
-        "standard_block_minutes": 120,
-        "guarantee_selected": 4,
     }
     e_response = client.post(f"/api/tournaments/{tournament['id']}/events", json=event_data)
+    assert e_response.status_code == 201
     event = e_response.json()
 
+    draw_plan = json.dumps({"template_type": "CANONICAL_32", "wf_rounds": 2, "guarantee": 4})
+    patch_resp = client.put(
+        f"/api/events/{event['id']}",
+        json={
+            "draw_plan_json": draw_plan,
+            "draw_status": "final",
+            "wf_block_minutes": 60,
+            "standard_block_minutes": 120,
+            "guarantee_selected": 4,
+        },
+    )
+    assert patch_resp.status_code == 200
+    event = patch_resp.json()
+
     # Generate matches
-    client.post(
+    gen_resp = client.post(
         f"/api/tournaments/{tournament['id']}/schedule/matches/generate",
         json={"event_id": event["id"], "wipe_existing": True},
     )
+    assert gen_resp.status_code == 200
 
     # Get the schedule version
-    version = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament["id"])).first()
+    version = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament["id"])
+    ).first()
 
     return {"tournament": tournament, "event": event, "version": version}
 
@@ -233,8 +246,20 @@ def test_bracket_injection_8_teams(client: TestClient, session: Session, setup_t
         select(Match).where(Match.event_id == event.id, Match.schedule_version_id == version.id)
     ).all()
 
-    qf_matches = [m for m in matches if "QF" in m.match_code]
-    qf_matches.sort(key=lambda m: m.match_code)
+    qf_matches = [m for m in matches if "QF" in (m.match_code or "")]
+    if len(qf_matches) < 4:
+        qf_matches = sorted(
+            [
+                m
+                for m in matches
+                if m.match_type == "WF"
+                and m.round_number == 1
+                and not m.source_match_a_id
+                and not m.source_match_b_id
+            ],
+            key=lambda m: (m.sequence_in_round or 0, m.match_code or ""),
+        )
+    qf_matches.sort(key=lambda m: m.match_code or "")
 
     teams = session.exec(select(Team).where(Team.event_id == event.id)).all()
     teams_by_id = {t.id: t for t in teams}
@@ -268,6 +293,17 @@ def test_idempotency(client: TestClient, session: Session, setup_test_tournament
 
     if not version:
         pytest.skip("No schedule version available")
+
+    existing_teams = session.exec(select(Team).where(Team.event_id == event.id)).all()
+    for team in existing_teams:
+        session.delete(team)
+    session.commit()
+
+    for i in range(1, 9):
+        client.post(
+            f"/api/events/{event.id}/teams",
+            json={"name": f"Seed {i} Team", "seed": i, "rating": 2000.0 - i * 100},
+        )
 
     # Run injection twice
     response1 = client.post(
@@ -453,8 +489,18 @@ def test_full_workflow(client: TestClient, session: Session, setup_test_tourname
     # Verify teams are in grid
     assert len(grid["teams"]) >= 8
 
-    # Verify matches have team IDs
+    # Verify matches have team IDs (legacy QF codes or WF R1 for CANONICAL_32 alias)
     qf_matches = [m for m in grid["matches"] if "QF" in m.get("match_code", "")]
+    if len(qf_matches) < 4:
+        qf_matches = sorted(
+            [
+                m
+                for m in grid["matches"]
+                if m.get("stage") == "WF"
+                and m.get("round_index") == 1
+            ],
+            key=lambda m: (m.get("sequence_in_round") or 0, m.get("match_code") or ""),
+        )
     assert len(qf_matches) == 4
 
     for qf in qf_matches:

@@ -350,7 +350,7 @@ def place_matches_into_slots(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.is_active,
-            not ScheduleSlot.is_manual_only,
+            ScheduleSlot.is_manual_only.is_(False),
         )
     ).all()
 
@@ -499,9 +499,9 @@ def _build_day_round_groups(
         4 rounds, 2 days  -> [{0,1}, {2,3}]
         3 rounds, 3 days  -> [{0,1}, {2}, set()]
     """
-    groups: List[set] = [set() for _ in range(num_days)]
+    groups: List[set] = [set() for _ in range(max(num_days, 1))]
     for tr in range(num_team_rounds):
-        day_idx = min(tr // 2, num_days - 1)  # cap to last day
+        day_idx = min(tr // 2, max(num_days, 1) - 1)  # cap to last day
         groups[day_idx].add(tr)
     return groups
 
@@ -554,7 +554,7 @@ def run_sequence_schedule(
             select(ScheduleSlot).where(
                 ScheduleSlot.schedule_version_id == schedule_version_id,
                 ScheduleSlot.is_active,
-                not ScheduleSlot.is_manual_only,
+                ScheduleSlot.is_manual_only.is_(False),
             )
         ).all()
         if s.id not in _blocked
@@ -606,6 +606,19 @@ def run_sequence_schedule(
         r.total_failed = 0
         r.total_reserved_spares = 0
         r.duration_ms = 0
+        r.day_results = []
+        return r
+
+    if num_days == 0:
+
+        class _NoSlots:
+            pass
+
+        r = _NoSlots()
+        r.total_assigned = 0
+        r.total_failed = len(seq)
+        r.total_reserved_spares = 0
+        r.duration_ms = int((_time.monotonic() - t0) * 1000)
         r.day_results = []
         return r
 

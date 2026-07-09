@@ -555,7 +555,7 @@ def _try_move_prerequisite_earlier(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.day_date == day_date,
             ScheduleSlot.is_active,
-            not ScheduleSlot.is_manual_only,
+            ScheduleSlot.is_manual_only.is_(False),
             ScheduleSlot.start_time < current_slot.start_time,
         )
     ).all()
@@ -626,7 +626,7 @@ def _fill_spare_courts_with_consolation(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.day_date == day_date,
             ScheduleSlot.is_active,
-            not ScheduleSlot.is_manual_only,
+            ScheduleSlot.is_manual_only.is_(False),
         )
     ).all()
 
@@ -859,7 +859,7 @@ def compute_spare_reservations(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.day_date == day_date,
             ScheduleSlot.is_active,
-            not ScheduleSlot.is_manual_only,
+            ScheduleSlot.is_manual_only.is_(False),
         )
     ).all()
     if not slots:

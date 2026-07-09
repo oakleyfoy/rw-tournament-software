@@ -40,6 +40,7 @@ def _setup_tournament_with_matches(session: Session):
         timezone="America/New_York",
         start_date=date(2026, 6, 5),
         end_date=date(2026, 6, 7),
+        desk_management_mode="court_management",
     )
     session.add(t)
     session.flush()
@@ -510,6 +511,9 @@ def test_sms_automation_status_triggers_up_next_on_deck_and_first_match(client, 
 def test_finalize_preview_suppresses_auto_post_match_sms_until_approved(client, session):
     """Finalize can return a preview without auto-sending post-match texts."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    t.desk_management_mode = "checkin_management"
+    session.add(t)
+    session.commit()
     _set_team_test_phones(session, teams)
 
     draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
@@ -564,6 +568,9 @@ def test_finalize_preview_suppresses_auto_post_match_sms_until_approved(client, 
 def test_finalize_sms_approval_endpoint_sends_post_match_next(client, session):
     """Approved finalize SMS send writes post-match logs after the match is finalized."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    t.desk_management_mode = "checkin_management"
+    session.add(t)
+    session.commit()
     _set_team_test_phones(session, teams)
 
     draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
@@ -2230,6 +2237,7 @@ def _setup_wf_pool_tournament(session: Session):
         timezone="America/New_York",
         start_date=date(2026, 6, 5),
         end_date=date(2026, 6, 7),
+        desk_management_mode="court_management",
     )
     session.add(t)
     session.flush()
@@ -2604,7 +2612,7 @@ def test_pool_placement_sends_rr_first_match_sms(client, session):
     ).all()
     # 8 teams, one phone each => 8 sends
     assert len(rr_logs) == 8
-    assert all("Round Robin" in (row.message_body or "") for row in rr_logs)
+    assert all("first match" in (row.message_body or "").lower() for row in rr_logs)
     assert all("Court" in (row.message_body or "") for row in rr_logs)
 
 

@@ -462,7 +462,7 @@ def auto_assign_with_rest(
         .where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.is_active,
-            not ScheduleSlot.is_manual_only,
+            ScheduleSlot.is_manual_only.is_(False),
         )
         .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
     ).all()

@@ -94,12 +94,26 @@ def inject_bracket_8_teams(session: Session, event_id: int, schedule_version_id:
     qf_matches.sort(key=lambda m: m.match_code)  # Sort by match_code for consistent ordering
 
     if len(qf_matches) != 4:
-        raise TeamInjectionError(
-            f"Cannot inject teams into bracket: Expected exactly 4 QF matches "
-            f"(match_code contains 'QF'), found {len(qf_matches)}. "
-            f"This event may not be using the CANONICAL_32 (8-team bracket) template. "
-            f"Current template may be pool play or round robin."
-        )
+        # WF_TO_BRACKETS_8 / CANONICAL_32 alias: first WF round has four matches with teams.
+        wf_r1 = session.exec(
+            select(Match).where(
+                Match.event_id == event_id,
+                Match.schedule_version_id == schedule_version_id,
+                Match.match_type == "WF",
+                Match.round_number == 1,
+            )
+        ).all()
+        wf_r1 = [m for m in wf_r1 if m.source_match_a_id is None and m.source_match_b_id is None]
+        wf_r1.sort(key=lambda m: (m.sequence_in_round or 0, m.match_code or ""))
+        if len(wf_r1) == 4:
+            qf_matches = wf_r1
+        else:
+            raise TeamInjectionError(
+                f"Cannot inject teams into bracket: Expected exactly 4 QF matches "
+                f"(match_code contains 'QF'), found {len(qf_matches)}. "
+                f"This event may not be using the CANONICAL_32 (8-team bracket) template. "
+                f"Current template may be pool play or round robin."
+            )
 
     # Assign teams to QFs
     # QF order by match_code should be: QF1, QF2, QF3, QF4
@@ -313,7 +327,7 @@ def inject_teams_v1(session: Session, event_id: int, schedule_version_id: int, c
     # - CANONICAL_32 template with 8 teams: bracket injection (QFs only)
     # - Other templates or team_count < 8: round robin injection
 
-    if template_type == "CANONICAL_32" and team_count == 8:
+    if template_type in ("CANONICAL_32", "WF_TO_BRACKETS_8") and team_count == 8:
         # Bracket injection (8-team single elimination)
         matches_updated = inject_bracket_8_teams(session, event_id, schedule_version_id, teams)
         injection_type = "bracket"

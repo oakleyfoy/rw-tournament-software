@@ -45,7 +45,7 @@ def test_schedule_builder_reflects_rr_only_for_8_teams(session: Session):
     session.refresh(event)
 
     # Call Schedule Builder
-    response = get_schedule_builder(tournament.id, session)
+    response = get_schedule_builder(tournament.id, schedule_version_id=None, session=session)
 
     # Find our event
     event_data = next((e for e in response["events"] if e["event_id"] == event.id), None)
@@ -90,7 +90,7 @@ def test_schedule_builder_reflects_wf_to_brackets_8_for_12_teams(session: Sessio
     session.refresh(event)
 
     # Call Schedule Builder
-    response = get_schedule_builder(tournament.id, session)
+    response = get_schedule_builder(tournament.id, schedule_version_id=None, session=session)
 
     # Find our event
     event_data = next((e for e in response["events"] if e["event_id"] == event.id), None)
@@ -139,7 +139,7 @@ def test_schedule_builder_rejects_wf_to_pools_4_for_8_teams(session: Session):
     session.refresh(event)
 
     # Call Schedule Builder
-    response = get_schedule_builder(tournament.id, session)
+    response = get_schedule_builder(tournament.id, schedule_version_id=None, session=session)
 
     # Find our event
     event_data = next((e for e in response["events"] if e["event_id"] == event.id), None)
@@ -180,7 +180,7 @@ def test_schedule_builder_exposes_manual_schedule_order(session: Session):
     session.commit()
     session.refresh(event)
 
-    response = get_schedule_builder(tournament.id, session)
+    response = get_schedule_builder(tournament.id, schedule_version_id=None, session=session)
     event_data = next((e for e in response["events"] if e["event_id"] == event.id), None)
 
     assert event_data is not None, "Event should appear in Schedule Builder"

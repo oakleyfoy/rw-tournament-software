@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, delete
+from sqlmodel import Session, SQLModel, create_engine
 
 from app.database import get_session
 from app.main import app
@@ -37,22 +37,7 @@ def session_fixture():
     Tables persist across tests within a session but are isolated per test run.
     """
     # Import all models to ensure they're registered BEFORE create_all
-    from app.models.auth_session import AuthSession  # noqa: F401
-    from app.models.event import Event  # noqa: F401
-    from app.models.match import Match  # noqa: F401
-    from app.models.match_assignment import MatchAssignment  # noqa: F401
-    from app.models.player import Player  # noqa: F401
-    from app.models.policy_run import PolicyRun  # noqa: F401
-    from app.models.schedule_slot import ScheduleSlot  # noqa: F401
-    from app.models.schedule_version import ScheduleVersion  # noqa: F401
-    from app.models.sms_consent_event import SmsConsentEvent  # noqa: F401
-    from app.models.team import Team  # noqa: F401
-    from app.models.team_avoid_edge import TeamAvoidEdge  # noqa: F401
-    from app.models.team_player import TeamPlayer  # noqa: F401
-    from app.models.tournament import Tournament  # noqa: F401
-    from app.models.tournament_day import TournamentDay  # noqa: F401
-    from app.models.tournament_time_window import TournamentTimeWindow  # noqa: F401
-    from app.models.user_account import UserAccount  # noqa: F401
+    import app.models  # noqa: F401
 
     # Create all tables on test engine (explicit, don't rely on app startup)
     SQLModel.metadata.create_all(test_engine)
@@ -60,17 +45,19 @@ def session_fixture():
     with Session(test_engine) as session:
         yield session
 
-    # Shared in-memory DB: clear auth so tests after test_auth.py are not forced to send Bearer tokens.
-    with Session(test_engine) as cleanup:
-        from app.models.auth_session import AuthSession
-        from app.models.user_account import UserAccount
+    # Shared in-memory DB: wipe rows so tests do not leak data (TeamPlayer, auth, etc.).
+    from sqlalchemy import text
 
-        cleanup.exec(delete(AuthSession))
-        cleanup.exec(delete(UserAccount))
+    with Session(test_engine) as cleanup:
+        conn = cleanup.connection()
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        for table in reversed(SQLModel.metadata.sorted_tables):
+            conn.execute(table.delete())
+        conn.execute(text("PRAGMA foreign_keys=ON"))
         cleanup.commit()
 
-    # Note: With StaticPool + :memory:, other table data persists across tests in same run
-    # but is isolated per pytest invocation. This matches previous behavior.
+    # Note: With StaticPool + :memory:, schema persists across tests in same run
+    # but row data is cleared after each test function.
 
 
 @pytest.fixture(name="client")

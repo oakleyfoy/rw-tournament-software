@@ -1512,7 +1512,13 @@ def generate_matches(
             linked_team_ids = [t.id for t in linked_teams]
 
             # Generate matches via engine (existing_codes mutated in-place for idempotency)
-            matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
+            session._allow_match_generation = True
+            try:
+                matches, warnings = generate_matches_for_event(
+                    session, version.id, spec, linked_team_ids, existing_codes
+                )
+            finally:
+                session._allow_match_generation = False
 
             # Add matches to session
             for match in matches:

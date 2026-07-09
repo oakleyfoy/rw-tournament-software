@@ -67,6 +67,7 @@ class SmsAutomationEngine:
             self._trigger_checkin_slot_checkin(match)
             return
 
+        self._trigger_first_match(match)
         self._trigger_up_next(match)
         self._trigger_on_deck(match)
 
