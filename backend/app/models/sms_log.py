@@ -22,6 +22,4 @@ class SmsLog(SQLModel, table=True):
     error_message: Optional[str] = Field(default=None)  # Error details if failed
     trigger: str = Field(default="manual")  # manual|auto
     dedupe_key: Optional[str] = Field(default=None, index=True)
-    sent_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

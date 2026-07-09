@@ -8,6 +8,7 @@ Exactly one return path:
 No adding, no averaging, no fallback, no cached override.
 When Advanced: days/courts/hours_per_day are ignored.
 """
+
 from dataclasses import dataclass
 from typing import List
 
@@ -41,9 +42,7 @@ def resolve_tournament_capacity(session: Session, tournament_id: int) -> Resolve
 
     Guard: Advanced mode with zero active time windows raises an error (no silent fallback).
     """
-    use_time_windows = session.exec(
-        select(Tournament.use_time_windows).where(Tournament.id == tournament_id)
-    ).one()
+    use_time_windows = session.exec(select(Tournament.use_time_windows).where(Tournament.id == tournament_id)).one()
 
     errors: List[str] = []
     total_court_minutes = 0
@@ -55,7 +54,7 @@ def resolve_tournament_capacity(session: Session, tournament_id: int) -> Resolve
             select(TournamentTimeWindow)
             .where(
                 TournamentTimeWindow.tournament_id == tournament_id,
-                TournamentTimeWindow.is_active == True,
+                TournamentTimeWindow.is_active,
             )
             .order_by(TournamentTimeWindow.day_date, TournamentTimeWindow.start_time)
         ).all()
@@ -107,9 +106,7 @@ def resolve_tournament_capacity(session: Session, tournament_id: int) -> Resolve
 
     if active_days_count == 0:
         errors.append(
-            "At least one active time window is required"
-            if use_time_windows
-            else "At least one active day is required"
+            "At least one active time window is required" if use_time_windows else "At least one active day is required"
         )
     if total_court_minutes == 0:
         errors.append("Total court minutes must be greater than 0")

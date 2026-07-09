@@ -48,10 +48,7 @@ def format_e164(phone: str, default_country: str = "1") -> str:
         # International format
         return f"+{digits}"
     else:
-        raise ValueError(
-            f"Cannot parse phone number: '{phone}'. "
-            f"Expected 10-digit US number or E.164 format."
-        )
+        raise ValueError(f"Cannot parse phone number: '{phone}'. Expected 10-digit US number or E.164 format.")
 
 
 def validate_e164(phone: str) -> bool:
@@ -74,6 +71,7 @@ def get_team_phone_numbers(team) -> list[str]:
     Returns:
         List of valid E.164 phone numbers (0-2 items)
     """
+
     def _first_valid_phone(*field_names: str) -> Optional[str]:
         for field_name in field_names:
             raw = getattr(team, field_name, None)
@@ -133,8 +131,7 @@ class TwilioService:
                 logger.info("Twilio client initialized successfully.")
             except ImportError:
                 logger.warning(
-                    "twilio package not installed. Running in dry-run mode. "
-                    "Install with: pip install twilio"
+                    "twilio package not installed. Running in dry-run mode. Install with: pip install twilio"
                 )
                 self.dry_run = True
             except Exception as e:
@@ -199,9 +196,7 @@ class TwilioService:
             # queued statuses in our log/UI.
             provider_status = str(getattr(message, "status", "") or "").lower()
             app_status = "sent"
-            logger.info(
-                f"SMS sent to {to}: SID={message.sid}, status={message.status}"
-            )
+            logger.info(f"SMS sent to {to}: SID={message.sid}, status={message.status}")
             return {
                 "sid": message.sid,
                 "status": app_status,

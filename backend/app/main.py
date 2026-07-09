@@ -1,6 +1,6 @@
+import json
 import os
 import subprocess
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -25,10 +25,9 @@ from app.db_schema_patch import (
     ensure_tournament_sms_settings_columns,
     ensure_tournament_time_window_columns,
 )
-from app.services.sms_automation import start_first_match_runner_if_enabled
 from app.routes import (
-    avoid_edges,
     auth,
+    avoid_edges,
     debug,
     desk,
     draw_builder,
@@ -49,6 +48,7 @@ from app.routes import (
     wf_conflicts,
     wf_grouping,
 )
+from app.services.sms_automation import start_first_match_runner_if_enabled
 
 app = FastAPI(title="RW Tournament Software API")
 _DEBUG_LOG_PATH = r"c:\RW Tournament Software\.cursor\debug.log"
@@ -144,6 +144,7 @@ async def agent_request_trace(request: Request, call_next):
         # endregion
     return response
 
+
 # Include routers
 _protected_deps = [Depends(require_authenticated_user)]
 
@@ -219,7 +220,6 @@ def on_startup():
     print("REGISTERED ROUTES (Full Path Stack)")
     print("=" * 80)
     route_count = 0
-    wipe_route_found = False
     for r in app.routes:
         try:
             methods = getattr(r, "methods", None)
@@ -258,6 +258,7 @@ if _static_dir.is_dir():
             return FileResponse(str(file_path))
         return FileResponse(str(_static_dir / "index.html"))
 else:
+
     @app.get("/")
     def root():
         return {"message": "RW Tournament Software API (no frontend build found)"}

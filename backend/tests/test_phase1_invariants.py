@@ -8,19 +8,20 @@ This test iterates all Phase 1 allowed team counts and verifies:
 """
 
 import pytest
+
+from app.services.draw_plan_engine import (
+    DrawPlanSpec,
+    compute_inventory,
+    normalize_template_key,
+    resolve_event_family,
+)
 from app.services.draw_plan_rules import (
     ALLOWED_TEAM_COUNTS,
     PHASE1_SUPPORTED_TEAM_COUNTS,
-    required_wf_rounds,
-    calculate_wf_matches,
     calculate_rr_matches_for_pools,
     calculate_rr_only_matches,
-)
-from app.services.draw_plan_engine import (
-    DrawPlanSpec,
-    normalize_template_key,
-    compute_inventory,
-    resolve_event_family,
+    calculate_wf_matches,
+    required_wf_rounds,
 )
 
 
@@ -48,14 +49,14 @@ class TestPhase1AllowedMatrix:
     def test_rr_only_inventory(self, team_count: int):
         """RR_ONLY events produce correct inventory with no errors."""
         spec = make_spec_for_team_count(team_count, "RR_ONLY")
-        
+
         # Verify family resolution
         assert resolve_event_family(spec) == "RR_ONLY"
-        
+
         # Verify inventory
         inv = compute_inventory(spec)
         assert not inv.has_errors(), f"Unexpected errors: {inv.errors}"
-        
+
         # Verify counts
         expected_rr = calculate_rr_only_matches(team_count)
         assert inv.wf_matches == 0
@@ -67,21 +68,21 @@ class TestPhase1AllowedMatrix:
     def test_wf_to_pools_dynamic_inventory(self, team_count: int):
         """WF_TO_POOLS_DYNAMIC events produce correct inventory with no errors."""
         spec = make_spec_for_team_count(team_count, "WF_TO_POOLS_DYNAMIC")
-        
+
         # Verify family resolution
         assert resolve_event_family(spec) == "WF_TO_POOLS_DYNAMIC"
-        
+
         # Verify inventory
         inv = compute_inventory(spec)
         assert not inv.has_errors(), f"Unexpected errors for {team_count} teams: {inv.errors}"
-        
+
         # Verify counts using rules module
         wf_rounds = required_wf_rounds("WF_TO_POOLS_DYNAMIC", team_count)
         expected_wf = calculate_wf_matches(team_count, wf_rounds)
         expected_rr = calculate_rr_matches_for_pools(team_count)
-        
+
         assert inv.wf_matches == expected_wf, f"WF mismatch for {team_count}: {inv.wf_matches} != {expected_wf}"
-        assert inv.bracket_matches == 0, f"Bracket should be 0 for pools-only"
+        assert inv.bracket_matches == 0, "Bracket should be 0 for pools-only"
         assert inv.rr_matches == expected_rr, f"RR mismatch for {team_count}: {inv.rr_matches} != {expected_rr}"
         assert inv.total_matches == expected_wf + expected_rr
 
@@ -89,18 +90,18 @@ class TestPhase1AllowedMatrix:
     def test_wf_to_brackets_8_inventory(self, team_count: int):
         """WF_TO_BRACKETS_8 events produce correct inventory with no errors."""
         spec = make_spec_for_team_count(team_count, "WF_TO_BRACKETS_8")
-        
+
         # Verify family resolution
         assert resolve_event_family(spec) == "WF_TO_BRACKETS_8"
-        
+
         # Verify inventory
         inv = compute_inventory(spec)
         assert not inv.has_errors(), f"Unexpected errors for {team_count} teams: {inv.errors}"
-        
+
         # Verify WF count using rules
         wf_rounds = required_wf_rounds("WF_TO_BRACKETS_8", team_count)
         expected_wf = calculate_wf_matches(team_count, wf_rounds)
-        
+
         assert inv.wf_matches == expected_wf
         assert inv.bracket_matches > 0, "Brackets family should have bracket matches"
         assert inv.rr_matches == 0, "Brackets family should have no RR"
@@ -124,5 +125,5 @@ class TestPhase1RejectsUnsupported:
             for c in counts:
                 assert c not in all_counts, f"Team count {c} is in multiple families"
                 all_counts.add(c)
-        
+
         assert all_counts == set(PHASE1_SUPPORTED_TEAM_COUNTS)

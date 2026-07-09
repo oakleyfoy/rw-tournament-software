@@ -339,9 +339,7 @@ class SmsAutomationEngine:
         if not self._is_last_started_match_in_timeslot(current_match, current_slot):
             return
         current_key = self._slot_sort_key(current_slot)
-        matches = self.session.exec(
-            select(Match).where(Match.schedule_version_id == self.version_id)
-        ).all()
+        matches = self.session.exec(select(Match).where(Match.schedule_version_id == self.version_id)).all()
         next_slot_key: Optional[tuple[date, time, int]] = None
         rows: list[tuple[Match, ScheduleSlot]] = []
         for match in matches:
@@ -393,9 +391,7 @@ class SmsAutomationEngine:
         are already started or finished.
         """
         current_time = self._coerce_time(current_slot.start_time)
-        matches = self.session.exec(
-            select(Match).where(Match.schedule_version_id == self.version_id)
-        ).all()
+        matches = self.session.exec(select(Match).where(Match.schedule_version_id == self.version_id)).all()
         for match in matches:
             if match.id is None or match.id == current_match.id:
                 continue
@@ -453,18 +449,14 @@ class SmsAutomationEngine:
             stats["disabled"] = True
             return stats
         normalized_mode = _normalize_sms_template_mode(template_mode)
-        message_type = (
-            "checkin_first_match"
-            if normalized_mode == "checkin_management"
-            else "first_match"
-        )
+        message_type = "checkin_first_match" if normalized_mode == "checkin_management" else "first_match"
         active, _template = self._template_for(message_type)
 
         tournament_tz_name = (self.tournament.timezone or "UTC").strip() or "UTC"
         try:
-            tournament_tz = ZoneInfo(tournament_tz_name)
+            ZoneInfo(tournament_tz_name)
         except Exception:
-            tournament_tz = ZoneInfo("UTC")
+            ZoneInfo("UTC")
             tournament_tz_name = "UTC"
         stats["timezone"] = tournament_tz_name
 
@@ -558,11 +550,7 @@ class SmsAutomationEngine:
             stats["disabled"] = True
             return stats
         normalized_mode = _normalize_sms_template_mode(template_mode)
-        message_type = (
-            "checkin_rr_first_match"
-            if normalized_mode == "checkin_management"
-            else "rr_first_match"
-        )
+        message_type = "checkin_rr_first_match" if normalized_mode == "checkin_management" else "rr_first_match"
         active, _template = self._template_for(message_type)
 
         first_rows = self._first_rr_match_rows_by_team(event_id=event_id)
@@ -703,7 +691,7 @@ class SmsAutomationEngine:
             suffix = f"({match.match_code})"
             trimmed = message.rstrip()
             if trimmed.endswith(suffix):
-                message = trimmed[:-len(suffix)].rstrip()
+                message = trimmed[: -len(suffix)].rstrip()
         return _normalize_sms_message(message)
 
     def _template_for(self, message_type: str) -> Tuple[bool, str]:
@@ -728,9 +716,7 @@ class SmsAutomationEngine:
     def _is_enabled(self, field_name: str, default: bool) -> bool:
         if self._settings is None:
             self._settings = self.session.exec(
-                select(TournamentSmsSettings).where(
-                    TournamentSmsSettings.tournament_id == self.tournament.id
-                )
+                select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == self.tournament.id)
             ).first()
         if self._settings is None:
             return default
@@ -741,9 +727,7 @@ class SmsAutomationEngine:
     def _texts_enabled(self) -> bool:
         if self._settings is None:
             self._settings = self.session.exec(
-                select(TournamentSmsSettings).where(
-                    TournamentSmsSettings.tournament_id == self.tournament.id
-                )
+                select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == self.tournament.id)
             ).first()
         if self._settings is None:
             return True
@@ -771,13 +755,12 @@ class SmsAutomationEngine:
 
         if self._settings is None:
             self._settings = self.session.exec(
-                select(TournamentSmsSettings).where(
-                    TournamentSmsSettings.tournament_id == self.tournament.id
-                )
+                select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == self.tournament.id)
             ).first()
 
         player_contacts_only = _player_contacts_only_enabled(
-            self.session, self.tournament.id  # type: ignore[arg-type]
+            self.session,
+            self.tournament.id,  # type: ignore[arg-type]
         )
         targets = _team_sms_targets(
             session=self.session,
@@ -785,14 +768,8 @@ class SmsAutomationEngine:
             team=team,
             player_contacts_only=player_contacts_only,
         )
-        test_mode_enabled = bool(
-            self._settings and getattr(self._settings, "test_mode", False)
-        )
-        allowlist = _allowlist_set(
-            getattr(self._settings, "test_allowlist", None)
-            if self._settings
-            else None
-        )
+        test_mode_enabled = bool(self._settings and getattr(self._settings, "test_mode", False))
+        allowlist = _allowlist_set(getattr(self._settings, "test_allowlist", None) if self._settings else None)
 
         projected = {
             "sent": 0,
@@ -851,13 +828,12 @@ class SmsAutomationEngine:
 
         if self._settings is None:
             self._settings = self.session.exec(
-                select(TournamentSmsSettings).where(
-                    TournamentSmsSettings.tournament_id == self.tournament.id
-                )
+                select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == self.tournament.id)
             ).first()
 
         player_contacts_only = _player_contacts_only_enabled(
-            self.session, self.tournament.id  # type: ignore[arg-type]
+            self.session,
+            self.tournament.id,  # type: ignore[arg-type]
         )
         targets = _team_sms_targets(
             session=self.session,
@@ -865,14 +841,8 @@ class SmsAutomationEngine:
             team=team,
             player_contacts_only=player_contacts_only,
         )
-        test_mode_enabled = bool(
-            self._settings and getattr(self._settings, "test_mode", False)
-        )
-        allowlist = _allowlist_set(
-            getattr(self._settings, "test_allowlist", None)
-            if self._settings
-            else None
-        )
+        test_mode_enabled = bool(self._settings and getattr(self._settings, "test_mode", False))
+        allowlist = _allowlist_set(getattr(self._settings, "test_allowlist", None) if self._settings else None)
 
         preview_rows: list[dict[str, Any]] = []
         for target in targets:
@@ -921,16 +891,8 @@ class SmsAutomationEngine:
                 "jobs": [],
             }
         is_checkin_mode = self._is_checkin_management()
-        toggle_name = (
-            "auto_checkin_post_match_next"
-            if is_checkin_mode
-            else "auto_post_match_next"
-        )
-        message_type = (
-            "checkin_post_match_next"
-            if is_checkin_mode
-            else "post_match_next"
-        )
+        toggle_name = "auto_checkin_post_match_next" if is_checkin_mode else "auto_post_match_next"
+        message_type = "checkin_post_match_next" if is_checkin_mode else "post_match_next"
         if not self._texts_enabled():
             return {
                 "message_type": message_type,
@@ -1052,9 +1014,13 @@ class SmsAutomationEngine:
             return []
 
         match_ids = [a.match_id for a in assignments if a.match_id is not None]
-        matches = self.session.exec(
-            select(Match).where(Match.id.in_(match_ids))  # type: ignore[arg-type]
-        ).all() if match_ids else []
+        matches = (
+            self.session.exec(
+                select(Match).where(Match.id.in_(match_ids))  # type: ignore[arg-type]
+            ).all()
+            if match_ids
+            else []
+        )
         by_id = {m.id: m for m in matches if m.id is not None}
 
         rows: list[tuple[tuple[date, time, int], Match]] = []
@@ -1091,9 +1057,7 @@ class SmsAutomationEngine:
         fall back to the earliest remaining non-FINAL match for the team so both
         sides still get post-match "next match" texts when scheduled.
         """
-        matches = self.session.exec(
-            select(Match).where(Match.schedule_version_id == self.version_id)
-        ).all()
+        matches = self.session.exec(select(Match).where(Match.schedule_version_id == self.version_id)).all()
         candidates: list[tuple[tuple[date, time, int, int], Match, ScheduleSlot]] = []
         for m in matches:
             if m.id == exclude_match_id:
@@ -1126,9 +1090,7 @@ class SmsAutomationEngine:
           - slot: ScheduleSlot
           - sort_key: tuple
         """
-        matches = self.session.exec(
-            select(Match).where(Match.schedule_version_id == self.version_id)
-        ).all()
+        matches = self.session.exec(select(Match).where(Match.schedule_version_id == self.version_id)).all()
         result: Dict[int, Dict[str, Any]] = {}
         for m in matches:
             if m.id is None:
@@ -1482,4 +1444,3 @@ def _runner_loop(interval_seconds: int) -> None:
         elapsed = std_time.time() - started
         delay = max(1.0, interval_seconds - elapsed)
         std_time.sleep(delay)
-

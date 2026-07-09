@@ -5,8 +5,9 @@ Verifies that auto-assign can schedule matches with null team IDs
 when allow_teamless=True (default for draft schedules).
 """
 
-import pytest
 from datetime import date, time
+
+import pytest
 from sqlmodel import Session, select
 
 from app.database import engine
@@ -81,15 +82,15 @@ def teamless_test_setup():
                 tournament_id=tournament.id,
                 event_id=event.id,
                 schedule_version_id=version.id,
-                match_code=f"TEST_RR_{i+1:02d}",
+                match_code=f"TEST_RR_{i + 1:02d}",
                 match_type="RR",
                 round_number=1,
                 sequence_in_round=i + 1,
                 duration_minutes=60,
                 team_a_id=None,  # Null team
                 team_b_id=None,  # Null team
-                placeholder_side_a=f"TBD {i*2+1}",
-                placeholder_side_b=f"TBD {i*2+2}",
+                placeholder_side_a=f"TBD {i * 2 + 1}",
+                placeholder_side_b=f"TBD {i * 2 + 2}",
             )
             matches.append(match)
             session.add(match)

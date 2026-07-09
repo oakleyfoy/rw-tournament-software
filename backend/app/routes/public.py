@@ -3,7 +3,7 @@ Public read-only API endpoints.
 
 No auth required. Used by public-facing bracket/waterfall pages.
 """
-import json
+
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -27,6 +27,7 @@ router = APIRouter()
 
 
 # ── Response models ──────────────────────────────────────────────────────
+
 
 class MatchBox(BaseModel):
     match_id: int
@@ -101,6 +102,7 @@ class DivisionItem(BaseModel):
     code: str
     label: str
 
+
 class PublicEventItem(BaseModel):
     event_id: int
     name: str
@@ -124,6 +126,7 @@ class PublicDrawsListResponse(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+
 def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
     """Convert score_json dict to display string like '8-4' or '6-3 6-4'."""
     if not score_json:
@@ -134,9 +137,7 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
         if "display" in score_json:
             return str(score_json["display"])
         if "sets" in score_json and isinstance(score_json["sets"], list):
-            return " ".join(
-                f"{s.get('a', 0)}-{s.get('b', 0)}" for s in score_json["sets"]
-            )
+            return " ".join(f"{s.get('a', 0)}-{s.get('b', 0)}" for s in score_json["sets"])
         if "a" in score_json and "b" in score_json:
             return f"{score_json['a']}-{score_json['b']}"
         if "score" in score_json:
@@ -272,12 +273,20 @@ def _build_match_box(
         line2 = _team_full_name(match.team_b_id, match.placeholder_side_b, team_map)
     else:
         line1 = _team_line_for_r2(
-            match.team_a_id, match.placeholder_side_a, match.source_match_a_id,
-            match.source_a_role, team_map, all_matches_by_id,
+            match.team_a_id,
+            match.placeholder_side_a,
+            match.source_match_a_id,
+            match.source_a_role,
+            team_map,
+            all_matches_by_id,
         )
         line2 = _team_line_for_r2(
-            match.team_b_id, match.placeholder_side_b, match.source_match_b_id,
-            match.source_b_role, team_map, all_matches_by_id,
+            match.team_b_id,
+            match.placeholder_side_b,
+            match.source_match_b_id,
+            match.source_b_role,
+            team_map,
+            all_matches_by_id,
         )
 
     # Notes (advancement destination)
@@ -300,9 +309,7 @@ def _build_match_box(
     )
 
 
-def _team_full_name(
-    team_id: Optional[int], placeholder: str, team_map: Dict[int, Team]
-) -> str:
+def _team_full_name(team_id: Optional[int], placeholder: str, team_map: Dict[int, Team]) -> str:
     """Team name for R1 center boxes — always use full name (with city/state)."""
     if team_id is not None:
         team = team_map.get(team_id)
@@ -381,21 +388,16 @@ def _r2_dest_lines(event_name: str, r2_role: str, r2_seq: int, r2_winner_count: 
         lose_div = _DIV_LABELS["BLL"]
         letter = chr(ord("A") + r2_seq - r2_winner_count - 1)
 
-    return (
-        f"Winner to {event_name} {win_div} — {letter}\n"
-        f"Loser to {event_name} {lose_div} — {letter}"
-    )
+    return f"Winner to {event_name} {win_div} — {letter}\nLoser to {event_name} {lose_div} — {letter}"
 
 
 def _rr_pool_dest_lines(event_name: str, pool_count: int, teams_per_pool: int) -> str:
     """Destination label for WF_TO_POOLS dynamic events."""
-    return (
-        f"Advances to {event_name} RR pool seeding\n"
-        f"({pool_count} pools × {teams_per_pool} teams)"
-    )
+    return f"Advances to {event_name} RR pool seeding\n({pool_count} pools × {teams_per_pool} teams)"
 
 
 # ── Public draws list ────────────────────────────────────────────────────
+
 
 @router.get(
     "/public/tournaments/{tournament_id}/draws",
@@ -414,9 +416,7 @@ def public_draws_list(
     if not version:
         return NotPublishedResponse()
 
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
 
     items: List[PublicEventItem] = []
     for e in sorted(events, key=lambda x: (x.category, x.name)):
@@ -475,16 +475,18 @@ def public_draws_list(
             if pool_code in rr_found:
                 rr_divs.append(DivisionItem(code=pool_code, label=label))
 
-        items.append(PublicEventItem(
-            event_id=e.id,
-            name=e.name,
-            category=e.category,
-            team_count=e.team_count,
-            has_waterfall=has_wf,
-            has_round_robin=has_rr,
-            divisions=divs,
-            round_robin_divisions=rr_divs,
-        ))
+        items.append(
+            PublicEventItem(
+                event_id=e.id,
+                name=e.name,
+                category=e.category,
+                team_count=e.team_count,
+                has_waterfall=has_wf,
+                has_round_robin=has_rr,
+                divisions=divs,
+                round_robin_divisions=rr_divs,
+            )
+        )
 
     return PublicDrawsListResponse(
         tournament_name=tournament.name,
@@ -493,6 +495,7 @@ def public_draws_list(
 
 
 # ── Public waterfall ─────────────────────────────────────────────────────
+
 
 @router.get(
     "/public/tournaments/{tournament_id}/events/{event_id}/waterfall",
@@ -546,13 +549,18 @@ def public_waterfall(
             rows=[],
         )
 
-    rr_exists = len(session.exec(
-        select(Match.id).where(
-            Match.event_id == event_id,
-            Match.schedule_version_id == version.id,
-            Match.match_type == "RR",
+    rr_exists = (
+        len(
+            session.exec(
+                select(Match.id).where(
+                    Match.event_id == event_id,
+                    Match.schedule_version_id == version.id,
+                    Match.match_type == "RR",
+                )
+            ).all()
         )
-    ).all()) > 0
+        > 0
+    )
     div_type = "roundrobin" if rr_exists else "bracket"
 
     all_matches_by_id = {m.id: m for m in wf_matches}
@@ -588,9 +596,7 @@ def public_waterfall(
         if m.team_b_id:
             team_ids.add(m.team_b_id)
 
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map = {t.id: t for t in teams}
 
     # Load assignments + slots for schedule info
@@ -600,14 +606,10 @@ def public_waterfall(
         )
     ).all()
     wf_match_ids = {m.id for m in wf_matches}
-    assignment_map = {
-        a.match_id: a for a in assignments if a.match_id in wf_match_ids
-    }
+    assignment_map = {a.match_id: a for a in assignments if a.match_id in wf_match_ids}
 
     slot_ids = {a.slot_id for a in assignment_map.values()}
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     # Reorder R1 matches so the two that share the same R2 winner
@@ -621,10 +623,7 @@ def public_waterfall(
         [r2 for r2 in r2_matches if r2.source_a_role == "WINNER"],
         key=lambda r2: (r2.sequence_in_round or 0, r2.id),
     ):
-        src_ids = [
-            sid for sid in [r2w.source_match_a_id, r2w.source_match_b_id]
-            if sid and sid in r1_by_id
-        ]
+        src_ids = [sid for sid in [r2w.source_match_a_id, r2w.source_match_b_id] if sid and sid in r1_by_id]
         src_ids.sort(key=lambda sid: (r1_by_id[sid].sequence_in_round or 0, sid))
         for sid in src_ids:
             if sid not in paired_r1_ids:
@@ -636,30 +635,48 @@ def public_waterfall(
             ordered_r1.append(r1)
 
     # Build rows
-    r2_winner_count = sum(
-        1 for r2 in r2_matches if r2.source_a_role == "WINNER"
-    )
+    r2_winner_count = sum(1 for r2 in r2_matches if r2.source_a_role == "WINNER")
     rows: List[WaterfallRow] = []
     for r1 in ordered_r1:
         center = _build_match_box(
-            r1, team_map, assignment_map, slot_map, all_matches_by_id,
+            r1,
+            team_map,
+            assignment_map,
+            slot_map,
+            all_matches_by_id,
             is_center=True,
             show_court_info=show_court_info,
         )
 
         winner_match = r1_to_winner.get(r1.id)
-        winner = _build_match_box(
-            winner_match, team_map, assignment_map, slot_map, all_matches_by_id,
-            is_center=False,
-            show_court_info=show_court_info,
-        ) if winner_match else None
+        winner = (
+            _build_match_box(
+                winner_match,
+                team_map,
+                assignment_map,
+                slot_map,
+                all_matches_by_id,
+                is_center=False,
+                show_court_info=show_court_info,
+            )
+            if winner_match
+            else None
+        )
 
         loser_match = r1_to_loser.get(r1.id)
-        loser = _build_match_box(
-            loser_match, team_map, assignment_map, slot_map, all_matches_by_id,
-            is_center=False,
-            show_court_info=show_court_info,
-        ) if loser_match else None
+        loser = (
+            _build_match_box(
+                loser_match,
+                team_map,
+                assignment_map,
+                slot_map,
+                all_matches_by_id,
+                is_center=False,
+                show_court_info=show_court_info,
+            )
+            if loser_match
+            else None
+        )
 
         winner_dest = None
         loser_dest = None
@@ -673,12 +690,16 @@ def public_waterfall(
         else:
             if winner_match:
                 winner_dest = _r2_dest_lines(
-                    event.name, "WINNER", winner_match.sequence_in_round,
+                    event.name,
+                    "WINNER",
+                    winner_match.sequence_in_round,
                     r2_winner_count,
                 )
             if loser_match:
                 loser_dest = _r2_dest_lines(
-                    event.name, "LOSER", loser_match.sequence_in_round,
+                    event.name,
+                    "LOSER",
+                    loser_match.sequence_in_round,
                     r2_winner_count,
                 )
 
@@ -687,19 +708,21 @@ def public_waterfall(
         r2_winner_name = r2_ww
         r2_loser_name = r2_lw
 
-        rows.append(WaterfallRow(
-            center_box=center,
-            winner_box=winner,
-            loser_box=loser,
-            winner_dest=winner_dest,
-            loser_dest=loser_dest,
-            r2_winner_team_name=r2_winner_name,
-            r2_loser_team_name=r2_loser_name,
-            r2_winner_bracket_winner_name=r2_ww,
-            r2_winner_bracket_loser_name=r2_wl,
-            r2_loser_bracket_winner_name=r2_lw,
-            r2_loser_bracket_loser_name=r2_ll,
-        ))
+        rows.append(
+            WaterfallRow(
+                center_box=center,
+                winner_box=winner,
+                loser_box=loser,
+                winner_dest=winner_dest,
+                loser_dest=loser_dest,
+                r2_winner_team_name=r2_winner_name,
+                r2_loser_team_name=r2_loser_name,
+                r2_winner_bracket_winner_name=r2_ww,
+                r2_winner_bracket_loser_name=r2_wl,
+                r2_loser_bracket_winner_name=r2_lw,
+                r2_loser_bracket_loser_name=r2_ll,
+            )
+        )
 
     return WaterfallResponse(
         tournament_name=tournament.name,
@@ -712,8 +735,7 @@ def public_waterfall(
 
 # ── Public bracket ──────────────────────────────────────────────────────
 
-_CODE_TO_DIV = {"BWW": "Division I", "BWL": "Division II",
-                "BLW": "Division III", "BLL": "Division IV"}
+_CODE_TO_DIV = {"BWW": "Division I", "BWL": "Division II", "BLW": "Division III", "BLL": "Division IV"}
 
 _ROUND_LABELS = {1: "Quarterfinal", 2: "Semifinal", 3: "Final"}
 
@@ -780,14 +802,20 @@ def _build_bracket_box(
         top_line = match_num_str
 
     line1 = _bracket_team_line(
-        match.team_a_id, match.placeholder_side_a,
-        match.source_match_a_id, match.source_a_role,
-        team_map, match_map,
+        match.team_a_id,
+        match.placeholder_side_a,
+        match.source_match_a_id,
+        match.source_a_role,
+        team_map,
+        match_map,
     )
     line2 = _bracket_team_line(
-        match.team_b_id, match.placeholder_side_b,
-        match.source_match_b_id, match.source_b_role,
-        team_map, match_map,
+        match.team_b_id,
+        match.placeholder_side_b,
+        match.source_match_b_id,
+        match.source_b_role,
+        team_map,
+        match_map,
     )
 
     return BracketMatchBox(
@@ -882,9 +910,7 @@ def public_bracket(
             team_ids.add(m.team_a_id)
         if m.team_b_id:
             team_ids.add(m.team_b_id)
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map = {t.id: t for t in teams}
 
     assignments = session.exec(
@@ -895,18 +921,19 @@ def public_bracket(
     bracket_ids = {m.id for m in bracket_matches}
     assignment_map = {a.match_id: a for a in assignments if a.match_id in bracket_ids}
     slot_ids = {a.slot_id for a in assignment_map.values()}
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     main_matches = []
     consolation_matches = []
 
-    for m in sorted(bracket_matches,
-                    key=lambda m: (m.round_index or 0, m.sequence_in_round or 0)):
+    for m in sorted(bracket_matches, key=lambda m: (m.round_index or 0, m.sequence_in_round or 0)):
         box = _build_bracket_box(
-            m, team_map, assignment_map, slot_map, match_map,
+            m,
+            team_map,
+            assignment_map,
+            slot_map,
+            match_map,
             show_court_info=show_court_info,
         )
         if (m.match_type or "").upper() == "CONSOLATION":
@@ -1062,9 +1089,7 @@ def public_round_robin(
             team_ids.add(m.team_a_id)
         if m.team_b_id:
             team_ids.add(m.team_b_id)
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map: Dict[int, Team] = {t.id: t for t in teams}
 
     rr_ids = {m.id for m in rr_matches}
@@ -1075,9 +1100,7 @@ def public_round_robin(
     ).all()
     assignment_map = {a.match_id: a for a in assignments if a.match_id in rr_ids}
     slot_ids = {a.slot_id for a in assignment_map.values()}
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     pool_matches: Dict[str, List[Match]] = {}
@@ -1109,6 +1132,7 @@ def public_round_robin(
             score_display = None
             if m.score_json:
                 import json
+
                 try:
                     sd = json.loads(m.score_json) if isinstance(m.score_json, str) else m.score_json
                     if isinstance(sd, dict) and sd.get("display"):
@@ -1133,13 +1157,13 @@ def public_round_robin(
                 if slot:
                     court_display = f"Court {slot.court_number}" if slot.court_number else None
                     if slot.day_date:
-                        from datetime import datetime, date as date_type, time as time_type
+                        from datetime import date as date_type
+
                         dd = slot.day_date
                         if isinstance(dd, str):
                             dd = date_type.fromisoformat(dd)
                         day_display = dd.strftime("%A, %B %d, %Y")
                     if slot.start_time:
-                        from datetime import time as time_type
                         st = slot.start_time
                         if isinstance(st, str):
                             parts = st.split(":")
@@ -1150,25 +1174,29 @@ def public_round_robin(
                         else:
                             time_display = st.strftime("%I:%M %p").lstrip("0")
 
-            boxes.append(RRMatchBox(
-                match_id=m.id,
-                match_code=m.match_code,
-                round_index=display_round_index,
-                line1=line1,
-                line2=line2,
-                status=status,
-                score_display=score_display,
-                court_label=court_display,
-                day_display=day_display,
-                time_display=time_display,
-                winner_name=winner_name,
-            ))
+            boxes.append(
+                RRMatchBox(
+                    match_id=m.id,
+                    match_code=m.match_code,
+                    round_index=display_round_index,
+                    line1=line1,
+                    line2=line2,
+                    status=status,
+                    score_display=score_display,
+                    court_label=court_display,
+                    day_display=day_display,
+                    time_display=time_display,
+                    winner_name=winner_name,
+                )
+            )
 
-        pools.append(RRPool(
-            pool_code=pool_code,
-            pool_label=_POOL_LABELS.get(pool_code, pool_code),
-            matches=boxes,
-        ))
+        pools.append(
+            RRPool(
+                pool_code=pool_code,
+                pool_label=_POOL_LABELS.get(pool_code, pool_code),
+                matches=boxes,
+            )
+        )
 
     # Compute standings per pool from FINAL matches
     from app.services.score_parser import parse_score as _parse_score
@@ -1186,7 +1214,15 @@ def public_round_robin(
 
         rows_data: Dict[int, dict] = {}
         for tid in pool_team_ids:
-            rows_data[tid] = {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0}
+            rows_data[tid] = {
+                "wins": 0,
+                "losses": 0,
+                "sets_won": 0,
+                "sets_lost": 0,
+                "games_won": 0,
+                "games_lost": 0,
+                "played": 0,
+            }
         for m in matches_in_pool:
             rt = (m.runtime_status or "SCHEDULED").upper()
             if rt != "FINAL":
@@ -1244,14 +1280,13 @@ def public_round_robin(
         )
         sorted_rows = base_sorted_rows
 
-        standings_list.append(RRPoolStandings(
-            pool_code=pool_code,
-            pool_label=_POOL_LABELS.get(pool_code, pool_code),
-            rows=[
-                RRStandingsRow(team_id=tid, team_display=_disp(tid), **r)
-                for tid, r in sorted_rows
-            ],
-        ))
+        standings_list.append(
+            RRPoolStandings(
+                pool_code=pool_code,
+                pool_label=_POOL_LABELS.get(pool_code, pool_code),
+                rows=[RRStandingsRow(team_id=tid, team_display=_disp(tid), **r) for tid, r in sorted_rows],
+            )
+        )
 
     return RoundRobinResponse(
         tournament_name=tournament.name,
@@ -1422,9 +1457,7 @@ def public_schedule(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version.id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
 
     if not all_matches:
         return PublicScheduleResponse(
@@ -1448,9 +1481,7 @@ def public_schedule(
     assignment_map: Dict[int, MatchAssignment] = {a.match_id: a for a in assignments}
 
     slot_ids = list({a.slot_id for a in assignments})
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))).all() if slot_ids else []
     slot_map: Dict[int, ScheduleSlot] = {s.id: s for s in slots}
 
     team_ids = set()
@@ -1459,15 +1490,11 @@ def public_schedule(
             team_ids.add(m.team_a_id)
         if m.team_b_id:
             team_ids.add(m.team_b_id)
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map: Dict[int, Team] = {t.id: t for t in teams}
 
     event_ids = list({m.event_id for m in all_matches})
-    events = session.exec(
-        select(Event).where(Event.id.in_(event_ids))
-    ).all()
+    events = session.exec(select(Event).where(Event.id.in_(event_ids))).all()
     event_map: Dict[int, Event] = {e.id: e for e in events}
 
     # Build flat list
@@ -1504,8 +1531,10 @@ def public_schedule(
                 scheduled_time = st.strftime("%I:%M %p").lstrip("0") if st else None
                 sort_time = st.strftime("%H:%M") if st else None
 
-            court_name = f"Court {slot.court_label}" if slot.court_label else (
-                f"Court {slot.court_number}" if slot.court_number else None
+            court_name = (
+                f"Court {slot.court_label}"
+                if slot.court_label
+                else (f"Court {slot.court_number}" if slot.court_number else None)
             )
             if court_name and court_name.lower().startswith("court court"):
                 court_name = court_name[6:]
@@ -1526,29 +1555,31 @@ def public_schedule(
         t1_full = _schedule_team_line(m.team_a_id, m.placeholder_side_a, team_map, short=False)
         t2_full = _schedule_team_line(m.team_b_id, m.placeholder_side_b, team_map, short=False)
 
-        items.append(ScheduleMatchItem(
-            match_id=m.id,
-            match_number=m.id,
-            match_code=m.match_code or "",
-            stage=stage,
-            event_id=m.event_id,
-            event_name=ev_name,
-            division_name=div_name,
-            day_index=day_offset,
-            day_label=day_label,
-            scheduled_time=scheduled_time,
-            sort_time=sort_time,
-            court_name=court_name,
-            status=status,
-            team1_display=t1_display,
-            team2_display=t2_display,
-            team1_full_name=t1_full,
-            team2_full_name=t2_full,
-            score_display=score,
-            winner_team_id=m.winner_team_id,
-            team_a_id=m.team_a_id,
-            team_b_id=m.team_b_id,
-        ))
+        items.append(
+            ScheduleMatchItem(
+                match_id=m.id,
+                match_number=m.id,
+                match_code=m.match_code or "",
+                stage=stage,
+                event_id=m.event_id,
+                event_name=ev_name,
+                division_name=div_name,
+                day_index=day_offset,
+                day_label=day_label,
+                scheduled_time=scheduled_time,
+                sort_time=sort_time,
+                court_name=court_name,
+                status=status,
+                team1_display=t1_display,
+                team2_display=t2_display,
+                team1_full_name=t1_full,
+                team2_full_name=t2_full,
+                score_display=score,
+                winner_team_id=m.winner_team_id,
+                team_a_id=m.team_a_id,
+                team_b_id=m.team_b_id,
+            )
+        )
 
     # Compute filter options from full (unfiltered) set
     event_options = sorted(
@@ -1572,7 +1603,8 @@ def public_schedule(
     if search:
         q = search.lower()
         filtered = [
-            m for m in filtered
+            m
+            for m in filtered
             if q in m.team1_display.lower()
             or q in m.team2_display.lower()
             or q in m.team1_full_name.lower()

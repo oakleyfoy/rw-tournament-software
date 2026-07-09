@@ -4,9 +4,9 @@ Revision ID: 013_add_sms_support
 Revises: 012_public_version
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "013_add_sms_support"
 down_revision = "012_public_version"
@@ -62,9 +62,7 @@ def upgrade():
         ),
         sa.Column("message_type", sa.String(), nullable=False),
         sa.Column("template_body", sa.String(), nullable=False),
-        sa.Column(
-            "is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")
-        ),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
     )

@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 from app.models.match import Match
 from app.services.draw_plan_engine import DrawPlanSpec
-from app.services.wf_pairing import TeamSeed, build_wf_r1_pairings
+from app.services.draw_plan_rules import rr_pairings_by_round
 from app.services.wf_14_format import (
     CONS_PLACEMENT_PAIRINGS,
     CONS_REGULAR_PAIRINGS,
@@ -17,13 +17,14 @@ from app.services.wf_14_format import (
     select_top_two_bye_teams,
     teams_for_wf_r1,
 )
-from app.services.draw_plan_rules import rr_pairings_by_round
+from app.services.wf_pairing import TeamSeed, build_wf_r1_pairings
 from app.utils.rr_wiring import wire_rr_match_placeholders
 
 
 def _load_event_teams(session, event_id: int):
-    from app.models.team import Team
     from sqlmodel import select
+
+    from app.models.team import Team
 
     return list(session.exec(select(Team).where(Team.event_id == event_id)).all())
 
@@ -52,8 +53,7 @@ def _participating_teams_for_draw(
         if len(picked) >= TEAM_COUNT:
             if len(all_teams) > TEAM_COUNT:
                 warnings.append(
-                    f"WF_14_TOP2_BYE: using {TEAM_COUNT} linked teams; "
-                    f"{len(all_teams)} team rows on this event"
+                    f"WF_14_TOP2_BYE: using {TEAM_COUNT} linked teams; {len(all_teams)} team rows on this event"
                 )
             return picked[:TEAM_COUNT]
 
@@ -62,10 +62,7 @@ def _participating_teams_for_draw(
         key=lambda t: (t.seed if t.seed is not None else 9999, t.id),
     )
     if len(ordered) > TEAM_COUNT:
-        warnings.append(
-            f"WF_14_TOP2_BYE: using seeds 1–{TEAM_COUNT}; "
-            f"{len(ordered)} team rows on this event"
-        )
+        warnings.append(f"WF_14_TOP2_BYE: using seeds 1–{TEAM_COUNT}; {len(ordered)} team rows on this event")
     return ordered[:TEAM_COUNT]
 
 
@@ -82,9 +79,7 @@ def generate_wf_14_matches(
         warnings.append(f"WF_14_TOP2_BYE requires team_count={TEAM_COUNT}, got {spec.team_count}")
         return matches, warnings
     if spec.waterfall_rounds != REQUIRED_WF_ROUNDS:
-        warnings.append(
-            f"WF_14_TOP2_BYE requires waterfall_rounds={REQUIRED_WF_ROUNDS}, got {spec.waterfall_rounds}"
-        )
+        warnings.append(f"WF_14_TOP2_BYE requires waterfall_rounds={REQUIRED_WF_ROUNDS}, got {spec.waterfall_rounds}")
         return matches, warnings
 
     prefix = spec.match_code_prefix
@@ -92,8 +87,7 @@ def generate_wf_14_matches(
     participating = _participating_teams_for_draw(all_teams, linked_team_ids, warnings)
     if len(participating) < TEAM_COUNT:
         warnings.append(
-            f"WF_14_TOP2_BYE: expected {TEAM_COUNT} teams, found {len(participating)} "
-            f"({len(all_teams)} rows on event)"
+            f"WF_14_TOP2_BYE: expected {TEAM_COUNT} teams, found {len(participating)} ({len(all_teams)} rows on event)"
         )
 
     bye_a, bye_b = select_top_two_bye_teams(participating)
@@ -144,7 +138,7 @@ def generate_wf_14_matches(
             tournament_id=spec.tournament_id,
             event_id=spec.event_id,
             schedule_version_id=version_id,
-            match_code=f"{prefix}WF_R1_{i+1:02d}",
+            match_code=f"{prefix}WF_R1_{i + 1:02d}",
             match_type="WF",
             round_number=1,
             round_index=1,
@@ -247,7 +241,7 @@ def generate_wf_14_matches(
                     tournament_id=spec.tournament_id,
                     event_id=spec.event_id,
                     schedule_version_id=version_id,
-                    match_code=f"{prefix}POOL{pool_label}_RR_{rr_idx+1:02d}",
+                    match_code=f"{prefix}POOL{pool_label}_RR_{rr_idx + 1:02d}",
                     match_type="RR",
                     round_number=round_index,
                     round_index=round_index,

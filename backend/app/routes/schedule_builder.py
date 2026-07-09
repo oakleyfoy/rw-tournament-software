@@ -4,8 +4,8 @@ Schedule Builder — read-only authoritative match inventory.
 Uses Draw Plan Engine for all calculations. No local template math.
 """
 
-import logging
 import json
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -159,9 +159,7 @@ def get_schedule_builder(
         session, tournament, schedule_version_id
     )
     # Query ALL events (not just finalized)
-    all_events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id).order_by(Event.id)
-    ).all()
+    all_events = session.exec(select(Event).where(Event.tournament_id == tournament_id).order_by(Event.id)).all()
 
     finalized_events = [e for e in all_events if e.draw_status == "final"]
 

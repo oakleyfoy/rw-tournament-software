@@ -4,6 +4,7 @@ SQL utilities for consistent handling of query results.
 SQLModel/SQLAlchemy may return COUNT results as int or as a 1-tuple/Row.
 Use scalar_int() to safely coerce to int everywhere.
 """
+
 from typing import Any
 
 

@@ -53,10 +53,7 @@ def test_generate_wf_matches_r1_matches_build_wf_r1_pairings(session):
     session.flush()
 
     by_seed = {t.seed: t for t in teams}
-    seed_teams = [
-        TeamSeed(seed=s, team_id=by_seed[s].id, name=by_seed[s].name)
-        for s in range(1, 33)
-    ]
+    seed_teams = [TeamSeed(seed=s, team_id=by_seed[s].id, name=by_seed[s].name) for s in range(1, 33)]
     expected = build_wf_r1_pairings(seed_teams, 32)
 
     matches = generate_wf_matches(

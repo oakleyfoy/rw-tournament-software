@@ -5,7 +5,6 @@ Tests for Draw Plan Engine — the authoritative source of match inventory and g
 import json
 from datetime import date, time
 
-import pytest
 from sqlmodel import Session, select
 
 from app.models.event import Event
@@ -17,13 +16,12 @@ from app.models.team import Team
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.services.draw_plan_engine import (
-    DrawPlanSpec,
-    InventoryCounts,
     BRACKET_MATCHES_G4,
     BRACKET_MATCHES_G5,
-    build_spec_from_event,
+    DrawPlanSpec,
     bracket_inventory,
     bracket_matches_for_guarantee,
+    build_spec_from_event,
     compute_inventory,
     normalize_template_key,
     repair_bracket_placeholder_source_wiring,
@@ -31,14 +29,14 @@ from app.services.draw_plan_engine import (
     resolve_event_family,
     validate_spec,
 )
-from app.services.wf_pool_projection import compute_wf_projection
 from app.services.draw_plan_rules import rr_pairings_by_round, rr_round_count
-from app.utils.wf_seeding import pool_assignment_contiguous, wf_rank_key, WFTeamResult
-
+from app.services.wf_pool_projection import compute_wf_projection
+from app.utils.wf_seeding import WFTeamResult, pool_assignment_contiguous, wf_rank_key
 
 # -----------------------------------------------------------------------------
 # Helper to build specs quickly
 # -----------------------------------------------------------------------------
+
 
 def make_spec(
     template_type: str,
@@ -94,6 +92,7 @@ def test_build_spec_from_event_prefers_draw_plan_timing_values():
 # normalize_template_key tests
 # -----------------------------------------------------------------------------
 
+
 class TestNormalizeTemplateKey:
     def test_uppercase(self):
         assert normalize_template_key("wf_to_pools_4") == "WF_TO_POOLS_4"
@@ -111,6 +110,7 @@ class TestNormalizeTemplateKey:
 # -----------------------------------------------------------------------------
 # resolve_event_family tests
 # -----------------------------------------------------------------------------
+
 
 class TestResolveEventFamily:
     def test_rr_only(self):
@@ -147,6 +147,7 @@ class TestResolveEventFamily:
 # -----------------------------------------------------------------------------
 # validate_spec tests
 # -----------------------------------------------------------------------------
+
 
 class TestValidateSpec:
     def test_valid_spec(self):
@@ -190,6 +191,7 @@ class TestRRRoundNumbering:
         rounds = {r for r, _s, _a, _b in pairings}
         assert rounds == {1, 2, 3}, f"Expected rounds {{1,2,3}}, got {rounds}"
         from collections import Counter
+
         per_round = Counter(r for r, _s, _a, _b in pairings)
         assert per_round == {1: 2, 2: 2, 3: 2}, f"Expected 2 per round, got {dict(per_round)}"
         assert rr_round_count(4) == 3
@@ -209,6 +211,7 @@ class TestRRRoundNumbering:
         rounds = {r for r, _s, _a, _b in pairings}
         assert rounds == {1, 2, 3, 4, 5}, f"Expected rounds {{1..5}}, got {rounds}"
         from collections import Counter
+
         per_round = Counter(r for r, _s, _a, _b in pairings)
         assert all(c == 3 for c in per_round.values()), f"Expected 3 per round, got {dict(per_round)}"
         assert rr_round_count(6) == 5
@@ -226,9 +229,7 @@ class TestRRRoundNumbering:
         ]
         assert pairings == expected, f"Got {pairings}"
 
-    def test_wf_to_pools_4_pool_a_rr_matches_use_exact_pool4_order(
-        self, session, client
-    ):
+    def test_wf_to_pools_4_pool_a_rr_matches_use_exact_pool4_order(self, session, client):
         """WF_TO_POOLS_4 pool RR matches must have R1: 1v4,2v3; R2: 1v3,2v4; R3: 1v2,3v4."""
         from app.models.tournament_time_window import TournamentTimeWindow
 
@@ -281,7 +282,7 @@ class TestRRRoundNumbering:
         session.commit()
         session.refresh(event)
         for i in range(16):
-            session.add(Team(event_id=event.id, name=f"Seed {i+1}", seed=i + 1, rating=1000.0))
+            session.add(Team(event_id=event.id, name=f"Seed {i + 1}", seed=i + 1, rating=1000.0))
         session.commit()
 
         r = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
@@ -301,12 +302,10 @@ class TestRRRoundNumbering:
         for i, m in enumerate(pool_a_rr):
             exp_r, exp_s = expected_round_seq[i]
             assert m.round_index == exp_r and m.sequence_in_round == exp_s, (
-                f"Match {i+1}: expected R{exp_r} seq{exp_s}, got R{m.round_index} seq{m.sequence_in_round}"
+                f"Match {i + 1}: expected R{exp_r} seq{exp_s}, got R{m.round_index} seq{m.sequence_in_round}"
             )
 
-    def test_rr_only_4_teams_generated_matches_have_rounds_1_2_3(
-        self, session, client
-    ):
+    def test_rr_only_4_teams_generated_matches_have_rounds_1_2_3(self, session, client):
         """RR_ONLY with 4 teams: generated matches have round_index in {1,2,3}, 2 per round."""
         from app.models.tournament_time_window import TournamentTimeWindow
 
@@ -364,12 +363,10 @@ class TestRRRoundNumbering:
         session.refresh(event)
 
         for i in range(4):
-            session.add(Team(event_id=event.id, name=f"Team {i+1}", seed=i + 1, rating=1000.0))
+            session.add(Team(event_id=event.id, name=f"Team {i + 1}", seed=i + 1, rating=1000.0))
         session.commit()
 
-        r = client.post(
-            f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate"
-        )
+        r = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
         assert r.status_code == 200, r.text
 
         matches = session.exec(
@@ -383,6 +380,7 @@ class TestRRRoundNumbering:
         round_indices = [m.round_index for m in matches]
         assert set(round_indices) == {1, 2, 3}
         from collections import Counter
+
         per_round = Counter(round_indices)
         assert per_round == {1: 2, 2: 2, 3: 2}
 
@@ -448,7 +446,7 @@ class TestWFRound1Pairing:
         session.commit()
         session.refresh(event)
         for i in range(8):
-            session.add(Team(event_id=event.id, name=f"Seed {i+1}", seed=i + 1, rating=1000.0))
+            session.add(Team(event_id=event.id, name=f"Seed {i + 1}", seed=i + 1, rating=1000.0))
         session.commit()
 
         r = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
@@ -473,7 +471,7 @@ class TestWFRound1Pairing:
             a, b = parse_seed(m.placeholder_side_a), parse_seed(m.placeholder_side_b)
             pair = tuple(sorted([a, b]))
             exp = expected[i]
-            assert pair == (min(exp), max(exp)), f"Match {i+1}: expected {exp}, got ({a},{b})"
+            assert pair == (min(exp), max(exp)), f"Match {i + 1}: expected {exp}, got ({a},{b})"
 
     def test_wf_r1_16_teams(self, session, client):
         """16 teams: half-split in fold order."""
@@ -528,7 +526,7 @@ class TestWFRound1Pairing:
         session.commit()
         session.refresh(event)
         for i in range(16):
-            session.add(Team(event_id=event.id, name=f"Seed {i+1}", seed=i + 1, rating=1000.0))
+            session.add(Team(event_id=event.id, name=f"Seed {i + 1}", seed=i + 1, rating=1000.0))
         session.commit()
 
         r = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
@@ -553,7 +551,7 @@ class TestWFRound1Pairing:
             a, b = parse_seed(m.placeholder_side_a), parse_seed(m.placeholder_side_b)
             pair = tuple(sorted([a, b]))
             exp = expected[i]
-            assert pair == (min(exp), max(exp)), f"Match {i+1}: expected {exp}, got ({a},{b})"
+            assert pair == (min(exp), max(exp)), f"Match {i + 1}: expected {exp}, got ({a},{b})"
 
 
 # -----------------------------------------------------------------------------
@@ -712,10 +710,12 @@ def test_wf_projection_interprets_winner_first_score_for_side_b_winner(session: 
         category="mixed",
         name="Mixed WF",
         team_count=4,
-        draw_plan_json=json.dumps({
-            "template_type": "WF_TO_POOLS_DYNAMIC",
-            "wf_rounds": 2,
-        }),
+        draw_plan_json=json.dumps(
+            {
+                "template_type": "WF_TO_POOLS_DYNAMIC",
+                "wf_rounds": 2,
+            }
+        ),
     )
     session.add(event)
     session.flush()
@@ -818,11 +818,13 @@ def test_wf_projection_interprets_winner_first_score_for_side_b_winner(session: 
     ]
     session.add_all(slots)
     session.flush()
-    session.add_all([
-        MatchAssignment(schedule_version_id=version.id, match_id=r1_m1.id, slot_id=slots[0].id),
-        MatchAssignment(schedule_version_id=version.id, match_id=r1_m2.id, slot_id=slots[1].id),
-        MatchAssignment(schedule_version_id=version.id, match_id=r2_m1.id, slot_id=slots[2].id),
-    ])
+    session.add_all(
+        [
+            MatchAssignment(schedule_version_id=version.id, match_id=r1_m1.id, slot_id=slots[0].id),
+            MatchAssignment(schedule_version_id=version.id, match_id=r1_m2.id, slot_id=slots[1].id),
+            MatchAssignment(schedule_version_id=version.id, match_id=r2_m1.id, slot_id=slots[2].id),
+        ]
+    )
     session.commit()
 
     projection = compute_wf_projection(session, tournament.id, version.id, event.id)
@@ -861,10 +863,12 @@ def test_wf_projection_seed_reason_without_db_seed_uses_deterministic_order(sess
         category="mixed",
         name="Mixed WF",
         team_count=4,
-        draw_plan_json=json.dumps({
-            "template_type": "WF_TO_POOLS_DYNAMIC",
-            "wf_rounds": 2,
-        }),
+        draw_plan_json=json.dumps(
+            {
+                "template_type": "WF_TO_POOLS_DYNAMIC",
+                "wf_rounds": 2,
+            }
+        ),
     )
     session.add(event)
     session.flush()
@@ -946,6 +950,7 @@ def test_wf_projection_seed_reason_without_db_seed_uses_deterministic_order(sess
 # compute_inventory tests: RR_ONLY
 # -----------------------------------------------------------------------------
 
+
 class TestInventoryRROnly:
     def test_8_teams(self):
         spec = make_spec("RR_ONLY", 8)
@@ -973,6 +978,7 @@ class TestInventoryRROnly:
 # compute_inventory tests: WF_TO_POOLS_4
 # -----------------------------------------------------------------------------
 
+
 class TestInventoryWFToPools4:
     def test_valid_16_teams_2_rounds(self):
         spec = make_spec("WF_TO_POOLS_4", 16, wf_rounds=2)
@@ -999,6 +1005,7 @@ class TestInventoryWFToPools4:
 # -----------------------------------------------------------------------------
 # compute_inventory tests: WF_TO_BRACKETS_8
 # -----------------------------------------------------------------------------
+
 
 class TestInventoryWFToBrackets8:
     def test_32_teams_2_rounds_g5(self):
@@ -1054,6 +1061,7 @@ class TestInventoryWFToBrackets8:
 # bracket_matches_for_guarantee tests
 # -----------------------------------------------------------------------------
 
+
 class TestBracketMatchesForGuarantee:
     def test_g4(self):
         assert bracket_matches_for_guarantee(4) == BRACKET_MATCHES_G4
@@ -1069,6 +1077,7 @@ class TestBracketMatchesForGuarantee:
 # compute_inventory: unsupported template
 # -----------------------------------------------------------------------------
 
+
 class TestInventoryUnsupported:
     def test_unknown_template(self):
         spec = make_spec("FOOBAR_TEMPLATE", 16)
@@ -1081,6 +1090,7 @@ class TestInventoryUnsupported:
 # Regression: CANONICAL_32 is unsupported for 32 teams; use WF_TO_BRACKETS_8
 # -----------------------------------------------------------------------------
 
+
 class TestCanonical32IsUnsupportedFor32Teams:
     def test_canonical_32_with_32_teams_returns_error(self):
         """
@@ -1088,10 +1098,10 @@ class TestCanonical32IsUnsupportedFor32Teams:
         Draw Builder should store WF_TO_BRACKETS_8 for 32-team Women's events.
         """
         spec = make_spec("CANONICAL_32", 32, wf_rounds=2, guarantee=5)
-        
+
         # Family should be UNSUPPORTED
         assert resolve_event_family(spec) == "UNSUPPORTED"
-        
+
         # Inventory should return an error
         inv = compute_inventory(spec)
         assert inv.has_errors(), "Expected errors for CANONICAL_32 with 32 teams"
@@ -1106,10 +1116,10 @@ class TestCanonical32IsUnsupportedFor32Teams:
         - Total: 80
         """
         spec = make_spec("WF_TO_BRACKETS_8", 32, wf_rounds=2, guarantee=5)
-        
+
         # Family should be WF_TO_BRACKETS_8
         assert resolve_event_family(spec) == "WF_TO_BRACKETS_8"
-        
+
         # Inventory should match expected values
         inv = compute_inventory(spec)
         assert not inv.has_errors(), f"Unexpected errors: {inv.errors}"
@@ -1154,6 +1164,7 @@ class TestCanonical32IsUnsupportedFor32Teams:
 # -----------------------------------------------------------------------------
 # WF_TO_POOLS_DYNAMIC: Phase 1 Pools-only template
 # -----------------------------------------------------------------------------
+
 
 class TestWfToPoolsDynamic:
     """Tests for WF_TO_POOLS_DYNAMIC template (Phase 1)."""
@@ -1273,6 +1284,7 @@ class TestWfToPoolsDynamic:
 # Match Generation Tests: WF_TO_BRACKETS_8 with WF2 wiring
 # -----------------------------------------------------------------------------
 
+
 class TestWF2BracketWiring:
     """Test that WF Round 2 results are wired into bracket slots correctly."""
 
@@ -1300,10 +1312,12 @@ class TestWF2BracketWiring:
             team_count=16,
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1333,9 +1347,7 @@ class TestWF2BracketWiring:
         session._allow_match_generation = True
         linked_team_ids = list(range(1, 17))  # 16 teams
         existing_codes = set()
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, linked_team_ids, existing_codes
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
         session.add_all(matches)
         session.commit()
 
@@ -1346,12 +1358,11 @@ class TestWF2BracketWiring:
         # Extract prefix: everything before "_BWW_"
         match_code_parts = ww_match.match_code.split("_BWW_")[0]
         # Remove trailing underscore if present
-        event_prefix = match_code_parts.rstrip('_')
+        event_prefix = match_code_parts.rstrip("_")
 
         # Find WW bracket QF matches (M1-M4) — round_index == 1 for all QFs
         ww_qf_matches = [
-            m for m in matches
-            if m.match_type == "MAIN" and "BWW_M" in m.match_code and m.round_index == 1
+            m for m in matches if m.match_type == "MAIN" and "BWW_M" in m.match_code and m.round_index == 1
         ]
         ww_qf_matches.sort(key=lambda m: m.sequence_in_round or 0)
 
@@ -1361,10 +1372,12 @@ class TestWF2BracketWiring:
         qf1 = ww_qf_matches[0]
         expected_a = f"{event_prefix}_WF_R2_W01"
         expected_b = f"{event_prefix}_WF_R2_W02"
-        assert expected_a in qf1.placeholder_side_a or expected_a in qf1.placeholder_side_b, \
+        assert expected_a in qf1.placeholder_side_a or expected_a in qf1.placeholder_side_b, (
             f"QF1 missing {expected_a}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_b in qf1.placeholder_side_a or expected_b in qf1.placeholder_side_b, \
+        )
+        assert expected_b in qf1.placeholder_side_a or expected_b in qf1.placeholder_side_b, (
             f"QF1 missing {expected_b}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        )
 
         w01 = next(m for m in matches if m.match_code == expected_a)
         w02 = next(m for m in matches if m.match_code == expected_b)
@@ -1374,26 +1387,32 @@ class TestWF2BracketWiring:
         qf2 = ww_qf_matches[1]
         expected_a = f"{event_prefix}_WF_R2_W03"
         expected_b = f"{event_prefix}_WF_R2_W04"
-        assert expected_a in qf2.placeholder_side_a or expected_a in qf2.placeholder_side_b, \
+        assert expected_a in qf2.placeholder_side_a or expected_a in qf2.placeholder_side_b, (
             f"QF2 missing {expected_a}, got {qf2.placeholder_side_a} / {qf2.placeholder_side_b}"
-        assert expected_b in qf2.placeholder_side_a or expected_b in qf2.placeholder_side_b, \
+        )
+        assert expected_b in qf2.placeholder_side_a or expected_b in qf2.placeholder_side_b, (
             f"QF2 missing {expected_b}, got {qf2.placeholder_side_a} / {qf2.placeholder_side_b}"
+        )
 
         qf3 = ww_qf_matches[2]
         expected_a = f"{event_prefix}_WF_R2_W02"
         expected_b = f"{event_prefix}_WF_R2_W03"
-        assert expected_a in qf3.placeholder_side_a or expected_a in qf3.placeholder_side_b, \
+        assert expected_a in qf3.placeholder_side_a or expected_a in qf3.placeholder_side_b, (
             f"QF3 missing {expected_a}, got {qf3.placeholder_side_a} / {qf3.placeholder_side_b}"
-        assert expected_b in qf3.placeholder_side_a or expected_b in qf3.placeholder_side_b, \
+        )
+        assert expected_b in qf3.placeholder_side_a or expected_b in qf3.placeholder_side_b, (
             f"QF3 missing {expected_b}, got {qf3.placeholder_side_a} / {qf3.placeholder_side_b}"
+        )
 
         qf4 = ww_qf_matches[3]
         expected_a = f"{event_prefix}_WF_R2_W04"
         expected_b = f"{event_prefix}_WF_R2_W01"
-        assert expected_a in qf4.placeholder_side_a or expected_a in qf4.placeholder_side_b, \
+        assert expected_a in qf4.placeholder_side_a or expected_a in qf4.placeholder_side_b, (
             f"QF4 missing {expected_a}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
-        assert expected_b in qf4.placeholder_side_a or expected_b in qf4.placeholder_side_b, \
+        )
+        assert expected_b in qf4.placeholder_side_a or expected_b in qf4.placeholder_side_b, (
             f"QF4 missing {expected_b}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        )
 
         # Verify no "TBD" placeholders in WW bracket QFs
         for qf in ww_qf_matches:
@@ -1426,10 +1445,12 @@ class TestWF2BracketWiring:
             team_count=16,
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1457,9 +1478,7 @@ class TestWF2BracketWiring:
         session._allow_match_generation = True
         linked_team_ids = list(range(1, 17))
         existing_codes = set()
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, linked_team_ids, existing_codes
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
         session.add_all(matches)
         session.commit()
 
@@ -1467,12 +1486,11 @@ class TestWF2BracketWiring:
         wl_match = next((m for m in matches if "BWL_M" in m.match_code), None)
         assert wl_match is not None, "No WL bracket matches found"
         match_code_parts = wl_match.match_code.split("_BWL_")[0]
-        event_prefix = match_code_parts.rstrip('_')
+        event_prefix = match_code_parts.rstrip("_")
 
         # Find WL bracket QF matches
         wl_qf_matches = [
-            m for m in matches
-            if m.match_type == "MAIN" and "BWL_M" in m.match_code and m.round_index == 1
+            m for m in matches if m.match_type == "MAIN" and "BWL_M" in m.match_code and m.round_index == 1
         ]
         wl_qf_matches.sort(key=lambda m: m.sequence_in_round or 0)
 
@@ -1482,18 +1500,22 @@ class TestWF2BracketWiring:
         qf1 = wl_qf_matches[0]
         expected_w_token_1 = f"{event_prefix}_WF_R2_W01"
         expected_w_token_2 = f"{event_prefix}_WF_R2_W02"
-        assert expected_w_token_1 in qf1.placeholder_side_a or expected_w_token_1 in qf1.placeholder_side_b, \
+        assert expected_w_token_1 in qf1.placeholder_side_a or expected_w_token_1 in qf1.placeholder_side_b, (
             f"WL QF1 missing {expected_w_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_w_token_2 in qf1.placeholder_side_a or expected_w_token_2 in qf1.placeholder_side_b, \
+        )
+        assert expected_w_token_2 in qf1.placeholder_side_a or expected_w_token_2 in qf1.placeholder_side_b, (
             f"WL QF1 missing {expected_w_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        )
 
-        assert "_WF_R2_L" not in qf1.placeholder_side_a and "_WF_R2_L" not in qf1.placeholder_side_b, \
+        assert "_WF_R2_L" not in qf1.placeholder_side_a and "_WF_R2_L" not in qf1.placeholder_side_b, (
             f"BWL QF1 must not use orange L tokens; got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        )
         w01 = next(m for m in matches if m.match_code == expected_w_token_1)
         w02 = next(m for m in matches if m.match_code == expected_w_token_2)
         assert {qf1.source_match_a_id, qf1.source_match_b_id} == {w01.id, w02.id}
-        assert qf1.source_a_role == "LOSER" and qf1.source_b_role == "LOSER", \
+        assert qf1.source_a_role == "LOSER" and qf1.source_b_role == "LOSER", (
             f"BWL QF1 expects LOSER of green R2; got roles {qf1.source_a_role!r} / {qf1.source_b_role!r}"
+        )
 
         # Verify no "TBD" or "Division" placeholders
         for qf in wl_qf_matches:
@@ -1526,10 +1548,12 @@ class TestWF2BracketWiring:
             team_count=32,  # 32 teams = 4 brackets (WW, WL, LW, LL)
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1557,9 +1581,7 @@ class TestWF2BracketWiring:
         session._allow_match_generation = True
         linked_team_ids = list(range(1, 33))  # 32 teams
         existing_codes = set()
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, linked_team_ids, existing_codes
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
         session.add_all(matches)
         session.commit()
 
@@ -1567,12 +1589,11 @@ class TestWF2BracketWiring:
         blw_match = next((m for m in matches if "BLW_M" in m.match_code), None)
         assert blw_match is not None, "No BLW bracket matches found"
         match_code_parts = blw_match.match_code.split("_BLW_")[0]
-        event_prefix = match_code_parts.rstrip('_')
+        event_prefix = match_code_parts.rstrip("_")
 
         # Find BLW bracket QF matches (M1-M4)
         blw_qf_matches = [
-            m for m in matches
-            if m.match_type == "MAIN" and "BLW_M" in m.match_code and m.round_index == 1
+            m for m in matches if m.match_type == "MAIN" and "BLW_M" in m.match_code and m.round_index == 1
         ]
         blw_qf_matches.sort(key=lambda m: m.sequence_in_round or 0)
 
@@ -1582,19 +1603,23 @@ class TestWF2BracketWiring:
         qf1 = blw_qf_matches[0]
         expected_l_token_1 = f"{event_prefix}_WF_R2_L01"
         expected_l_token_2 = f"{event_prefix}_WF_R2_L02"
-        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, \
+        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, (
             f"BLW QF1 missing {expected_l_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, \
+        )
+        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, (
             f"BLW QF1 missing {expected_l_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        )
 
         # BLW QF4: 8-feeder rotation slot pair (7, 8) -> L07 vs L08
         qf4 = blw_qf_matches[3]
         expected_l_token_7 = f"{event_prefix}_WF_R2_L07"
         expected_l_token_8 = f"{event_prefix}_WF_R2_L08"
-        assert expected_l_token_7 in qf4.placeholder_side_a or expected_l_token_7 in qf4.placeholder_side_b, \
+        assert expected_l_token_7 in qf4.placeholder_side_a or expected_l_token_7 in qf4.placeholder_side_b, (
             f"BLW QF4 missing {expected_l_token_7}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
-        assert expected_l_token_8 in qf4.placeholder_side_a or expected_l_token_8 in qf4.placeholder_side_b, \
+        )
+        assert expected_l_token_8 in qf4.placeholder_side_a or expected_l_token_8 in qf4.placeholder_side_b, (
             f"BLW QF4 missing {expected_l_token_8}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        )
 
         l01 = next(m for m in matches if m.match_code == expected_l_token_1)
         l02 = next(m for m in matches if m.match_code == expected_l_token_2)
@@ -1631,10 +1656,12 @@ class TestWF2BracketWiring:
             team_count=32,  # 32 teams = 4 brackets (WW, WL, LW, LL)
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1662,9 +1689,7 @@ class TestWF2BracketWiring:
         session._allow_match_generation = True
         linked_team_ids = list(range(1, 33))  # 32 teams
         existing_codes = set()
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, linked_team_ids, existing_codes
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
         session.add_all(matches)
         session.commit()
 
@@ -1672,12 +1697,11 @@ class TestWF2BracketWiring:
         bll_match = next((m for m in matches if "BLL_M" in m.match_code), None)
         assert bll_match is not None, "No BLL bracket matches found"
         match_code_parts = bll_match.match_code.split("_BLL_")[0]
-        event_prefix = match_code_parts.rstrip('_')
+        event_prefix = match_code_parts.rstrip("_")
 
         # Find BLL bracket QF matches (M1-M4)
         bll_qf_matches = [
-            m for m in matches
-            if m.match_type == "MAIN" and "BLL_M" in m.match_code and m.round_index == 1
+            m for m in matches if m.match_type == "MAIN" and "BLL_M" in m.match_code and m.round_index == 1
         ]
         bll_qf_matches.sort(key=lambda m: m.sequence_in_round or 0)
 
@@ -1687,19 +1711,23 @@ class TestWF2BracketWiring:
         qf1 = bll_qf_matches[0]
         expected_l_token_1 = f"{event_prefix}_WF_R2_L01"
         expected_l_token_2 = f"{event_prefix}_WF_R2_L02"
-        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, \
+        assert expected_l_token_1 in qf1.placeholder_side_a or expected_l_token_1 in qf1.placeholder_side_b, (
             f"BLL QF1 missing {expected_l_token_1}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
-        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, \
+        )
+        assert expected_l_token_2 in qf1.placeholder_side_a or expected_l_token_2 in qf1.placeholder_side_b, (
             f"BLL QF1 missing {expected_l_token_2}, got {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        )
 
         # BLL QF4: (7, 8) -> L07 vs L08
         qf4 = bll_qf_matches[3]
         expected_l_token_7 = f"{event_prefix}_WF_R2_L07"
         expected_l_token_8 = f"{event_prefix}_WF_R2_L08"
-        assert expected_l_token_7 in qf4.placeholder_side_a or expected_l_token_7 in qf4.placeholder_side_b, \
+        assert expected_l_token_7 in qf4.placeholder_side_a or expected_l_token_7 in qf4.placeholder_side_b, (
             f"BLL QF4 missing {expected_l_token_7}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
-        assert expected_l_token_8 in qf4.placeholder_side_a or expected_l_token_8 in qf4.placeholder_side_b, \
+        )
+        assert expected_l_token_8 in qf4.placeholder_side_a or expected_l_token_8 in qf4.placeholder_side_b, (
             f"BLL QF4 missing {expected_l_token_8}, got {qf4.placeholder_side_a} / {qf4.placeholder_side_b}"
+        )
 
         lb01 = next(m for m in matches if m.match_code == expected_l_token_1)
         lb02 = next(m for m in matches if m.match_code == expected_l_token_2)
@@ -1707,8 +1735,9 @@ class TestWF2BracketWiring:
         assert qf1.source_a_role == "LOSER" and qf1.source_b_role == "LOSER"
 
         # Verify BLL uses L tokens (losers), not W tokens
-        assert "_WF_R2_W" not in qf1.placeholder_side_a and "_WF_R2_W" not in qf1.placeholder_side_b, \
+        assert "_WF_R2_W" not in qf1.placeholder_side_a and "_WF_R2_W" not in qf1.placeholder_side_b, (
             f"BLL QF1 should use L tokens (losers), but found W token: {qf1.placeholder_side_a} / {qf1.placeholder_side_b}"
+        )
 
         # Verify no legacy placeholders
         for qf in bll_qf_matches:
@@ -1740,10 +1769,12 @@ class TestWF2BracketWiring:
             team_count=32,  # 32 teams = 4 brackets
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1771,16 +1802,14 @@ class TestWF2BracketWiring:
         session._allow_match_generation = True
         linked_team_ids = list(range(1, 33))  # 32 teams
         existing_codes = set()
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, linked_team_ids, existing_codes
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
         session.add_all(matches)
         session.commit()
 
         # Extract event prefix
         any_match = next((m for m in matches if "_B" in m.match_code), None)
         assert any_match is not None, "No bracket matches found"
-        event_prefix = any_match.match_code.split("_B")[0].rstrip('_')
+        event_prefix = any_match.match_code.split("_B")[0].rstrip("_")
 
         # Each division QF1: first two WF R2 feeders in that track (sequential; matches waterfall labels).
         # WW/WL: green W01–W08; LW/LL: orange L01–L08 (WIN vs LOSER).
@@ -1790,21 +1819,26 @@ class TestWF2BracketWiring:
             ("BLW", "L", "01", "02"),
             ("BLL", "L", "01", "02"),
         ]
-        
+
         for bracket_label, token_type, seq_a, seq_b in expected_mappings:
             qf1_match = next(
-                (m for m in matches if f"{bracket_label}_M1" in m.match_code and m.match_type == "MAIN"),
-                None
+                (m for m in matches if f"{bracket_label}_M1" in m.match_code and m.match_type == "MAIN"), None
             )
             assert qf1_match is not None, f"No {bracket_label} QF1 match found"
-            
+
             expected_token_a = f"{event_prefix}_WF_R2_{token_type}{seq_a}"
             expected_token_b = f"{event_prefix}_WF_R2_{token_type}{seq_b}"
-            
-            assert expected_token_a in qf1_match.placeholder_side_a or expected_token_a in qf1_match.placeholder_side_b, \
+
+            assert (
+                expected_token_a in qf1_match.placeholder_side_a or expected_token_a in qf1_match.placeholder_side_b
+            ), (
                 f"{bracket_label} QF1 should have {expected_token_a}, got {qf1_match.placeholder_side_a} / {qf1_match.placeholder_side_b}"
-            assert expected_token_b in qf1_match.placeholder_side_a or expected_token_b in qf1_match.placeholder_side_b, \
+            )
+            assert (
+                expected_token_b in qf1_match.placeholder_side_a or expected_token_b in qf1_match.placeholder_side_b
+            ), (
                 f"{bracket_label} QF1 should have {expected_token_b}, got {qf1_match.placeholder_side_a} / {qf1_match.placeholder_side_b}"
+            )
 
     def test_drop_in_matches_wire_to_correct_feeders(self, session):
         """Extra drop-in matches should use consolation-semi losers, then main-semi losers."""
@@ -1829,10 +1863,12 @@ class TestWF2BracketWiring:
             team_count=16,
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1858,9 +1894,7 @@ class TestWF2BracketWiring:
         )
 
         session._allow_match_generation = True
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, list(range(1, 17)), set()
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, list(range(1, 17)), set())
         session.add_all(matches)
         session.commit()
 
@@ -1909,10 +1943,12 @@ class TestWF2BracketWiring:
             team_count=16,
             guarantee_selected=5,
         )
-        event.draw_plan_json = json.dumps({
-            "template_type": "WF_TO_BRACKETS_8",
-            "wf_rounds": 2,
-        })
+        event.draw_plan_json = json.dumps(
+            {
+                "template_type": "WF_TO_BRACKETS_8",
+                "wf_rounds": 2,
+            }
+        )
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -1938,9 +1974,7 @@ class TestWF2BracketWiring:
         )
 
         session._allow_match_generation = True
-        matches, warnings = generate_matches_for_event(
-            session, version.id, spec, list(range(1, 17)), set()
-        )
+        matches, warnings = generate_matches_for_event(session, version.id, spec, list(range(1, 17)), set())
         session.add_all(matches)
         session.commit()
 
@@ -2010,10 +2044,12 @@ def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Sessi
         team_count=16,
         guarantee_selected=5,
     )
-    event.draw_plan_json = json.dumps({
-        "template_type": "WF_TO_BRACKETS_8",
-        "wf_rounds": 2,
-    })
+    event.draw_plan_json = json.dumps(
+        {
+            "template_type": "WF_TO_BRACKETS_8",
+            "wf_rounds": 2,
+        }
+    )
     session.add(event)
     session.commit()
     session.refresh(event)
@@ -2039,9 +2075,7 @@ def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Sessi
     )
 
     session._allow_match_generation = True
-    matches, _warnings = generate_matches_for_event(
-        session, version.id, spec, list(range(1, 17)), set()
-    )
+    matches, _warnings = generate_matches_for_event(session, version.id, spec, list(range(1, 17)), set())
     session.add_all(matches)
     session.commit()
 
@@ -2079,4 +2113,3 @@ def test_repair_bracket_placeholder_source_wiring_restores_bwl_qf(session: Sessi
     assert {bwl_m1.source_match_a_id, bwl_m1.source_match_b_id} == {wf_w01.id, wf_w02.id}
     assert bwl_m1.source_a_role == "LOSER"
     assert bwl_m1.source_b_role == "LOSER"
-

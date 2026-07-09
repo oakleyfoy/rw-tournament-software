@@ -37,6 +37,7 @@ class ScheduleSlot(SQLModel, table=True):
         if isinstance(value, list):
             return ",".join(str(x) for x in value)
         return str(value)
+
     block_minutes: int
     label: Optional[str] = None
     is_active: bool = Field(default=True)

@@ -2,6 +2,7 @@
 Phase 4 Advancement: When a match is finalized, auto-populate downstream match team slots.
 WF/MAIN bracket only. Only updates team_a_id/team_b_id on future matches; no slot/assignment mutation.
 """
+
 from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session, select
@@ -50,12 +51,8 @@ def resolve_all_dependencies(session: Session, schedule_version_id: int) -> Dict
         - Deterministic ordering (processes by match_id)
         - No slot/assignment mutations
     """
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
-    unknown_before = sum(
-        1 for m in all_matches if m.team_a_id is None or m.team_b_id is None
-    )
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
+    unknown_before = sum(1 for m in all_matches if m.team_a_id is None or m.team_b_id is None)
 
     finalized_matches = session.exec(
         select(Match)
@@ -77,12 +74,8 @@ def resolve_all_dependencies(session: Session, schedule_version_id: int) -> Dict
         matches_processed += 1
 
     session.expire_all()
-    all_matches_after = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
-    unknown_after = sum(
-        1 for m in all_matches_after if m.team_a_id is None or m.team_b_id is None
-    )
+    all_matches_after = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
+    unknown_after = sum(1 for m in all_matches_after if m.team_a_id is None or m.team_b_id is None)
 
     return {
         "matches_processed": matches_processed,
@@ -92,18 +85,12 @@ def resolve_all_dependencies(session: Session, schedule_version_id: int) -> Dict
     }
 
 
-def simulate_advancement_higher_seed_wins(
-    session: Session, schedule_version_id: int
-) -> Dict:
+def simulate_advancement_higher_seed_wins(session: Session, schedule_version_id: int) -> Dict:
     """
     DEV-ONLY: Simulate advancement by assuming higher seed (lower team_id) wins.
     """
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
-    unknown_before = sum(
-        1 for m in all_matches if m.team_a_id is None or m.team_b_id is None
-    )
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
+    unknown_before = sum(1 for m in all_matches if m.team_a_id is None or m.team_b_id is None)
 
     simulatable = []
     for match in all_matches:
@@ -114,10 +101,7 @@ def simulate_advancement_higher_seed_wins(
         is_source = session.exec(
             select(Match).where(
                 Match.schedule_version_id == schedule_version_id,
-                (
-                    (Match.source_match_a_id == match.id) |
-                    (Match.source_match_b_id == match.id)
-                ),
+                ((Match.source_match_a_id == match.id) | (Match.source_match_b_id == match.id)),
             )
         ).first()
         if is_source:
@@ -140,12 +124,8 @@ def simulate_advancement_higher_seed_wins(
         matches_simulated += 1
 
     session.expire_all()
-    all_matches_after = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
-    unknown_after = sum(
-        1 for m in all_matches_after if m.team_a_id is None or m.team_b_id is None
-    )
+    all_matches_after = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
+    unknown_after = sum(1 for m in all_matches_after if m.team_a_id is None or m.team_b_id is None)
 
     return {
         "matches_simulated": matches_simulated,
@@ -268,16 +248,12 @@ def apply_advancement_for_final_match(session: Session, match_id: int) -> int:
     if event:
         from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
 
-        updated_count += refresh_wf14_consolation_after_advancement(
-            session, match.event_id, version_id
-        )
+        updated_count += refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
 
     return updated_count
 
 
-def apply_advancement_with_details(
-    session: Session, match_id: int
-) -> Dict[str, Any]:
+def apply_advancement_with_details(session: Session, match_id: int) -> Dict[str, Any]:
     """
     Like apply_advancement_for_final_match but returns structured results
     with downstream updates and warnings for the desk UI.
@@ -320,11 +296,13 @@ def apply_advancement_with_details(
         current = down.team_a_id if slot == "A" else down.team_b_id
 
         if current is not None and current != team_id:
-            warnings.append({
-                "match_id": down.id,
-                "reason": "CONFLICT_EXISTING_TEAM",
-                "detail": f"Slot {slot} already has team {current}, not overwriting with {team_id}",
-            })
+            warnings.append(
+                {
+                    "match_id": down.id,
+                    "reason": "CONFLICT_EXISTING_TEAM",
+                    "detail": f"Slot {slot} already has team {current}, not overwriting with {team_id}",
+                }
+            )
             return
 
         if current != team_id:
@@ -333,15 +311,17 @@ def apply_advancement_with_details(
             else:
                 down.team_b_id = team_id
             session.add(down)
-            updates.append({
-                "match_id": down.id,
-                "slot_filled": slot,
-                "team_id": team_id,
-                "match_code": down.match_code,
-                "match_type": down.match_type,
-                "event_id": down.event_id,
-                "role": role,
-            })
+            updates.append(
+                {
+                    "match_id": down.id,
+                    "slot_filled": slot,
+                    "team_id": team_id,
+                    "match_code": down.match_code,
+                    "match_type": down.match_type,
+                    "event_id": down.event_id,
+                    "role": role,
+                }
+            )
 
     # Downstream where this match feeds slot A
     downstream_a = session.exec(
@@ -406,12 +386,11 @@ def apply_advancement_with_details(
     return {"downstream_updates": updates, "warnings": warnings}
 
 
-def _auto_default_if_needed(
-    session: Session, updates: List[Dict[str, Any]]
-) -> tuple:
+def _auto_default_if_needed(session: Session, updates: List[Dict[str, Any]]) -> tuple:
     """After advancement, check if any updated match has a defaulted team and auto-finalize.
     Returns (extra_updates, extra_warnings) from cascading auto-defaults."""
     from datetime import datetime
+
     from app.models.team import Team
 
     extra_updates: List[Dict[str, Any]] = []
@@ -452,11 +431,13 @@ def _auto_default_if_needed(
         session.add(down)
         session.commit()
 
-        extra_warnings.append({
-            "match_id": down.id,
-            "reason": "AUTO_DEFAULTED",
-            "detail": f"Match #{down.id} ({down.match_code}) was auto-defaulted (team is defaulted for weekend)",
-        })
+        extra_warnings.append(
+            {
+                "match_id": down.id,
+                "reason": "AUTO_DEFAULTED",
+                "detail": f"Match #{down.id} ({down.match_code}) was auto-defaulted (team is defaulted for weekend)",
+            }
+        )
 
         cascade = apply_advancement_with_details(session, down.id)
         extra_updates.extend(cascade.get("downstream_updates", []))

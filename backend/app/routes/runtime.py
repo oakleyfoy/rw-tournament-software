@@ -3,6 +3,7 @@ Phase 4 Runtime: Match status + scoring. No schedule mutation.
 Allowed on draft and final schedule versions; assignments/slots remain immutable.
 When a match is finalized, advancement service fills downstream team slots (WF/MAIN).
 """
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -205,8 +206,10 @@ def get_version_runtime_matches(
 # Bulk Dependency Resolution
 # ============================================================================
 
+
 class ResolveDependenciesResponse(BaseModel):
     """Response for bulk dependency resolution"""
+
     matches_processed: int
     teams_advanced: int
     unknown_before: int
@@ -224,18 +227,18 @@ def resolve_dependencies(
 ) -> ResolveDependenciesResponse:
     """
     Bulk resolve dependencies for all finalized matches in a schedule version.
-    
+
     Iterates through all FINAL matches with winner_team_id and applies advancement
     to populate downstream match team slots. This is useful after:
     - Batch importing match results
     - Recovering from interrupted advancement
     - Verifying advancement state
-    
+
     Guarantees:
     - Idempotent (safe to call multiple times)
     - Deterministic ordering (processes by match_id)
     - No slot/assignment mutations
-    
+
     Returns:
         - matches_processed: number of finalized matches processed
         - teams_advanced: total downstream team slots filled
@@ -243,22 +246,24 @@ def resolve_dependencies(
         - unknown_after: count of matches with null teams after
     """
     from app.services.advancement_service import resolve_all_dependencies
-    
+
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    
+
     from app.models.schedule_version import ScheduleVersion
+
     version = session.get(ScheduleVersion, schedule_version_id)
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
-    
+
     result = resolve_all_dependencies(session, schedule_version_id)
     return ResolveDependenciesResponse(**result)
 
 
 class SimulateAdvancementResponse(BaseModel):
     """Response for simulate advancement (dev-only)"""
+
     matches_simulated: int
     teams_advanced: int
     unknown_before: int
@@ -276,16 +281,16 @@ def simulate_advancement(
 ) -> SimulateAdvancementResponse:
     """
     DEV-ONLY: Simulate advancement by assuming higher seed (lower team_id) wins.
-    
+
     For each WF/dependency-source match that has both teams assigned but no winner:
     - Set winner_team_id = min(team_a_id, team_b_id)
     - Set runtime_status = "FINAL"
     - Run advancement to fill downstream slots
-    
+
     This is for testing the advancement pipeline without manual match result entry.
-    
+
     WARNING: This will modify match results! Use only in development/testing.
-    
+
     Returns:
         - matches_simulated: number of matches auto-finalized
         - teams_advanced: total downstream slots filled
@@ -293,15 +298,16 @@ def simulate_advancement(
         - unknown_after: count of unknown-team matches after
     """
     from app.services.advancement_service import simulate_advancement_higher_seed_wins
-    
+
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    
+
     from app.models.schedule_version import ScheduleVersion
+
     version = session.get(ScheduleVersion, schedule_version_id)
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
-    
+
     result = simulate_advancement_higher_seed_wins(session, schedule_version_id)
     return SimulateAdvancementResponse(**result)

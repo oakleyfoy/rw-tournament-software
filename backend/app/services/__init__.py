@@ -7,4 +7,3 @@ Pure business logic services that:
 - Do NOT depend on HTTP request/response objects
 - Do NOT mutate data unless explicitly designed to
 """
-

@@ -4,9 +4,9 @@ Revision ID: 014_add_player_sms_foundation
 Revises: 013_add_sms_support
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "014_add_player_sms_foundation"
 down_revision = "013_add_sms_support"

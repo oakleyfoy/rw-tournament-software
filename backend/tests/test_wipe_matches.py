@@ -1,9 +1,9 @@
 """
 Tests for wipe matches endpoint.
 """
+
 from datetime import date, time
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -80,30 +80,22 @@ def test_wipe_matches_deletes_all_matches(client: TestClient, session: Session):
     session.commit()
 
     # Verify matches exist
-    matches_before = session.exec(
-        select(Match).where(Match.schedule_version_id == version.id)
-    ).all()
+    matches_before = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
     assert len(matches_before) == 2
 
     # Call wipe endpoint
-    response = client.delete(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches"
-    )
+    response = client.delete(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches")
 
     assert response.status_code == 200
     data = response.json()
     assert data["deleted_matches"] == 2
 
     # Verify matches are deleted
-    matches_after = session.exec(
-        select(Match).where(Match.schedule_version_id == version.id)
-    ).all()
+    matches_after = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
     assert len(matches_after) == 0
 
     # Verify preview returns empty
-    preview_response = client.get(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/preview"
-    )
+    preview_response = client.get(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/preview")
     assert preview_response.status_code == 200
     preview_data = preview_response.json()
     assert len(preview_data["matches"]) == 0
@@ -134,9 +126,7 @@ def test_wipe_matches_refuses_finalized_version(client: TestClient, session: Ses
     session.refresh(version)
 
     # Try to wipe matches
-    response = client.delete(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches"
-    )
+    response = client.delete(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches")
 
     assert response.status_code == 409
     assert "finalized" in response.json()["detail"].lower()
@@ -173,9 +163,7 @@ def test_wipe_matches_404_for_wrong_tournament(client: TestClient, session: Sess
     session.refresh(version)
 
     # Try to wipe using wrong tournament ID
-    response = client.delete(
-        f"/api/tournaments/{tournament2.id}/schedule/versions/{version.id}/matches"
-    )
+    response = client.delete(f"/api/tournaments/{tournament2.id}/schedule/versions/{version.id}/matches")
 
     assert response.status_code == 404
 
@@ -265,9 +253,7 @@ def test_wipe_matches_deletes_assignments_too(client: TestClient, session: Sessi
     assert len(assignments_before) == 1
 
     # Call wipe endpoint
-    response = client.delete(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches"
-    )
+    response = client.delete(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches")
 
     assert response.status_code == 200
 

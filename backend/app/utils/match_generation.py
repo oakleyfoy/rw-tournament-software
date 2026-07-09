@@ -121,6 +121,7 @@ def generate_wf_to_pools_4_canonical_r1(
     linked_teams = []
     if session and (effective_team_count or event.team_count) >= 16:
         from app.utils.team_injection import get_deterministic_teams
+
         linked_teams = get_deterministic_teams(session, event.id) or []
     bind_teams = len(linked_teams) == 16
     # R1 pairs: (0,15), (1,14), (2,13), (3,12), (4,11), (5,10), (6,9), (7,8) (0-based seed 1..16)
@@ -186,8 +187,8 @@ def generate_wf_to_pools_4_canonical_r2(
             round_index=2,
             sequence_in_round=seq,
             duration_minutes=duration_minutes,
-            placeholder_side_a=f"W(R1_{i+1})",
-            placeholder_side_b=f"W(R1_{j+1})",
+            placeholder_side_a=f"W(R1_{i + 1})",
+            placeholder_side_b=f"W(R1_{j + 1})",
             team_a_id=None,
             team_b_id=None,
             status="unscheduled",
@@ -210,8 +211,8 @@ def generate_wf_to_pools_4_canonical_r2(
             round_index=2,
             sequence_in_round=seq,
             duration_minutes=duration_minutes,
-            placeholder_side_a=f"L(R1_{i+1})",
-            placeholder_side_b=f"L(R1_{j+1})",
+            placeholder_side_a=f"L(R1_{i + 1})",
+            placeholder_side_b=f"L(R1_{j + 1})",
             team_a_id=None,
             team_b_id=None,
             status="unscheduled",
@@ -338,6 +339,7 @@ def generate_wf_matches(
     linked_teams_for_wf = []
     if session and n_teams_binding >= 2:
         from app.utils.team_injection import get_deterministic_teams
+
         linked_teams_for_wf = get_deterministic_teams(session, event.id) or []
     bind_wf = len(linked_teams_for_wf) == n_teams_binding and n_teams_binding % 2 == 0
     wf_pairs_by_round = []
@@ -370,16 +372,10 @@ def generate_wf_matches(
         seed_teams.sort(key=lambda x: x.seed)
         if pairing_ok and [t.seed for t in seed_teams] == list(range(1, n_teams_binding + 1)):
             pairing = build_wf_r1_pairings(seed_teams, n_teams_binding)
-            r1_pairs = [
-                (team_by_id[ta_id], team_by_id[tb_id])
-                for ta_id, tb_id in pairing.team_id_pairs
-            ]
+            r1_pairs = [(team_by_id[ta_id], team_by_id[tb_id]) for ta_id, tb_id in pairing.team_id_pairs]
         else:
             # Deterministic order already seed-primary; pair top half vs bottom half by slot.
-            r1_pairs = [
-                (linked_teams_for_wf[i], linked_teams_for_wf[i + half])
-                for i in range(half)
-            ]
+            r1_pairs = [(linked_teams_for_wf[i], linked_teams_for_wf[i + half]) for i in range(half)]
 
         wf_pairs_by_round.append(r1_pairs)
 
@@ -462,9 +458,8 @@ def generate_standard_matches(
     # Load linked teams if session provided (for binding)
     linked_teams_ordered = []
     if session:
-        from sqlmodel import select
-        from app.models.team import Team
         from app.utils.team_injection import get_deterministic_teams
+
         linked_teams_ordered = get_deterministic_teams(session, event.id) or []
 
     # Determine match type based on template
@@ -591,9 +586,7 @@ def generate_standard_matches(
             placement_pairs = []
             if len(linked_teams_ordered) >= placement_count * 2:
                 for i in range(placement_count):
-                    placement_pairs.append(
-                        (linked_teams_ordered[i * 2], linked_teams_ordered[i * 2 + 1])
-                    )
+                    placement_pairs.append((linked_teams_ordered[i * 2], linked_teams_ordered[i * 2 + 1]))
             for seq in range(1, placement_count + 1):
                 if match_num > count:
                     break

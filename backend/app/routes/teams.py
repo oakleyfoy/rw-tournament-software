@@ -18,10 +18,10 @@ from app.models.event import Event
 from app.models.match import Match
 from app.models.schedule_version import ScheduleVersion
 from app.models.sms_log import SmsLog
-from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
+from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.utils.team_injection import TeamInjectionError, inject_teams_v1
 
@@ -84,6 +84,7 @@ class TeamResponse(BaseModel):
     @classmethod
     def coerce_defaulted(cls, v: object) -> bool:
         return bool(v) if v is not None else False
+
     registration_timestamp: Optional[datetime] = None
     created_at: datetime
     wf_group_index: Optional[int] = None
@@ -97,9 +98,7 @@ class TeamResponse(BaseModel):
 def _sync_player_contacts_if_enabled(session: Session, tournament_id: int) -> None:
     """Keep Player/TeamPlayer contacts in sync after team edits."""
     settings = session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == tournament_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
     ).first()
     if not settings or not bool(getattr(settings, "player_contacts_only", False)):
         return
@@ -349,6 +348,7 @@ def _parse_seeded_line(raw: str, line_num: int) -> dict:
     # 10+ fields: use the enhanced parser from team_import
     if len(parts) >= 10:
         from app.routes.team_import import parse_team_rows
+
         rows = parse_team_rows(raw)
         if not rows:
             raise ValueError("Could not parse 10-field line")
@@ -419,9 +419,7 @@ def _parse_combined_import_rows(raw_text: str) -> tuple[List[dict], List[Rejecte
     if any(name not in index_map for name in required):
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Header row must include Seed, First names team, Full name, city, state team, and Draw columns"
-            ),
+            detail=("Header row must include Seed, First names team, Full name, city, state team, and Draw columns"),
         )
 
     parsed: List[dict] = []
@@ -795,10 +793,7 @@ def _blocked_team_ids_for_finalized_matches(
         )
     ).all()
     for match, version_status in stale_matches:
-        referenced_ids = {
-            tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id)
-            if tid in stale_set
-        }
+        referenced_ids = {tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id) if tid in stale_set}
         if not referenced_ids:
             continue
         is_final_match = (match.runtime_status or "").upper() == "FINAL"
@@ -839,10 +834,7 @@ def _safe_remove_teams_from_event(
         )
     ).all()
     for match, version_status in stale_matches:
-        referenced_ids = {
-            tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id)
-            if tid in stale_set
-        }
+        referenced_ids = {tid for tid in (match.team_a_id, match.team_b_id, match.winner_team_id) if tid in stale_set}
         if not referenced_ids:
             continue
         is_final_match = (match.runtime_status or "").upper() == "FINAL"
@@ -858,7 +850,7 @@ def _safe_remove_teams_from_event(
         session.add(match)
 
     removable_stale_ids = [tid for tid in stale_team_ids if tid not in blocked_stale_ids]
-    removable_set = set(removable_stale_ids)
+    set(removable_stale_ids)
 
     if blocked_stale_ids:
         blocked_teams = session.exec(
@@ -900,9 +892,7 @@ def _safe_remove_teams_from_event(
         for team in teams_to_delete:
             session.delete(team)
         session.flush()
-        warnings.append(
-            f"Removed {len(removable_stale_ids)} {removal_summary}."
-        )
+        warnings.append(f"Removed {len(removable_stale_ids)} {removal_summary}.")
 
     return warnings
 
@@ -914,9 +904,7 @@ def _upsert_seeded_rows_for_event(
 ) -> tuple[int, int, List[str], List[Team]]:
     warnings: List[str] = []
 
-    existing_teams = session.exec(
-        select(Team).where(Team.event_id == event.id)
-    ).all()
+    existing_teams = session.exec(select(Team).where(Team.event_id == event.id)).all()
     incoming_seeds = {row["seed"] for row in parsed}
 
     stale_team_ids: List[int] = []
@@ -929,9 +917,7 @@ def _upsert_seeded_rows_for_event(
     if stale_team_ids:
         warnings.extend(_safe_remove_teams_from_event(session, event, stale_team_ids))
 
-    existing_teams = session.exec(
-        select(Team).where(Team.event_id == event.id)
-    ).all()
+    existing_teams = session.exec(select(Team).where(Team.event_id == event.id)).all()
     existing_by_seed = {t.seed: t for t in existing_teams if t.seed is not None}
 
     imported_count = 0
@@ -946,8 +932,7 @@ def _upsert_seeded_rows_for_event(
         if existing:
             if existing.name != row["full_name"]:
                 warnings.append(
-                    f"W_SEED_REASSIGNED: seed {seed} changed from "
-                    f"'{existing.name}' to '{row['full_name']}'"
+                    f"W_SEED_REASSIGNED: seed {seed} changed from '{existing.name}' to '{row['full_name']}'"
                 )
             existing.name = row["full_name"]
             existing.rating = row["rating"]
@@ -1040,9 +1025,7 @@ def _upsert_seeded_rows_for_event(
 
     total_teams = len(session.exec(select(Team).where(Team.event_id == event.id)).all())
     if event.team_count != total_teams:
-        warnings.append(
-            f"Event team_count was {event.team_count}, now {total_teams} teams in DB."
-        )
+        warnings.append(f"Event team_count was {event.team_count}, now {total_teams} teams in DB.")
         event.team_count = total_teams
         session.add(event)
 
@@ -1099,16 +1082,22 @@ def import_seeded_teams(
 
         seed = row["seed"]
         if seed in seen_seeds:
-            rejected.append(RejectedRow(
-                line=i, text=raw_line[:120],
-                reason=f"Duplicate seed {seed} (already seen)",
-            ))
+            rejected.append(
+                RejectedRow(
+                    line=i,
+                    text=raw_line[:120],
+                    reason=f"Duplicate seed {seed} (already seen)",
+                )
+            )
             continue
         if seed < 1:
-            rejected.append(RejectedRow(
-                line=i, text=raw_line[:120],
-                reason=f"Seed must be >= 1, got {seed}",
-            ))
+            rejected.append(
+                RejectedRow(
+                    line=i,
+                    text=raw_line[:120],
+                    reason=f"Seed must be >= 1, got {seed}",
+                )
+            )
             continue
 
         seen_seeds.add(seed)
@@ -1122,8 +1111,7 @@ def import_seeded_teams(
         missing = expected - seen_seeds
         if missing:
             warnings.append(
-                f"Seeds not contiguous: missing {sorted(missing)}. "
-                f"Got {len(parsed)} teams for seeds 1..{max_seed}."
+                f"Seeds not contiguous: missing {sorted(missing)}. Got {len(parsed)} teams for seeds 1..{max_seed}."
             )
 
     imported_count, updated_count, helper_warnings, _ = _upsert_seeded_rows_for_event(session, event, parsed)
@@ -1149,9 +1137,7 @@ def import_combined_teams(
     request: CombinedTeamImportRequest,
     session: Session = Depends(get_session),
 ):
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     if not events:
         raise HTTPException(status_code=404, detail="No events found for this tournament")
 
@@ -1233,7 +1219,7 @@ def import_combined_teams(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"Cannot replace roster for \"{event.name}\": "
+                    f'Cannot replace roster for "{event.name}": '
                     f"{len(blocked)} team(s) are still assigned to finalized matches or a finalized schedule version. "
                     "Clear those assignments before re-importing."
                 ),

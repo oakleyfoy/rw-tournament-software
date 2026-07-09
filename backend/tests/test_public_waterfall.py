@@ -104,9 +104,7 @@ def test_public_waterfall_roundrobin_dest_uses_pool_seeding_not_four_divisions(c
     session.add(tournament)
     session.commit()
 
-    resp = client.get(
-        f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall"
-    )
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["division_type"] == "roundrobin"
@@ -184,9 +182,7 @@ def test_public_waterfall_hides_match_and_court_info_in_checkin_management(clien
     session.add(tournament)
     session.commit()
 
-    resp = client.get(
-        f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall"
-    )
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall")
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -322,9 +318,7 @@ def test_public_waterfall_bracket_four_division_names_from_final_r2(client, sess
     session.add(tournament)
     session.commit()
 
-    resp = client.get(
-        f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall"
-    )
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["division_type"] == "bracket"

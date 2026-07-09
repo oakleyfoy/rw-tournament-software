@@ -21,8 +21,8 @@ from app.models.player import Player
 from app.models.policy_run import PolicyRun
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
-from app.models.sms_log import SmsLog
 from app.models.slot_lock import SlotLock
+from app.models.sms_log import SmsLog
 from app.models.sms_template import SmsTemplate
 from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.models.team import Team
@@ -413,7 +413,9 @@ def _build_print_packet_pdf(
             c.setFillGray(C_MID)
             c.drawRightString(x + w - 6, y + 7, status.replace("_", " "))
 
-    def _draw_dest_card(c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str, team_name: Optional[str]) -> None:
+    def _draw_dest_card(
+        c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str, team_name: Optional[str]
+    ) -> None:
         c.setFillGray(0.97)
         c.setStrokeGray(C_LIGHT)
         c.rect(x, y, w, h, stroke=1, fill=1)
@@ -442,10 +444,7 @@ def _build_print_packet_pdf(
             win_div = dest_label_map["BLW"]
             lose_div = dest_label_map["BLL"]
             letter = chr(ord("A") + r2_seq - r2_winner_count - 1)
-        return (
-            f"Winner to {event_name} {win_div} - {letter}\n"
-            f"Loser to {event_name} {lose_div} - {letter}"
-        )
+        return f"Winner to {event_name} {win_div} - {letter}\nLoser to {event_name} {lose_div} - {letter}"
 
     def _build_wf_rows(event: Event, wf_matches: List[Match]) -> List[Dict[str, Any]]:
         all_matches = {m.id: m for m in wf_matches}
@@ -499,8 +498,12 @@ def _build_print_packet_pdf(
             if loser_match and loser_match.sequence_in_round:
                 loser_dest = _dest_lines(event.name, "LOSER", loser_match.sequence_in_round, r2_winner_count)
 
-            r2_winner_name = _team_name(winner_match.winner_team_id, None) if winner_match and winner_match.winner_team_id else None
-            r2_loser_name = _team_name(loser_match.winner_team_id, None) if loser_match and loser_match.winner_team_id else None
+            r2_winner_name = (
+                _team_name(winner_match.winner_team_id, None) if winner_match and winner_match.winner_team_id else None
+            )
+            r2_loser_name = (
+                _team_name(loser_match.winner_team_id, None) if loser_match and loser_match.winner_team_id else None
+            )
 
             rows.append(
                 {
@@ -919,31 +922,37 @@ def download_print_packet_pdf(
     ).all()
     event_ids = [e.id for e in events]
 
-    matches = session.exec(
-        select(Match).where(
-            Match.tournament_id == tournament_id,
-            Match.schedule_version_id == version.id,
-            Match.event_id.in_(event_ids),  # type: ignore
-            Match.match_type.in_(["WF", "RR"]),  # type: ignore
-        )
-    ).all() if event_ids else []
+    matches = (
+        session.exec(
+            select(Match).where(
+                Match.tournament_id == tournament_id,
+                Match.schedule_version_id == version.id,
+                Match.event_id.in_(event_ids),  # type: ignore
+                Match.match_type.in_(["WF", "RR"]),  # type: ignore
+            )
+        ).all()
+        if event_ids
+        else []
+    )
     matches_by_event: Dict[int, List[Match]] = {}
     for m in matches:
         matches_by_event.setdefault(m.event_id, []).append(m)
 
     match_ids = [m.id for m in matches]
-    assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == version.id,
-            MatchAssignment.match_id.in_(match_ids),  # type: ignore
-        )
-    ).all() if match_ids else []
+    assignments = (
+        session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == version.id,
+                MatchAssignment.match_id.in_(match_ids),  # type: ignore
+            )
+        ).all()
+        if match_ids
+        else []
+    )
     assignment_by_match = {a.match_id: a for a in assignments}
 
     slot_ids = list({a.slot_id for a in assignments})
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     team_ids = set()
@@ -952,9 +961,7 @@ def download_print_packet_pdf(
             team_ids.add(m.team_a_id)
         if m.team_b_id:
             team_ids.add(m.team_b_id)
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map = {t.id: t for t in teams}
 
     try:
@@ -1082,79 +1089,91 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         session.add(new_tournament)
         session.flush()
 
-        source_days = session.exec(
-            select(TournamentDay).where(TournamentDay.tournament_id == tournament_id)
-        ).all()
+        source_days = session.exec(select(TournamentDay).where(TournamentDay.tournament_id == tournament_id)).all()
         source_windows = session.exec(
             select(TournamentTimeWindow).where(TournamentTimeWindow.tournament_id == tournament_id)
         ).all()
-        source_events = session.exec(
-            select(Event).where(Event.tournament_id == tournament_id)
-        ).all()
+        source_events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
         source_versions = session.exec(
             select(ScheduleVersion)
             .where(ScheduleVersion.tournament_id == tournament_id)
             .order_by(ScheduleVersion.version_number.asc(), ScheduleVersion.id.asc())
         ).all()
-        source_slots = session.exec(
-            select(ScheduleSlot).where(ScheduleSlot.tournament_id == tournament_id)
-        ).all()
-        source_matches = session.exec(
-            select(Match).where(Match.tournament_id == tournament_id)
-        ).all()
+        source_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.tournament_id == tournament_id)).all()
+        source_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
         source_court_state = session.exec(
-            select(TournamentCourtState).where(
-                TournamentCourtState.tournament_id == tournament_id
-            )
+            select(TournamentCourtState).where(TournamentCourtState.tournament_id == tournament_id)
         ).all()
         source_sms_settings = session.exec(
-            select(TournamentSmsSettings).where(
-                TournamentSmsSettings.tournament_id == tournament_id
-            )
+            select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
         ).first()
-        source_sms_templates = session.exec(
-            select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)
-        ).all()
+        source_sms_templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)).all()
 
         source_event_ids = [e.id for e in source_events if e.id is not None]
-        source_teams = session.exec(
-            select(Team).where(Team.event_id.in_(source_event_ids))  # type: ignore
-        ).all() if source_event_ids else []
+        source_teams = (
+            session.exec(
+                select(Team).where(Team.event_id.in_(source_event_ids))  # type: ignore
+            ).all()
+            if source_event_ids
+            else []
+        )
         source_team_ids = [t.id for t in source_teams if t.id is not None]
 
-        source_avoid_edges = session.exec(
-            select(TeamAvoidEdge).where(TeamAvoidEdge.event_id.in_(source_event_ids))  # type: ignore
-        ).all() if source_event_ids else []
+        source_avoid_edges = (
+            session.exec(
+                select(TeamAvoidEdge).where(TeamAvoidEdge.event_id.in_(source_event_ids))  # type: ignore
+            ).all()
+            if source_event_ids
+            else []
+        )
 
-        source_players = session.exec(
-            select(Player).where(Player.tournament_id == tournament_id)
-        ).all()
-        source_team_players = session.exec(
-            select(TeamPlayer).where(TeamPlayer.team_id.in_(source_team_ids))  # type: ignore
-        ).all() if source_team_ids else []
+        source_players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+        source_team_players = (
+            session.exec(
+                select(TeamPlayer).where(TeamPlayer.team_id.in_(source_team_ids))  # type: ignore
+            ).all()
+            if source_team_ids
+            else []
+        )
 
         source_version_ids = [v.id for v in source_versions if v.id is not None]
 
-        source_assignments = session.exec(
-            select(MatchAssignment).where(
-                MatchAssignment.schedule_version_id.in_(source_version_ids)  # type: ignore
-            )
-        ).all() if source_version_ids else []
-        source_match_locks = session.exec(
-            select(MatchLock).where(
-                MatchLock.schedule_version_id.in_(source_version_ids)  # type: ignore
-            )
-        ).all() if source_version_ids else []
-        source_slot_locks = session.exec(
-            select(SlotLock).where(
-                SlotLock.schedule_version_id.in_(source_version_ids)  # type: ignore
-            )
-        ).all() if source_version_ids else []
-        source_policy_runs = session.exec(
-            select(PolicyRun).where(
-                PolicyRun.schedule_version_id.in_(source_version_ids)  # type: ignore
-            )
-        ).all() if source_version_ids else []
+        source_assignments = (
+            session.exec(
+                select(MatchAssignment).where(
+                    MatchAssignment.schedule_version_id.in_(source_version_ids)  # type: ignore
+                )
+            ).all()
+            if source_version_ids
+            else []
+        )
+        source_match_locks = (
+            session.exec(
+                select(MatchLock).where(
+                    MatchLock.schedule_version_id.in_(source_version_ids)  # type: ignore
+                )
+            ).all()
+            if source_version_ids
+            else []
+        )
+        source_slot_locks = (
+            session.exec(
+                select(SlotLock).where(
+                    SlotLock.schedule_version_id.in_(source_version_ids)  # type: ignore
+                )
+            ).all()
+            if source_version_ids
+            else []
+        )
+        source_policy_runs = (
+            session.exec(
+                select(PolicyRun).where(
+                    PolicyRun.schedule_version_id.in_(source_version_ids)  # type: ignore
+                )
+            ).all()
+            if source_version_ids
+            else []
+        )
 
         # 2) Copy day/time-window metadata.
         for day in source_days:
@@ -1276,10 +1295,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                         candidate_name = f"{base_name} ({suffix})"
                         suffix += 1
                         continue
-                    if (
-                        "team.event_id, team.seed" in msg
-                        or "uq_event_seed" in msg
-                    ) and candidate_seed is not None:
+                    if ("team.event_id, team.seed" in msg or "uq_event_seed" in msg) and candidate_seed is not None:
                         candidate_seed = None
                         continue
                     raise
@@ -1344,8 +1360,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 except IntegrityError as e:
                     msg = str(e).lower()
                     if (
-                        "player.tournament_id, player.phone_e164" in msg
-                        or "uq_player_tournament_phone" in msg
+                        "player.tournament_id, player.phone_e164" in msg or "uq_player_tournament_phone" in msg
                     ) and candidate_phone is not None:
                         candidate_phone = None
                         continue
@@ -1734,14 +1749,10 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
     tournament.desk_management_mode = "checkin_management"
     session.add(tournament)
 
-    versions = session.exec(
-        select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament_id)
-    ).all()
+    versions = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament_id)).all()
     version_ids = [v.id for v in versions if v.id is not None]
 
-    matches = session.exec(
-        select(Match).where(Match.tournament_id == tournament_id)
-    ).all()
+    matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     event_has_wf: Dict[int, bool] = {}
     for m in matches:
         event_has_wf[m.event_id] = event_has_wf.get(m.event_id, False) or ((m.match_type or "").upper() == "WF")
@@ -1767,9 +1778,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                 m.team_b_id = None
         session.add(m)
 
-    match_checkins = session.exec(
-        select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)
-    ).all()
+    match_checkins = session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)).all()
     for row in match_checkins:
         session.delete(row)
 
@@ -1806,13 +1815,9 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
             if tournament.public_schedule_version_id in version_ids
             else latest_final_version_id
         )
-        draft_version_ids = {
-            v.id for v in versions if v.id is not None and (v.status or "").lower() == "draft"
-        }
+        draft_version_ids = {v.id for v in versions if v.id is not None and (v.status or "").lower() == "draft"}
         if canonical_version_id and draft_version_ids:
-            canonical_assignments = [
-                a for a in assignments if a.schedule_version_id == canonical_version_id
-            ]
+            canonical_assignments = [a for a in assignments if a.schedule_version_id == canonical_version_id]
             if canonical_assignments:
                 all_version_matches = session.exec(
                     select(Match).where(Match.schedule_version_id.in_(version_ids))  # type: ignore[arg-type]
@@ -1836,9 +1841,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                     )
 
                 slot_by_version_key = {
-                    (s.schedule_version_id, _slot_key(s)): s
-                    for s in all_version_slots
-                    if s.id is not None
+                    (s.schedule_version_id, _slot_key(s)): s for s in all_version_slots if s.id is not None
                 }
                 slot_by_version_timekey: Dict[Tuple[int, date, time, time], List[ScheduleSlot]] = {}
                 for s in all_version_slots:
@@ -1869,20 +1872,12 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                         canonical_slot.end_time,
                     )
                     for draft_version_id in draft_version_ids:
-                        draft_match = match_by_version_code.get(
-                            (draft_version_id, canonical_match.match_code)
-                        )
+                        draft_match = match_by_version_code.get((draft_version_id, canonical_match.match_code))
                         draft_slot = slot_by_version_key.get((draft_version_id, canonical_slot_key))
                         if not draft_slot:
-                            same_time_slots = slot_by_version_timekey.get(
-                                (draft_version_id, *canonical_time_key)
-                            ) or []
+                            same_time_slots = slot_by_version_timekey.get((draft_version_id, *canonical_time_key)) or []
                             preferred = next(
-                                (
-                                    sl
-                                    for sl in same_time_slots
-                                    if sl.court_number == canonical_slot.court_number
-                                ),
+                                (sl for sl in same_time_slots if sl.court_number == canonical_slot.court_number),
                                 None,
                             )
                             draft_slot = preferred or (same_time_slots[0] if same_time_slots else None)
@@ -1895,9 +1890,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                         )
 
                 if desired_by_version_match:
-                    current_draft_assignments = [
-                        a for a in assignments if a.schedule_version_id in draft_version_ids
-                    ]
+                    current_draft_assignments = [a for a in assignments if a.schedule_version_id in draft_version_ids]
                     current_by_version_match = {
                         (a.schedule_version_id, a.match_id): a for a in current_draft_assignments
                     }
@@ -1943,12 +1936,8 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                     row.assigned_by = None if (row.assigned_by or "").upper() == "CHECKIN_DESK" else row.assigned_by
                     session.add(row)
             else:
-                baseline_by_version_match = {
-                    (row.schedule_version_id, row.match_id): row for row in baseline_rows
-                }
-                current_by_version_match = {
-                    (row.schedule_version_id, row.match_id): row for row in assignments
-                }
+                baseline_by_version_match = {(row.schedule_version_id, row.match_id): row for row in baseline_rows}
+                current_by_version_match = {(row.schedule_version_id, row.match_id): row for row in assignments}
                 for key, current_row in current_by_version_match.items():
                     baseline = baseline_by_version_match.get(key)
                     if baseline is None:
@@ -1988,9 +1977,7 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
         for row in slot_locks:
             session.delete(row)
 
-    sms_logs = session.exec(
-        select(SmsLog).where(SmsLog.tournament_id == tournament_id)
-    ).all()
+    sms_logs = session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament_id)).all()
     for row in sms_logs:
         session.delete(row)
 

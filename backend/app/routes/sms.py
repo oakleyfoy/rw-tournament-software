@@ -28,8 +28,8 @@ from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.player import Player
-from app.models.schedule_version import ScheduleVersion
 from app.models.schedule_slot import ScheduleSlot
+from app.models.schedule_version import ScheduleVersion
 from app.models.sms_consent_event import SmsConsentEvent
 from app.models.sms_log import SmsLog
 from app.models.sms_phone_list import SmsPhoneList, SmsPhoneListMember
@@ -467,9 +467,7 @@ def _reset_match_placeholder(
     return "TBD"
 
 
-def _get_tournament_or_404(
-    session: Session, tournament_id: int
-) -> Tournament | SimpleNamespace:
+def _get_tournament_or_404(session: Session, tournament_id: int) -> Tournament | SimpleNamespace:
     """Get tournament or raise 404."""
     try:
         tournament = session.get(Tournament, tournament_id)
@@ -479,17 +477,13 @@ def _get_tournament_or_404(
         msg = str(exc).lower()
         if "no such column" in msg and "tournament.is_archived" in msg:
             row = session.exec(
-                text(
-                    "SELECT id, public_schedule_version_id "
-                    "FROM tournament WHERE id = :tournament_id"
-                ),
+                text("SELECT id, public_schedule_version_id FROM tournament WHERE id = :tournament_id"),
                 {"tournament_id": tournament_id},
             ).first()
             if not row:
                 raise HTTPException(404, f"Tournament {tournament_id} not found")
             logger.warning(
-                "Tournament schema fallback active for tournament %s; "
-                "missing is_archived column",
+                "Tournament schema fallback active for tournament %s; missing is_archived column",
                 tournament_id,
             )
             return SimpleNamespace(
@@ -502,15 +496,11 @@ def _get_tournament_or_404(
     return tournament
 
 
-def _get_all_teams_for_tournament(
-    session: Session, tournament_id: int
-) -> List[Team]:
+def _get_all_teams_for_tournament(session: Session, tournament_id: int) -> List[Team]:
     """Get all teams across all events in a tournament."""
     from app.models.event import Event
 
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_ids = [e.id for e in events]
     if not event_ids:
         return []
@@ -617,9 +607,7 @@ def _allowlist_set(raw: Optional[str]) -> set[str]:
     return normalized
 
 
-_HTML_ANCHOR_RE = re.compile(
-    r"(?is)<a\b[^>]*\bhref\s*=\s*(['\"])(.*?)\1[^>]*>(.*?)</a>"
-)
+_HTML_ANCHOR_RE = re.compile(r"(?is)<a\b[^>]*\bhref\s*=\s*(['\"])(.*?)\1[^>]*>(.*?)</a>")
 _HTML_BR_RE = re.compile(r"(?is)<br\s*/?>")
 _HTML_P_CLOSE_RE = re.compile(r"(?is)</p\s*>")
 _HTML_P_OPEN_RE = re.compile(r"(?is)<p\b[^>]*>")
@@ -729,21 +717,16 @@ def _normalize_team_phone(raw: Optional[str]) -> Optional[str]:
 
 def _team_slot_phone(team: Team, slot: int) -> Optional[str]:
     if slot == 1:
-        return (
-            _normalize_team_phone(getattr(team, "player1_cellphone", None))
-            or _normalize_team_phone(getattr(team, "p1_cell", None))
+        return _normalize_team_phone(getattr(team, "player1_cellphone", None)) or _normalize_team_phone(
+            getattr(team, "p1_cell", None)
         )
-    return (
-        _normalize_team_phone(getattr(team, "player2_cellphone", None))
-        or _normalize_team_phone(getattr(team, "p2_cell", None))
+    return _normalize_team_phone(getattr(team, "player2_cellphone", None)) or _normalize_team_phone(
+        getattr(team, "p2_cell", None)
     )
 
 
 def _team_player_names(team: Team) -> tuple[str, str]:
-    source = (
-        (getattr(team, "display_name", None) or "").strip()
-        or (getattr(team, "name", None) or "").strip()
-    )
+    source = (getattr(team, "display_name", None) or "").strip() or (getattr(team, "name", None) or "").strip()
     if not source:
         fallback = f"Team {getattr(team, 'id', 'Unknown')}"
         return (f"{fallback} Player 1", f"{fallback} Player 2")
@@ -948,18 +931,10 @@ def _settings_to_response(
         auto_on_deck=settings.auto_on_deck,
         auto_up_next=settings.auto_up_next,
         auto_court_change=settings.auto_court_change,
-        auto_checkin_first_match=bool(
-            getattr(settings, "auto_checkin_first_match", False)
-        ),
-        auto_checkin_slot_checkin=bool(
-            getattr(settings, "auto_checkin_slot_checkin", False)
-        ),
-        auto_checkin_post_match_next=bool(
-            getattr(settings, "auto_checkin_post_match_next", False)
-        ),
-        auto_checkin_court_assigned=bool(
-            getattr(settings, "auto_checkin_court_assigned", False)
-        ),
+        auto_checkin_first_match=bool(getattr(settings, "auto_checkin_first_match", False)),
+        auto_checkin_slot_checkin=bool(getattr(settings, "auto_checkin_slot_checkin", False)),
+        auto_checkin_post_match_next=bool(getattr(settings, "auto_checkin_post_match_next", False)),
+        auto_checkin_court_assigned=bool(getattr(settings, "auto_checkin_court_assigned", False)),
         texts_enabled=bool(getattr(settings, "texts_enabled", True)),
         test_mode=bool(getattr(settings, "test_mode", False)),
         test_allowlist=getattr(settings, "test_allowlist", None),
@@ -972,9 +947,7 @@ def _get_sms_settings_row(
     tournament_id: int,
 ) -> Optional[TournamentSmsSettings]:
     return session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == tournament_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
     ).first()
 
 
@@ -987,11 +960,7 @@ def _player_contacts_only_enabled(
 
 
 def _team_slot_email(team: Team, slot: int) -> Optional[str]:
-    candidates = (
-        ("player1_email", "p1_email")
-        if slot == 1
-        else ("player2_email", "p2_email")
-    )
+    candidates = ("player1_email", "p1_email") if slot == 1 else ("player2_email", "p2_email")
     for field_name in candidates:
         raw = getattr(team, field_name, None)
         if raw is None:
@@ -1025,28 +994,17 @@ def _sync_players_and_team_links_from_team_slots(
             "links_removed": 0,
         }
 
-    players = session.exec(
-        select(Player).where(Player.tournament_id == tournament_id)
-    ).all()
-    players_by_phone: dict[str, Player] = {
-        p.phone_e164: p
-        for p in players
-        if p.phone_e164
-    }
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+    players_by_phone: dict[str, Player] = {p.phone_e164: p for p in players if p.phone_e164}
 
     team_ids = [t.id for t in team_rows if t.id is not None]
     links = session.exec(
         select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))  # type: ignore
     ).all()
     links_by_team_slot: dict[tuple[int, int], TeamPlayer] = {
-        (link.team_id, int(link.lineup_slot)): link
-        for link in links
-        if link.lineup_slot in (1, 2)
+        (link.team_id, int(link.lineup_slot)): link for link in links if link.lineup_slot in (1, 2)
     }
-    links_by_team_player: dict[tuple[int, int], TeamPlayer] = {
-        (link.team_id, link.player_id): link
-        for link in links
-    }
+    links_by_team_player: dict[tuple[int, int], TeamPlayer] = {(link.team_id, link.player_id): link for link in links}
 
     stats = {
         "players_created": 0,
@@ -1087,10 +1045,7 @@ def _sync_players_and_team_links_from_team_slots(
                 stats["players_created"] += 1
             else:
                 updated = False
-                if player_name and (
-                    not player.full_name
-                    or player.full_name.startswith("Unknown (")
-                ):
+                if player_name and (not player.full_name or player.full_name.startswith("Unknown (")):
                     player.full_name = player_name
                     if not player.display_name:
                         player.display_name = player_name
@@ -1139,16 +1094,13 @@ def _sync_players_and_team_links_from_team_slots(
                     existing_pair_link.role = "player"
                     changed = True
                 if existing_pair_link.is_primary_contact != (slot == 1):
-                    existing_pair_link.is_primary_contact = (slot == 1)
+                    existing_pair_link.is_primary_contact = slot == 1
                     changed = True
                 if changed:
                     session.add(existing_pair_link)
                     stats["links_updated"] += 1
 
-                if (
-                    existing_slot_link is not None
-                    and existing_slot_link.id != existing_pair_link.id
-                ):
+                if existing_slot_link is not None and existing_slot_link.id != existing_pair_link.id:
                     session.delete(existing_slot_link)
                     stats["links_removed"] += 1
                     links_by_team_player.pop((team_id, existing_slot_link.player_id), None)
@@ -1162,7 +1114,7 @@ def _sync_players_and_team_links_from_team_slots(
                 old_player_id = existing_slot_link.player_id
                 existing_slot_link.player_id = player_id
                 existing_slot_link.role = existing_slot_link.role or "player"
-                existing_slot_link.is_primary_contact = (slot == 1)
+                existing_slot_link.is_primary_contact = slot == 1
                 session.add(existing_slot_link)
                 stats["links_updated"] += 1
                 links_by_team_player.pop((team_id, old_player_id), None)
@@ -1216,10 +1168,10 @@ def _team_targets_from_player_contacts(
 
     ordered_links = sorted(
         links,
-        key=lambda l: (
-            99 if l.lineup_slot is None else int(l.lineup_slot),
-            0 if l.is_primary_contact else 1,
-            l.id or 0,
+        key=lambda link: (
+            99 if link.lineup_slot is None else int(link.lineup_slot),
+            0 if link.is_primary_contact else 1,
+            link.id or 0,
         ),
     )
 
@@ -1363,9 +1315,7 @@ def _send_to_phone_targets(
     twilio = get_twilio_service()
     normalized_message = _normalize_sms_message(message)
     settings = session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == tournament_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
     ).first()
     if settings is not None and not bool(getattr(settings, "texts_enabled", True)):
         return SmsSendResponse(
@@ -1380,9 +1330,7 @@ def _send_to_phone_targets(
             results=[],
         )
     test_mode_enabled = bool(settings and getattr(settings, "test_mode", False))
-    test_allowlist = _allowlist_set(
-        getattr(settings, "test_allowlist", None) if settings else None
-    )
+    test_allowlist = _allowlist_set(getattr(settings, "test_allowlist", None) if settings else None)
     status_callback_url = _status_callback_url_for_tournament(
         tournament_id,
         request_base_url=status_callback_base_url,
@@ -1396,12 +1344,7 @@ def _send_to_phone_targets(
     # For manual tournament-blast smoke tests, also include test allowlist
     # phones even if they are not currently attached to tournament teams.
     # This keeps test mode useful for admin verification.
-    if (
-        test_mode_enabled
-        and trigger == "manual"
-        and message_type == "tournament_blast"
-        and test_allowlist
-    ):
+    if test_mode_enabled and trigger == "manual" and message_type == "tournament_blast" and test_allowlist:
         existing_phones = {str(t.get("phone", "")).strip() for t in targets}
         for phone in sorted(test_allowlist):
             if phone not in existing_phones:
@@ -1455,9 +1398,7 @@ def _send_to_phone_targets(
 
         if test_mode_enabled and phone not in test_allowlist:
             skipped_test_mode_count += 1
-            blocked_reason = (
-                "Test mode enabled: recipient not in test_allowlist"
-            )
+            blocked_reason = "Test mode enabled: recipient not in test_allowlist"
             session.add(
                 SmsLog(
                     tournament_id=tournament_id,
@@ -1622,9 +1563,7 @@ def _get_teams_for_event(
     if not event or event.tournament_id != tournament_id:
         raise HTTPException(404, f"Event {event_id} not found in tournament")
 
-    teams = session.exec(
-        select(Team).where(Team.event_id == event_id)
-    ).all()
+    teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
     return list(teams)
 
 
@@ -1636,9 +1575,7 @@ def _get_teams_for_division(
     raw = division.strip()
     division_norm = _normalize_match_key(raw)
 
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     if not events:
         return []
 
@@ -1654,26 +1591,14 @@ def _get_teams_for_division(
 
     matched_event_ids: List[int] = []
     if category_match:
-        matched_event_ids = [
-            e.id for e in events if _event_category_text(e) == category_match
-        ]
+        matched_event_ids = [e.id for e in events if _event_category_text(e) == category_match]
     else:
-        matched_event_ids = [
-            e.id for e in events if division_norm in _event_lookup_keys(e)
-        ]
+        matched_event_ids = [e.id for e in events if division_norm in _event_lookup_keys(e)]
 
     if not matched_event_ids:
-        valid_divisions = sorted(
-            {
-                _event_category_text(e)
-                for e in events
-            }
-        )
+        valid_divisions = sorted({_event_category_text(e) for e in events})
         sample_named = sorted(
-            {
-                (("Women's" if _event_category_text(e) == "womens" else "Mixed") + f" {e.name}").strip()
-                for e in events
-            }
+            {(("Women's" if _event_category_text(e) == "womens" else "Mixed") + f" {e.name}").strip() for e in events}
         )
         raise HTTPException(
             400,
@@ -1867,9 +1792,7 @@ def _render_template(
     Unknown placeholders are left as-is (not crash).
     """
     try:
-        return template_body.format_map(
-            {k: v for k, v in kwargs.items() if v is not None}
-        )
+        return template_body.format_map({k: v for k, v in kwargs.items() if v is not None})
     except KeyError:
         # If template has placeholders we don't have values for,
         # do a safe partial render
@@ -1908,9 +1831,7 @@ def get_sms_status(
     )
 
     settings = session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == tournament_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
     ).first()
 
     return SmsStatusResponse(
@@ -1929,9 +1850,7 @@ def get_sms_players(
 ):
     """List existing Player rows for player-target lookup in SMS UI."""
     _get_tournament_or_404(session, tournament_id)
-    players = session.exec(
-        select(Player).where(Player.tournament_id == tournament_id)
-    ).all()
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
     players.sort(
         key=lambda p: (
             (p.display_name or p.full_name or "").lower(),
@@ -2096,55 +2015,61 @@ def wipe_sms_players(
     """Delete all player and team records for a tournament."""
     _get_tournament_or_404(session, tournament_id)
 
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_ids = [event.id for event in events if event.id is not None]
 
-    teams = session.exec(
-        select(Team).where(Team.event_id.in_(event_ids))  # type: ignore[arg-type]
-    ).all() if event_ids else []
+    teams = (
+        session.exec(
+            select(Team).where(Team.event_id.in_(event_ids))  # type: ignore[arg-type]
+        ).all()
+        if event_ids
+        else []
+    )
     team_ids = [team.id for team in teams if team.id is not None]
     team_ids_set = set(team_ids)
     team_by_id = {team.id: team for team in teams if team.id is not None}
 
-    players = session.exec(
-        select(Player).where(Player.tournament_id == tournament_id)
-    ).all()
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
 
-    team_links = session.exec(
-        select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))  # type: ignore[arg-type]
-    ).all() if team_ids else []
-    team_checkins = session.exec(
-        select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)
-    ).all()
+    team_links = (
+        session.exec(
+            select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))  # type: ignore[arg-type]
+        ).all()
+        if team_ids
+        else []
+    )
+    team_checkins = session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)).all()
     player_checkins = session.exec(
         select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
     ).all()
     lookup_rows = session.exec(
         select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
     ).all()
-    consent_events = session.exec(
-        select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament_id)
-    ).all()
-    avoid_edges = session.exec(
-        select(TeamAvoidEdge).where(
-            TeamAvoidEdge.event_id.in_(event_ids),  # type: ignore[arg-type]
-            or_(
-                TeamAvoidEdge.team_id_a.in_(team_ids),  # type: ignore[arg-type]
-                TeamAvoidEdge.team_id_b.in_(team_ids),  # type: ignore[arg-type]
-            ),
-        )
-    ).all() if team_ids and event_ids else []
-    sms_logs = session.exec(
-        select(SmsLog).where(
-            SmsLog.tournament_id == tournament_id,
-            SmsLog.team_id.in_(team_ids),  # type: ignore[arg-type]
-        )
-    ).all() if team_ids else []
-    matches = session.exec(
-        select(Match).where(Match.tournament_id == tournament_id)
-    ).all()
+    consent_events = session.exec(select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament_id)).all()
+    avoid_edges = (
+        session.exec(
+            select(TeamAvoidEdge).where(
+                TeamAvoidEdge.event_id.in_(event_ids),  # type: ignore[arg-type]
+                or_(
+                    TeamAvoidEdge.team_id_a.in_(team_ids),  # type: ignore[arg-type]
+                    TeamAvoidEdge.team_id_b.in_(team_ids),  # type: ignore[arg-type]
+                ),
+            )
+        ).all()
+        if team_ids and event_ids
+        else []
+    )
+    sms_logs = (
+        session.exec(
+            select(SmsLog).where(
+                SmsLog.tournament_id == tournament_id,
+                SmsLog.team_id.in_(team_ids),  # type: ignore[arg-type]
+            )
+        ).all()
+        if team_ids
+        else []
+    )
+    matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
 
     matches_cleared = 0
     for match in matches:
@@ -2280,12 +2205,7 @@ def get_sms_matches(
         ).all()
     slot_by_id = {s.id: s for s in slots if s.id is not None}
 
-    team_ids = {
-        team_id
-        for m in matches
-        for team_id in (m.team_a_id, m.team_b_id)
-        if team_id is not None
-    }
+    team_ids = {team_id for m in matches for team_id in (m.team_a_id, m.team_b_id) if team_id is not None}
     teams = []
     if team_ids:
         teams = session.exec(
@@ -2329,9 +2249,7 @@ def get_sms_matches(
         if start_time:
             when_bits.append(start_time)
         when_text = f"{' '.join(when_bits)} | " if when_bits else ""
-        display_label = (
-            f"{when_text}{event_name} | {m.match_code} | {team_a_name} vs {team_b_name}"
-        ).strip(" |")
+        display_label = (f"{when_text}{event_name} | {m.match_code} | {team_a_name} vs {team_b_name}").strip(" |")
 
         item = SmsMatchLookupItem(
             match_id=m.id,  # type: ignore[arg-type]
@@ -2844,11 +2762,7 @@ def send_timeslot_text(
 
     # Filter by start_time (handle both "10:00" and "10:00:00")
     target_time = body.start_time
-    matching_slots = [
-        s
-        for s in slots
-        if str(s.start_time).startswith(target_time)
-    ]
+    matching_slots = [s for s in slots if str(s.start_time).startswith(target_time)]
 
     if not matching_slots:
         raise HTTPException(
@@ -3289,9 +3203,7 @@ def get_sms_settings(
     _get_tournament_or_404(session, tournament_id)
 
     settings = session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == tournament_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
     ).first()
 
     return _settings_to_response(tournament_id, settings)
@@ -3307,13 +3219,9 @@ def update_sms_settings(
     _get_tournament_or_404(session, tournament_id)
 
     settings = session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == tournament_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
     ).first()
-    was_player_contacts_only = bool(
-        settings and getattr(settings, "player_contacts_only", False)
-    )
+    was_player_contacts_only = bool(settings and getattr(settings, "player_contacts_only", False))
 
     if not settings:
         # Create with defaults, then apply updates
@@ -3322,9 +3230,7 @@ def update_sms_settings(
     # Apply only provided fields
     update_data = body.model_dump(exclude_unset=True)
     if "test_allowlist" in update_data:
-        update_data["test_allowlist"] = _normalize_allowlist_text(
-            update_data["test_allowlist"]
-        ) or None
+        update_data["test_allowlist"] = _normalize_allowlist_text(update_data["test_allowlist"]) or None
     for key, value in update_data.items():
         setattr(settings, key, value)
 
@@ -3360,9 +3266,7 @@ def get_sms_templates(
     """
     _get_tournament_or_404(session, tournament_id)
 
-    templates = session.exec(
-        select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)
-    ).all()
+    templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)).all()
     custom_by_type = {t.message_type: t for t in templates}
 
     # Always return the full template set in a stable order:
@@ -3409,8 +3313,7 @@ def update_sms_template(
     if message_type not in valid_types:
         raise HTTPException(
             400,
-            f"Invalid message_type '{message_type}'. "
-            f"Must be one of: {', '.join(valid_types)}",
+            f"Invalid message_type '{message_type}'. Must be one of: {', '.join(valid_types)}",
         )
 
     template = session.exec(
@@ -3447,9 +3350,7 @@ def reset_sms_templates(
     """Reset all templates to defaults (deletes custom templates)."""
     _get_tournament_or_404(session, tournament_id)
 
-    templates = session.exec(
-        select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)
-    ).all()
+    templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == tournament_id)).all()
     for t in templates:
         session.delete(t)
     session.commit()
@@ -3527,9 +3428,7 @@ def run_rr_first_match_reminders(
     _get_tournament_or_404(session, tournament_id)
     event = session.get(Event, event_id)
     if not event or event.tournament_id != tournament_id:
-        raise HTTPException(
-            404, f"Event {event_id} not found in tournament {tournament_id}"
-        )
+        raise HTTPException(404, f"Event {event_id} not found in tournament {tournament_id}")
 
     result = run_rr_first_match_for_event(
         session=session,

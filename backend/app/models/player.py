@@ -39,11 +39,7 @@ class Player(SQLModel, table=True):
     sms_consented_at: Optional[datetime] = Field(default=None)
     sms_opted_out_at: Optional[datetime] = Field(default=None)
 
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
-    updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     team_links: List["TeamPlayer"] = Relationship(back_populates="player")

@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.database import get_session
 from app.main import app
@@ -204,7 +204,7 @@ def test_preview_diagnostics_multiple_events(client: TestClient, session: Sessio
                 tournament_id=t.id,
                 event_id=ev.id,
                 schedule_version_id=v.id,
-                match_code=f"EV{ev.id}_RR_{i+1:02d}",
+                match_code=f"EV{ev.id}_RR_{i + 1:02d}",
                 match_type="RR",
                 round_number=1,
                 round_index=1,

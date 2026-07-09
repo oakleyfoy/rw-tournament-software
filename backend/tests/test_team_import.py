@@ -1,12 +1,12 @@
 """Tests for enhanced team import with full field support."""
 
-import pytest
 from datetime import date
+
+import pytest
 from sqlmodel import Session, select
 
 from app.models.team import Team
 from app.routes.team_import import parse_team_rows
-
 
 # ---------------------------------------------------------------------------
 # Parser tests (no database needed)
@@ -108,8 +108,8 @@ class TestParseTeamRows:
 @pytest.fixture
 def setup_event(session: Session):
     """Create a tournament and event for import testing."""
-    from app.models.tournament import Tournament
     from app.models.event import Event
+    from app.models.tournament import Tournament
 
     tournament = Tournament(
         name="Import Test",
@@ -162,9 +162,7 @@ def test_import_full_format(client, session, setup_event):
     assert data["errors"] == 0
 
     # Verify teams in DB
-    teams = session.exec(
-        select(Team).where(Team.event_id == event.id)
-    ).all()
+    teams = session.exec(select(Team).where(Team.event_id == event.id)).all()
     assert len(teams) == 3
 
     # Check first team has all fields

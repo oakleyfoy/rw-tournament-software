@@ -38,10 +38,10 @@ from app.utils.conflict_report import (
 class ConflictReportBuilder:
     """
     Pure deterministic computation of conflict reports.
-    
+
     Phase 3D.1 Step B: Contains full computation logic (moved from helper).
     """
-    
+
     def compute(
         self,
         session: Session,
@@ -52,18 +52,18 @@ class ConflictReportBuilder:
     ) -> ConflictReportV1:
         """
         Compute deterministic conflict report for a schedule version.
-        
+
         Phase 3D.1 Step B: Full computation logic (verbatim copy from helper).
-        
+
         Args:
             session: Database session (read-only)
             tournament_id: Tournament ID
             schedule_version_id: Schedule version ID
             event_id: Optional event filter
-        
+
         Returns:
             ConflictReportV1 with all conflict details
-        
+
         Guarantees:
             - No database mutations (no add/commit/delete)
             - Deterministic output (same input → same output)
@@ -72,7 +72,7 @@ class ConflictReportBuilder:
         # ====================================================================
         # Phase 3D.1 Step B: Verbatim copy of compute_conflict_report logic
         # ====================================================================
-        
+
         # Build match query
         match_query = select(Match).where(
             Match.tournament_id == tournament_id, Match.schedule_version_id == schedule_version_id
@@ -348,37 +348,31 @@ class ConflictReportBuilder:
     ) -> TeamConflictsSummary:
         """
         Compute team overlap conflicts for matches with known teams.
-        
+
         Only evaluates overlaps for matches where both team_a_id and team_b_id are known.
         Matches with null teams are counted as unknown_team_matches.
-        
+
         Returns:
             TeamConflictsSummary with conflict details and counts
-        
+
         Guarantees:
             - Read-only (no mutations)
             - Deterministic ordering (sorted by match_id, team_id)
         """
         from datetime import timedelta
-        
+
         conflicts: List[TeamConflictDetail] = []
-        
+
         # Count matches with unknown teams (any null team_id)
-        unknown_team_matches = [
-            m for m in all_matches
-            if m.team_a_id is None or m.team_b_id is None
-        ]
+        unknown_team_matches = [m for m in all_matches if m.team_a_id is None or m.team_b_id is None]
         unknown_team_matches_count = len(unknown_team_matches)
-        
+
         # Filter to matches with known teams (both teams present)
-        known_team_matches = [
-            m for m in assigned_matches
-            if m.team_a_id is not None and m.team_b_id is not None
-        ]
-        
+        known_team_matches = [m for m in assigned_matches if m.team_a_id is not None and m.team_b_id is not None]
+
         # Build team -> [(match, start_dt, end_dt)] mapping
         team_schedule: dict[int, List[tuple]] = {}
-        
+
         for match in known_team_matches:
             assignment = match_to_assignment.get(match.id)
             if not assignment:
@@ -386,52 +380,53 @@ class ConflictReportBuilder:
             slot = slot_map.get(assignment.slot_id)
             if not slot:
                 continue
-            
+
             start_dt = datetime.combine(slot.day_date, slot.start_time)
             end_dt = start_dt + timedelta(minutes=match.duration_minutes)
-            
+
             for team_id in (match.team_a_id, match.team_b_id):
                 if team_id is not None:
                     if team_id not in team_schedule:
                         team_schedule[team_id] = []
                     team_schedule[team_id].append((match, assignment.slot_id, start_dt, end_dt))
-        
+
         # Check for overlaps within each team's schedule
         seen_conflicts: set = set()  # (min(match_id, other_id), max(...), team_id)
-        
+
         for team_id, schedule in team_schedule.items():
             # Sort by start time for deterministic processing
             schedule.sort(key=lambda x: (x[2], x[0].id))
-            
+
             for i, (match, slot_id, start, end) in enumerate(schedule):
                 for j in range(i + 1, len(schedule)):
                     other_match, other_slot_id, other_start, other_end = schedule[j]
-                    
+
                     # Check overlap: [start, end) overlaps [other_start, other_end)
                     if start < other_end and other_start < end:
                         # Create a unique key to avoid duplicate conflicts
                         conflict_key = (min(match.id, other_match.id), max(match.id, other_match.id), team_id)
-                        
+
                         if conflict_key not in seen_conflicts:
                             seen_conflicts.add(conflict_key)
-                            
-                            conflicts.append(TeamConflictDetail(
-                                match_id=match.id,
-                                match_code=match.match_code,
-                                slot_id=slot_id,
-                                team_id=team_id,
-                                conflicting_match_id=other_match.id,
-                                conflicting_match_code=other_match.match_code,
-                                conflicting_slot_id=other_slot_id,
-                                details=f"Team {team_id} has overlapping matches: {match.match_code} ({start.isoformat()}-{end.isoformat()}) and {other_match.match_code} ({other_start.isoformat()}-{other_end.isoformat()})",
-                            ))
-        
+
+                            conflicts.append(
+                                TeamConflictDetail(
+                                    match_id=match.id,
+                                    match_code=match.match_code,
+                                    slot_id=slot_id,
+                                    team_id=team_id,
+                                    conflicting_match_id=other_match.id,
+                                    conflicting_match_code=other_match.match_code,
+                                    conflicting_slot_id=other_slot_id,
+                                    details=f"Team {team_id} has overlapping matches: {match.match_code} ({start.isoformat()}-{end.isoformat()}) and {other_match.match_code} ({other_start.isoformat()}-{other_end.isoformat()})",
+                                )
+                            )
+
         # Sort conflicts deterministically
         conflicts.sort(key=lambda c: (c.match_id, c.team_id, c.conflicting_match_id))
-        
+
         return TeamConflictsSummary(
             known_team_conflicts_count=len(conflicts),
             unknown_team_matches_count=unknown_team_matches_count,
             conflicts=conflicts,
         )
-

@@ -29,7 +29,7 @@ from app.models.tournament import Tournament
 def conflicts_test_fixture(session: Session):
     """
     Create minimal tournament → version → slots → matches for conflicts endpoint testing.
-    
+
     This is the same pattern used in manual_editor_setup and conflict_report_fixture.
     """
     # Create tournament
@@ -43,7 +43,7 @@ def conflicts_test_fixture(session: Session):
     session.add(tournament)
     session.commit()
     session.refresh(tournament)
-    
+
     # Create event
     event = Event(
         tournament_id=tournament.id,
@@ -57,7 +57,7 @@ def conflicts_test_fixture(session: Session):
     session.add(event)
     session.commit()
     session.refresh(event)
-    
+
     # Create schedule version
     version = ScheduleVersion(
         tournament_id=tournament.id,
@@ -68,7 +68,7 @@ def conflicts_test_fixture(session: Session):
     session.add(version)
     session.commit()
     session.refresh(version)
-    
+
     # Create slots (5 slots total)
     slots = []
     for i in range(5):
@@ -87,7 +87,7 @@ def conflicts_test_fixture(session: Session):
     session.commit()
     for slot in slots:
         session.refresh(slot)
-    
+
     # Create matches (4 matches total)
     matches = []
     for i in range(4):
@@ -95,14 +95,14 @@ def conflicts_test_fixture(session: Session):
             tournament_id=tournament.id,
             schedule_version_id=version.id,
             event_id=event.id,
-            match_code=f"M{i+1}",
+            match_code=f"M{i + 1}",
             match_type="MAIN",
             round_number=i + 1,
             round_index=i + 1,
             sequence_in_round=1,
             duration_minutes=45,
-            placeholder_side_a=f"Team A{i+1}",
-            placeholder_side_b=f"Team B{i+1}",
+            placeholder_side_a=f"Team A{i + 1}",
+            placeholder_side_b=f"Team B{i + 1}",
             status="unscheduled",
         )
         matches.append(match)
@@ -110,7 +110,7 @@ def conflicts_test_fixture(session: Session):
     session.commit()
     for match in matches:
         session.refresh(match)
-    
+
     # Assign 2 matches, leave 2 unassigned
     assignment1 = MatchAssignment(
         schedule_version_id=version.id,
@@ -127,7 +127,7 @@ def conflicts_test_fixture(session: Session):
     session.add(assignment1)
     session.add(assignment2)
     session.commit()
-    
+
     return {
         "tournament_id": tournament.id,
         "version_id": version.id,
@@ -147,7 +147,7 @@ def conflicts_test_fixture(session: Session):
 def test_conflicts_endpoint_returns_200_with_stable_shape(client: TestClient, conflicts_test_fixture):
     """
     CRITICAL: Verify conflicts endpoint returns 200 OK with expected response shape.
-    
+
     This is the minimal smoke test to prove the endpoint works after refactors.
     Validates:
     - Status code 200
@@ -157,25 +157,24 @@ def test_conflicts_endpoint_returns_200_with_stable_shape(client: TestClient, co
     """
     tournament_id = conflicts_test_fixture["tournament_id"]
     version_id = conflicts_test_fixture["version_id"]
-    
+
     # Call conflicts endpoint
     resp = client.get(
-        f"/api/tournaments/{tournament_id}/schedule/conflicts",
-        params={"schedule_version_id": version_id}
+        f"/api/tournaments/{tournament_id}/schedule/conflicts", params={"schedule_version_id": version_id}
     )
-    
+
     # Assert 200 OK
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
-    
+
     data = resp.json()
-    
+
     # Assert top-level keys exist (stable response shape)
     assert "summary" in data, "Response missing 'summary' key"
     assert "unassigned" in data, "Response missing 'unassigned' key"
     assert "slot_pressure" in data, "Response missing 'slot_pressure' key"
     assert "stage_timeline" in data, "Response missing 'stage_timeline' key"
     assert "ordering_integrity" in data, "Response missing 'ordering_integrity' key"
-    
+
     # Assert summary has expected fields
     summary = data["summary"]
     assert "tournament_id" in summary
@@ -185,32 +184,34 @@ def test_conflicts_endpoint_returns_200_with_stable_shape(client: TestClient, co
     assert "assigned_matches" in summary
     assert "unassigned_matches" in summary
     assert "assignment_rate" in summary
-    
+
     # Assert schedule_version_id matches request
     assert summary["schedule_version_id"] == version_id, (
         f"Response version_id {summary['schedule_version_id']} != requested {version_id}"
     )
-    
+
     # Assert tournament_id matches request
     assert summary["tournament_id"] == tournament_id, (
         f"Response tournament_id {summary['tournament_id']} != requested {tournament_id}"
     )
-    
+
     # Assert counts are integers (type safety)
     assert isinstance(summary["total_matches"], int), "total_matches must be int"
     assert isinstance(summary["assigned_matches"], int), "assigned_matches must be int"
     assert isinstance(summary["unassigned_matches"], int), "unassigned_matches must be int"
     assert isinstance(summary["assignment_rate"], (int, float)), "assignment_rate must be numeric"
-    
+
     # Assert counts are internally consistent
     expected_total = summary["assigned_matches"] + summary["unassigned_matches"]
     assert summary["total_matches"] == expected_total, (
         f"Inconsistent counts: total={summary['total_matches']}, "
         f"assigned={summary['assigned_matches']}, unassigned={summary['unassigned_matches']}"
     )
-    
+
     # Assert assignment_rate is calculated correctly
-    expected_rate = (summary["assigned_matches"] / summary["total_matches"] * 100) if summary["total_matches"] > 0 else 0.0
+    expected_rate = (
+        (summary["assigned_matches"] / summary["total_matches"] * 100) if summary["total_matches"] > 0 else 0.0
+    )
     assert abs(summary["assignment_rate"] - expected_rate) < 0.01, (
         f"Assignment rate {summary['assignment_rate']} != expected {expected_rate}"
     )
@@ -219,26 +220,25 @@ def test_conflicts_endpoint_returns_200_with_stable_shape(client: TestClient, co
 def test_conflicts_endpoint_unassigned_list_has_expected_fields(client: TestClient, conflicts_test_fixture):
     """
     Verify unassigned matches list contains expected fields.
-    
+
     This ensures the unassigned analysis works correctly.
     """
     tournament_id = conflicts_test_fixture["tournament_id"]
     version_id = conflicts_test_fixture["version_id"]
-    
+
     resp = client.get(
-        f"/api/tournaments/{tournament_id}/schedule/conflicts",
-        params={"schedule_version_id": version_id}
+        f"/api/tournaments/{tournament_id}/schedule/conflicts", params={"schedule_version_id": version_id}
     )
-    
+
     assert resp.status_code == 200
     data = resp.json()
-    
+
     unassigned = data["unassigned"]
     assert isinstance(unassigned, list), "unassigned must be a list"
-    
+
     # Should have 2 unassigned matches (fixture has 4 total, 2 assigned)
     assert len(unassigned) == 2, f"Expected 2 unassigned, got {len(unassigned)}"
-    
+
     # Verify each unassigned match has expected fields
     for unassigned_match in unassigned:
         assert "match_id" in unassigned_match, "Missing match_id"
@@ -246,14 +246,14 @@ def test_conflicts_endpoint_unassigned_list_has_expected_fields(client: TestClie
         assert "round_index" in unassigned_match, "Missing round_index"
         assert "duration_minutes" in unassigned_match, "Missing duration_minutes"
         assert "reason" in unassigned_match, "Missing reason"
-        
+
         # Verify types
         assert isinstance(unassigned_match["match_id"], int)
         assert isinstance(unassigned_match["stage"], str)
         assert isinstance(unassigned_match["round_index"], int)
         assert isinstance(unassigned_match["duration_minutes"], int)
         assert isinstance(unassigned_match["reason"], str)
-        
+
         # Reason should not be empty or just "UNKNOWN" (should have diagnostic info)
         assert unassigned_match["reason"] != "", "Reason should not be empty"
 
@@ -261,13 +261,13 @@ def test_conflicts_endpoint_unassigned_list_has_expected_fields(client: TestClie
 def test_conflicts_endpoint_requires_schedule_version_id(client: TestClient, conflicts_test_fixture):
     """
     Verify endpoint returns 422 if schedule_version_id is missing.
-    
+
     This is a validation test.
     """
     tournament_id = conflicts_test_fixture["tournament_id"]
-    
+
     resp = client.get(f"/api/tournaments/{tournament_id}/schedule/conflicts")
-    
+
     # Should fail validation (missing required query param)
     assert resp.status_code == 422
 
@@ -276,11 +276,8 @@ def test_conflicts_endpoint_404_for_invalid_tournament(client: TestClient):
     """
     Verify endpoint returns 404 for non-existent tournament.
     """
-    resp = client.get(
-        "/api/tournaments/99999/schedule/conflicts",
-        params={"schedule_version_id": 1}
-    )
-    
+    resp = client.get("/api/tournaments/99999/schedule/conflicts", params={"schedule_version_id": 1})
+
     assert resp.status_code == 404
 
 
@@ -289,44 +286,41 @@ def test_conflicts_endpoint_404_for_invalid_version(client: TestClient, conflict
     Verify endpoint returns 404 for non-existent schedule version.
     """
     tournament_id = conflicts_test_fixture["tournament_id"]
-    
-    resp = client.get(
-        f"/api/tournaments/{tournament_id}/schedule/conflicts",
-        params={"schedule_version_id": 99999}
-    )
-    
+
+    resp = client.get(f"/api/tournaments/{tournament_id}/schedule/conflicts", params={"schedule_version_id": 99999})
+
     assert resp.status_code == 404
 
 
 def test_conflicts_endpoint_is_read_only(session: Session, client: TestClient, conflicts_test_fixture):
     """
     Verify endpoint does not mutate the database.
-    
+
     This is critical for a diagnostic/reporting endpoint.
     """
     tournament_id = conflicts_test_fixture["tournament_id"]
     version_id = conflicts_test_fixture["version_id"]
-    
+
     # Count records before
     from sqlmodel import select
+
     matches_before = len(session.exec(select(Match)).all())
     assignments_before = len(session.exec(select(MatchAssignment)).all())
     slots_before = len(session.exec(select(ScheduleSlot)).all())
-    
+
     # Call endpoint
     resp = client.get(
-        f"/api/tournaments/{tournament_id}/schedule/conflicts",
-        params={"schedule_version_id": version_id}
+        f"/api/tournaments/{tournament_id}/schedule/conflicts", params={"schedule_version_id": version_id}
     )
-    
+
     assert resp.status_code == 200
-    
+
     # Count records after
     session.expire_all()  # Clear cache
     matches_after = len(session.exec(select(Match)).all())
     assignments_after = len(session.exec(select(MatchAssignment)).all())
     slots_after = len(session.exec(select(ScheduleSlot)).all())
-    
+
     # Verify no mutations
     assert matches_after == matches_before, "Endpoint should not create/delete matches"
     assert assignments_after == assignments_before, "Endpoint should not create/delete assignments"
@@ -345,12 +339,12 @@ def test_conflicts_endpoint_is_deterministic(client: TestClient, conflicts_test_
     """
     CRITICAL: Call conflicts endpoint multiple times with identical inputs and assert
     canonical JSON is identical each time.
-    
+
     This catches:
     - Nondeterministic ordering
     - Timestamps/UUIDs
     - Unstable defaults
-    
+
     Hard guardrail for Phase 3D.2 completion.
     """
     tournament_id = conflicts_test_fixture["tournament_id"]
@@ -375,4 +369,3 @@ def test_conflicts_endpoint_is_deterministic(client: TestClient, conflicts_test_
         "Identical inputs must produce identical canonical JSON.\n"
         "Check for timestamps, UUIDs, or unstable ordering."
     )
-

@@ -18,20 +18,17 @@ from sqlmodel import Session, select
 from app.models.event import Event
 from app.models.match import Match
 from app.models.schedule_version import ScheduleVersion
+from app.models.team import Team
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_time_window import TournamentTimeWindow
-from app.models.team import Team
-from app.services.plan_report import (
-    SchedulePlanReport,
-    build_schedule_plan_report,
-)
 from app.services.draw_plan_engine import (
     build_spec_from_event,
-    compute_inventory,
     generate_matches_for_event,
 )
-
+from app.services.plan_report import (
+    build_schedule_plan_report,
+)
 
 # ============================================================================
 # Fixtures
@@ -100,14 +97,16 @@ def tournament_with_events(session: Session):
         category="mixed",
         name="Mixed 8",
         team_count=8,
-        draw_plan_json=json.dumps({
-            "template_type": "WF_TO_POOLS_DYNAMIC",
-            "wf_rounds": 1,
-            "timing": {
-                "wf_block_minutes": 60,
-                "standard_block_minutes": 120,
-            },
-        }),
+        draw_plan_json=json.dumps(
+            {
+                "template_type": "WF_TO_POOLS_DYNAMIC",
+                "wf_rounds": 1,
+                "timing": {
+                    "wf_block_minutes": 60,
+                    "standard_block_minutes": 120,
+                },
+            }
+        ),
         draw_status="final",
         guarantee_selected=5,
         wf_block_minutes=60,
@@ -123,14 +122,16 @@ def tournament_with_events(session: Session):
         category="womens",
         name="Womens 4",
         team_count=4,
-        draw_plan_json=json.dumps({
-            "template_type": "RR_ONLY",
-            "wf_rounds": 0,
-            "timing": {
-                "wf_block_minutes": 60,
-                "standard_block_minutes": 120,
-            },
-        }),
+        draw_plan_json=json.dumps(
+            {
+                "template_type": "RR_ONLY",
+                "wf_rounds": 0,
+                "timing": {
+                    "wf_block_minutes": 60,
+                    "standard_block_minutes": 120,
+                },
+            }
+        ),
         draw_status="final",
         guarantee_selected=5,
         wf_block_minutes=60,
@@ -142,28 +143,28 @@ def tournament_with_events(session: Session):
 
     # Create teams for both events
     for i in range(1, 9):
-        session.add(Team(
-            event_id=event_a.id,
-            name=f"Team A{i}",
-            seed=i,
-            rating=100 - i,
-        ))
+        session.add(
+            Team(
+                event_id=event_a.id,
+                name=f"Team A{i}",
+                seed=i,
+                rating=100 - i,
+            )
+        )
     for i in range(1, 5):
-        session.add(Team(
-            event_id=event_b.id,
-            name=f"Team B{i}",
-            seed=i,
-            rating=100 - i,
-        ))
+        session.add(
+            Team(
+                event_id=event_b.id,
+                name=f"Team B{i}",
+                seed=i,
+                rating=100 - i,
+            )
+        )
     session.commit()
 
     # Generate matches for both events using the engine
-    teams_a = session.exec(
-        select(Team).where(Team.event_id == event_a.id).order_by(Team.seed)
-    ).all()
-    teams_b = session.exec(
-        select(Team).where(Team.event_id == event_b.id).order_by(Team.seed)
-    ).all()
+    teams_a = session.exec(select(Team).where(Team.event_id == event_a.id).order_by(Team.seed)).all()
+    teams_b = session.exec(select(Team).where(Team.event_id == event_b.id).order_by(Team.seed)).all()
 
     spec_a = build_spec_from_event(event_a)
     spec_b = build_spec_from_event(event_b)
@@ -173,15 +174,11 @@ def tournament_with_events(session: Session):
     # Allow match generation
     session._allow_match_generation = True  # type: ignore[attr-defined]
 
-    matches_a, _ = generate_matches_for_event(
-        session, sv.id, spec_a, [tm.id for tm in teams_a], existing_codes
-    )
+    matches_a, _ = generate_matches_for_event(session, sv.id, spec_a, [tm.id for tm in teams_a], existing_codes)
     session.add_all(matches_a)
     session.commit()
 
-    matches_b, _ = generate_matches_for_event(
-        session, sv.id, spec_b, [tm.id for tm in teams_b], existing_codes
-    )
+    matches_b, _ = generate_matches_for_event(session, sv.id, spec_b, [tm.id for tm in teams_b], existing_codes)
     session.add_all(matches_b)
     session.commit()
 
@@ -341,11 +338,13 @@ def test_rr_top2_not_last_round_triggers_error(session: Session, tournament_with
     # Round 3 should have seeds 1 vs 2.
     # Move seeds 1v2 match to round 1 and the round 1 match to round 3.
     matches_b = session.exec(
-        select(Match).where(
+        select(Match)
+        .where(
             Match.event_id == event_b.id,
             Match.schedule_version_id == sv.id,
             Match.match_type == "RR",
-        ).order_by(Match.round_index, Match.sequence_in_round)
+        )
+        .order_by(Match.round_index, Match.sequence_in_round)
     ).all()
 
     # Find the 1v2 match (should be in round 3)

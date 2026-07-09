@@ -18,8 +18,8 @@ Asserts:
 
 import json
 from collections import defaultdict
-from datetime import date, time, timedelta
-from typing import Dict, List, Set, Tuple
+from datetime import date, time
+from typing import Dict, List, Tuple
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -31,11 +31,9 @@ from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
-from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_time_window import TournamentTimeWindow
-
 
 # ============================================================================
 # Kiawah Reference Constants
@@ -45,7 +43,7 @@ FRIDAY = date(2026, 2, 20)
 SATURDAY = date(2026, 2, 21)
 SUNDAY = date(2026, 2, 22)
 
-NUM_COURTS_BASE = 15    # Courts available all day
+NUM_COURTS_BASE = 15  # Courts available all day
 NUM_COURTS_MIDDAY = 19  # Courts available from midday onward
 
 # Expected match counts per event
@@ -161,7 +159,8 @@ def kiawah_tournament_fixture(session: Session):
 
     # Mixed (16 teams) — WF_TO_POOLS_DYNAMIC, 2 WF rounds, 4 pools of 4 RR
     events["mixed"] = _create_event(
-        session, tournament.id,
+        session,
+        tournament.id,
         name="Mixed",
         category="mixed",
         team_count=16,
@@ -174,7 +173,8 @@ def kiawah_tournament_fixture(session: Session):
 
     # Women's A (32 teams) — WF_TO_BRACKETS_8, 2 WF rounds, 4 brackets of 8
     events["womens_a"] = _create_event(
-        session, tournament.id,
+        session,
+        tournament.id,
         name="Womens A",
         category="womens",
         team_count=32,
@@ -187,7 +187,8 @@ def kiawah_tournament_fixture(session: Session):
 
     # Women's B (32 teams)
     events["womens_b"] = _create_event(
-        session, tournament.id,
+        session,
+        tournament.id,
         name="Womens B",
         category="womens",
         team_count=32,
@@ -200,7 +201,8 @@ def kiawah_tournament_fixture(session: Session):
 
     # Women's C (32 teams)
     events["womens_c"] = _create_event(
-        session, tournament.id,
+        session,
+        tournament.id,
         name="Womens C",
         category="womens",
         team_count=32,
@@ -258,11 +260,13 @@ def _create_event(
     standard_block_minutes: int = 105,
 ) -> Dict:
     """Create an event with teams and finalize it."""
-    draw_plan_json = json.dumps({
-        "template_type": template_type,
-        "wf_rounds": wf_rounds,
-        "guarantee": guarantee,
-    })
+    draw_plan_json = json.dumps(
+        {
+            "template_type": template_type,
+            "wf_rounds": wf_rounds,
+            "guarantee": guarantee,
+        }
+    )
 
     event = Event(
         tournament_id=tournament_id,
@@ -327,7 +331,7 @@ class TestKiawahMatchGeneration:
 
     def test_generate_matches_inventory(self, session: Session, kiawah_tournament):
         """Verify correct match counts for all 4 events."""
-        from app.routes.schedule import generate_matches, MatchGenerateRequest
+        from app.routes.schedule import MatchGenerateRequest, generate_matches
 
         tid = kiawah_tournament["tournament_id"]
         vid = kiawah_tournament["version_id"]
@@ -339,15 +343,13 @@ class TestKiawahMatchGeneration:
         session._allow_match_generation = False  # type: ignore[attr-defined]
 
         total = result["total_matches_created"]
-        print(f"\n=== Match Generation Results ===")
+        print("\n=== Match Generation Results ===")
         print(f"Total matches created: {total}")
         for event_name, breakdown in result.get("per_event_breakdown", {}).items():
             print(f"  {event_name}: {breakdown}")
 
         # Verify total matches
-        all_matches = session.exec(
-            select(Match).where(Match.schedule_version_id == vid)
-        ).all()
+        all_matches = session.exec(select(Match).where(Match.schedule_version_id == vid)).all()
         print(f"Total matches in DB: {len(all_matches)}")
 
         # Count by event
@@ -391,7 +393,7 @@ class TestKiawahSlotGeneration:
 
     def test_generate_slots_capacity(self, session: Session, kiawah_tournament):
         """Verify slot generation creates adequate capacity for 300+ matches."""
-        from app.routes.schedule import generate_slots, SlotGenerateRequest
+        from app.routes.schedule import SlotGenerateRequest, generate_slots
 
         tid = kiawah_tournament["tournament_id"]
         vid = kiawah_tournament["version_id"]
@@ -404,13 +406,11 @@ class TestKiawahSlotGeneration:
         result = generate_slots(tid, request, session, _transactional=True)
         slots_created = result["slots_created"]
 
-        print(f"\n=== Slot Generation Results ===")
+        print("\n=== Slot Generation Results ===")
         print(f"Total slots created: {slots_created}")
 
         # Get slots per day
-        all_slots = session.exec(
-            select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == vid)
-        ).all()
+        all_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == vid)).all()
 
         by_day = defaultdict(list)
         for s in all_slots:
@@ -442,10 +442,10 @@ class TestKiawahFullPipeline:
         4. Validate: completeness, sequencing, staggering
         """
         from app.routes.schedule import (
-            generate_matches,
-            generate_slots,
             MatchGenerateRequest,
             SlotGenerateRequest,
+            generate_matches,
+            generate_slots,
         )
         from app.services.schedule_policy_plan import run_full_schedule_policy
 
@@ -459,7 +459,7 @@ class TestKiawahFullPipeline:
         match_result = generate_matches(tid, match_req, session, _transactional=True)
         session._allow_match_generation = False  # type: ignore[attr-defined]
         total_matches = match_result["total_matches_created"]
-        print(f"\n=== Kiawah Full Pipeline ===")
+        print("\n=== Kiawah Full Pipeline ===")
         print(f"Matches generated: {total_matches}")
 
         # ── Step 2: Generate Slots ─────────────────────────────────────
@@ -471,7 +471,7 @@ class TestKiawahFullPipeline:
         # ── Step 3: Run Full Policy Scheduler ──────────────────────────
         policy_result = run_full_schedule_policy(session, tid, vid)
 
-        print(f"\nPolicy Results:")
+        print("\nPolicy Results:")
         print(f"  Total assigned: {policy_result.total_assigned}")
         print(f"  Total failed: {policy_result.total_failed}")
         print(f"  Duration: {policy_result.duration_ms}ms")
@@ -479,16 +479,12 @@ class TestKiawahFullPipeline:
             print(f"  Day: {day_result}")
 
         # ── Step 4: Validate ───────────────────────────────────────────
-        all_matches = session.exec(
-            select(Match).where(Match.schedule_version_id == vid)
-        ).all()
-        all_assignments = session.exec(
-            select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)
-        ).all()
+        all_matches = session.exec(select(Match).where(Match.schedule_version_id == vid)).all()
+        all_assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)).all()
         assigned_match_ids = {a.match_id for a in all_assignments}
         unassigned = [m for m in all_matches if m.id not in assigned_match_ids]
 
-        print(f"\n=== Validation ===")
+        print("\n=== Validation ===")
         print(f"Total matches: {len(all_matches)}")
         print(f"Assigned: {len(assigned_match_ids)}")
         print(f"Unassigned: {len(unassigned)}")
@@ -498,30 +494,25 @@ class TestKiawahFullPipeline:
             by_event_type = defaultdict(list)
             for m in unassigned:
                 by_event_type[(m.event_id, m.match_type)].append(m)
-            print(f"\nUnassigned breakdown:")
+            print("\nUnassigned breakdown:")
             for (eid, mtype), matches in sorted(by_event_type.items()):
                 print(f"  Event {eid}, {mtype}: {len(matches)} matches")
 
         # ── 4a. Completeness ───────────────────────────────────────────
         # Allow up to 5% unassigned (some consolation matches may be gated)
         unassigned_pct = len(unassigned) / len(all_matches) * 100 if all_matches else 0
-        assert unassigned_pct < 5, (
-            f"Too many unassigned: {len(unassigned)}/{len(all_matches)} "
-            f"({unassigned_pct:.1f}%)"
-        )
+        assert unassigned_pct < 5, f"Too many unassigned: {len(unassigned)}/{len(all_matches)} ({unassigned_pct:.1f}%)"
 
         # ── 4b. Sequencing Validation ──────────────────────────────────
         sequencing_violations = _check_sequencing(session, all_matches, vid)
         print(f"\nSequencing violations: {len(sequencing_violations)}")
         for v in sequencing_violations[:5]:
             print(f"  {v}")
-        assert len(sequencing_violations) == 0, (
-            f"Sequencing violations: {sequencing_violations[:5]}"
-        )
+        assert len(sequencing_violations) == 0, f"Sequencing violations: {sequencing_violations[:5]}"
 
         # ── 4c. Category Staggering ────────────────────────────────────
         stagger_report = _check_staggering(session, all_matches, vid, events)
-        print(f"\nStaggering report:")
+        print("\nStaggering report:")
         for day_date, report in sorted(stagger_report.items()):
             print(f"  {day_date}:")
             for event_label, times in sorted(report.items()):
@@ -530,7 +521,7 @@ class TestKiawahFullPipeline:
 
         # ── 4d. Day Distribution ───────────────────────────────────────
         day_dist = _check_day_distribution(session, all_matches, vid)
-        print(f"\nDay distribution:")
+        print("\nDay distribution:")
         for day_date, count in sorted(day_dist.items()):
             print(f"  {day_date}: {count} matches")
 
@@ -549,15 +540,15 @@ class TestKiawahFullPipeline:
         sunday_count = day_dist.get(SUNDAY, 0)
         assert sunday_count >= 20, f"Sunday should have >=20 finals, got {sunday_count}"
 
-        print(f"\n=== ALL CHECKS PASSED ===")
+        print("\n=== ALL CHECKS PASSED ===")
 
     def test_quality_report(self, session: Session, kiawah_tournament):
         """Test the quality report endpoint against a completed Kiawah schedule."""
         from app.routes.schedule import (
-            generate_matches,
-            generate_slots,
             MatchGenerateRequest,
             SlotGenerateRequest,
+            generate_matches,
+            generate_slots,
         )
         from app.services.schedule_policy_plan import run_full_schedule_policy
         from app.services.schedule_quality_report import generate_quality_report
@@ -567,16 +558,23 @@ class TestKiawahFullPipeline:
 
         # Generate matches, slots, and run policy
         session._allow_match_generation = True  # type: ignore[attr-defined]
-        generate_matches(tid, MatchGenerateRequest(schedule_version_id=vid, wipe_existing=True), session, _transactional=True)
+        generate_matches(
+            tid, MatchGenerateRequest(schedule_version_id=vid, wipe_existing=True), session, _transactional=True
+        )
         session._allow_match_generation = False  # type: ignore[attr-defined]
-        generate_slots(tid, SlotGenerateRequest(source="time_windows", schedule_version_id=vid, wipe_existing=True), session, _transactional=True)
+        generate_slots(
+            tid,
+            SlotGenerateRequest(source="time_windows", schedule_version_id=vid, wipe_existing=True),
+            session,
+            _transactional=True,
+        )
         run_full_schedule_policy(session, tid, vid)
 
         # Run quality report
         report = generate_quality_report(session, tid, vid)
         report_dict = report.to_dict()
 
-        print(f"\n=== Quality Report ===")
+        print("\n=== Quality Report ===")
         print(f"Overall: {'PASS' if report.overall_passed else 'FAIL'}")
         for check in report.checks:
             status = "PASS" if check.passed else "FAIL"
@@ -584,7 +582,7 @@ class TestKiawahFullPipeline:
             for d in check.details[:5]:
                 print(f"    - {d}")
 
-        print(f"\nStats:")
+        print("\nStats:")
         for k, v in report.stats.items():
             print(f"  {k}: {v}")
 
@@ -626,9 +624,7 @@ def _check_sequencing(
     match_by_id = {m.id: m for m in all_matches}
 
     # Build assignment lookup (match_id -> slot)
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)).all()
     slot_by_match = {}
     for a in assignments:
         slot = session.get(ScheduleSlot, a.slot_id)
@@ -675,9 +671,7 @@ def _check_staggering(
     Returns {day_date: {event_label: [sorted start_times]}}.
     """
     # Build assignment lookup
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)).all()
     slot_by_match = {}
     for a in assignments:
         slot = session.get(ScheduleSlot, a.slot_id)
@@ -712,9 +706,7 @@ def _check_day_distribution(
     version_id: int,
 ) -> Dict[date, int]:
     """Count assigned matches per day."""
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)).all()
     slot_by_match = {}
     for a in assignments:
         slot = session.get(ScheduleSlot, a.slot_id)
@@ -732,6 +724,7 @@ def _check_day_distribution(
 # ============================================================================
 # 60-Minute Block Variant — matches real-world Kiawah configuration
 # ============================================================================
+
 
 @pytest.fixture(name="kiawah_60min")
 def kiawah_60min_fixture(session: Session):
@@ -793,7 +786,8 @@ def kiawah_60min_fixture(session: Session):
 
     events = {}
     events["mixed"] = _create_event(
-        session, tournament.id,
+        session,
+        tournament.id,
         name="Mixed",
         category="mixed",
         team_count=16,
@@ -805,7 +799,8 @@ def kiawah_60min_fixture(session: Session):
     )
     for label, name in [("womens_a", "Womens A"), ("womens_b", "Womens B"), ("womens_c", "Womens C")]:
         events[label] = _create_event(
-            session, tournament.id,
+            session,
+            tournament.id,
             name=name,
             category="womens",
             team_count=32,
@@ -829,10 +824,10 @@ class TestKiawah60MinBlocks:
     def test_full_policy_60min(self, session: Session, kiawah_60min):
         """All 280 matches should be assigned with 60-min blocks."""
         from app.routes.schedule import (
-            generate_matches,
-            generate_slots,
             MatchGenerateRequest,
             SlotGenerateRequest,
+            generate_matches,
+            generate_slots,
         )
         from app.services.schedule_policy_plan import run_full_schedule_policy
 
@@ -842,20 +837,24 @@ class TestKiawah60MinBlocks:
         # Generate matches
         session._allow_match_generation = True  # type: ignore[attr-defined]
         match_result = generate_matches(
-            tid, MatchGenerateRequest(schedule_version_id=vid, wipe_existing=True),
-            session, _transactional=True,
+            tid,
+            MatchGenerateRequest(schedule_version_id=vid, wipe_existing=True),
+            session,
+            _transactional=True,
         )
         session._allow_match_generation = False  # type: ignore[attr-defined]
         total_matches = match_result["total_matches_created"]
 
         # Generate slots
         slot_result = generate_slots(
-            tid, SlotGenerateRequest(source="time_windows", schedule_version_id=vid, wipe_existing=True),
-            session, _transactional=True,
+            tid,
+            SlotGenerateRequest(source="time_windows", schedule_version_id=vid, wipe_existing=True),
+            session,
+            _transactional=True,
         )
         slots_created = slot_result["slots_created"]
 
-        print(f"\n=== 60-min Block Test ===")
+        print("\n=== 60-min Block Test ===")
         print(f"Matches: {total_matches}, Slots: {slots_created}")
 
         # Run scheduler
@@ -867,12 +866,8 @@ class TestKiawah60MinBlocks:
             print(f"  {dr}")
 
         # Validate completeness
-        all_matches = session.exec(
-            select(Match).where(Match.schedule_version_id == vid)
-        ).all()
-        all_assignments = session.exec(
-            select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)
-        ).all()
+        all_matches = session.exec(select(Match).where(Match.schedule_version_id == vid)).all()
+        all_assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)).all()
         assigned_ids = {a.match_id for a in all_assignments}
         unassigned = [m for m in all_matches if m.id not in assigned_ids]
 
@@ -885,26 +880,23 @@ class TestKiawah60MinBlocks:
                 print(f"  Event {eid}, {mtype}: {codes[:5]}...")
 
         # Must have 0 unassigned (the rest gap fix should make this work)
-        assert len(unassigned) == 0, (
-            f"Expected 0 unassigned with 60-min blocks, got {len(unassigned)}"
-        )
+        assert len(unassigned) == 0, f"Expected 0 unassigned with 60-min blocks, got {len(unassigned)}"
 
         # Validate sequencing
         violations = _check_sequencing(session, all_matches, vid)
         assert len(violations) == 0, f"Sequencing violations: {violations[:5]}"
 
         # Print Day 1 grid summary (event order verification)
-        all_slots = session.exec(
-            select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == vid)
-        ).all()
+        all_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == vid)).all()
         slot_by_id = {s.id: s for s in all_slots}
         match_by_id = {m.id: m for m in all_matches}
         day1_date = min(s.day_date for s in all_slots)
 
         # Build time-bucket summary for day 1
         from collections import Counter
+
         bucket_events: Dict = defaultdict(lambda: Counter())
-        spare_per_bucket: Dict = defaultdict(int)
+        defaultdict(int)
         total_per_bucket: Dict = defaultdict(int)
         for s in all_slots:
             if s.day_date != day1_date:
@@ -922,10 +914,12 @@ class TestKiawah60MinBlocks:
             bucket_events[t_label][(m.event_id, m.match_type, m.round_number)] += 1
 
         from app.models.event import Event
-        event_names = {e.id: e.name for e in session.exec(
-            select(Event).where(Event.tournament_id == kiawah_60min["tournament_id"])
-        ).all()}
-        print(f"\n=== Day 1 Grid (event ordering) ===")
+
+        event_names = {
+            e.id: e.name
+            for e in session.exec(select(Event).where(Event.tournament_id == kiawah_60min["tournament_id"])).all()
+        }
+        print("\n=== Day 1 Grid (event ordering) ===")
         for t_label in sorted(bucket_events.keys()):
             assigned_count = sum(bucket_events[t_label].values())
             total_courts = total_per_bucket.get(t_label, 0)

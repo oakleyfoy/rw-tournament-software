@@ -9,13 +9,13 @@ Verifies:
 """
 
 import json
-import pytest
 from datetime import date, time
-from sqlmodel import Session, select, func
+
+import pytest
+from sqlmodel import func, select
 
 from app.models.event import Event
 from app.models.match import Match
-from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
@@ -50,11 +50,13 @@ def multi_event_setup(session):
             category="mixed" if "Mixed" in name else "women",
             team_count=team_count,
             draw_status="final",
-            draw_plan_json=json.dumps({
-                "version": "1.0",
-                "template_type": "RR_ONLY",
-                "wf_rounds": 0,
-            }),
+            draw_plan_json=json.dumps(
+                {
+                    "version": "1.0",
+                    "template_type": "RR_ONLY",
+                    "wf_rounds": 0,
+                }
+            ),
             wf_block_minutes=60,
             standard_block_minutes=105,
         )
@@ -64,7 +66,7 @@ def multi_event_setup(session):
         for t in range(team_count):
             team = Team(
                 event_id=event.id,
-                name=f"{name} Team {t+1}",
+                name=f"{name} Team {t + 1}",
                 seed=t + 1,
             )
             session.add(team)
@@ -121,9 +123,7 @@ class TestNoDuplicateEventGeneration:
 
         assert result.summary.matches_generated > 0, "No matches generated"
 
-        matches = session.exec(
-            select(Match).where(Match.schedule_version_id == setup["version_id"])
-        ).all()
+        matches = session.exec(select(Match).where(Match.schedule_version_id == setup["version_id"])).all()
         match_codes = [m.match_code for m in matches]
 
         unique_codes = set(match_codes)
@@ -200,8 +200,7 @@ class TestNoDuplicateEventGeneration:
             unique_event_codes = set(event_codes)
 
             assert len(unique_event_codes) == len(event_codes), (
-                f"Event {event.name} has duplicate match_codes: "
-                f"{[c for c in event_codes if event_codes.count(c) > 1]}"
+                f"Event {event.name} has duplicate match_codes: {[c for c in event_codes if event_codes.count(c) > 1]}"
             )
 
     def test_no_integrity_error_on_triple_build(self, multi_event_setup):

@@ -1,15 +1,16 @@
 """Phase 4 Advancement: finalizing upstream advances downstream team slots. Idempotent, version-isolated."""
+
 from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.models.event import Event
 from app.models.match import Match
-from app.models.tournament import Tournament
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
+from app.models.tournament import Tournament
 
 
 @pytest.fixture
@@ -109,9 +110,7 @@ def bracket_pair(client: TestClient, session: Session):
     }
 
 
-def test_finalizing_upstream_advances_downstream_team_slot(
-    client: TestClient, session: Session, bracket_pair
-):
+def test_finalizing_upstream_advances_downstream_team_slot(client: TestClient, session: Session, bracket_pair):
     """Finalize upstream via PATCH; assert downstream.team_a_id is set to winner."""
     tid = bracket_pair["tournament_id"]
     upstream_id = bracket_pair["upstream_id"]
@@ -145,7 +144,7 @@ def test_advance_idempotent(client: TestClient, session: Session, bracket_pair):
 
     r1 = client.post(f"/api/tournaments/{tid}/runtime/matches/{upstream_id}/advance")
     assert r1.status_code == 200
-    c1 = r1.json().get("advanced_count", 0)
+    r1.json().get("advanced_count", 0)
 
     r2 = client.post(f"/api/tournaments/{tid}/runtime/matches/{upstream_id}/advance")
     assert r2.status_code == 200

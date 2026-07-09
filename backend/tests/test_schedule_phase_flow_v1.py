@@ -25,7 +25,6 @@ from app.models import (
     ScheduleVersion,
     Team,
     Tournament,
-    TournamentDay,
     TournamentTimeWindow,
 )
 
@@ -140,9 +139,7 @@ def test_generate_matches_only_idempotent(client: TestClient, session: Session, 
     assert len(codes) == len(set(codes)), "No duplicate match codes"
 
 
-def test_generate_matches_rebuilds_when_duration_settings_change(
-    client: TestClient, session: Session, wf_pools_setup
-):
+def test_generate_matches_rebuilds_when_duration_settings_change(client: TestClient, session: Session, wf_pools_setup):
     """If event timing changes, generate-matches should rebuild existing inventory."""
     tid = wf_pools_setup["tournament_id"]
     vid = wf_pools_setup["version_id"]
@@ -259,12 +256,16 @@ def test_generate_matches_fills_missing_event_mixed_has_16_womens_missing(sessio
     total_before = len(session.exec(select(Match).where(Match.schedule_version_id == version.id)).all())
     assert total_before == 46
 
-    womens_matches = session.exec(select(Match).where(Match.event_id == womens.id, Match.schedule_version_id == version.id)).all()
+    womens_matches = session.exec(
+        select(Match).where(Match.event_id == womens.id, Match.schedule_version_id == version.id)
+    ).all()
     for m in womens_matches:
         session.delete(m)
     session.commit()
 
-    mixed_count_before = len(session.exec(select(Match).where(Match.event_id == mixed.id, Match.schedule_version_id == version.id)).all())
+    mixed_count_before = len(
+        session.exec(select(Match).where(Match.event_id == mixed.id, Match.schedule_version_id == version.id)).all()
+    )
     assert mixed_count_before == 16
 
     r2 = client.post(f"/api/tournaments/{t.id}/schedule/versions/{version.id}/matches/generate")
@@ -272,8 +273,12 @@ def test_generate_matches_fills_missing_event_mixed_has_16_womens_missing(sessio
     d2 = r2.json()
     assert d2["matches_generated"] == 30, f"Expected 30 added (Women's), got {d2['matches_generated']}"
 
-    mixed_count = len(session.exec(select(Match).where(Match.event_id == mixed.id, Match.schedule_version_id == version.id)).all())
-    womens_count = len(session.exec(select(Match).where(Match.event_id == womens.id, Match.schedule_version_id == version.id)).all())
+    mixed_count = len(
+        session.exec(select(Match).where(Match.event_id == mixed.id, Match.schedule_version_id == version.id)).all()
+    )
+    womens_count = len(
+        session.exec(select(Match).where(Match.event_id == womens.id, Match.schedule_version_id == version.id)).all()
+    )
     total = mixed_count + womens_count
 
     assert mixed_count == 16, f"Mixed should remain 16, got {mixed_count}"
@@ -411,9 +416,7 @@ def test_generate_slots_only_returns_400_for_missing_day_config(
     session.commit()
     session.refresh(version)
 
-    resp = client.post(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate"
-    )
+    resp = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate")
     assert resp.status_code == 400
     assert "No active tournament days found" in resp.json()["detail"]
 
@@ -465,16 +468,12 @@ def test_generate_slots_only_skips_overlapping_window_duplicates(
     session.commit()
     session.refresh(version)
 
-    resp = client.post(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate"
-    )
+    resp = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Unique starts should be 09:00, 10:00, 11:00, 12:00 => 4 slots.
     assert body["slots_generated"] == 4
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
-    ).all()
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
     assert len(slots) == 4
 
 

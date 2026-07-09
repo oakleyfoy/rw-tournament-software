@@ -296,7 +296,9 @@ def test_womens_non_wf_preferred_day_is_hard_locked(session: Session, setup_day_
     assert result["preferred_day_metrics"]["preferred_day_hits"] == 2
     assert result["preferred_day_metrics"]["preferred_day_misses"] == 0
 
-    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.match_id.in_([m.id for m in matches]))).all()
+    assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.match_id.in_([m.id for m in matches]))
+    ).all()
     assigned_match_ids = {assignment.match_id for assignment in assignments}
     assert len(assigned_match_ids) == 2
 

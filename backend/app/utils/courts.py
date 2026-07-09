@@ -4,6 +4,7 @@ Canonical parser for tournament court names.
 Handles both string ("1,5,6") and list (["1","5","6"]) inputs so we never
 silently corrupt labels (e.g. list("1,5,6") -> ['1', ',', '5', ...]).
 """
+
 from typing import List, Optional, Union
 
 

@@ -59,9 +59,7 @@ def test_seeded_import_prunes_stale_teams_and_syncs_event_team_count(client, ses
     body = resp.json()
     assert any("Removed 4 stale team(s)" in w for w in body["warnings"])
 
-    teams_after = session.exec(
-        select(Team).where(Team.event_id == event.id).order_by(Team.seed)
-    ).all()
+    teams_after = session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed)).all()
     assert len(teams_after) == 12
     assert [t.seed for t in teams_after] == list(range(1, 13))
     assert all(t.notes is None for t in teams_after)
@@ -152,9 +150,7 @@ def test_seeded_import_clears_draft_match_references_for_removed_stale_teams(cli
     body = resp.json()
     assert any("Removed 4 stale team(s)" in w for w in body["warnings"])
 
-    teams_after = session.exec(
-        select(Team).where(Team.event_id == event.id).order_by(Team.seed)
-    ).all()
+    teams_after = session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed)).all()
     assert len(teams_after) == 12
     assert [t.seed for t in teams_after] == list(range(1, 13))
 

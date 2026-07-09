@@ -12,9 +12,7 @@ class PolicyRun(SQLModel, table=True):
     schedule_version_id: int = Field(foreign_key="scheduleversion.id", index=True)
     day_date: Optional[str] = Field(default=None)
     policy_version: str = Field(default="sequence_v1")
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     input_hash: str = Field(max_length=16)
     output_hash: str = Field(max_length=16)
     ok: bool = Field(default=True)

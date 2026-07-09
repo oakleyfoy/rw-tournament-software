@@ -439,9 +439,7 @@ def ensure_tournament_sms_settings_columns(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure tournament_sms_settings columns (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure tournament_sms_settings columns (this is OK if table doesn't exist yet): {e}")
 
 
 def ensure_temporary_player_lookup_columns(engine: Engine) -> None:
@@ -495,9 +493,7 @@ def ensure_temporary_player_lookup_columns(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure temporary_player_lookup columns (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure temporary_player_lookup columns (this is OK if table doesn't exist yet): {e}")
 
 
 def ensure_sms_phone_list_columns(engine: Engine) -> None:
@@ -552,9 +548,7 @@ def ensure_sms_phone_list_columns(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure sms phone list columns (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure sms phone list columns (this is OK if table doesn't exist yet): {e}")
 
 
 def ensure_start_over_baseline_assignment_table(engine: Engine) -> None:
@@ -624,9 +618,7 @@ def ensure_tournament_time_window_columns(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure tournament time window columns (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure tournament time window columns (this is OK if table doesn't exist yet): {e}")
 
 
 def ensure_schedule_slot_columns(engine: Engine) -> None:
@@ -676,6 +668,4 @@ def ensure_schedule_slot_columns(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure schedule slot columns (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure schedule slot columns (this is OK if table doesn't exist yet): {e}")

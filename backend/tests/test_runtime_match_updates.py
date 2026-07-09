@@ -1,15 +1,16 @@
 """Phase 4 runtime: match status + scoring. No schedule mutation."""
+
 from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.models.event import Event
 from app.models.match import Match
-from app.models.tournament import Tournament
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
+from app.models.tournament import Tournament
 
 
 @pytest.fixture

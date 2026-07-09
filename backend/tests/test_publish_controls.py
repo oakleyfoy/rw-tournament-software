@@ -12,7 +12,6 @@ Validates:
 
 from datetime import date
 
-import pytest
 from sqlmodel import Session
 
 from app.models.schedule_version import ScheduleVersion
@@ -67,9 +66,7 @@ def test_publish_final_version_exposes_it(client, session):
     v = _make_version(session, t.id, status="final")
     session.commit()
 
-    pub_resp = client.patch(
-        f"/api/tournaments/{t.id}/schedule/versions/{v.id}/publish"
-    )
+    pub_resp = client.patch(f"/api/tournaments/{t.id}/schedule/versions/{v.id}/publish")
     assert pub_resp.status_code == 200
     pub_body = pub_resp.json()
     assert pub_body["success"] is True
@@ -89,9 +86,7 @@ def test_publish_draft_returns_400(client, session):
     v = _make_version(session, t.id, status="draft")
     session.commit()
 
-    resp = client.patch(
-        f"/api/tournaments/{t.id}/schedule/versions/{v.id}/publish"
-    )
+    resp = client.patch(f"/api/tournaments/{t.id}/schedule/versions/{v.id}/publish")
     assert resp.status_code == 400
     assert "FINAL" in resp.json()["detail"]
 
@@ -145,8 +140,6 @@ def test_cannot_publish_version_from_another_tournament(client, session):
     v2 = _make_version(session, t2.id, status="final")
     session.commit()
 
-    resp = client.patch(
-        f"/api/tournaments/{t1.id}/schedule/versions/{v2.id}/publish"
-    )
+    resp = client.patch(f"/api/tournaments/{t1.id}/schedule/versions/{v2.id}/publish")
     assert resp.status_code == 404
     assert "does not belong" in resp.json()["detail"]

@@ -237,4 +237,3 @@ def update_user(
     session.commit()
     session.refresh(user)
     return AuthUserResponse.model_validate(user)
-

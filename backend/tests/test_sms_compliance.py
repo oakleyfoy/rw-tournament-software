@@ -60,9 +60,7 @@ def setup_tournament_team(session: Session):
     return tournament, event, team
 
 
-def test_stop_start_updates_consent_and_send_behavior(
-    client, session, setup_tournament_team
-):
+def test_stop_start_updates_consent_and_send_behavior(client, session, setup_tournament_team):
     tournament, _, team = setup_tournament_team
 
     # Baseline manual send succeeds.
@@ -191,9 +189,7 @@ def test_status_callback_updates_sms_log(client, session, setup_tournament_team)
     assert log.status == "delivered"
 
 
-def test_webhook_requires_signature_when_auth_token_configured(
-    client, session, setup_tournament_team, monkeypatch
-):
+def test_webhook_requires_signature_when_auth_token_configured(client, session, setup_tournament_team, monkeypatch):
     tournament, _, _ = setup_tournament_team
     import app.services.twilio_service as twilio_mod
 
@@ -213,9 +209,7 @@ def test_webhook_requires_signature_when_auth_token_configured(
     assert resp.status_code == 403
 
 
-def test_send_attaches_status_callback_url_when_base_configured(
-    client, session, setup_tournament_team, monkeypatch
-):
+def test_send_attaches_status_callback_url_when_base_configured(client, session, setup_tournament_team, monkeypatch):
     tournament, _, team = setup_tournament_team
     monkeypatch.setenv("SMS_STATUS_CALLBACK_BASE_URL", "https://example.test")
 
@@ -237,14 +231,10 @@ def test_send_attaches_status_callback_url_when_base_configured(
         json={"message": "Callback URL test"},
     )
     assert resp.status_code == 200
-    assert captured["url"] == (
-        f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback"
-    )
+    assert captured["url"] == (f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback")
 
 
-def test_send_attaches_status_callback_url_with_api_base(
-    client, session, setup_tournament_team, monkeypatch
-):
+def test_send_attaches_status_callback_url_with_api_base(client, session, setup_tournament_team, monkeypatch):
     tournament, _, team = setup_tournament_team
     monkeypatch.setenv("SMS_STATUS_CALLBACK_BASE_URL", "https://example.test/api")
 
@@ -266,9 +256,7 @@ def test_send_attaches_status_callback_url_with_api_base(
         json={"message": "Callback URL test"},
     )
     assert resp.status_code == 200
-    assert captured["url"] == (
-        f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback"
-    )
+    assert captured["url"] == (f"https://example.test/api/tournaments/{tournament.id}/sms/webhook/status-callback")
 
 
 def test_send_attaches_status_callback_url_from_request_when_env_missing(
@@ -298,14 +286,10 @@ def test_send_attaches_status_callback_url_from_request_when_env_missing(
         json={"message": "Callback URL fallback test"},
     )
     assert resp.status_code == 200
-    assert captured["url"] == (
-        f"http://testserver/api/tournaments/{tournament.id}/sms/webhook/status-callback"
-    )
+    assert captured["url"] == (f"http://testserver/api/tournaments/{tournament.id}/sms/webhook/status-callback")
 
 
-def test_webhook_routes_bypass_auth_after_bootstrap(
-    client, session, setup_tournament_team
-):
+def test_webhook_routes_bypass_auth_after_bootstrap(client, session, setup_tournament_team):
     tournament, _, team = setup_tournament_team
 
     bootstrap = client.post(

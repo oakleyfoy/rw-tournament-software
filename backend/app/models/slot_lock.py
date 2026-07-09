@@ -6,9 +6,7 @@ from sqlmodel import Field, SQLModel
 
 
 class SlotLock(SQLModel, table=True):
-    __table_args__ = (
-        SAUniqueConstraint("schedule_version_id", "slot_id", name="uq_slotlock_version_slot"),
-    )
+    __table_args__ = (SAUniqueConstraint("schedule_version_id", "slot_id", name="uq_slotlock_version_slot"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     schedule_version_id: int = Field(foreign_key="scheduleversion.id", index=True)

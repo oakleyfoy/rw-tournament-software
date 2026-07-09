@@ -24,13 +24,13 @@ from dataclasses import dataclass, field
 from datetime import date, time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from sqlmodel import Session, select
 from sqlalchemy import func
+from sqlmodel import Session, select
 
 from app.models import Event, Match, MatchAssignment, ScheduleSlot
 
-
 # ─── Data structures ─────────────────────────────────────────────────────
+
 
 @dataclass
 class Violation:
@@ -83,6 +83,7 @@ class InvariantReport:
 
 # ─── Helper: load day assignments with slot/match data ────────────────────
 
+
 def _load_day_assignments(
     session: Session,
     version_id: int,
@@ -103,6 +104,7 @@ def _load_day_assignments(
 
 # ─── Invariant A: No team > 2 matches/day ────────────────────────────────
 
+
 def _check_team_daily_cap(
     assignments: List[Tuple[MatchAssignment, Match, ScheduleSlot]],
     day: date,
@@ -121,16 +123,19 @@ def _check_team_daily_cap(
     violations = []
     for tid, count in team_counts.items():
         if count > cap:
-            violations.append(Violation(
-                code="TEAM_OVER_DAILY_CAP",
-                message=f"Team {tid} has {count} matches on {day} (cap={cap})",
-                team_id=tid,
-                context={"day": str(day), "count": count, "match_ids": team_matches[tid]},
-            ))
+            violations.append(
+                Violation(
+                    code="TEAM_OVER_DAILY_CAP",
+                    message=f"Team {tid} has {count} matches on {day} (cap={cap})",
+                    team_id=tid,
+                    context={"day": str(day), "count": count, "match_ids": team_matches[tid]},
+                )
+            )
     return violations
 
 
 # ─── Invariant B: Fairness — no 2nd match before all play 1st ────────────
+
 
 def _check_fairness_ordering(
     assignments: List[Tuple[MatchAssignment, Match, ScheduleSlot]],
@@ -164,25 +169,28 @@ def _check_fairness_ordering(
             if len(times) >= 2:
                 second_match_time = times[1]
                 if second_match_time < latest_first:
-                    violations.append(Violation(
-                        code="FAIRNESS_SECOND_BEFORE_ALL_FIRST",
-                        message=(
-                            f"Team {tid} plays 2nd match at {second_match_time} "
-                            f"but some teams in event {event_id} don't start "
-                            f"their 1st until {latest_first}"
-                        ),
-                        event_id=event_id,
-                        team_id=tid,
-                        context={
-                            "day": str(day),
-                            "second_match_time": str(second_match_time),
-                            "latest_first_match": str(latest_first),
-                        },
-                    ))
+                    violations.append(
+                        Violation(
+                            code="FAIRNESS_SECOND_BEFORE_ALL_FIRST",
+                            message=(
+                                f"Team {tid} plays 2nd match at {second_match_time} "
+                                f"but some teams in event {event_id} don't start "
+                                f"their 1st until {latest_first}"
+                            ),
+                            event_id=event_id,
+                            team_id=tid,
+                            context={
+                                "day": str(day),
+                                "second_match_time": str(second_match_time),
+                                "latest_first_match": str(latest_first),
+                            },
+                        )
+                    )
     return violations
 
 
 # ─── Invariant C: No unresolved placeholder scheduled ─────────────────────
+
 
 def _check_unresolved_dependencies(
     assignments: List[Tuple[MatchAssignment, Match, ScheduleSlot]],
@@ -205,47 +213,51 @@ def _check_unresolved_dependencies(
 
             upstream = all_assignments_by_match.get(src_id)
             if upstream is None:
-                violations.append(Violation(
-                    code="UNRESOLVED_UPSTREAM_UNASSIGNED",
-                    message=(
-                        f"Match {match.id} ({match.match_code}) depends on "
-                        f"match {src_id} ({role_label}) which is not assigned"
-                    ),
-                    match_id=match.id,
-                    event_id=match.event_id,
-                    context={
-                        "day": str(day),
-                        "source_match_id": src_id,
-                        "role": role_label,
-                    },
-                ))
-            else:
-                _up_asn, up_slot = upstream
-                # Upstream must be at an earlier time (or earlier day)
-                if up_slot.day_date > slot.day_date or (
-                    up_slot.day_date == slot.day_date
-                    and up_slot.start_time >= slot.start_time
-                ):
-                    violations.append(Violation(
-                        code="UNRESOLVED_UPSTREAM_NOT_BEFORE",
+                violations.append(
+                    Violation(
+                        code="UNRESOLVED_UPSTREAM_UNASSIGNED",
                         message=(
-                            f"Match {match.id} ({match.match_code}) at "
-                            f"{slot.start_time} depends on match {src_id} "
-                            f"which is at {up_slot.start_time} (not earlier)"
+                            f"Match {match.id} ({match.match_code}) depends on "
+                            f"match {src_id} ({role_label}) which is not assigned"
                         ),
                         match_id=match.id,
                         event_id=match.event_id,
                         context={
                             "day": str(day),
                             "source_match_id": src_id,
-                            "source_time": str(up_slot.start_time),
-                            "this_time": str(slot.start_time),
+                            "role": role_label,
                         },
-                    ))
+                    )
+                )
+            else:
+                _up_asn, up_slot = upstream
+                # Upstream must be at an earlier time (or earlier day)
+                if up_slot.day_date > slot.day_date or (
+                    up_slot.day_date == slot.day_date and up_slot.start_time >= slot.start_time
+                ):
+                    violations.append(
+                        Violation(
+                            code="UNRESOLVED_UPSTREAM_NOT_BEFORE",
+                            message=(
+                                f"Match {match.id} ({match.match_code}) at "
+                                f"{slot.start_time} depends on match {src_id} "
+                                f"which is at {up_slot.start_time} (not earlier)"
+                            ),
+                            match_id=match.id,
+                            event_id=match.event_id,
+                            context={
+                                "day": str(day),
+                                "source_match_id": src_id,
+                                "source_time": str(up_slot.start_time),
+                                "this_time": str(slot.start_time),
+                            },
+                        )
+                    )
     return violations
 
 
 # ─── Invariant D: Consolation rounds complete or absent ───────────────────
+
 
 def _check_consolation_completeness(
     assignments: List[Tuple[MatchAssignment, Match, ScheduleSlot]],
@@ -287,27 +299,30 @@ def _check_consolation_completeness(
 
         if unassigned > 0:
             event_id, mt, ri = key
-            violations.append(Violation(
-                code="CONSOLATION_PARTIAL_ROUND",
-                message=(
-                    f"Event {event_id}: {mt} round_index={ri} has "
-                    f"{assigned_anywhere}/{total} assigned globally "
-                    f"({unassigned} unassigned)"
-                ),
-                event_id=event_id,
-                context={
-                    "day": str(day),
-                    "match_type": mt,
-                    "round_index": ri,
-                    "assigned_globally": assigned_anywhere,
-                    "total_in_round": total,
-                    "unassigned": unassigned,
-                },
-            ))
+            violations.append(
+                Violation(
+                    code="CONSOLATION_PARTIAL_ROUND",
+                    message=(
+                        f"Event {event_id}: {mt} round_index={ri} has "
+                        f"{assigned_anywhere}/{total} assigned globally "
+                        f"({unassigned} unassigned)"
+                    ),
+                    event_id=event_id,
+                    context={
+                        "day": str(day),
+                        "match_type": mt,
+                        "round_index": ri,
+                        "assigned_globally": assigned_anywhere,
+                        "total_in_round": total,
+                        "unassigned": unassigned,
+                    },
+                )
+            )
     return violations
 
 
 # ─── Invariant E: Spare-court rules ──────────────────────────────────────
+
 
 def _check_spare_court_rules(
     session: Session,
@@ -335,7 +350,7 @@ def _check_spare_court_rules(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == version_id,
             ScheduleSlot.day_date == day,
-            ScheduleSlot.is_active == True,
+            ScheduleSlot.is_active,
         )
     ).all()
 
@@ -358,25 +373,25 @@ def _check_spare_court_rules(
             continue  # first slot: no spare required
 
         if spare < 1:
-            violations.append(Violation(
-                code="SPARE_COURT_VIOLATION",
-                message=(
-                    f"Time slot {t} on {day}: {total} courts, "
-                    f"{assigned} assigned, {spare} spare (need >= 1)"
-                ),
-                context={
-                    "day": str(day),
-                    "time": str(t),
-                    "total_courts": total,
-                    "assigned": assigned,
-                    "spare": spare,
-                },
-            ))
+            violations.append(
+                Violation(
+                    code="SPARE_COURT_VIOLATION",
+                    message=(f"Time slot {t} on {day}: {total} courts, {assigned} assigned, {spare} spare (need >= 1)"),
+                    context={
+                        "day": str(day),
+                        "time": str(t),
+                        "total_courts": total,
+                        "assigned": assigned,
+                        "spare": spare,
+                    },
+                )
+            )
 
     return violations
 
 
 # ─── Capacity detection ──────────────────────────────────────────────────
+
 
 def _is_capacity_tight(
     session: Session,
@@ -387,17 +402,13 @@ def _is_capacity_tight(
     usable slots).  Spare court reservation is disabled — all courts are usable.
     """
     # Count total matches
-    match_count = session.exec(
-        select(func.count(Match.id)).where(
-            Match.schedule_version_id == version_id
-        )
-    ).one()
+    match_count = session.exec(select(func.count(Match.id)).where(Match.schedule_version_id == version_id)).one()
 
     # Count total active slots (all courts usable, no spare reservation)
     slot_count = session.exec(
         select(func.count(ScheduleSlot.id)).where(
             ScheduleSlot.schedule_version_id == version_id,
-            ScheduleSlot.is_active == True,
+            ScheduleSlot.is_active,
         )
     ).one()
 
@@ -405,6 +416,7 @@ def _is_capacity_tight(
 
 
 # ─── Main verifier ────────────────────────────────────────────────────────
+
 
 def verify_day(
     session: Session,
@@ -436,9 +448,7 @@ def verify_day(
     }
 
     # Load all matches for consolation completeness check
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
 
     violations: List[Violation] = []
     stats = InvariantStats()
@@ -454,21 +464,20 @@ def verify_day(
     violations.extend(fairness_violations)
 
     # C) Unresolved dependencies
-    dep_violations = _check_unresolved_dependencies(
-        day_assignments, all_assignments_by_match, day
-    )
+    dep_violations = _check_unresolved_dependencies(day_assignments, all_assignments_by_match, day)
     stats.unresolved_scheduled = len(dep_violations)
     violations.extend(dep_violations)
 
     # D) Consolation completeness (advisory — does not cause rollback)
-    cons_violations = _check_consolation_completeness(
-        day_assignments, all_matches, all_assignments_by_match, day
-    )
+    cons_violations = _check_consolation_completeness(day_assignments, all_matches, all_assignments_by_match, day)
     stats.consolation_partial = len(cons_violations)
 
     # E) Spare court rules (disabled — all courts used, no spares reserved)
     spare_violations = _check_spare_court_rules(
-        session, version_id, day, day_assignments,
+        session,
+        version_id,
+        day,
+        day_assignments,
         spare_policy_enabled=spare_policy_enabled,
     )
     stats.spare_violations = len(spare_violations)
@@ -496,9 +505,7 @@ def verify_full_schedule(
 
     # Get all days that have slots
     all_slots = session.exec(
-        select(ScheduleSlot.day_date)
-        .where(ScheduleSlot.schedule_version_id == version_id)
-        .distinct()
+        select(ScheduleSlot.day_date).where(ScheduleSlot.schedule_version_id == version_id).distinct()
     ).all()
     days = sorted(set(all_slots))
 
@@ -507,7 +514,10 @@ def verify_full_schedule(
 
     for day in days:
         report = verify_day(
-            session, tournament_id, version_id, day,
+            session,
+            tournament_id,
+            version_id,
+            day,
             spare_policy_enabled=spare_enabled,
         )
         combined_violations.extend(report.violations)
@@ -526,6 +536,7 @@ def verify_full_schedule(
 
 # ─── Hashing ─────────────────────────────────────────────────────────────
 
+
 def hash_policy_input(
     session: Session,
     tournament_id: int,
@@ -540,57 +551,41 @@ def hash_policy_input(
     slots = session.exec(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == version_id,
-            ScheduleSlot.is_active == True,
+            ScheduleSlot.is_active,
         )
     ).all()
-    slot_tuples = sorted(
-        (str(s.day_date), str(s.start_time), s.court_number, s.block_minutes)
-        for s in slots
-    )
+    slot_tuples = sorted((str(s.day_date), str(s.start_time), s.court_number, s.block_minutes) for s in slots)
 
     # Match digest: sorted list of (match_id, event_id, match_type, round_index)
-    matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
-    match_tuples = sorted(
-        (m.id, m.event_id, m.match_type, m.round_index or 0, m.sequence_in_round)
-        for m in matches
-    )
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
+    match_tuples = sorted((m.id, m.event_id, m.match_type, m.round_index or 0, m.sequence_in_round) for m in matches)
 
     # Event digest — includes draw_plan_json so a silent plan change
     # invalidates the hash and prevents stale replays.
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
-    event_tuples = sorted(
-        (e.id, e.name, e.team_count or 0, e.category, e.draw_plan_json or "")
-        for e in events
-    )
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    event_tuples = sorted((e.id, e.name, e.team_count or 0, e.category, e.draw_plan_json or "") for e in events)
 
     # Lock digest — changes to locks must invalidate the hash
     from app.models.match_lock import MatchLock
     from app.models.slot_lock import SlotLock
-    match_locks = session.exec(
-        select(MatchLock).where(MatchLock.schedule_version_id == version_id)
-    ).all()
-    match_lock_tuples = sorted(
-        (ml.match_id, ml.slot_id) for ml in match_locks
-    )
-    slot_locks = session.exec(
-        select(SlotLock).where(SlotLock.schedule_version_id == version_id)
-    ).all()
-    slot_lock_tuples = sorted(
-        (sl.slot_id, sl.status) for sl in slot_locks
-    )
 
-    payload = json.dumps({
-        "policy_version": policy_version,
-        "slots": slot_tuples,
-        "matches": match_tuples,
-        "events": event_tuples,
-        "match_locks": match_lock_tuples,
-        "slot_locks": slot_lock_tuples,
-    }, sort_keys=True, default=str)
+    match_locks = session.exec(select(MatchLock).where(MatchLock.schedule_version_id == version_id)).all()
+    match_lock_tuples = sorted((ml.match_id, ml.slot_id) for ml in match_locks)
+    slot_locks = session.exec(select(SlotLock).where(SlotLock.schedule_version_id == version_id)).all()
+    slot_lock_tuples = sorted((sl.slot_id, sl.status) for sl in slot_locks)
+
+    payload = json.dumps(
+        {
+            "policy_version": policy_version,
+            "slots": slot_tuples,
+            "matches": match_tuples,
+            "events": event_tuples,
+            "match_locks": match_lock_tuples,
+            "slot_locks": slot_lock_tuples,
+        },
+        sort_keys=True,
+        default=str,
+    )
 
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
@@ -609,10 +604,7 @@ def hash_policy_output(
         .where(MatchAssignment.schedule_version_id == version_id)
     ).all()
 
-    assignment_tuples = sorted(
-        (str(s.day_date), str(s.start_time), s.court_number, a.match_id)
-        for a, s in rows
-    )
+    assignment_tuples = sorted((str(s.day_date), str(s.start_time), s.court_number, a.match_id) for a, s in rows)
 
     payload = json.dumps(assignment_tuples, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]

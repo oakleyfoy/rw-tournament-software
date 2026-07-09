@@ -9,10 +9,11 @@ Supports formats like:
 
 Returns None on parse failure (non-fatal).
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -44,12 +45,7 @@ def parse_score(score_json: Optional[Dict[str, Any]]) -> Optional[ParsedScore]:
     elif isinstance(score_json, dict):
         if "sets" in score_json and isinstance(score_json["sets"], list):
             return _parse_structured_sets(score_json["sets"])
-        raw = str(
-            score_json.get("actual")
-            or score_json.get("display")
-            or score_json.get("score")
-            or ""
-        )
+        raw = str(score_json.get("actual") or score_json.get("display") or score_json.get("score") or "")
     if not raw or not raw.strip():
         return None
 
@@ -72,10 +68,7 @@ def validate_score_for_duration(score_text: str, duration_minutes: int) -> Tuple
     modes = scoring_modes_for_duration(duration_minutes)
     if modes == ["PRO_SET_4"]:
         if not _is_valid_pro_set_4_match(sets):
-            return False, (
-                "Invalid score for 4-game pro set. Allowed set scores: "
-                "4-0, 4-1, 4-2, 5-3, or 5-4."
-            )
+            return False, ("Invalid score for 4-game pro set. Allowed set scores: 4-0, 4-1, 4-2, 5-3, or 5-4.")
         return True, None
 
     if modes == ["PRO_SET_8", "REGULAR"]:
@@ -89,10 +82,7 @@ def validate_score_for_duration(score_text: str, duration_minutes: int) -> Tuple
 
     if modes == ["PRO_SET_8"]:
         if not _is_valid_pro_set_8_match(sets):
-            return False, (
-                "Invalid score for 8-game pro set. Allowed set scores: "
-                "8-0 through 8-6, plus 9-7 or 9-8."
-            )
+            return False, ("Invalid score for 8-game pro set. Allowed set scores: 8-0 through 8-6, plus 9-7 or 9-8.")
         return True, None
 
     # REGULAR

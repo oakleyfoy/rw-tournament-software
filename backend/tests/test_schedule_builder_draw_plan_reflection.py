@@ -4,8 +4,9 @@ Regression test: Schedule Builder must reflect draw_plan_json exactly.
 This ensures that when an event is finalized with a specific template/team_count/wf_rounds,
 Schedule Builder shows the exact same values (not stale defaults).
 """
-import pytest
+
 from datetime import date
+
 from sqlmodel import Session
 
 from app.models.event import Event
@@ -96,8 +97,12 @@ def test_schedule_builder_reflects_wf_to_brackets_8_for_12_teams(session: Sessio
     assert event_data is not None, "Event should appear in Schedule Builder"
 
     # Assert template matches what was stored (NOT WF_TO_POOLS_4)
-    assert event_data["template_type"] == "WF_TO_BRACKETS_8", f"Expected WF_TO_BRACKETS_8, got {event_data['template_type']}"
-    assert event_data["template_key"] == "WF_TO_BRACKETS_8", f"Expected WF_TO_BRACKETS_8, got {event_data['template_key']}"
+    assert event_data["template_type"] == "WF_TO_BRACKETS_8", (
+        f"Expected WF_TO_BRACKETS_8, got {event_data['template_type']}"
+    )
+    assert event_data["template_key"] == "WF_TO_BRACKETS_8", (
+        f"Expected WF_TO_BRACKETS_8, got {event_data['template_key']}"
+    )
     assert event_data["team_count"] == 12, f"Expected team_count=12, got {event_data['team_count']}"
     assert event_data["waterfall_rounds"] == 2, f"Expected wf_rounds=2, got {event_data['waterfall_rounds']}"
     assert "error" not in event_data, f"Event should have no errors, got: {event_data.get('error')}"
@@ -142,8 +147,9 @@ def test_schedule_builder_rejects_wf_to_pools_4_for_8_teams(session: Session):
 
     # Assert error is shown (WF_TO_POOLS_4 requires team_count divisible by 4)
     assert "error" in event_data, "Event should have error for invalid template/team_count combination"
-    assert "divisible by 4" in event_data["error"].lower() or "WF_TO_POOLS_4" in event_data["error"], \
+    assert "divisible by 4" in event_data["error"].lower() or "WF_TO_POOLS_4" in event_data["error"], (
         f"Error should mention WF_TO_POOLS_4 constraint, got: {event_data.get('error')}"
+    )
 
 
 def test_schedule_builder_exposes_manual_schedule_order(session: Session):

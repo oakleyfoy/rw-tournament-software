@@ -5,6 +5,7 @@ Revises: 536be58cfc80
 Create Date: 2026-02-24 12:00:00
 
 """
+
 import sqlalchemy as sa
 
 from alembic import op
@@ -18,9 +19,7 @@ depends_on = None
 
 def upgrade():
     with op.batch_alter_table("tournament", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column("public_schedule_version_id", sa.Integer(), nullable=True)
-        )
+        batch_op.add_column(sa.Column("public_schedule_version_id", sa.Integer(), nullable=True))
         batch_op.create_foreign_key(
             "fk_tournament_public_version",
             "scheduleversion",

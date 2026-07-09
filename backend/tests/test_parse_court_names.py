@@ -1,5 +1,4 @@
 """Canonical court_names parser: string and list inputs must both produce correct labels."""
-import pytest
 
 from app.utils.courts import parse_court_names
 

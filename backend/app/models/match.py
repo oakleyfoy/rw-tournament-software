@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from sqlalchemy import JSON, UniqueConstraint as SAUniqueConstraint
+from sqlalchemy import JSON
+from sqlalchemy import UniqueConstraint as SAUniqueConstraint
 from sqlmodel import Column, Field, Relationship, SQLModel
 
 if TYPE_CHECKING:

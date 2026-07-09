@@ -4,11 +4,12 @@ WF Pool Projection — compute projected RR pool assignments from WF match resul
 Traces each team's waterfall path (W/L per round) to assign bucket ranks,
 then uses wf_seeding utilities to rank within buckets and map to pools.
 """
+
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
@@ -171,9 +172,7 @@ def compute_wf_projection(
         return None
 
     total_wf = len(wf_matches)
-    finalized_wf = sum(
-        1 for m in wf_matches if (m.runtime_status or "SCHEDULED").upper() == "FINAL"
-    )
+    finalized_wf = sum(1 for m in wf_matches if (m.runtime_status or "SCHEDULED").upper() == "FINAL")
     wf_complete = finalized_wf == total_wf
 
     # Separate by round
@@ -400,27 +399,31 @@ def compute_wf_projection(
                         f"seed #{original_seed_by_team.get(tid, 999999)}"
                     )
 
-            pool_teams.append(ProjectedTeam(
-                team_id=tid,
-                team_display=_disp(tid),
-                seed_position=seed_pos,
-                bucket=bucket_str,
-                status=status,
-                wf_wins=wf_wins,
-                wf_losses=wf_losses,
-                wf_game_diff=wf_game_diff,
-                wf_games_lost=wf_games_lost,
-                wf2_game_diff=wf2_game_diff,
-                wf2_games_lost=wf2_games_lost,
-                placement_reason=placement_reason,
-            ))
+            pool_teams.append(
+                ProjectedTeam(
+                    team_id=tid,
+                    team_display=_disp(tid),
+                    seed_position=seed_pos,
+                    bucket=bucket_str,
+                    status=status,
+                    wf_wins=wf_wins,
+                    wf_losses=wf_losses,
+                    wf_game_diff=wf_game_diff,
+                    wf_games_lost=wf_games_lost,
+                    wf2_game_diff=wf2_game_diff,
+                    wf2_games_lost=wf2_games_lost,
+                    placement_reason=placement_reason,
+                )
+            )
             seed_pos += 1
 
-        pools.append(ProjectedPool(
-            pool_label=label,
-            pool_display=display,
-            teams=pool_teams,
-        ))
+        pools.append(
+            ProjectedPool(
+                pool_label=label,
+                pool_display=display,
+                teams=pool_teams,
+            )
+        )
 
     return EventProjection(
         event_id=event_id,
@@ -451,10 +454,9 @@ def apply_pool_placement(
     if not event:
         raise ValueError("Event not found")
 
-    draw_plan = {}
     if event.draw_plan_json:
         try:
-            draw_plan = json.loads(event.draw_plan_json)
+            json.loads(event.draw_plan_json)
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -517,12 +519,14 @@ def apply_pool_placement(
         if changed:
             session.add(m)
             updated += 1
-            assignments.append({
-                "match_id": m.id,
-                "match_code": m.match_code,
-                "team_a_id": m.team_a_id,
-                "team_b_id": m.team_b_id,
-            })
+            assignments.append(
+                {
+                    "match_id": m.id,
+                    "match_code": m.match_code,
+                    "team_a_id": m.team_a_id,
+                    "team_b_id": m.team_b_id,
+                }
+            )
 
     session.commit()
 

@@ -1,5 +1,6 @@
 """Regression: Phase 1 Total Court Hours Available must be computed from current mode.
 Switching Simple <-> Advanced must not carry over stale capacity from the other mode."""
+
 import pytest
 from fastapi.testclient import TestClient
 

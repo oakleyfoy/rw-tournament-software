@@ -7,9 +7,7 @@ from sqlmodel import Field, SQLModel
 
 class TournamentCourtState(SQLModel, table=True):
     __tablename__ = "tournamentcourtstate"
-    __table_args__ = (
-        SAUniqueConstraint("tournament_id", "court_label", name="uq_courtstate_tournament_court"),
-    )
+    __table_args__ = (SAUniqueConstraint("tournament_id", "court_label", name="uq_courtstate_tournament_court"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     tournament_id: int = Field(foreign_key="tournament.id", index=True)

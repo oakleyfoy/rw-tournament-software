@@ -12,20 +12,19 @@ Validates:
 """
 
 from datetime import date, time
-
-import pytest
-from sqlmodel import Session, select
 from typing import List
+
+from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
+from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.sms_log import SmsLog
-from app.models.player import Player
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
@@ -550,8 +549,7 @@ def test_finalize_preview_suppresses_auto_post_match_sms_until_approved(client, 
     assert body["sms_preview"]["total_messages"] >= 1
     assert len(body["sms_preview"]["recipients"]) >= 1
     assert all(
-        not (recipient["message"] or "").rstrip().endswith(")")
-        for recipient in body["sms_preview"]["recipients"]
+        not (recipient["message"] or "").rstrip().endswith(")") for recipient in body["sms_preview"]["recipients"]
     )
 
     post_logs = session.exec(
@@ -749,6 +747,7 @@ def test_board_empty_court(client, session):
 
 
 # ── On Deck tests ──────────────────────────────────────────────────────
+
 
 def test_on_deck_three_scheduled_matches(client, session):
     """Court with 3 scheduled matches: up_next = earliest, on_deck = second earliest."""
@@ -1070,6 +1069,7 @@ def test_finalize_does_not_auto_start_in_checkin_management_mode(client, session
 
 # ── Impact endpoint tests ──────────────────────────────────────────────
 
+
 def test_impact_terminal_match_null_targets(client, session):
     """R2 match (no downstream) returns null winner/loser targets."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
@@ -1080,9 +1080,7 @@ def test_impact_terminal_match_null_targets(client, session):
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
     r2 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
 
-    resp = client.get(
-        f"/api/desk/tournaments/{t.id}/impact?version_id={draft_id}&match_id={r2['match_id']}"
-    )
+    resp = client.get(f"/api/desk/tournaments/{t.id}/impact?version_id={draft_id}&match_id={r2['match_id']}")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["impacts"]) == 1
@@ -1136,12 +1134,10 @@ def test_impact_locked_slot_shows_blocked(client, session):
 
     # Find the draft R2 match and its slot
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
-    r2 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
+    [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R2_M01"][0]
 
     # Find the slot for R2
-    draft_version_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == draft_id)
-    ).all()
+    draft_version_matches = session.exec(select(Match).where(Match.schedule_version_id == draft_id)).all()
     r2_match = [m for m in draft_version_matches if m.match_code == "WOM_E1_WF_R2_M01"][0]
     assignment = session.exec(
         select(MatchAssignment).where(
@@ -1160,9 +1156,7 @@ def test_impact_locked_slot_shows_blocked(client, session):
     session.commit()
 
     # Check impact for R1 M1 — its winner target (R2) should be SLOT_LOCKED
-    resp = client.get(
-        f"/api/desk/tournaments/{t.id}/impact?version_id={draft_id}"
-    )
+    resp = client.get(f"/api/desk/tournaments/{t.id}/impact?version_id={draft_id}")
     assert resp.status_code == 200
     body = resp.json()
 
@@ -1172,6 +1166,7 @@ def test_impact_locked_slot_shows_blocked(client, session):
 
 
 # ── Conflict check tests ──────────────────────────────────────────────
+
 
 def test_conflict_team_already_playing(client, session):
     """If a team is IN_PROGRESS in another match, warn TEAM_ALREADY_PLAYING."""
@@ -1227,9 +1222,7 @@ def test_conflict_team_already_playing(client, session):
     # But M1 is FINAL. Check conflicts for a SCHEDULED match with Alpha would work if one existed.
 
     # The cleanest test: just add another match with Alpha/Delta scheduled on same version.
-    draft_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == draft_id)
-    ).all()
+    session.exec(select(Match).where(Match.schedule_version_id == draft_id)).all()
     # Find Alpha's team ID (team1 of M1)
     alpha_id = m1["team1_id"]
 
@@ -1287,7 +1280,7 @@ def test_conflict_day_cap_exceeded(client, session):
 
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
     m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
-    m2 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M02"][0]
+    [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M02"][0]
     alpha_id = m1["team1_id"]
 
     # Finalize M1 (Alpha wins) — Alpha has 1 FINAL match on Day 1
@@ -1414,6 +1407,7 @@ def test_conflict_rest_too_short(client, session):
 
 # ── Timeline tests ──────────────────────────────────────────────────────
 
+
 def test_timeline_created_at_present(client, session):
     """Every match in snapshot has created_at timestamp."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
@@ -1495,6 +1489,7 @@ def test_timeline_finalize_sets_completed_at_and_winner(client, session):
 
 # ── Bulk Status tests ──────────────────────────────────────────────────
 
+
 def test_bulk_pause_updates_in_progress_only(client, session):
     """Bulk pause sets only IN_PROGRESS matches to PAUSED, rejects FINAL version."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
@@ -1504,7 +1499,7 @@ def test_bulk_pause_updates_in_progress_only(client, session):
 
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
     m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
-    m2 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M02"][0]
+    [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M02"][0]
 
     # Set m1 to IN_PROGRESS
     client.patch(
@@ -1621,6 +1616,7 @@ def test_paused_delayed_status_via_status_endpoint(client, session):
 
 # ── Court State tests ──────────────────────────────────────────────────
 
+
 def test_court_state_upsert_and_get(client, session):
     """Patching court state creates row, subsequent GET returns it."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
@@ -1686,6 +1682,7 @@ def test_court_state_rejects_empty_patch(client, session):
 
 
 # ── Score parser unit tests ──────────────────────────────────────────────
+
 
 def test_score_parser_simple():
     """Parse a simple one-set score like '8-4'."""
@@ -1757,6 +1754,7 @@ def test_score_validation_by_duration_rules():
 
 
 # ── Standings endpoint tests ─────────────────────────────────────────────
+
 
 def _setup_rr_tournament(session: Session):
     """Create a tournament with an RR event, 4 teams, and 3 RR matches."""
@@ -2168,44 +2166,46 @@ def test_standings_supports_fifth_pool_division(client, session):
     session.add_all([team1, team2, team3, team4])
     session.flush()
 
-    session.add_all([
-        Match(
-            tournament_id=t.id,
-            event_id=ev.id,
-            schedule_version_id=v.id,
-            match_code="MIX_E1_RR_POOLA_M01",
-            match_type="RR",
-            round_number=1,
-            round_index=1,
-            sequence_in_round=1,
-            duration_minutes=60,
-            team_a_id=team1.id,
-            team_b_id=team2.id,
-            placeholder_side_a="Seed 1",
-            placeholder_side_b="Seed 2",
-            runtime_status="FINAL",
-            winner_team_id=team1.id,
-            score_json={"display": "6-4 6-4"},
-        ),
-        Match(
-            tournament_id=t.id,
-            event_id=ev.id,
-            schedule_version_id=v.id,
-            match_code="MIX_E1_RR_POOLE_M01",
-            match_type="RR",
-            round_number=1,
-            round_index=1,
-            sequence_in_round=2,
-            duration_minutes=60,
-            team_a_id=team3.id,
-            team_b_id=team4.id,
-            placeholder_side_a="Seed 3",
-            placeholder_side_b="Seed 4",
-            runtime_status="FINAL",
-            winner_team_id=team3.id,
-            score_json={"display": "6-3 6-2"},
-        ),
-    ])
+    session.add_all(
+        [
+            Match(
+                tournament_id=t.id,
+                event_id=ev.id,
+                schedule_version_id=v.id,
+                match_code="MIX_E1_RR_POOLA_M01",
+                match_type="RR",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=1,
+                duration_minutes=60,
+                team_a_id=team1.id,
+                team_b_id=team2.id,
+                placeholder_side_a="Seed 1",
+                placeholder_side_b="Seed 2",
+                runtime_status="FINAL",
+                winner_team_id=team1.id,
+                score_json={"display": "6-4 6-4"},
+            ),
+            Match(
+                tournament_id=t.id,
+                event_id=ev.id,
+                schedule_version_id=v.id,
+                match_code="MIX_E1_RR_POOLE_M01",
+                match_type="RR",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=2,
+                duration_minutes=60,
+                team_a_id=team3.id,
+                team_b_id=team4.id,
+                placeholder_side_a="Seed 3",
+                placeholder_side_b="Seed 4",
+                runtime_status="FINAL",
+                winner_team_id=team3.id,
+                score_json={"display": "6-3 6-2"},
+            ),
+        ]
+    )
     session.commit()
 
     resp = client.get(f"/api/desk/tournaments/{t.id}/standings?version_id={v.id}")
@@ -2218,6 +2218,7 @@ def test_standings_supports_fifth_pool_division(client, session):
 
 
 # ── Pool Projection + Placement tests ────────────────────────────────────
+
 
 def _setup_wf_pool_tournament(session: Session):
     """Create a tournament with WF_TO_POOLS_DYNAMIC (8 teams, 1 WF round, 2 pools of 4)."""
@@ -2267,7 +2268,7 @@ def _setup_wf_pool_tournament(session: Session):
             tournament_id=t.id,
             event_id=ev.id,
             schedule_version_id=v.id,
-            match_code=f"MIX_E1_WF_R1_{idx+1:02d}",
+            match_code=f"MIX_E1_WF_R1_{idx + 1:02d}",
             match_type="WF",
             round_number=1,
             round_index=1,
@@ -2275,8 +2276,8 @@ def _setup_wf_pool_tournament(session: Session):
             duration_minutes=60,
             team_a_id=teams[a].id,
             team_b_id=teams[b].id,
-            placeholder_side_a=f"Seed {a+1}",
-            placeholder_side_b=f"Seed {b+1}",
+            placeholder_side_a=f"Seed {a + 1}",
+            placeholder_side_b=f"Seed {b + 1}",
         )
         session.add(m)
         wf_matches.append(m)
@@ -2287,7 +2288,7 @@ def _setup_wf_pool_tournament(session: Session):
     rr_matches = []
     pool_pairings = [(1, 2), (3, 4), (1, 3), (2, 4), (1, 4), (2, 3)]
     for pool_idx in range(2):
-        pool_label = chr(ord('A') + pool_idx)
+        pool_label = chr(ord("A") + pool_idx)
         for rr_idx, (pa, pb) in enumerate(pool_pairings):
             seed_a = pool_idx * 4 + pa
             seed_b = pool_idx * 4 + pb
@@ -2295,7 +2296,7 @@ def _setup_wf_pool_tournament(session: Session):
                 tournament_id=t.id,
                 event_id=ev.id,
                 schedule_version_id=v.id,
-                match_code=f"MIX_E1_POOL{pool_label}_RR_{rr_idx+1:02d}",
+                match_code=f"MIX_E1_POOL{pool_label}_RR_{rr_idx + 1:02d}",
                 match_type="RR",
                 round_number=1,
                 round_index=1,
@@ -2480,10 +2481,12 @@ def test_pool_placement_resolves_seeds(client, session):
     # Build placement payload from projection
     placement_pools = []
     for pool in proj["pools"]:
-        placement_pools.append({
-            "pool_label": pool["pool_label"],
-            "team_ids": [t["team_id"] for t in pool["teams"]],
-        })
+        placement_pools.append(
+            {
+                "pool_label": pool["pool_label"],
+                "team_ids": [t["team_id"] for t in pool["teams"]],
+            }
+        )
 
     resp = client.post(
         f"/api/desk/tournaments/{t.id}/pool-placement",
@@ -2537,12 +2540,9 @@ def test_pool_placement_sends_rr_first_match_sms(client, session):
     wf = sorted([m for m in snap["matches"] if m["stage"] == "WF"], key=lambda m: m["match_id"])
     rr_first_round = sorted(
         [
-            m for m in snap["matches"]
-            if m["stage"] == "RR"
-            and (
-                m["match_code"].endswith("_RR_01")
-                or m["match_code"].endswith("_RR_02")
-            )
+            m
+            for m in snap["matches"]
+            if m["stage"] == "RR" and (m["match_code"].endswith("_RR_01") or m["match_code"].endswith("_RR_02"))
         ],
         key=lambda m: m["match_code"],
     )
@@ -2610,6 +2610,7 @@ def test_pool_placement_sends_rr_first_match_sms(client, session):
 
 # ── Move / Swap / Add Slot / Add Court tests ─────────────────────────────
 
+
 def _setup_draft_for_move(session: Session):
     """Create a draft version with 2 courts, 2 time slots, and 2 matches."""
     t = Tournament(
@@ -2649,42 +2650,78 @@ def _setup_draft_for_move(session: Session):
         teams.append(t_)
 
     m1 = Match(
-        tournament_id=t.id, event_id=ev.id, schedule_version_id=v.id,
-        match_code="MIX_WF_R1_M01", match_type="WF",
-        round_number=1, round_index=1, sequence_in_round=1, duration_minutes=60,
-        team_a_id=teams[0].id, team_b_id=teams[3].id,
-        placeholder_side_a="SEED_1", placeholder_side_b="SEED_4",
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="MIX_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="SEED_1",
+        placeholder_side_b="SEED_4",
     )
     m2 = Match(
-        tournament_id=t.id, event_id=ev.id, schedule_version_id=v.id,
-        match_code="MIX_WF_R1_M02", match_type="WF",
-        round_number=1, round_index=1, sequence_in_round=2, duration_minutes=60,
-        team_a_id=teams[1].id, team_b_id=teams[2].id,
-        placeholder_side_a="SEED_2", placeholder_side_b="SEED_3",
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="MIX_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
     )
     session.add_all([m1, m2])
     session.flush()
 
     # 2 courts x 2 time slots = 4 slots total
     slot_c1_t1 = ScheduleSlot(
-        tournament_id=t.id, schedule_version_id=v.id,
-        day_date=date(2026, 7, 1), start_time=time(9, 0), end_time=time(10, 0),
-        court_number=1, court_label="1", block_minutes=60,
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 7, 1),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
     )
     slot_c2_t1 = ScheduleSlot(
-        tournament_id=t.id, schedule_version_id=v.id,
-        day_date=date(2026, 7, 1), start_time=time(9, 0), end_time=time(10, 0),
-        court_number=2, court_label="2", block_minutes=60,
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 7, 1),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
     )
     slot_c1_t2 = ScheduleSlot(
-        tournament_id=t.id, schedule_version_id=v.id,
-        day_date=date(2026, 7, 1), start_time=time(10, 30), end_time=time(11, 30),
-        court_number=1, court_label="1", block_minutes=60,
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 7, 1),
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
     )
     slot_c2_t2 = ScheduleSlot(
-        tournament_id=t.id, schedule_version_id=v.id,
-        day_date=date(2026, 7, 1), start_time=time(10, 30), end_time=time(11, 30),
-        court_number=2, court_label="2", block_minutes=60,
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 7, 1),
+        start_time=time(10, 30),
+        end_time=time(11, 30),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
     )
     session.add_all([slot_c1_t1, slot_c2_t1, slot_c1_t2, slot_c2_t2])
     session.flush()
@@ -2800,27 +2837,33 @@ def test_merge_duplicate_desk_teams_relinks_references(client, session):
     session.add(match)
     session.flush()
 
-    session.add(MatchCheckIn(
-        tournament_id=tournament.id,
-        schedule_version_id=version.id,
-        match_id=match.id,
-        team_id=duplicate.id,
-        side="A",
-        team_checked_in=True,
-    ))
+    session.add(
+        MatchCheckIn(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=duplicate.id,
+            side="A",
+            team_checked_in=True,
+        )
+    )
     session.add(TeamPlayer(team_id=duplicate.id, player_id=101))
-    session.add(TeamAvoidEdge(
-        event_id=event.id,
-        team_id_a=min(canonical.id, duplicate.id),
-        team_id_b=max(canonical.id, duplicate.id),
-    ))
-    session.add(SmsLog(
-        tournament_id=tournament.id,
-        team_id=duplicate.id,
-        phone_number="+15555550123",
-        message_body="test",
-        message_type="team_direct",
-    ))
+    session.add(
+        TeamAvoidEdge(
+            event_id=event.id,
+            team_id_a=min(canonical.id, duplicate.id),
+            team_id_b=max(canonical.id, duplicate.id),
+        )
+    )
+    session.add(
+        SmsLog(
+            tournament_id=tournament.id,
+            team_id=duplicate.id,
+            phone_number="+15555550123",
+            message_body="test",
+            message_type="team_direct",
+        )
+    )
     session.commit()
     duplicate_id = duplicate.id
 
@@ -2834,9 +2877,7 @@ def test_merge_duplicate_desk_teams_relinks_references(client, session):
     assert match.team_a_id == canonical.id
     assert match.winner_team_id == canonical.id
 
-    remaining = session.exec(
-        select(Team).where(Team.event_id == event.id)
-    ).all()
+    remaining = session.exec(select(Team).where(Team.event_id == event.id)).all()
     assert len(remaining) == 2
     assert all(team.id != duplicate_id for team in remaining)
 
@@ -2901,9 +2942,7 @@ def test_merge_duplicate_desk_teams_matches_clone_suffix_rows(client, session):
     assert body["groups_merged"] == 1
     assert body["teams_removed"] == 1
 
-    remaining = session.exec(
-        select(Team).where(Team.event_id == event.id)
-    ).all()
+    remaining = session.exec(select(Team).where(Team.event_id == event.id)).all()
     assert len(remaining) == 1
     assert remaining[0].id == canonical.id
     assert remaining[0].seed == 1
@@ -3230,10 +3269,12 @@ def test_checkin_assign_parks_preassigned_match_into_dragged_match_old_slot_when
     )
     session.add_all([m3, m4])
     session.flush()
-    session.add_all([
-        MatchAssignment(schedule_version_id=v.id, match_id=m3.id, slot_id=slot_c1_t2.id),
-        MatchAssignment(schedule_version_id=v.id, match_id=m4.id, slot_id=slot_c2_t2.id),
-    ])
+    session.add_all(
+        [
+            MatchAssignment(schedule_version_id=v.id, match_id=m3.id, slot_id=slot_c1_t2.id),
+            MatchAssignment(schedule_version_id=v.id, match_id=m4.id, slot_id=slot_c2_t2.id),
+        ]
+    )
     session.commit()
 
     mode_resp = client.patch(
@@ -3365,8 +3406,7 @@ def test_towels_show_on_all_team_checkin_matches(client, session):
         f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
         json={
             "raw_text": (
-                "Player Name\tTowel Color\tReport URL\n"
-                "Alpha Player 1\tBlue\thttps://example.com/reports/alpha-1\n"
+                "Player Name\tTowel Color\tReport URL\nAlpha Player 1\tBlue\thttps://example.com/reports/alpha-1\n"
             )
         },
     )
@@ -3415,8 +3455,7 @@ def test_temporary_player_lookup_reimport_replaces_existing_rows(client, session
         f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
         json={
             "raw_text": (
-                "Player Name\tTowel Color\tReport URL\n"
-                "Alpha Player 1\tRed\thttps://example.com/reports/alpha-1-new\n"
+                "Player Name\tTowel Color\tReport URL\nAlpha Player 1\tRed\thttps://example.com/reports/alpha-1-new\n"
             )
         },
     )
@@ -3492,9 +3531,7 @@ def test_temporary_player_lookup_crud_updates_checkin_snapshot(client, session):
     assert player_state["towel_color"] == "Red"
     assert player_state["report_url"] is None
 
-    delete_resp = client.delete(
-        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/{created['id']}"
-    )
+    delete_resp = client.delete(f"/api/desk/tournaments/{t.id}/temporary-player-lookups/{created['id']}")
     assert delete_resp.status_code == 200
 
     list_resp = client.get(f"/api/desk/tournaments/{t.id}/temporary-player-lookups")
@@ -3577,8 +3614,7 @@ def test_checkin_player_lookup_slots_without_team_player_links_are_clickable(cli
         f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
         json={
             "raw_text": (
-                "Player Name\tTowel Color\tReport URL\n"
-                "Venitta Reeves\tBlack\thttps://example.com/reports/venitta\n"
+                "Player Name\tTowel Color\tReport URL\nVenitta Reeves\tBlack\thttps://example.com/reports/venitta\n"
             )
         },
     )
@@ -3902,6 +3938,7 @@ def test_checkin_snapshot_prefers_latest_towel_lookup_row_for_same_player(client
     assert player_state["towel_color"] == "Black"
     assert player_state["report_url"] == "https://new.example/jon"
 
+
 def test_move_match_to_empty_slot(client, session):
     """Moving a match to an empty slot succeeds."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
@@ -4220,9 +4257,7 @@ def test_delete_middle_court_requires_slot_opt_in_then_renumbers_remaining(clien
     session.refresh(t)
     assert t.court_names == ["1", "2", "4"]
 
-    remaining_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)
-    ).all()
+    remaining_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)).all()
     court_numbers = sorted({slot.court_number for slot in remaining_slots})
     assert court_numbers == [1, 2, 3]
     shifted_slots = [slot for slot in remaining_slots if slot.court_number == 3]
@@ -4268,9 +4303,7 @@ def test_remap_courts_updates_slot_numbers_and_labels(client, session):
     """Global remap updates slot court_number/court_label only (assignments stay attached to same slots)."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
 
-    pre_assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)
-    ).all()
+    pre_assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)).all()
     pre_by_slot = {a.match_id: a.slot_id for a in pre_assignments}
 
     resp = client.post(
@@ -4285,16 +4318,12 @@ def test_remap_courts_updates_slot_numbers_and_labels(client, session):
     assert body["success"] is True
     assert body["remapped_slots"] >= 1
 
-    updated_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)
-    ).all()
+    updated_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)).all()
     assert len(updated_slots) > 0
     assert all(s.court_number in (15, 16) for s in updated_slots)
     assert all((s.court_label or "") in ("15", "16") for s in updated_slots)
 
-    post_assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)
-    ).all()
+    post_assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == v.id)).all()
     post_by_slot = {a.match_id: a.slot_id for a in post_assignments}
     assert post_by_slot == pre_by_slot
 
@@ -4318,7 +4347,7 @@ def test_conflict_check_move_day_cap(client, session):
     """Conflict check for MOVE detects day cap exceeded at target slot."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
     m1, m2 = matches
-    slot_c1_t2 = slots[2]
+    slots[2]
 
     # Mark m1 as IN_PROGRESS (counts toward daily cap)
     m1.runtime_status = "IN_PROGRESS"
@@ -4331,12 +4360,21 @@ def test_conflict_check_move_day_cap(client, session):
 
     # Create a third match for Bravo (also FINAL) to give Bravo 2 FINAL/IP matches
     m3_extra = Match(
-        tournament_id=t.id, event_id=ev.id, schedule_version_id=v.id,
-        match_code="MIX_WF_R1_M03", match_type="WF",
-        round_number=1, round_index=1, sequence_in_round=3, duration_minutes=60,
-        team_a_id=teams[1].id, team_b_id=teams[3].id,
-        placeholder_side_a="SEED_2", placeholder_side_b="SEED_4",
-        runtime_status="FINAL", winner_team_id=teams[1].id,
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="MIX_WF_R1_M03",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=3,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[3].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_4",
+        runtime_status="FINAL",
+        winner_team_id=teams[1].id,
     )
     session.add(m3_extra)
     session.flush()
@@ -4347,20 +4385,33 @@ def test_conflict_check_move_day_cap(client, session):
 
     # Create a fourth match for Bravo (the one we'll check)
     m4 = Match(
-        tournament_id=t.id, event_id=ev.id, schedule_version_id=v.id,
-        match_code="MIX_WF_R2_M01", match_type="WF",
-        round_number=2, round_index=1, sequence_in_round=1, duration_minutes=60,
-        team_a_id=teams[1].id, team_b_id=teams[0].id,
-        placeholder_side_a="W1", placeholder_side_b="W2",
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="MIX_WF_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[0].id,
+        placeholder_side_a="W1",
+        placeholder_side_b="W2",
     )
     session.add(m4)
     session.flush()
 
     # Need a 5th slot for m4
     extra_slot = ScheduleSlot(
-        tournament_id=t.id, schedule_version_id=v.id,
-        day_date=date(2026, 7, 1), start_time=time(12, 0), end_time=time(13, 0),
-        court_number=1, court_label="1", block_minutes=60,
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=date(2026, 7, 1),
+        start_time=time(12, 0),
+        end_time=time(13, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
     )
     session.add(extra_slot)
     session.flush()
@@ -4424,6 +4475,7 @@ def test_snapshot_includes_slots_and_grid_fields(client, session):
 
 # ── Reschedule Engine tests ──────────────────────────────────────────────
 
+
 def _setup_reschedule(session: Session, *, num_matches=4):
     """
     Set up a two-day, 2-court tournament with matches assigned on Day 1.
@@ -4443,7 +4495,10 @@ def _setup_reschedule(session: Session, *, num_matches=4):
     session.flush()
 
     v = ScheduleVersion(
-        tournament_id=t.id, version_number=1, status="draft", notes="Desk Draft",
+        tournament_id=t.id,
+        version_number=1,
+        status="draft",
+        notes="Desk Draft",
     )
     session.add(v)
     session.flush()
@@ -4462,11 +4517,19 @@ def _setup_reschedule(session: Session, *, num_matches=4):
     matches = []
     for i in range(num_matches):
         m = Match(
-            tournament_id=t.id, event_id=ev.id, schedule_version_id=v.id,
-            match_code=f"MIX_WF_R1_M{i+1:02d}", match_type="WF",
-            round_number=1, round_index=1, sequence_in_round=i + 1, duration_minutes=60,
-            team_a_id=teams[i * 2].id, team_b_id=teams[i * 2 + 1].id,
-            placeholder_side_a=f"SEED_{i*2+1}", placeholder_side_b=f"SEED_{i*2+2}",
+            tournament_id=t.id,
+            event_id=ev.id,
+            schedule_version_id=v.id,
+            match_code=f"MIX_WF_R1_M{i + 1:02d}",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=i + 1,
+            duration_minutes=60,
+            team_a_id=teams[i * 2].id,
+            team_b_id=teams[i * 2 + 1].id,
+            placeholder_side_a=f"SEED_{i * 2 + 1}",
+            placeholder_side_b=f"SEED_{i * 2 + 2}",
         )
         session.add(m)
         session.flush()
@@ -4477,9 +4540,14 @@ def _setup_reschedule(session: Session, *, num_matches=4):
     for ct in [1, 2]:
         for h, m in [(9, 0), (10, 30)]:
             s = ScheduleSlot(
-                tournament_id=t.id, schedule_version_id=v.id,
-                day_date=date(2026, 7, 1), start_time=time(h, m), end_time=time(h + 1, m),
-                court_number=ct, court_label=str(ct), block_minutes=60,
+                tournament_id=t.id,
+                schedule_version_id=v.id,
+                day_date=date(2026, 7, 1),
+                start_time=time(h, m),
+                end_time=time(h + 1, m),
+                court_number=ct,
+                court_label=str(ct),
+                block_minutes=60,
             )
             session.add(s)
             session.flush()
@@ -4490,16 +4558,21 @@ def _setup_reschedule(session: Session, *, num_matches=4):
     for ct in [1, 2]:
         for h, m in [(9, 0), (10, 30)]:
             s = ScheduleSlot(
-                tournament_id=t.id, schedule_version_id=v.id,
-                day_date=date(2026, 7, 2), start_time=time(h, m), end_time=time(h + 1, m),
-                court_number=ct, court_label=str(ct), block_minutes=60,
+                tournament_id=t.id,
+                schedule_version_id=v.id,
+                day_date=date(2026, 7, 2),
+                start_time=time(h, m),
+                end_time=time(h + 1, m),
+                court_number=ct,
+                court_label=str(ct),
+                block_minutes=60,
             )
             session.add(s)
             session.flush()
             d2_slots.append(s)
 
     # Assign matches to Day 1 slots
-    for i, m in enumerate(matches[:len(d1_slots)]):
+    for i, m in enumerate(matches[: len(d1_slots)]):
         a = MatchAssignment(schedule_version_id=v.id, match_id=m.id, slot_id=d1_slots[i].id)
         session.add(a)
 
@@ -4512,14 +4585,17 @@ def test_reschedule_partial_day(client, session):
     """Partial day: matches after cutoff are moved to available slots."""
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "PARTIAL_DAY",
-        "affected_day": "2026-07-01",
-        "unavailable_from": "10:00",
-        "available_from": "14:00",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "PARTIAL_DAY",
+            "affected_day": "2026-07-01",
+            "unavailable_from": "10:00",
+            "available_from": "14:00",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4534,12 +4610,15 @@ def test_reschedule_full_washout(client, session):
     """Full washout: all Day 1 unplayed matches move to Day 2."""
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4552,13 +4631,16 @@ def test_reschedule_court_loss(client, session):
     """Court loss: matches on court 2 redistributed away from affected slots."""
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "COURT_LOSS",
-        "affected_day": "2026-07-01",
-        "unavailable_courts": [2],
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "COURT_LOSS",
+            "affected_day": "2026-07-01",
+            "unavailable_courts": [2],
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4585,12 +4667,15 @@ def test_reschedule_locked_matches_excluded(client, session):
     session.add(assignment)
     session.commit()
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4607,12 +4692,15 @@ def test_reschedule_final_matches_excluded(client, session):
     session.add(matches[0])
     session.commit()
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4632,12 +4720,15 @@ def test_reschedule_unplaceable_when_no_slots(client, session):
             session.add(s)
     session.commit()
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4650,21 +4741,27 @@ def test_reschedule_apply(client, session):
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
     # Preview
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     preview = resp.json()
 
     # Apply
     moves = [{"match_id": m["match_id"], "new_slot_id": m["new_slot_id"]} for m in preview["proposed_moves"]]
-    resp2 = client.post(f"/api/desk/tournaments/{t.id}/reschedule/apply", json={
-        "version_id": v.id,
-        "moves": moves,
-    })
+    resp2 = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/apply",
+        json={
+            "version_id": v.id,
+            "moves": moves,
+        },
+    )
     assert resp2.status_code == 200
     body = resp2.json()
     assert body["applied_moves"] == len(moves)
@@ -4690,11 +4787,14 @@ def test_reschedule_rejects_final_version(client, session):
     session.add(v)
     session.commit()
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+        },
+    )
     assert resp.status_code == 400
 
 
@@ -4702,11 +4802,14 @@ def test_reschedule_feasibility(client, session):
     """Feasibility endpoint returns correct fits/utilization for each format."""
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/feasibility", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/feasibility",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4739,13 +4842,16 @@ def test_reschedule_preview_with_scoring_format(client, session):
     """Preview with scoring_format uses compressed durations for placement."""
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "scoring_format": "PRO_SET_4",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "scoring_format": "PRO_SET_4",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -4765,24 +4871,30 @@ def test_reschedule_apply_with_duration_updates(client, session):
     t, v, ev, teams, matches, slots = _setup_reschedule(session)
 
     # Preview with compressed format
-    resp = client.post(f"/api/desk/tournaments/{t.id}/reschedule/preview", json={
-        "version_id": v.id,
-        "mode": "FULL_WASHOUT",
-        "affected_day": "2026-07-01",
-        "scoring_format": "PRO_SET_4",
-        "add_time_slots": False,
-    })
+    resp = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/preview",
+        json={
+            "version_id": v.id,
+            "mode": "FULL_WASHOUT",
+            "affected_day": "2026-07-01",
+            "scoring_format": "PRO_SET_4",
+            "add_time_slots": False,
+        },
+    )
     assert resp.status_code == 200
     preview = resp.json()
 
     moves = [{"match_id": m["match_id"], "new_slot_id": m["new_slot_id"]} for m in preview["proposed_moves"]]
 
     # Apply with duration_updates
-    resp2 = client.post(f"/api/desk/tournaments/{t.id}/reschedule/apply", json={
-        "version_id": v.id,
-        "moves": moves,
-        "duration_updates": preview["duration_updates"],
-    })
+    resp2 = client.post(
+        f"/api/desk/tournaments/{t.id}/reschedule/apply",
+        json={
+            "version_id": v.id,
+            "moves": moves,
+            "duration_updates": preview["duration_updates"],
+        },
+    )
     assert resp2.status_code == 200
     body = resp2.json()
     assert body["applied_moves"] == len(moves)

@@ -9,6 +9,7 @@ Modes:
   COURT_LOSS   — specific courts become unavailable
   REBUILD      — regenerate schedule from scratch for all remaining matches
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -48,7 +49,7 @@ class RescheduleParams:
     mode: str  # PARTIAL_DAY | FULL_WASHOUT | COURT_LOSS
     affected_day: date
     unavailable_from: Optional[time] = None  # PARTIAL_DAY
-    available_from: Optional[time] = None    # PARTIAL_DAY: when courts reopen
+    available_from: Optional[time] = None  # PARTIAL_DAY: when courts reopen
     unavailable_courts: Optional[List[int]] = None  # COURT_LOSS
     target_days: Optional[List[date]] = None  # FULL_WASHOUT overflow
     extend_day_end: Optional[time] = None
@@ -156,9 +157,7 @@ def compute_feasibility(
     params: RescheduleParams,
 ) -> FeasibilityResult:
     """Compute feasibility for each scoring format without mutating anything."""
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == params.version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == params.version_id)).all()
 
     all_assignments = session.exec(
         select(MatchAssignment).where(
@@ -169,7 +168,7 @@ def compute_feasibility(
     all_slots = session.exec(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == params.version_id,
-            ScheduleSlot.is_active == True,
+            ScheduleSlot.is_active,
         )
     ).all()
 
@@ -222,13 +221,15 @@ def compute_feasibility(
         dur = SCORING_FORMATS[fmt_key]
         needed = affected_count * dur
         util = int(round(needed / available_minutes * 100)) if available_minutes > 0 else 999
-        formats.append(FormatFeasibility(
-            format=fmt_key,
-            duration=dur,
-            label=SCORING_FORMAT_LABELS[fmt_key],
-            fits=needed <= available_minutes,
-            utilization=util,
-        ))
+        formats.append(
+            FormatFeasibility(
+                format=fmt_key,
+                duration=dur,
+                label=SCORING_FORMAT_LABELS[fmt_key],
+                fits=needed <= available_minutes,
+                utilization=util,
+            )
+        )
 
     return FeasibilityResult(affected_count=affected_count, formats=formats)
 
@@ -276,7 +277,7 @@ def compute_reschedule(
     all_slots = session.exec(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == params.version_id,
-            ScheduleSlot.is_active == True,
+            ScheduleSlot.is_active,
         )
     ).all()
 
@@ -318,9 +319,11 @@ def compute_reschedule(
         # unavailable_from need to shift forward (not just those in the rain window).
         # This preserves match ordering.
         if params.mode == "PARTIAL_DAY":
-            if (slot.day_date == params.affected_day
-                    and params.unavailable_from
-                    and slot.start_time >= params.unavailable_from):
+            if (
+                slot.day_date == params.affected_day
+                and params.unavailable_from
+                and slot.start_time >= params.unavailable_from
+            ):
                 affected_matches.append(m)
             elif _slot_is_affected(slot, params):
                 affected_matches.append(m)
@@ -360,7 +363,10 @@ def compute_reschedule(
 
     if params.add_time_slots and params.extend_day_end:
         new_slots, new_ids = _generate_extended_day_slots(
-            session, tournament, params, all_slots,
+            session,
+            tournament,
+            params,
+            all_slots,
         )
         all_slots = list(all_slots) + new_slots
         for s in new_slots:
@@ -388,7 +394,12 @@ def compute_reschedule(
     if params.add_time_slots and len(affected_matches) > len(available_slots):
         overflow_needed = len(affected_matches) - len(available_slots)
         new_slots, new_ids = _generate_overflow_slots(
-            session, tournament, params, all_slots, kept_slot_ids, overflow_needed,
+            session,
+            tournament,
+            params,
+            all_slots,
+            kept_slot_ids,
+            overflow_needed,
         )
         available_slots.extend(new_slots)
         new_slot_ids.extend(new_ids)
@@ -474,7 +485,9 @@ def compute_reschedule(
         m = match_map.get(mid)
         slot = slot_map.get(assign.slot_id)
         if m and slot:
-            placed_end_times[mid] = datetime.combine(slot.day_date, slot.start_time) + timedelta(minutes=m.duration_minutes)
+            placed_end_times[mid] = datetime.combine(slot.day_date, slot.start_time) + timedelta(
+                minutes=m.duration_minutes
+            )
 
     # Auto-assign affected matches to available slots
     occupied_new: Set[int] = set()
@@ -556,33 +569,37 @@ def compute_reschedule(
                     team_day_count[day_key] = team_day_count.get(day_key, 0) + 1
 
             court_label = slot.court_label or str(slot.court_number)
-            proposed_moves.append(ProposedMove(
-                match_id=m.id,
-                match_number=m.id,
-                match_code=m.match_code,
-                event_name=event_map.get(m.event_id, ""),
-                stage=m.match_type,
-                old_slot_id=old_assign.slot_id if old_assign else None,
-                old_court=f"Court {old_slot.court_label}" if old_slot else None,
-                old_time=_time_str(old_slot.start_time) if old_slot else None,
-                old_day=_day_str(old_slot.day_date) if old_slot else None,
-                new_slot_id=slot.id,
-                new_court=f"Court {court_label}",
-                new_time=_time_str(slot.start_time),
-                new_day=_day_str(slot.day_date),
-            ))
+            proposed_moves.append(
+                ProposedMove(
+                    match_id=m.id,
+                    match_number=m.id,
+                    match_code=m.match_code,
+                    event_name=event_map.get(m.event_id, ""),
+                    stage=m.match_type,
+                    old_slot_id=old_assign.slot_id if old_assign else None,
+                    old_court=f"Court {old_slot.court_label}" if old_slot else None,
+                    old_time=_time_str(old_slot.start_time) if old_slot else None,
+                    old_day=_day_str(old_slot.day_date) if old_slot else None,
+                    new_slot_id=slot.id,
+                    new_court=f"Court {court_label}",
+                    new_time=_time_str(slot.start_time),
+                    new_day=_day_str(slot.day_date),
+                )
+            )
             placed = True
             break
 
         if not placed:
-            unplaceable.append(UnplaceableMatch(
-                match_id=m.id,
-                match_number=m.id,
-                match_code=m.match_code,
-                event_name=event_map.get(m.event_id, ""),
-                stage=m.match_type,
-                reason="NO_AVAILABLE_SLOT",
-            ))
+            unplaceable.append(
+                UnplaceableMatch(
+                    match_id=m.id,
+                    match_number=m.id,
+                    match_code=m.match_code,
+                    event_name=event_map.get(m.event_id, ""),
+                    stage=m.match_type,
+                    reason="NO_AVAILABLE_SLOT",
+                )
+            )
 
     return ReschedulePreview(
         proposed_moves=proposed_moves,
@@ -823,6 +840,7 @@ def _generate_overflow_slots(
 #  Rebuild Remaining Schedule
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RebuildDayConfig:
     day_date: date
@@ -899,20 +917,20 @@ def compute_rebuild_preview(
 ) -> RebuildPreview:
     """Simulate rebuild placement to show accurate preview with day assignments."""
 
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
 
     event_ids = list({m.event_id for m in all_matches})
     events = session.exec(select(Event).where(Event.id.in_(event_ids))).all() if event_ids else []
     event_map = {e.id: e.name for e in events}
 
     team_map: Dict[int, str] = {}
+
     def _team_name(tid: Optional[int], placeholder: str) -> str:
         if tid is None:
             return placeholder
         if tid not in team_map:
             from app.models.team import Team
+
             t = session.get(Team, tid)
             team_map[tid] = t.name if t else placeholder
         return team_map[tid]
@@ -923,9 +941,7 @@ def compute_rebuild_preview(
     ).all()
     assign_by_match_order = {a.match_id: a for a in all_assignments_for_order}
 
-    all_slots_for_order = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
-    ).all()
+    all_slots_for_order = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
     slot_map_order = {s.id: s for s in all_slots_for_order}
 
     # Separate remaining from final/dropped
@@ -969,13 +985,15 @@ def compute_rebuild_preview(
         slots_per_court = max(0, (end_min - start_min) // dc.block_minutes)
         day_slots = slots_per_court * dc.courts
         total_slots += day_slots
-        per_day.append({
-            "date": dc.day_date.isoformat(),
-            "slots": day_slots,
-            "courts": dc.courts,
-            "format": dc.format,
-            "block_minutes": dc.block_minutes,
-        })
+        per_day.append(
+            {
+                "date": dc.day_date.isoformat(),
+                "slots": day_slots,
+                "courts": dc.courts,
+                "format": dc.format,
+                "block_minutes": dc.block_minutes,
+            }
+        )
         # Generate simulated slot objects for placement
         current = start_min
         while current + dc.block_minutes <= end_min:
@@ -983,13 +1001,15 @@ def compute_rebuild_preview(
             slot_end_min = current + dc.block_minutes
             slot_end = time(slot_end_min // 60, slot_end_min % 60)
             for court_num in range(1, dc.courts + 1):
-                sim_slots.append({
-                    "day_date": dc.day_date,
-                    "start_time": slot_start,
-                    "end_time": slot_end,
-                    "block_minutes": dc.block_minutes,
-                    "court_number": court_num,
-                })
+                sim_slots.append(
+                    {
+                        "day_date": dc.day_date,
+                        "start_time": slot_start,
+                        "end_time": slot_end,
+                        "block_minutes": dc.block_minutes,
+                        "court_number": court_num,
+                    }
+                )
             current += dc.block_minutes
 
     # Sort sim slots chronologically
@@ -1100,22 +1120,28 @@ def compute_rebuild_preview(
     for i, m in enumerate(remaining):
         status = (m.runtime_status or "SCHEDULED").upper()
         day_info = match_day_assignments.get(m.id)
-        match_items.append(RebuildMatchItem(
-            match_id=m.id,
-            match_number=m.id,
-            match_code=m.match_code,
-            event_name=event_map.get(m.event_id, ""),
-            stage=m.match_type,
-            team1=_team_name(m.team_a_id, m.placeholder_side_a),
-            team2=_team_name(m.team_b_id, m.placeholder_side_b),
-            status=status,
-            rank=i + 1,
-            assigned_day=day_info[0] if day_info else None,
-            assigned_time=day_info[1] if day_info else None,
-        ))
+        match_items.append(
+            RebuildMatchItem(
+                match_id=m.id,
+                match_number=m.id,
+                match_code=m.match_code,
+                event_name=event_map.get(m.event_id, ""),
+                stage=m.match_type,
+                team1=_team_name(m.team_a_id, m.placeholder_side_a),
+                team2=_team_name(m.team_b_id, m.placeholder_side_b),
+                status=status,
+                rank=i + 1,
+                assigned_day=day_info[0] if day_info else None,
+                assigned_time=day_info[1] if day_info else None,
+            )
+        )
 
     actual_fits = unplaceable_count == 0
-    day1_count = sum(1 for m_item in match_items if m_item.assigned_day == day_configs[0].day_date.isoformat()) if day_configs else 0
+    day1_count = (
+        sum(1 for m_item in match_items if m_item.assigned_day == day_configs[0].day_date.isoformat())
+        if day_configs
+        else 0
+    )
 
     return RebuildPreview(
         remaining_matches=len(remaining),
@@ -1152,13 +1178,11 @@ def apply_rebuild(
 
     court_names = tournament.court_names or ["1"]
 
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
 
     event_ids = list({m.event_id for m in all_matches})
     events = session.exec(select(Event).where(Event.id.in_(event_ids))).all() if event_ids else []
-    event_map = {e.id: e.name for e in events}
+    {e.id: e.name for e in events}
 
     # Load current assignments and slots BEFORE deleting them, to determine original order
     pre_assignments = session.exec(
@@ -1285,9 +1309,7 @@ def apply_rebuild(
             final_assignments_map[a.match_id] = a
 
     all_slot_map: Dict[int, ScheduleSlot] = {}
-    remaining_old_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
-    ).all()
+    remaining_old_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
     for s in remaining_old_slots:
         all_slot_map[s.id] = s
     for s in new_slots:

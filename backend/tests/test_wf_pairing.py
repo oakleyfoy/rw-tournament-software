@@ -4,14 +4,12 @@ with avoid-group conflict resolution.
 """
 
 from app.services.wf_pairing import (
-    PairingConflict,
-    PairingResult,
     TeamSeed,
-    bracket_fold_positions,
-    build_wf_r1_pairings,
     _groups_conflict,
     _optimize_wf_r2_adjacency_swaps,
     _wf_r2_pod_of_four_penalty,
+    bracket_fold_positions,
+    build_wf_r1_pairings,
 )
 
 
@@ -201,6 +199,7 @@ class TestDeterminism:
 
     def test_shuffled_input_order_same_output(self):
         import random
+
         teams = _make_teams(16)
         baseline = build_wf_r1_pairings(teams, 16)
 
@@ -227,7 +226,6 @@ class TestTeamIdPairs:
 
 
 class TestEdgeCases:
-
     def test_two_teams(self):
         teams = _make_teams(2, {1: "a", 2: "a"})
         result = build_wf_r1_pairings(teams, 2)
@@ -312,7 +310,6 @@ class TestSwapResolution:
             if sa == 1 or sb == 1:
                 assert sb != 9 and sa != 9
 
-
     def test_swap_blocked_when_bottom_halves_different_level(self):
         # Quarter [(1,5), (4,8)]; WKWK conflict on (1,5). Fixing requires 5↔8 swap.
         # Different Level (rating) on bottom halves → swap disallowed; conflict stays.
@@ -395,8 +392,14 @@ class TestMultiGroupSupport:
     def test_multi_group_unavoidable(self):
         # All teams share group 'x' via multi-group strings
         groups = {
-            1: "x,a", 2: "x,b", 3: "x,c", 4: "x,d",
-            5: "x,e", 6: "x,f", 7: "x,g", 8: "x,h",
+            1: "x,a",
+            2: "x,b",
+            3: "x,c",
+            4: "x,d",
+            5: "x,e",
+            6: "x,f",
+            7: "x,g",
+            8: "x,h",
         }
         teams = _make_teams(8, groups)
         result = build_wf_r1_pairings(teams, 8)

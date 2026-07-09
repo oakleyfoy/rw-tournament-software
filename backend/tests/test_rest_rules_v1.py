@@ -659,10 +659,10 @@ def test_rr_no_team_overlapping_slots(session: Session):
     # Team 1 appears in M1 and M3 — must not get overlapping slots
     day = date(2026, 2, 20)
     matches_data = [
-        ("RR_R1_1", 1, 1, teams[0].id, teams[1].id),   # T1 vs T2
-        ("RR_R1_2", 1, 2, teams[2].id, teams[3].id),   # T3 vs T4
-        ("RR_R2_1", 2, 1, teams[0].id, teams[2].id),   # T1 vs T3
-        ("RR_R2_2", 2, 2, teams[1].id, teams[3].id),   # T2 vs T4
+        ("RR_R1_1", 1, 1, teams[0].id, teams[1].id),  # T1 vs T2
+        ("RR_R1_2", 1, 2, teams[2].id, teams[3].id),  # T3 vs T4
+        ("RR_R2_1", 2, 1, teams[0].id, teams[2].id),  # T1 vs T3
+        ("RR_R2_2", 2, 2, teams[1].id, teams[3].id),  # T2 vs T4
     ]
     for match_code, rnd, seq, ta, tb in matches_data:
         m = Match(
@@ -704,9 +704,7 @@ def test_rr_no_team_overlapping_slots(session: Session):
     assert result["assigned_count"] == 4
 
     # Build team_id -> list of (start_dt, end_dt)
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all()
     team_intervals = {}
     for a in assignments:
         match = session.get(Match, a.match_id)
@@ -857,9 +855,7 @@ def test_wf_to_wf_30_minutes_enforced(session: Session):
     assert result["unassigned_count"] == 0
 
     # Verify Team 1's gap is at least 30 minutes
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all()
 
     team1_entries = []
     for a in assignments:
@@ -1190,8 +1186,11 @@ def test_feeder_rest_wf_to_wf_30min():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot_early, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot_early,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert not ok
     assert len(violations) == 1
@@ -1213,8 +1212,11 @@ def test_feeder_rest_wf_to_wf_30min():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot_ok, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot_ok,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert ok
     assert len(violations) == 0
@@ -1279,8 +1281,11 @@ def test_feeder_rest_wf_to_scoring_60min():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot_early, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot_early,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert not ok
     assert violations[0].violation_type == "REST_FEEDER_GAP"
@@ -1300,8 +1305,11 @@ def test_feeder_rest_wf_to_scoring_60min():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot_ok, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot_ok,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert ok
     assert len(violations) == 0
@@ -1368,16 +1376,22 @@ def test_feeder_rest_weather_bypass():
 
     # Without weather: should fail
     ok, violations = check_rest_compatibility(
-        slot, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert not ok
 
     # With weather: should pass (WF→WF has no stage-specific rule, only universal min)
     ok, violations = check_rest_compatibility(
-        slot, child, tracker,
+        slot,
+        child,
+        tracker,
         weather_reschedule=True,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert ok
     assert len(violations) == 0
@@ -1442,9 +1456,12 @@ def test_feeder_rest_weather_preserves_stage_rules():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot, child, tracker,
+        slot,
+        child,
+        tracker,
         weather_reschedule=True,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert not ok
     assert violations[0].violation_type == "REST_FEEDER_GAP"
@@ -1686,8 +1703,11 @@ def test_feeder_rest_skips_when_unassigned():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     # Should pass — no feeder data means no violation
     assert ok
@@ -1754,8 +1774,11 @@ def test_feeder_rest_dedup_same_source():
         is_active=True,
     )
     ok, violations = check_rest_compatibility(
-        slot, child, tracker,
-        feeder_end_times=feeder_end_times, match_map=match_map,
+        slot,
+        child,
+        tracker,
+        feeder_end_times=feeder_end_times,
+        match_map=match_map,
     )
     assert not ok
     # Should have exactly 1 violation, not 2 (dedup)

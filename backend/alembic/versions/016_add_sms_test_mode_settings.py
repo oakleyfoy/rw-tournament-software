@@ -4,9 +4,9 @@ Revision ID: 016_add_sms_test_mode_settings
 Revises: 015_add_sms_log_dedupe_key
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "016_add_sms_test_mode_settings"
 down_revision = "015_add_sms_log_dedupe_key"

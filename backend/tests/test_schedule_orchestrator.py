@@ -235,9 +235,7 @@ def test_build_schedule_all_slot_court_labels_are_strings(client: TestClient, se
     tournament_id = setup["tournament_id"]
     version_id = setup["version_id"]
 
-    response = client.post(
-        f"/api/tournaments/{tournament_id}/schedule/versions/{version_id}/build?clear_existing=true"
-    )
+    response = client.post(f"/api/tournaments/{tournament_id}/schedule/versions/{version_id}/build?clear_existing=true")
     assert response.status_code == 200, response.text
 
     slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
@@ -362,7 +360,11 @@ def test_inject_teams_is_ignored_by_route_guard(client: TestClient, session: Ses
 def test_no_teams_no_warning_with_inject_teams_false(client: TestClient, session: Session):
     """Test that inject_teams=False skips injection silently (no warning)"""
     tournament = Tournament(
-        name="No Teams Test 2", location="Test", timezone="UTC", start_date=date(2026, 1, 16), end_date=date(2026, 1, 16)
+        name="No Teams Test 2",
+        location="Test",
+        timezone="UTC",
+        start_date=date(2026, 1, 16),
+        end_date=date(2026, 1, 16),
     )
     session.add(tournament)
     session.commit()

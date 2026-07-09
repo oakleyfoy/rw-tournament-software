@@ -148,9 +148,5 @@ def test_sms_consent_event_dedupe_key(session: Session, setup_tournament_team):
         session.commit()
     session.rollback()
 
-    rows = session.exec(
-        select(SmsConsentEvent).where(
-            SmsConsentEvent.tournament_id == tournament.id
-        )
-    ).all()
+    rows = session.exec(select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament.id)).all()
     assert len(rows) == 1

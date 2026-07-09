@@ -15,7 +15,6 @@ import json
 import logging
 from typing import List, Optional
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from app.models import Event, Match, MatchAssignment, ScheduleSlot, ScheduleVersion, Team, TeamAvoidEdge, Tournament
@@ -198,10 +197,12 @@ def build_schedule_v1(
 
         # TEMP DEBUG: Log tournament mode and active windows/days
         import logging
+
         from sqlmodel import func
-        from app.models.tournament_time_window import TournamentTimeWindow
+
         from app.models.tournament_day import TournamentDay
-        
+        from app.models.tournament_time_window import TournamentTimeWindow
+
         logger = logging.getLogger(__name__)
         logger.error(
             "BUILD DEBUG: use_time_windows=%s clear_existing=%s tournament_id=%s",
@@ -216,7 +217,7 @@ def build_schedule_v1(
                 .select_from(TournamentTimeWindow)
                 .where(
                     TournamentTimeWindow.tournament_id == tournament_id,
-                    TournamentTimeWindow.is_active == True,
+                    TournamentTimeWindow.is_active,
                 )
             ).one()
         )
@@ -227,7 +228,7 @@ def build_schedule_v1(
                 .select_from(TournamentDay)
                 .where(
                     TournamentDay.tournament_id == tournament_id,
-                    TournamentDay.is_active == True,
+                    TournamentDay.is_active,
                 )
             ).one()
         )
@@ -243,9 +244,11 @@ def build_schedule_v1(
 
         # If no slots exist OR clear_existing=True (regenerate), generate them
         if len(existing_slots) == 0 or clear_existing:
-            from app.routes.schedule import generate_slots, SlotGenerateRequest
+            from app.routes.schedule import SlotGenerateRequest, generate_slots
 
-            slot_request = SlotGenerateRequest(source="auto", schedule_version_id=version_id, wipe_existing=clear_existing)
+            slot_request = SlotGenerateRequest(
+                source="auto", schedule_version_id=version_id, wipe_existing=clear_existing
+            )
             slots_result = generate_slots(tournament_id, slot_request, session, _transactional=True)
             slots_created = slots_result.get("slots_created", 0)
             result.summary.slots_generated = slots_created
@@ -272,10 +275,7 @@ def build_schedule_v1(
         from sqlmodel import func
 
         existing_match_count = scalar_int(
-            session.exec(
-                select(func.count(Match.id))
-                .where(Match.schedule_version_id == version_id)
-            ).one()
+            session.exec(select(func.count(Match.id)).where(Match.schedule_version_id == version_id)).one()
         )
 
         if existing_match_count > 0:
@@ -294,7 +294,7 @@ def build_schedule_v1(
             )
         else:
             # Generate matches from finalized events (exactly once per version)
-            from app.routes.schedule import generate_matches, MatchGenerateRequest
+            from app.routes.schedule import MatchGenerateRequest, generate_matches
 
             match_request = MatchGenerateRequest(schedule_version_id=version_id, wipe_existing=False)
             session._allow_match_generation = True
@@ -404,26 +404,24 @@ def build_schedule_v1(
         # Step 7: Build event_summaries (per-event breakdown)
         # ====================================================================
         events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
-        all_matches_for_version = session.exec(
-            select(Match).where(Match.schedule_version_id == version_id)
-        ).all()
+        all_matches_for_version = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
         event_summaries = []
         for event in events:
             # teams_linked = actual Team rows linked to this event (real DB links)
             teams_linked = len(session.exec(select(Team).where(Team.event_id == event.id)).all())
             event_matches = [m for m in all_matches_for_version if m.event_id == event.id]
             matches_generated = len(event_matches)
-            matches_with_null_teams = sum(
-                1 for m in event_matches if m.team_a_id is None or m.team_b_id is None
+            matches_with_null_teams = sum(1 for m in event_matches if m.team_a_id is None or m.team_b_id is None)
+            event_summaries.append(
+                {
+                    "event_id": event.id,
+                    "event_name": event.name,
+                    "teams_count": event.team_count,  # config: event.team_count
+                    "teams_linked": teams_linked,  # actual DB Team rows for this event
+                    "matches_generated": matches_generated,
+                    "matches_with_null_teams": matches_with_null_teams,
+                }
             )
-            event_summaries.append({
-                "event_id": event.id,
-                "event_name": event.name,
-                "teams_count": event.team_count,  # config: event.team_count
-                "teams_linked": teams_linked,  # actual DB Team rows for this event
-                "matches_generated": matches_generated,
-                "matches_with_null_teams": matches_with_null_teams,
-            })
         result.summary.event_summaries = event_summaries
 
         # ====================================================================

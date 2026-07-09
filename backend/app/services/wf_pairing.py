@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Set, Tuple
 @dataclass
 class TeamSeed:
     """Lightweight struct for pairing input."""
+
     seed: int
     team_id: int
     avoid_group: Optional[str] = None
@@ -174,9 +175,7 @@ def _wf_r2_pod_of_four_penalty(pairs: List[Tuple[TeamSeed, TeamSeed]]) -> int:
 
 def _wf_r1_draw_ordered_pairs(by_seed: Dict[int, TeamSeed], half: int) -> List[Tuple[TeamSeed, TeamSeed]]:
     """Canonical WF R1 draw: half-split with bracket-safe match-list order (tops fixed)."""
-    matchups_by_top_seed = {
-        i: (by_seed[i], by_seed[i + half]) for i in range(1, half + 1)
-    }
+    matchups_by_top_seed = {i: (by_seed[i], by_seed[i + half]) for i in range(1, half + 1)}
     fold_order = _wf_r1_top_half_fold_order(half)
     return [matchups_by_top_seed[s] for s in fold_order]
 
@@ -311,15 +310,14 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
 
         shared = _groups_conflict(a.avoid_group, b.avoid_group)
         if shared:
-            conflicts.append(PairingConflict(
-                seed_a=a.seed,
-                seed_b=b.seed,
-                group=shared,
-                reason=(
-                    f"Unavoidable conflict: seed {a.seed} and seed {b.seed} "
-                    f"share avoid group '{shared}'"
-                ),
-            ))
+            conflicts.append(
+                PairingConflict(
+                    seed_a=a.seed,
+                    seed_b=b.seed,
+                    group=shared,
+                    reason=(f"Unavoidable conflict: seed {a.seed} and seed {b.seed} share avoid group '{shared}'"),
+                )
+            )
 
     return PairingResult(
         pairs=seed_pairs,

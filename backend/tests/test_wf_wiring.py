@@ -1,14 +1,10 @@
 """Tests for WF Round 2 Wiring Optimizer."""
 
-import pytest
-
 from app.services.wf_wiring import (
-    WiringPlan,
     best_pairing_for_block,
     build_wf_r2_wiring,
     groups_for_r1_match,
 )
-
 
 # ---------------------------------------------------------------------------
 # Lightweight stub objects for testing (avoid DB dependency)
@@ -47,13 +43,15 @@ def _make_matches_and_teams(n_matches, group_assignments):
         ta_id = 100 + 2 * i
         tb_id = 100 + 2 * i + 1
         ga, gb = group_assignments[i] if i < len(group_assignments) else (None, None)
-        matches.append(FakeMatch(
-            id=i + 1,
-            team_a_id=ta_id,
-            team_b_id=tb_id,
-            match_code=f"WF_R1_{i+1:02d}",
-            sequence_in_round=i + 1,
-        ))
+        matches.append(
+            FakeMatch(
+                id=i + 1,
+                team_a_id=ta_id,
+                team_b_id=tb_id,
+                match_code=f"WF_R1_{i + 1:02d}",
+                sequence_in_round=i + 1,
+            )
+        )
         team_by_id[ta_id] = FakeTeam(ta_id, ga)
         team_by_id[tb_id] = FakeTeam(tb_id, gb)
     return matches, team_by_id
@@ -65,7 +63,6 @@ def _make_matches_and_teams(n_matches, group_assignments):
 
 
 class TestGroupsForR1Match:
-
     def test_both_teams_have_groups(self):
         m = FakeMatch(1, team_a_id=10, team_b_id=20)
         teams = {10: FakeTeam(10, "a"), 20: FakeTeam(20, "b")}
@@ -102,7 +99,6 @@ class TestGroupsForR1Match:
 
 
 class TestBestPairingForBlock:
-
     def test_block_of_2(self):
         matches, teams = _make_matches_and_teams(2, [("a", None), ("b", None)])
         result = best_pairing_for_block(matches, teams)
@@ -131,9 +127,15 @@ class TestBestPairingForBlock:
 
         Should pick pattern 0 (first zero-score).
         """
-        matches, teams = _make_matches_and_teams(4, [
-            ("a", "a"), ("b", "b"), ("a", "a"), ("b", "b"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("a", "a"),
+                ("b", "b"),
+                ("a", "a"),
+                ("b", "b"),
+            ],
+        )
         result = best_pairing_for_block(matches, teams)
         pair_ids = [(p[0].id, p[1].id) for p in result]
         assert pair_ids == [(1, 4), (2, 3)]
@@ -152,9 +154,15 @@ class TestBestPairingForBlock:
 
         First zero-score pattern wins.
         """
-        matches, teams = _make_matches_and_teams(4, [
-            ("a", "a"), ("a", "a"), ("b", "b"), ("b", "b"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("a", "a"),
+                ("a", "a"),
+                ("b", "b"),
+                ("b", "b"),
+            ],
+        )
         result = best_pairing_for_block(matches, teams)
         pair_ids = [(p[0].id, p[1].id) for p in result]
         assert pair_ids == [(1, 4), (2, 3)]
@@ -173,9 +181,15 @@ class TestBestPairingForBlock:
 
         Should pick pattern 1 (first zero-score).
         """
-        matches, teams = _make_matches_and_teams(4, [
-            ("x", "x"), ("y", "y"), ("y", "y"), ("x", "x"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("x", "x"),
+                ("y", "y"),
+                ("y", "y"),
+                ("x", "x"),
+            ],
+        )
         result = best_pairing_for_block(matches, teams)
         pair_ids = [(p[0].id, p[1].id) for p in result]
         assert pair_ids == [(1, 3), (2, 4)]
@@ -187,7 +201,6 @@ class TestBestPairingForBlock:
 
 
 class TestBuildWfR2Wiring:
-
     def test_8_matches_four_pairs_sequential(self):
         """8 R1 matches → default block_size 2 → 4 feeder pairs."""
         matches, teams = _make_matches_and_teams(8, [(None, None)] * 8)
@@ -225,18 +238,30 @@ class TestBuildWfR2Wiring:
         """When a zero-score wiring exists, the optimizer selects it."""
         # Block [m0(a), m1(b), m2(a), m3(b)] — groups interleaved
         # Pattern (0,3),(1,2) → {a}∩{b}=0, {b}∩{a}=0 → score 0 ✓
-        matches, teams = _make_matches_and_teams(4, [
-            ("a", "a"), ("b", "b"), ("a", "a"), ("b", "b"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("a", "a"),
+                ("b", "b"),
+                ("a", "a"),
+                ("b", "b"),
+            ],
+        )
         plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) == 0
         assert plan.pairs == [(1, 4), (2, 3)]
 
     def test_unavoidable_overlap_produces_warning(self):
         """When all teams in a block share the same group, overlap is unavoidable."""
-        matches, teams = _make_matches_and_teams(4, [
-            ("x", "x"), ("x", "x"), ("x", "x"), ("x", "x"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("x", "x"),
+                ("x", "x"),
+                ("x", "x"),
+                ("x", "x"),
+            ],
+        )
         plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) > 0
         w = plan.warnings[0]
@@ -246,10 +271,19 @@ class TestBuildWfR2Wiring:
 
     def test_determinism(self):
         """Same inputs always produce the same wiring plan."""
-        matches, teams = _make_matches_and_teams(8, [
-            ("a", "b"), ("c", "a"), ("b", "c"), ("a", "b"),
-            ("c", "a"), ("b", "c"), ("a", "b"), ("c", "a"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            8,
+            [
+                ("a", "b"),
+                ("c", "a"),
+                ("b", "c"),
+                ("a", "b"),
+                ("c", "a"),
+                ("b", "c"),
+                ("a", "b"),
+                ("c", "a"),
+            ],
+        )
         plan1 = build_wf_r2_wiring(matches, teams, block_size=4)
         plan2 = build_wf_r2_wiring(matches, teams, block_size=4)
         assert plan1.pairs == plan2.pairs
@@ -257,9 +291,15 @@ class TestBuildWfR2Wiring:
 
     def test_determinism_across_reordered_input(self):
         """Wiring is based on sequence_in_round order, not list order."""
-        matches, teams = _make_matches_and_teams(4, [
-            ("a", "a"), ("b", "b"), ("a", "a"), ("b", "b"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("a", "a"),
+                ("b", "b"),
+                ("a", "a"),
+                ("b", "b"),
+            ],
+        )
         # Reverse the list — build_wf_r2_wiring should NOT re-sort
         # (draw_plan_engine uses _get_wf_r2_wiring which sorts)
         # But best_pairing_for_block processes them as given.
@@ -277,9 +317,15 @@ class TestBuildWfR2Wiring:
 
     def test_warning_includes_match_codes(self):
         """Warning message includes R1 match codes for the affected block."""
-        matches, teams = _make_matches_and_teams(4, [
-            ("z", "z"), ("z", "z"), ("z", "z"), ("z", "z"),
-        ])
+        matches, teams = _make_matches_and_teams(
+            4,
+            [
+                ("z", "z"),
+                ("z", "z"),
+                ("z", "z"),
+                ("z", "z"),
+            ],
+        )
         plan = build_wf_r2_wiring(matches, teams, block_size=4)
         assert len(plan.warnings) > 0
         w = plan.warnings[0]
@@ -291,8 +337,14 @@ class TestBuildWfR2Wiring:
         # Block 0: all group 'x' (unavoidable overlap)
         # Block 1: all different groups (no overlap)
         group_assignments = [
-            ("x", "x"), ("x", "x"), ("x", "x"), ("x", "x"),  # block 0
-            ("a", "b"), ("c", "d"), ("e", "f"), ("g", "h"),  # block 1
+            ("x", "x"),
+            ("x", "x"),
+            ("x", "x"),
+            ("x", "x"),  # block 0
+            ("a", "b"),
+            ("c", "d"),
+            ("e", "f"),
+            ("g", "h"),  # block 1
         ]
         matches, teams = _make_matches_and_teams(8, group_assignments)
         plan = build_wf_r2_wiring(matches, teams, block_size=4)

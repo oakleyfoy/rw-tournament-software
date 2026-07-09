@@ -15,4 +15,3 @@ class AuthSession(SQLModel, table=True):
     revoked_at: Optional[datetime] = Field(default=None)
     user_agent: Optional[str] = Field(default=None, max_length=512)
     ip_address: Optional[str] = Field(default=None, max_length=128)
-

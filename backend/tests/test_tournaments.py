@@ -367,53 +367,35 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
     assert len(cloned_events) == 1
     assert cloned_events[0].name == "Mixed A"
 
-    cloned_teams = session.exec(
-        select(Team).where(Team.event_id == cloned_events[0].id)
-    ).all()
+    cloned_teams = session.exec(select(Team).where(Team.event_id == cloned_events[0].id)).all()
     assert {t.name for t in cloned_teams} == {"Alpha / One", "Bravo / Two"}
 
-    cloned_versions = session.exec(
-        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
-    ).all()
+    cloned_versions = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)).all()
     assert len(cloned_versions) == 1
     assert cloned_versions[0].version_number == 7
     assert cloned.public_schedule_version_id == cloned_versions[0].id
 
-    cloned_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.tournament_id == duplicated_id)
-    ).all()
+    cloned_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.tournament_id == duplicated_id)).all()
     assert len(cloned_slots) == 2
 
-    cloned_matches = session.exec(
-        select(Match).where(Match.tournament_id == duplicated_id)
-    ).all()
+    cloned_matches = session.exec(select(Match).where(Match.tournament_id == duplicated_id)).all()
     assert len(cloned_matches) == 2
     by_code = {m.match_code: m for m in cloned_matches}
     assert by_code["MIX_A_R2_M01"].source_match_a_id == by_code["MIX_A_R1_M01"].id
 
     cloned_assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == cloned_versions[0].id
-        )
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == cloned_versions[0].id)
     ).all()
     assert len(cloned_assignments) == 2
     baseline_rows = session.exec(
-        select(StartOverBaselineAssignment).where(
-            StartOverBaselineAssignment.tournament_id == duplicated_id
-        )
+        select(StartOverBaselineAssignment).where(StartOverBaselineAssignment.tournament_id == duplicated_id)
     ).all()
     assert len(baseline_rows) == 2
-    assert {
-        (b.schedule_version_id, b.match_id, b.slot_id)
-        for b in baseline_rows
-    } == {
-        (a.schedule_version_id, a.match_id, a.slot_id)
-        for a in cloned_assignments
+    assert {(b.schedule_version_id, b.match_id, b.slot_id) for b in baseline_rows} == {
+        (a.schedule_version_id, a.match_id, a.slot_id) for a in cloned_assignments
     }
 
-    cloned_players = session.exec(
-        select(Player).where(Player.tournament_id == duplicated_id)
-    ).all()
+    cloned_players = session.exec(select(Player).where(Player.tournament_id == duplicated_id)).all()
     assert len(cloned_players) == 2
 
     cloned_team_links = session.exec(
@@ -424,16 +406,12 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
     assert len(cloned_team_links) == 2
 
     cloned_sms_settings = session.exec(
-        select(TournamentSmsSettings).where(
-            TournamentSmsSettings.tournament_id == duplicated_id
-        )
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == duplicated_id)
     ).first()
     assert cloned_sms_settings is not None
     assert cloned_sms_settings.player_contacts_only is True
 
-    cloned_templates = session.exec(
-        select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)
-    ).all()
+    cloned_templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)).all()
     assert len(cloned_templates) == 1
     assert cloned_templates[0].template_body == "Custom on deck"
 
@@ -478,9 +456,7 @@ def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: 
     ).first()
     assert cloned_event is not None
 
-    cloned_teams = session.exec(
-        select(Team).where(Team.event_id == cloned_event.id)
-    ).all()
+    cloned_teams = session.exec(select(Team).where(Team.event_id == cloned_event.id)).all()
     assert len(cloned_teams) == 1
     assert cloned_teams[0].name == "Dee Dee / Dennis"
     assert cloned_teams[0].seed == 1
@@ -523,9 +499,7 @@ def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient
     assert resp.status_code == 201
     duplicated_id = resp.json()["id"]
 
-    cloned_players = session.exec(
-        select(Player).where(Player.tournament_id == duplicated_id)
-    ).all()
+    cloned_players = session.exec(select(Player).where(Player.tournament_id == duplicated_id)).all()
     assert len(cloned_players) == 2
     phones = [p.phone_e164 for p in cloned_players]
     assert "+14024025437" in phones
@@ -567,9 +541,7 @@ def test_duplicate_tournament_handles_duplicate_sms_template_types(client: TestC
     assert resp.status_code == 201
     duplicated_id = resp.json()["id"]
 
-    cloned_templates = session.exec(
-        select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)
-    ).all()
+    cloned_templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)).all()
     post_match_templates = [t for t in cloned_templates if t.message_type == "post_match_next"]
     assert len(post_match_templates) == 1
     assert post_match_templates[0].template_body == "New body"
@@ -1061,9 +1033,7 @@ def test_start_over_wf_events_only_keep_wf_round_one_seeded_and_clear_checkin_de
     assert asg_b.assigned_by is None
 
 
-def test_start_over_restores_copy_baseline_assignments_after_runtime_moves(
-    client: TestClient, session: Session
-):
+def test_start_over_restores_copy_baseline_assignments_after_runtime_moves(client: TestClient, session: Session):
     source = Tournament(
         name="Baseline Restore Source",
         location="Austin",
@@ -1188,9 +1158,7 @@ def test_start_over_restores_copy_baseline_assignments_after_runtime_moves(
     assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 7, 3)].id
 
 
-def test_start_over_prefers_public_version_layout_for_draft_restore(
-    client: TestClient, session: Session
-):
+def test_start_over_prefers_public_version_layout_for_draft_restore(client: TestClient, session: Session):
     source = Tournament(
         name="Public Layout Source",
         location="Austin",
@@ -1322,9 +1290,7 @@ def test_start_over_prefers_public_version_layout_for_draft_restore(
     dup_tournament = session.get(Tournament, duplicated_id)
     assert dup_tournament is not None
     assert dup_tournament.public_schedule_version_id is not None
-    dup_versions = session.exec(
-        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
-    ).all()
+    dup_versions = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)).all()
     dup_draft = next(v for v in dup_versions if (v.status or "").lower() == "draft")
     dup_match = session.exec(
         select(Match).where(
@@ -1333,9 +1299,7 @@ def test_start_over_prefers_public_version_layout_for_draft_restore(
         )
     ).first()
     assert dup_match is not None
-    dup_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == dup_draft.id)
-    ).all()
+    dup_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == dup_draft.id)).all()
     dup_slot_by_day = {s.day_date: s for s in dup_slots}
     assert date(2026, 8, 1) in dup_slot_by_day
     assert date(2026, 8, 3) in dup_slot_by_day
@@ -1357,9 +1321,7 @@ def test_start_over_prefers_public_version_layout_for_draft_restore(
     assert dup_assignment.slot_id == dup_slot_by_day[date(2026, 8, 3)].id
 
 
-def test_start_over_uses_latest_final_layout_when_public_pointer_missing(
-    client: TestClient, session: Session
-):
+def test_start_over_uses_latest_final_layout_when_public_pointer_missing(client: TestClient, session: Session):
     source = Tournament(
         name="Final Fallback Source",
         location="Austin",
@@ -1487,9 +1449,7 @@ def test_start_over_uses_latest_final_layout_when_public_pointer_missing(
     assert dup_resp.status_code == 201
     duplicated_id = dup_resp.json()["id"]
 
-    dup_versions = session.exec(
-        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
-    ).all()
+    dup_versions = session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)).all()
     dup_draft = next(v for v in dup_versions if (v.status or "").lower() == "draft")
     dup_match = session.exec(
         select(Match).where(
@@ -1498,9 +1458,7 @@ def test_start_over_uses_latest_final_layout_when_public_pointer_missing(
         )
     ).first()
     assert dup_match is not None
-    dup_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == dup_draft.id)
-    ).all()
+    dup_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == dup_draft.id)).all()
     dup_slot_by_day = {s.day_date: s for s in dup_slots}
     dup_assignment = session.exec(
         select(MatchAssignment).where(

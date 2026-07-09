@@ -15,7 +15,7 @@ Feeder rest enforcement:
 - Processing order guarantees all R1 matches are assigned before any R2 match.
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import case
@@ -323,9 +323,7 @@ def check_rest_compatibility(
     return is_compatible, violations
 
 
-def _intervals_overlap(
-    a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime
-) -> bool:
+def _intervals_overlap(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
     """Check if [a_start, a_end) overlaps [b_start, b_end)."""
     return a_start < b_end and b_start < a_end
 
@@ -450,10 +448,7 @@ def auto_assign_with_rest(
     event_ids = {m.event_id for m in all_matches}
     event_by_id = {}
     if event_ids:
-        event_by_id = {
-            event.id: event
-            for event in session.exec(select(Event).where(Event.id.in_(event_ids))).all()
-        }
+        event_by_id = {event.id: event for event in session.exec(select(Event).where(Event.id.in_(event_ids))).all()}
 
     # Filter to only unassigned matches when not clearing
     if clear_existing:
@@ -467,7 +462,7 @@ def auto_assign_with_rest(
         .where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.is_active,
-            ScheduleSlot.is_manual_only == False,
+            not ScheduleSlot.is_manual_only,
         )
         .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
     ).all()
@@ -577,7 +572,7 @@ def auto_assign_with_rest(
         assigned = False
 
         # Determine if this match has known teams
-        has_known_teams = (match.team_a_id is not None and match.team_b_id is not None)
+        has_known_teams = match.team_a_id is not None and match.team_b_id is not None
         has_deps = (
             getattr(match, "source_match_a_id", None) is not None
             or getattr(match, "source_match_b_id", None) is not None
@@ -593,9 +588,7 @@ def auto_assign_with_rest(
             else:
                 # Strict mode: reject teamless matches without dependencies
                 reject_counts["null_team_reject"] += 1
-                results.append(
-                    AssignmentResult(match_id=match.id, assigned=False, failure_reason="NULL_TEAM")
-                )
+                results.append(AssignmentResult(match_id=match.id, assigned=False, failure_reason="NULL_TEAM"))
                 if "NULL_TEAM" not in unassigned_by_reason:
                     unassigned_by_reason["NULL_TEAM"] = []
                 unassigned_by_reason["NULL_TEAM"].append(
@@ -631,8 +624,12 @@ def auto_assign_with_rest(
 
             # Check rest compatibility
             rest_compatible, rest_violations = check_rest_compatibility(
-                slot, match, rest_tracker, weather_reschedule=weather_reschedule,
-                feeder_end_times=feeder_end_times, match_map=match_map,
+                slot,
+                match,
+                rest_tracker,
+                weather_reschedule=weather_reschedule,
+                feeder_end_times=feeder_end_times,
+                match_map=match_map,
             )
 
             if not rest_compatible:
@@ -644,7 +641,7 @@ def auto_assign_with_rest(
             # Only enforced when BOTH teams are known
             slot_start_dt = datetime.fromisoformat(f"{slot.day_date}T{slot.start_time}")
             slot_end_dt = slot_start_dt + timedelta(minutes=match.duration_minutes)
-            
+
             if has_known_teams:
                 has_overlap = False
                 for team_id in (match.team_a_id, match.team_b_id):
@@ -767,8 +764,12 @@ def auto_assign_with_rest(
                 # Check first available slot with correct duration for violation details
                 best_slot = duration_ok_slots[0]
                 _, rest_violations_list = check_rest_compatibility(
-                    best_slot, match, rest_tracker, weather_reschedule=weather_reschedule,
-                    feeder_end_times=feeder_end_times, match_map=match_map,
+                    best_slot,
+                    match,
+                    rest_tracker,
+                    weather_reschedule=weather_reschedule,
+                    feeder_end_times=feeder_end_times,
+                    match_map=match_map,
                 )
 
             results.append(
@@ -838,7 +839,10 @@ def auto_assign_with_rest(
             "scoring_to_scoring_violations": rest_blocked_scoring_scoring,
             "minimum_gap_violations": rest_blocked_minimum_gap,
             "feeder_gap_violations": rest_blocked_feeder_gap,
-            "total_rest_blocked": rest_blocked_wf_scoring + rest_blocked_scoring_scoring + rest_blocked_minimum_gap + rest_blocked_feeder_gap,
+            "total_rest_blocked": rest_blocked_wf_scoring
+            + rest_blocked_scoring_scoring
+            + rest_blocked_minimum_gap
+            + rest_blocked_feeder_gap,
         },
         "preferred_day_metrics": {
             "preferred_day_hits": preferred_day_hits,

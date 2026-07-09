@@ -1,17 +1,17 @@
 """Tests for SMS Phase 1: Data Models + Twilio Service."""
 
-import pytest
-from datetime import datetime, timezone
-from sqlmodel import Session, select
 from types import SimpleNamespace
 
+import pytest
+from sqlmodel import Session, select
+
 from app.models.sms_log import SmsLog
-from app.models.sms_template import SmsTemplate, DEFAULT_SMS_TEMPLATES
+from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.services.twilio_service import (
     format_e164,
-    validate_e164,
     get_team_phone_numbers,
+    validate_e164,
 )
 
 
@@ -192,6 +192,7 @@ class TestGetTeamPhoneNumbers:
 def setup_tournament(session: Session):
     """Create a tournament for FK references."""
     from datetime import date
+
     from app.models.tournament import Tournament
 
     tournament = Tournament(
@@ -230,9 +231,7 @@ def test_sms_log_crud(session: Session, setup_tournament):
     assert log.trigger == "auto"
 
     # Query back
-    logs = session.exec(
-        select(SmsLog).where(SmsLog.tournament_id == tournament.id)
-    ).all()
+    logs = session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all()
     assert len(logs) == 1
 
 

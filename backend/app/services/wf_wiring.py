@@ -43,11 +43,7 @@ def groups_for_r1_match(match: Any, team_by_id: Dict[int, Any]) -> Set[str]:
             if team:
                 ag = getattr(team, "avoid_group", None)
                 if ag:
-                    atoms |= {
-                        x.strip().lower()
-                        for x in ag.split(",")
-                        if x.strip()
-                    }
+                    atoms |= {x.strip().lower() for x in ag.split(",") if x.strip()}
     return atoms
 
 
@@ -75,9 +71,7 @@ def best_pairing_for_block(
         return []
     assert n == 4, f"Block must have 2 or 4 matches, got {n}"
 
-    match_groups = {
-        m.id: groups_for_r1_match(m, team_by_id) for m in r1_matches_block
-    }
+    match_groups = {m.id: groups_for_r1_match(m, team_by_id) for m in r1_matches_block}
 
     best_score: float = float("inf")
     best_pairs: List[Tuple[Any, Any]] = []
@@ -117,38 +111,35 @@ def build_wf_r2_wiring(
     all_pairs: List[Tuple[int, int]] = []
     warnings: List[WiringWarning] = []
 
-    blocks = [
-        r1_matches_ordered[i : i + block_size]
-        for i in range(0, len(r1_matches_ordered), block_size)
-    ]
+    blocks = [r1_matches_ordered[i : i + block_size] for i in range(0, len(r1_matches_ordered), block_size)]
 
     for block_idx, block in enumerate(blocks):
         block_pairs = best_pairing_for_block(block, team_by_id)
 
-        match_groups = {
-            m.id: groups_for_r1_match(m, team_by_id) for m in block
-        }
+        match_groups = {m.id: groups_for_r1_match(m, team_by_id) for m in block}
 
         block_overlaps: Set[str] = set()
         for m_a, m_b in block_pairs:
             g_a = match_groups.get(m_a.id, set())
             g_b = match_groups.get(m_b.id, set())
-            block_overlaps |= (g_a & g_b)
+            block_overlaps |= g_a & g_b
 
         for m_a, m_b in block_pairs:
             all_pairs.append((m_a.id, m_b.id))
 
         if block_overlaps:
             r1_codes = [getattr(m, "match_code", "?") for m in block]
-            warnings.append(WiringWarning(
-                block_index=block_idx,
-                r1_match_codes=r1_codes,
-                overlapping_groups=sorted(block_overlaps),
-                message=(
-                    f"W_WF_R2_AVOID_GROUP_POTENTIAL_CONFLICT: "
-                    f"block {block_idx} ({', '.join(r1_codes)}): "
-                    f"potential overlap on group(s) {sorted(block_overlaps)}"
-                ),
-            ))
+            warnings.append(
+                WiringWarning(
+                    block_index=block_idx,
+                    r1_match_codes=r1_codes,
+                    overlapping_groups=sorted(block_overlaps),
+                    message=(
+                        f"W_WF_R2_AVOID_GROUP_POTENTIAL_CONFLICT: "
+                        f"block {block_idx} ({', '.join(r1_codes)}): "
+                        f"potential overlap on group(s) {sorted(block_overlaps)}"
+                    ),
+                )
+            )
 
     return WiringPlan(pairs=all_pairs, warnings=warnings)

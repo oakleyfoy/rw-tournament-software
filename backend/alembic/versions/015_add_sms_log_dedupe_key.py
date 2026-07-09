@@ -4,9 +4,9 @@ Revision ID: 015_add_sms_log_dedupe_key
 Revises: 014_add_player_sms_foundation
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "015_add_sms_log_dedupe_key"
 down_revision = "014_add_player_sms_foundation"

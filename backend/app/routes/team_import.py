@@ -12,7 +12,7 @@ import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -250,9 +250,7 @@ def import_teams_enhanced(
 
     # Clear existing teams if requested
     if body.clear_existing:
-        existing_teams = session.exec(
-            select(Team).where(Team.event_id == event_id)
-        ).all()
+        existing_teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
         for t in existing_teams:
             session.delete(t)
         session.flush()

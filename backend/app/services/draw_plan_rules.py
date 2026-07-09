@@ -23,9 +23,7 @@ ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
 }
 
 # All Phase 1 supported team counts (union of all families)
-PHASE1_SUPPORTED_TEAM_COUNTS: FrozenSet[int] = frozenset().union(
-    *ALLOWED_TEAM_COUNTS.values()
-)
+PHASE1_SUPPORTED_TEAM_COUNTS: FrozenSet[int] = frozenset().union(*ALLOWED_TEAM_COUNTS.values())
 
 # Unsupported in Phase 1 (Phase 2 candidates)
 PHASE2_TEAM_COUNTS: FrozenSet[int] = frozenset({18, 22, 26, 30})
@@ -35,10 +33,11 @@ PHASE2_TEAM_COUNTS: FrozenSet[int] = frozenset({18, 22, 26, 30})
 # Waterfall Rounds Rules
 # =============================================================================
 
+
 def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
     """
     Return the required number of waterfall rounds for a given family and team count.
-    
+
     Rules:
     - RR_ONLY: always 0
     - WF_TO_POOLS_DYNAMIC: 1 for 8/10 teams, 2 for 12+ teams
@@ -61,10 +60,11 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
 # Pool Sizing Rules
 # =============================================================================
 
+
 def pool_config(team_count: int) -> Tuple[int, int]:
     """
     Return (pools_count, teams_per_pool) for WF_TO_POOLS_DYNAMIC.
-    
+
     Rules:
     - 10 teams: 2 pools of 5
     - All others: n/4 pools of 4
@@ -144,10 +144,11 @@ def rr_pairings_by_round(teams_per_pool: int) -> list[tuple[int, int, int, int]]
 # Validation Helpers
 # =============================================================================
 
+
 def get_valid_family_for_team_count(team_count: int) -> Optional[TemplateFamily]:
     """
     Return the valid template family for a given team count, or None if unsupported.
-    
+
     Priority order (most specific first):
     1. WF_TO_BRACKETS_8 (32 only)
     2. WF_14_TOP2_BYE (14 only)
@@ -177,12 +178,12 @@ def validate_template_config(
 ) -> Optional[str]:
     """
     Validate a template configuration.
-    
+
     Returns None if valid, or an error message string if invalid.
     """
     # Normalize template key
     key = template_key.strip().upper().replace(" ", "_")
-    
+
     # Check if this is a known family
     if key not in ALLOWED_TEAM_COUNTS:
         # Check for legacy templates
@@ -193,25 +194,26 @@ def validate_template_config(
                 return f"WF_TO_POOLS_4 requires 2 waterfall rounds, got {wf_rounds}"
             return None  # Legacy template is valid
         return f"Unknown template: {template_key}"
-    
+
     family: TemplateFamily = key  # type: ignore
-    
+
     # Validate team count
     if not is_team_count_valid_for_family(family, team_count):
         allowed = sorted(ALLOWED_TEAM_COUNTS[family])
         return f"{family} requires team_count in {{{','.join(map(str, allowed))}}}, got {team_count}"
-    
+
     # Validate waterfall rounds
     expected_wf = required_wf_rounds(family, team_count)
     if wf_rounds != expected_wf:
         return f"{family} with {team_count} teams requires waterfall_rounds={expected_wf}, got {wf_rounds}"
-    
+
     return None
 
 
 # =============================================================================
 # Inventory Calculation Helpers
 # =============================================================================
+
 
 def calculate_wf_matches(team_count: int, wf_rounds: int) -> int:
     """Calculate total waterfall matches: (n/2) * rounds."""

@@ -7,7 +7,12 @@ from app.models.event import Event
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
-from app.services.draw_plan_engine import DrawPlanSpec, compute_inventory, generate_matches_for_event, resolve_event_family
+from app.services.draw_plan_engine import (
+    DrawPlanSpec,
+    compute_inventory,
+    generate_matches_for_event,
+    resolve_event_family,
+)
 from app.services.wf_14_format import wf_14_total_matches
 
 
@@ -89,9 +94,7 @@ def test_wf_14_generates_match_codes(session):
     )
 
     session._allow_match_generation = True
-    teams = session.exec(
-        __import__("sqlmodel").select(Team).where(Team.event_id == event.id)
-    ).all()
+    teams = session.exec(__import__("sqlmodel").select(Team).where(Team.event_id == event.id)).all()
     by_seed = sorted(teams, key=lambda t: t.seed or 0)
     linked = [t.id for t in by_seed]
 
@@ -136,9 +139,7 @@ def test_wf_14_stale_draw_plan_coerced_on_generate(session, client):
         category="womens",
         name="Women's",
         team_count=14,
-        draw_plan_json=json.dumps(
-            {"template_type": "WF_TO_POOLS_DYNAMIC", "wf_rounds": 2, "guarantee": 5}
-        ),
+        draw_plan_json=json.dumps({"template_type": "WF_TO_POOLS_DYNAMIC", "wf_rounds": 2, "guarantee": 5}),
         draw_status="final",
         wf_block_minutes=60,
         standard_block_minutes=105,
@@ -163,9 +164,7 @@ def test_wf_14_stale_draw_plan_coerced_on_generate(session, client):
     session.commit()
     session.refresh(version)
 
-    resp = client.post(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/generate"
-    )
+    resp = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/generate")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["matches_generated"] == wf_14_total_matches()
@@ -229,9 +228,7 @@ def test_wf_14_generates_when_event_has_extra_team_rows(session, client):
     session.commit()
     session.refresh(version)
 
-    resp = client.post(
-        f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/generate"
-    )
+    resp = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/matches/generate")
     assert resp.status_code == 200, resp.text
     assert resp.json()["matches_generated"] == wf_14_total_matches()
 

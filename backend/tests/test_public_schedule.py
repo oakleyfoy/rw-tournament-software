@@ -12,7 +12,6 @@ Validates:
 
 from datetime import date, time
 
-import pytest
 from sqlmodel import Session, select
 
 from app.models.event import Event
@@ -480,9 +479,7 @@ def test_public_round_robin_standings_ignore_non_rr_match_codes(client, session)
     """Public RR standings should ignore finalized WF-coded matches even if typed RR."""
     t, ev, winner_team = _setup_published_rr_tournament(session)
 
-    other_team = session.exec(
-        select(Team).where(Team.event_id == ev.id, Team.id != winner_team.id)
-    ).first()
+    other_team = session.exec(select(Team).where(Team.event_id == ev.id, Team.id != winner_team.id)).first()
     assert other_team is not None
 
     bad = Match(

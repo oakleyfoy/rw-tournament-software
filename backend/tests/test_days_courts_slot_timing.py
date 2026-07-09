@@ -93,22 +93,14 @@ def test_days_courts_slot_generation_uses_draw_plan_timing_by_day():
         session.add(event)
         session.commit()
 
-        response = client.post(
-            f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate"
-        )
+        response = client.post(f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/slots/generate")
         assert response.status_code == 200, response.text
 
-        slots = session.exec(
-            select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
-        ).all()
+        slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
         assert slots
 
-        day_one_blocks = {
-            slot.block_minutes for slot in slots if slot.day_date == date(2026, 4, 10)
-        }
-        day_two_blocks = {
-            slot.block_minutes for slot in slots if slot.day_date == date(2026, 4, 11)
-        }
+        day_one_blocks = {slot.block_minutes for slot in slots if slot.day_date == date(2026, 4, 10)}
+        day_two_blocks = {slot.block_minutes for slot in slots if slot.day_date == date(2026, 4, 11)}
         assert day_one_blocks == {60}
         assert day_two_blocks == {105}
     finally:

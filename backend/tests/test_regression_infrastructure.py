@@ -17,7 +17,6 @@ from sqlmodel import Session, select
 
 from app.models.tournament import Tournament
 
-
 # ============================================================================
 # Test 1: CI Guardrail - Verify App Uses Overridden Test Session
 # ============================================================================
@@ -147,9 +146,7 @@ def test_staticpool_persistence_across_requests(client: TestClient):
     assert list_response.status_code == 200
     tournaments = list_response.json()
     tournament_ids = [t["id"] for t in tournaments]
-    assert tournament_id in tournament_ids, (
-        f"Tournament {tournament_id} not in list. StaticPool persistence broken."
-    )
+    assert tournament_id in tournament_ids, f"Tournament {tournament_id} not in list. StaticPool persistence broken."
 
 
 # ============================================================================
@@ -245,8 +242,7 @@ def assert_response_shape(response, expected_status, required_keys, endpoint_nam
     """
     # Check status code first
     assert response.status_code == expected_status, (
-        f"{endpoint_name} returned {response.status_code} (expected {expected_status}). "
-        f"Response: {response.text}"
+        f"{endpoint_name} returned {response.status_code} (expected {expected_status}). Response: {response.text}"
     )
 
     # Parse JSON
@@ -329,4 +325,3 @@ def test_response_shape_helper_on_team_create(client: TestClient):
     assert data["id"] is not None
     assert data["name"] == "Test Team"
     assert data["event_id"] == event["id"]
-

@@ -9,21 +9,19 @@ All template logic lives here. No other module should contain template math.
 Validation rules are imported from draw_plan_rules.py (single source of truth).
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional, Tuple
-import logging
 
 # Import Phase 1 rules from the single source of truth
 from app.services.draw_plan_rules import (
     ALLOWED_TEAM_COUNTS,
-    PHASE1_SUPPORTED_TEAM_COUNTS,
-    required_wf_rounds,
-    pool_config,
-    rr_matches_per_pool,
-    rr_pairings_by_round,
-    calculate_wf_matches,
     calculate_rr_matches_for_pools,
     calculate_rr_only_matches,
+    calculate_wf_matches,
+    pool_config,
+    required_wf_rounds,
+    rr_pairings_by_round,
 )
 from app.services.wf_pairing import PairingResult, TeamSeed, build_wf_r1_pairings
 from app.services.wf_wiring import WiringPlan, build_wf_r2_wiring
@@ -71,12 +69,11 @@ def _get_wf_r1_pairing(
     if len(linked_team_ids) < n:
         return None
 
-    from app.models.team import Team
     from sqlmodel import select
 
-    teams = session.exec(
-        select(Team).where(Team.event_id == event_id)
-    ).all()
+    from app.models.team import Team
+
+    teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
 
     if len(teams) < n:
         return None
@@ -87,14 +84,16 @@ def _get_wf_r1_pairing(
         t = by_id.get(tid)
         if not t or t.seed is None:
             return None
-        seed_teams.append(TeamSeed(
-            seed=t.seed,
-            team_id=t.id,
-            avoid_group=getattr(t, "avoid_group", None),
-            display_name=getattr(t, "display_name", None),
-            name=getattr(t, "name", None),
-            rating=getattr(t, "rating", None),
-        ))
+        seed_teams.append(
+            TeamSeed(
+                seed=t.seed,
+                team_id=t.id,
+                avoid_group=getattr(t, "avoid_group", None),
+                display_name=getattr(t, "display_name", None),
+                name=getattr(t, "name", None),
+                rating=getattr(t, "rating", None),
+            )
+        )
 
     seed_teams.sort(key=lambda x: x.seed)
     if [t.seed for t in seed_teams] != list(range(1, n + 1)):
@@ -110,12 +109,11 @@ def _load_teams_by_seed(session, event_id: int) -> dict:
     Used as fallback when the full pairing engine can't run
     (not all teams imported yet).
     """
-    from app.models.team import Team
     from sqlmodel import select
 
-    teams = session.exec(
-        select(Team).where(Team.event_id == event_id)
-    ).all()
+    from app.models.team import Team
+
+    teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
     return {t.seed: t for t in teams if t.seed is not None}
 
 
@@ -127,13 +125,12 @@ def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
     W(R1_{k+1}) for k = 1,3,5,…; losers bracket uses the same adjacency on the
     prior WF round. R1 ``sequence_in_round`` order must match the intended bracket.
     """
-    from app.models.team import Team
     from sqlmodel import select
 
+    from app.models.team import Team
+
     try:
-        teams = session.exec(
-            select(Team).where(Team.event_id == event_id)
-        ).all()
+        teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
         team_by_id = {t.id: t for t in teams}
     except Exception:
         team_by_id = {}
@@ -151,7 +148,7 @@ def _get_wf_r2_wiring(session, event_id: int, r1_matches: list) -> WiringPlan:
 
 # Bracket match counts by guarantee level (for 8-team single-elimination + consolation)
 # V1: G5 = 12 (7 main + 2 Tier1 consolation + 1 Tier2 + 2 placement), G4 = 9 (7 main + 2 Tier1)
-BRACKET_MATCHES_G4 = 9   # 7 main + 2 consolation tier1
+BRACKET_MATCHES_G4 = 9  # 7 main + 2 consolation tier1
 BRACKET_MATCHES_G5 = 12  # 7 main + 2 consolation tier1 + 1 tier2 + 2 placement
 
 # Division display name mapping (bracket label -> user-facing name)
@@ -163,7 +160,9 @@ DIVISION_DISPLAY_NAMES = {
 }
 
 # Supported event families (includes legacy WF_TO_POOLS_4)
-EventFamily = Literal["RR_ONLY", "WF_TO_POOLS_4", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE", "UNSUPPORTED"]
+EventFamily = Literal[
+    "RR_ONLY", "WF_TO_POOLS_4", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE", "UNSUPPORTED"
+]
 
 # Re-export for backwards compatibility
 WF_TO_POOLS_DYNAMIC_TEAM_COUNTS = ALLOWED_TEAM_COUNTS["WF_TO_POOLS_DYNAMIC"]
@@ -173,16 +172,18 @@ WF_TO_POOLS_DYNAMIC_TEAM_COUNTS = ALLOWED_TEAM_COUNTS["WF_TO_POOLS_DYNAMIC"]
 # Data Models
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class DrawPlanSpec:
     """Canonical input for draw plan calculations."""
+
     event_id: int
     event_name: str
     division: Optional[str]
     team_count: int
-    template_type: str        # Raw from DB/UI
-    template_key: str         # Normalized (uppercase, underscores)
-    guarantee: int            # 4 or 5
+    template_type: str  # Raw from DB/UI
+    template_key: str  # Normalized (uppercase, underscores)
+    guarantee: int  # 4 or 5
     waterfall_rounds: int
     waterfall_minutes: int
     standard_minutes: int
@@ -200,6 +201,7 @@ class DrawPlanSpec:
 @dataclass
 class InventoryCounts:
     """Output of inventory calculation."""
+
     wf_matches: int = 0
     bracket_matches: int = 0
     rr_matches: int = 0
@@ -215,6 +217,7 @@ class InventoryCounts:
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
 
 def normalize_template_key(s: Optional[str]) -> str:
     """Normalize template type string to canonical key."""
@@ -256,6 +259,7 @@ def bracket_matches_for_guarantee(guarantee: int) -> int:
 # Validation
 # -----------------------------------------------------------------------------
 
+
 def validate_spec(spec: DrawPlanSpec) -> List[str]:
     """
     Validate a DrawPlanSpec and return list of errors.
@@ -280,6 +284,7 @@ def validate_spec(spec: DrawPlanSpec) -> List[str]:
 # -----------------------------------------------------------------------------
 # Event Family Resolution
 # -----------------------------------------------------------------------------
+
 
 def resolve_event_family(spec: DrawPlanSpec) -> EventFamily:
     """
@@ -321,6 +326,7 @@ def resolve_event_family(spec: DrawPlanSpec) -> EventFamily:
 # -----------------------------------------------------------------------------
 # Inventory Calculation
 # -----------------------------------------------------------------------------
+
 
 def _compute_rr_only(spec: DrawPlanSpec) -> InventoryCounts:
     """Compute inventory for RR_ONLY family using rules module."""
@@ -367,7 +373,7 @@ def _compute_wf_to_pools_4(spec: DrawPlanSpec) -> InventoryCounts:
 def _compute_wf_to_pools_dynamic(spec: DrawPlanSpec) -> InventoryCounts:
     """
     Compute inventory for WF_TO_POOLS_DYNAMIC family.
-    
+
     Uses rules from draw_plan_rules.py (single source of truth).
     """
     errors: List[str] = []
@@ -377,9 +383,7 @@ def _compute_wf_to_pools_dynamic(spec: DrawPlanSpec) -> InventoryCounts:
     # Validate team count using rules module
     if n not in WF_TO_POOLS_DYNAMIC_TEAM_COUNTS:
         allowed = sorted(WF_TO_POOLS_DYNAMIC_TEAM_COUNTS)
-        errors.append(
-            f"WF_TO_POOLS_DYNAMIC supports team_count in {{{','.join(map(str, allowed))}}}, got {n}"
-        )
+        errors.append(f"WF_TO_POOLS_DYNAMIC supports team_count in {{{','.join(map(str, allowed))}}}, got {n}")
         return InventoryCounts(errors=errors)
 
     # Validate waterfall rounds using rules module
@@ -467,9 +471,7 @@ def _compute_wf_14_top2_bye(spec: DrawPlanSpec) -> InventoryCounts:
     if spec.team_count != TEAM_COUNT:
         errors.append(f"WF_14_TOP2_BYE requires team_count={TEAM_COUNT}, got {spec.team_count}")
     if spec.waterfall_rounds != REQUIRED_WF_ROUNDS:
-        errors.append(
-            f"WF_14_TOP2_BYE requires waterfall_rounds={REQUIRED_WF_ROUNDS}, got {spec.waterfall_rounds}"
-        )
+        errors.append(f"WF_14_TOP2_BYE requires waterfall_rounds={REQUIRED_WF_ROUNDS}, got {spec.waterfall_rounds}")
     if errors:
         return InventoryCounts(errors=errors)
 
@@ -498,10 +500,7 @@ def compute_inventory(spec: DrawPlanSpec) -> InventoryCounts:
     # Resolve family
     family = resolve_event_family(spec)
 
-    logger.debug(
-        "compute_inventory: event_id=%s family=%s template_key=%s",
-        spec.event_id, family, spec.template_key
-    )
+    logger.debug("compute_inventory: event_id=%s family=%s template_key=%s", spec.event_id, family, spec.template_key)
 
     if family == "RR_ONLY":
         return _compute_rr_only(spec)
@@ -519,14 +518,13 @@ def compute_inventory(spec: DrawPlanSpec) -> InventoryCounts:
         return _compute_wf_to_brackets_8(spec)
 
     # Unsupported
-    return InventoryCounts(
-        errors=[f"Unsupported template: {spec.template_type!r} (key={spec.template_key})"]
-    )
+    return InventoryCounts(errors=[f"Unsupported template: {spec.template_type!r} (key={spec.template_key})"])
 
 
 # -----------------------------------------------------------------------------
 # Preferred Day Assignment
 # -----------------------------------------------------------------------------
+
 
 def _assign_preferred_days(session, spec: DrawPlanSpec, matches: list) -> None:
     """
@@ -547,6 +545,7 @@ def _assign_preferred_days(session, spec: DrawPlanSpec, matches: list) -> None:
         return
 
     from sqlmodel import select
+
     from app.models.tournament_day import TournamentDay
 
     # Get tournament days in order
@@ -617,6 +616,7 @@ def _assign_preferred_days(session, spec: DrawPlanSpec, matches: list) -> None:
 # Match Generation (to be implemented in Step 4)
 # -----------------------------------------------------------------------------
 
+
 def generate_matches_for_event(
     session,
     version_id: int,
@@ -640,9 +640,7 @@ def generate_matches_for_event(
         ValueError: If duplicate match_codes are generated (internal bug)
     """
     if not getattr(session, "_allow_match_generation", False):
-        raise RuntimeError(
-            "generate_matches_for_event called outside build_schedule_v1"
-        )
+        raise RuntimeError("generate_matches_for_event called outside build_schedule_v1")
 
     from app.models.match import Match
 
@@ -701,6 +699,7 @@ def generate_matches_for_event(
 # Match Generation: RR_ONLY
 # -----------------------------------------------------------------------------
 
+
 def _generate_rr_only(
     session,
     version_id: int,
@@ -719,14 +718,13 @@ def _generate_rr_only(
 
     if len(linked_team_ids) != n:
         warnings.append(
-            f"RR_ONLY requires {n} linked teams, got {len(linked_team_ids)}; "
-            "generating matches with available teams"
+            f"RR_ONLY requires {n} linked teams, got {len(linked_team_ids)}; generating matches with available teams"
         )
 
     teams = linked_team_ids[:n] if len(linked_team_ids) >= n else linked_team_ids
     prefix = spec.match_code_prefix
     base_pairings = rr_pairings_by_round(n)
-    
+
     # Wire placeholders for RR_ONLY (single pool, pool_index=0)
     # Enforce top2-last-round constraint
     wired_pairings = wire_rr_match_placeholders(
@@ -748,10 +746,10 @@ def _generate_rr_only(
             # Fallback: use pair_count (shouldn't happen with proper wiring)
             idx_a = pair_count - 1
             idx_b = pair_count - 1
-        
+
         team_a_id = teams[idx_a] if idx_a < len(teams) else None
         team_b_id = teams[idx_b] if idx_b < len(teams) else None
-        
+
         match = Match(
             tournament_id=spec.tournament_id,
             event_id=spec.event_id,
@@ -775,6 +773,7 @@ def _generate_rr_only(
 # -----------------------------------------------------------------------------
 # Match Generation: WF_TO_POOLS_4
 # -----------------------------------------------------------------------------
+
 
 def _generate_wf_to_pools_4(
     session,
@@ -829,7 +828,7 @@ def _generate_wf_to_pools_4(
             tournament_id=spec.tournament_id,
             event_id=spec.event_id,
             schedule_version_id=version_id,
-            match_code=f"{prefix}WF_R1_{i+1:02d}",
+            match_code=f"{prefix}WF_R1_{i + 1:02d}",
             match_type="WF",
             round_number=1,
             round_index=1,
@@ -846,8 +845,7 @@ def _generate_wf_to_pools_4(
     if pairing and pairing.conflicts:
         for c in pairing.conflicts:
             warnings.append(
-                f"W_WF_R1_AVOID_GROUP_CONFLICT: seed {c.seed_a} vs seed {c.seed_b} "
-                f"(both group '{c.group}')"
+                f"W_WF_R1_AVOID_GROUP_CONFLICT: seed {c.seed_a} vs seed {c.seed_b} (both group '{c.group}')"
             )
 
     # Flush to get R1 match IDs
@@ -923,7 +921,7 @@ def _generate_wf_to_pools_4(
     pool_labels = ["A", "B", "C", "D"]
     pool_size = 4
     base_pairings = rr_pairings_by_round(pool_size)
-    
+
     for pool_idx, pool_label in enumerate(pool_labels):
         # Wire placeholders for this pool (enforces top2-last-round constraint)
         wired_pairings = wire_rr_match_placeholders(
@@ -932,13 +930,13 @@ def _generate_wf_to_pools_4(
             pairings=base_pairings,
             enforce_top2_last=True,
         )
-        
+
         for rr_idx, (round_index, seq_in_round, placeholder_a, placeholder_b) in enumerate(wired_pairings):
             match = Match(
                 tournament_id=spec.tournament_id,
                 event_id=spec.event_id,
                 schedule_version_id=version_id,
-                match_code=f"{prefix}POOL{pool_label}_RR_{rr_idx+1:02d}",
+                match_code=f"{prefix}POOL{pool_label}_RR_{rr_idx + 1:02d}",
                 match_type="RR",
                 round_number=round_index,
                 round_index=round_index,
@@ -957,6 +955,7 @@ def _generate_wf_to_pools_4(
 # -----------------------------------------------------------------------------
 # Match Generation: WF_TO_POOLS_DYNAMIC
 # -----------------------------------------------------------------------------
+
 
 def _generate_wf_to_pools_dynamic(
     session,
@@ -985,9 +984,7 @@ def _generate_wf_to_pools_dynamic(
     # Validate waterfall rounds using rules module
     expected_wf_rounds = required_wf_rounds("WF_TO_POOLS_DYNAMIC", n)
     if wf_rounds != expected_wf_rounds:
-        warnings.append(
-            f"WF_TO_POOLS_DYNAMIC with {n} teams requires wf_rounds={expected_wf_rounds}, got {wf_rounds}"
-        )
+        warnings.append(f"WF_TO_POOLS_DYNAMIC with {n} teams requires wf_rounds={expected_wf_rounds}, got {wf_rounds}")
         return matches, warnings
 
     prefix = spec.match_code_prefix
@@ -1029,7 +1026,7 @@ def _generate_wf_to_pools_dynamic(
             tournament_id=spec.tournament_id,
             event_id=spec.event_id,
             schedule_version_id=version_id,
-            match_code=f"{prefix}WF_R1_{i+1:02d}",
+            match_code=f"{prefix}WF_R1_{i + 1:02d}",
             match_type="WF",
             round_number=1,
             round_index=1,
@@ -1046,8 +1043,7 @@ def _generate_wf_to_pools_dynamic(
     if pairing and pairing.conflicts:
         for c in pairing.conflicts:
             warnings.append(
-                f"W_WF_R1_AVOID_GROUP_CONFLICT: seed {c.seed_a} vs seed {c.seed_b} "
-                f"(both group '{c.group}')"
+                f"W_WF_R1_AVOID_GROUP_CONFLICT: seed {c.seed_a} vs seed {c.seed_b} (both group '{c.group}')"
             )
 
     # Flush to get R1 match IDs for dependency wiring
@@ -1121,7 +1117,7 @@ def _generate_wf_to_pools_dynamic(
     # No playoffs - pools only
     # Wire placeholders deterministically by seed order
     # -------------------------------------------------------------------------
-    pool_labels = [chr(ord('A') + i) for i in range(pools_count)]  # A, B, C, ...
+    pool_labels = [chr(ord("A") + i) for i in range(pools_count)]  # A, B, C, ...
     base_pairings = rr_pairings_by_round(teams_per_pool)
 
     for pool_idx, pool_label in enumerate(pool_labels):
@@ -1132,13 +1128,13 @@ def _generate_wf_to_pools_dynamic(
             pairings=base_pairings,
             enforce_top2_last=True,
         )
-        
+
         for rr_idx, (round_index, seq_in_round, placeholder_a, placeholder_b) in enumerate(wired_pairings):
             match = Match(
                 tournament_id=spec.tournament_id,
                 event_id=spec.event_id,
                 schedule_version_id=version_id,
-                match_code=f"{prefix}POOL{pool_label}_RR_{rr_idx+1:02d}",
+                match_code=f"{prefix}POOL{pool_label}_RR_{rr_idx + 1:02d}",
                 match_type="RR",
                 round_number=round_index,
                 round_index=round_index,
@@ -1157,6 +1153,7 @@ def _generate_wf_to_pools_dynamic(
 # -----------------------------------------------------------------------------
 # Match Generation: WF_TO_BRACKETS_8
 # -----------------------------------------------------------------------------
+
 
 def _generate_wf_to_brackets_8(
     session,
@@ -1230,7 +1227,7 @@ def _generate_wf_to_brackets_8(
                     tournament_id=spec.tournament_id,
                     event_id=spec.event_id,
                     schedule_version_id=version_id,
-                    match_code=f"{prefix}WF_R{wf_round}_{i+1:02d}",
+                    match_code=f"{prefix}WF_R{wf_round}_{i + 1:02d}",
                     match_type="WF",
                     round_number=wf_round,
                     round_index=wf_round,
@@ -1247,8 +1244,7 @@ def _generate_wf_to_brackets_8(
             if pairing and pairing.conflicts:
                 for c in pairing.conflicts:
                     warnings.append(
-                        f"W_WF_R1_AVOID_GROUP_CONFLICT: seed {c.seed_a} vs seed {c.seed_b} "
-                        f"(both group '{c.group}')"
+                        f"W_WF_R1_AVOID_GROUP_CONFLICT: seed {c.seed_a} vs seed {c.seed_b} (both group '{c.group}')"
                     )
         else:
             # Subsequent WF rounds: dependency-driven from previous round
@@ -1277,8 +1273,8 @@ def _generate_wf_to_brackets_8(
                     sequence_in_round=seq,
                     team_a_id=None,
                     team_b_id=None,
-                    placeholder_side_a=f"W(R{wf_round-1}_{prev_seq_a})",
-                    placeholder_side_b=f"W(R{wf_round-1}_{prev_seq_b})",
+                    placeholder_side_a=f"W(R{wf_round - 1}_{prev_seq_a})",
+                    placeholder_side_b=f"W(R{wf_round - 1}_{prev_seq_b})",
                     source_match_a_id=src_a_id,
                     source_a_role="WINNER",
                     source_match_b_id=src_b_id,
@@ -1306,8 +1302,8 @@ def _generate_wf_to_brackets_8(
                     sequence_in_round=r2_half + seq,
                     team_a_id=None,
                     team_b_id=None,
-                    placeholder_side_a=f"L(R{wf_round-1}_{prev_seq_a})",
-                    placeholder_side_b=f"L(R{wf_round-1}_{prev_seq_b})",
+                    placeholder_side_a=f"L(R{wf_round - 1}_{prev_seq_a})",
+                    placeholder_side_b=f"L(R{wf_round - 1}_{prev_seq_b})",
                     source_match_a_id=src_a_id,
                     source_a_role="LOSER",
                     source_match_b_id=src_b_id,
@@ -1334,7 +1330,7 @@ def _generate_wf_to_brackets_8(
     # -------------------------------------------------------------------------
     # Generate Bracket Matches (8-team brackets with G4/G5 consolation)
     # -------------------------------------------------------------------------
-    
+
     def get_qf_wf_r2_tokens(event_prefix: str, bracket_label: str, qf_sequence: int) -> tuple[str, str]:
         """
         Generate WF R2 match_code tokens for a division bracket QF.
@@ -1362,25 +1358,25 @@ def _generate_wf_to_brackets_8(
             f"{event_prefix}_WF_R2_{token_type}{sa:02d}",
             f"{event_prefix}_WF_R2_{token_type}{sb:02d}",
         )
-    
+
     bracket_labels = ["WW", "WL", "LW", "LL"][:bracket_count]
     matches_per_bracket = bracket_matches_for_guarantee(spec.guarantee)
 
     # Sort WF2 matches deterministically by sequence_in_round
     # Winners come first (sequence 1-4), then losers (sequence 5-8 for 8-team)
     wf2_matches_sorted = sorted(wf2_matches, key=lambda m: (m.sequence_in_round or 0, m.match_code or ""))
-    
+
     # For 8-team bracket, we expect 8 WF2 matches (4 winners + 4 losers)
     # For larger brackets, adjust accordingly
     expected_wf2_count = n // 2 if wf_rounds >= 2 else 0
-    
+
     # Debug logging
     logger.debug(
         f"WF2 bracket wiring: wf_rounds={wf_rounds}, n={n}, "
         f"wf2_matches_count={len(wf2_matches)}, wf2_matches_sorted_count={len(wf2_matches_sorted)}, "
         f"expected_wf2_count={expected_wf2_count}"
     )
-    
+
     if wf_rounds >= 2 and len(wf2_matches_sorted) < expected_wf2_count:
         warnings.append(
             f"Expected {expected_wf2_count} WF Round 2 matches for {n} teams, "
@@ -1390,7 +1386,7 @@ def _generate_wf_to_brackets_8(
     # Extract event prefix from match_code_prefix (remove trailing underscore)
     # match_code_prefix format: "{cat}_{name}_E{event_id}_"
     # Token prefix format: "{cat}_{name}_E{event_id}" (no trailing underscore)
-    event_prefix = prefix.rstrip('_') if prefix.endswith('_') else prefix
+    event_prefix = prefix.rstrip("_") if prefix.endswith("_") else prefix
 
     # QF pairing for 8 WF R2 feeders: sequential (1v2, 3v4, 5v6, 7v8) — matches waterfall order / Winner A,B,C… labels.
     # For 4 feeders, get_qf_wf_r2_tokens uses the fixed rotation in _qf_wf_r2_slot_pair.
@@ -1400,13 +1396,13 @@ def _generate_wf_to_brackets_8(
         # For 16-team event with 2 WF rounds: 8 WF2 matches (4 winners + 4 losers)
         # For 32-team event with 2 WF rounds: 16 WF2 matches (8 winners + 8 losers)
         use_wf2_tokens = wf_rounds >= 2 and len(wf2_matches_sorted) > 0
-        
+
         logger.debug(
             f"Bracket {bracket_label}: use_wf2_tokens={use_wf2_tokens}, wf_rounds={wf_rounds}, "
             f"wf2_count={len(wf2_matches_sorted)}, expected={expected_wf2_count}, "
             f"event_prefix={event_prefix}"
         )
-        
+
         if not use_wf2_tokens:
             # WF2 is required for bracket generation - this should not happen for finalized events
             if wf_rounds >= 2:
@@ -1423,7 +1419,7 @@ def _generate_wf_to_brackets_8(
         # Generate bracket matches
         bracket_matches = []  # Track for SF/Final/Consolation references
         qf_matches = []  # Track QF matches for consolation references
-        
+
         for match_idx in range(matches_per_bracket):
             # Determine stage based on match index
             # Main bracket: matches 1-7, Consolation: matches 8+
@@ -1437,14 +1433,14 @@ def _generate_wf_to_brackets_8(
                 # sequence_in_round restarts within each round.
                 if match_idx < 4:
                     round_index = 1
-                    sequence_in_round = match_idx + 1        # 1..4 for QFs
+                    sequence_in_round = match_idx + 1  # 1..4 for QFs
                 elif match_idx < 6:
                     round_index = 2
-                    sequence_in_round = match_idx - 4 + 1    # 1..2 for SFs
+                    sequence_in_round = match_idx - 4 + 1  # 1..2 for SFs
                 else:
                     round_index = 3
-                    sequence_in_round = 1                     # 1 for Final
-                
+                    sequence_in_round = 1  # 1 for Final
+
                 # Determine placeholders based on bracket round
                 if match_idx < 4:
                     # QF matches: WF R2 tokens via get_qf_wf_r2_tokens (bracket shell when 8 feeders)
@@ -1478,11 +1474,11 @@ def _generate_wf_to_brackets_8(
                 # C3,C4,C5 (match_idx 9,10,11) = Round 2 (cons final + SF losers + cons semi losers)
                 if match_idx <= 8:
                     round_index = 1
-                    sequence_in_round = match_idx - 6   # 1, 2
+                    sequence_in_round = match_idx - 6  # 1, 2
                 else:
                     round_index = 2
-                    sequence_in_round = match_idx - 8   # 1, 2, 3 within round 2
-                
+                    sequence_in_round = match_idx - 8  # 1, 2, 3 within round 2
+
                 # Consolation placeholders reference a fixed per-bracket path:
                 # C1 (Cons SF): LOSER of QF1 vs LOSER of QF2
                 # C2 (Cons SF): LOSER of QF3 vs LOSER of QF4
@@ -1530,19 +1526,25 @@ def _generate_wf_to_brackets_8(
                     placeholder_b = f"TBD:{bracket_label}_C{sequence_in_round}"  # Placeholder for complex cases
 
             # Validation: ensure no legacy placeholders
-            assert not placeholder_a.startswith("Bracket "), \
+            assert not placeholder_a.startswith("Bracket "), (
                 f"Legacy placeholder detected in placeholder_a: '{placeholder_a}'"
-            assert not placeholder_b.startswith("Bracket "), \
+            )
+            assert not placeholder_b.startswith("Bracket "), (
                 f"Legacy placeholder detected in placeholder_b: '{placeholder_b}'"
-            assert not placeholder_a.startswith("Division "), \
+            )
+            assert not placeholder_a.startswith("Division "), (
                 f"Legacy placeholder detected in placeholder_a: '{placeholder_a}'"
-            assert not placeholder_b.startswith("Division "), \
+            )
+            assert not placeholder_b.startswith("Division "), (
                 f"Legacy placeholder detected in placeholder_b: '{placeholder_b}'"
+            )
             # Also check for " TBD" suffix (old format)
-            assert " TBD" not in placeholder_a or placeholder_a.startswith("TBD:"), \
+            assert " TBD" not in placeholder_a or placeholder_a.startswith("TBD:"), (
                 f"Legacy 'TBD' placeholder detected in placeholder_a: '{placeholder_a}'"
-            assert " TBD" not in placeholder_b or placeholder_b.startswith("TBD:"), \
+            )
+            assert " TBD" not in placeholder_b or placeholder_b.startswith("TBD:"), (
                 f"Legacy 'TBD' placeholder detected in placeholder_b: '{placeholder_b}'"
+            )
 
             match = Match(
                 tournament_id=spec.tournament_id,
@@ -1574,10 +1576,7 @@ def _generate_wf_to_brackets_8(
     #   1. Flush bracket matches to get database IDs
     #   2. Resolve placeholder references to actual match IDs
     # WF matches were flushed after the waterfall loop (including R2+ IDs).
-    bracket_only = [
-        m for m in matches
-        if m.match_type in ("MAIN", "CONSOLATION") and m.id is None
-    ]
+    bracket_only = [m for m in matches if m.match_type in ("MAIN", "CONSOLATION") and m.id is None]
     if bracket_only:
         session.add_all(bracket_only)
         session.flush()
@@ -1639,7 +1638,9 @@ def _generate_wf_to_brackets_8(
         session.flush()
         logger.debug(
             "Wired %d source links for %d bracket matches (event %s)",
-            wired_count, len(bracket_only), spec.event_name,
+            wired_count,
+            len(bracket_only),
+            spec.event_name,
         )
 
     return matches, warnings
@@ -1648,6 +1649,7 @@ def _generate_wf_to_brackets_8(
 # -----------------------------------------------------------------------------
 # Spec Builder Helper
 # -----------------------------------------------------------------------------
+
 
 def normalize_draw_plan_for_team_count(team_count: int, draw_plan: Optional[dict]) -> dict:
     """
@@ -1714,6 +1716,7 @@ def repair_existing_drop_in_wiring(
 ) -> int:
     """Repair stale C4/C5 drop-in wiring for already-generated brackets."""
     from sqlmodel import select
+
     from app.models.match import Match
 
     query = select(Match).where(Match.schedule_version_id == schedule_version_id)

@@ -5,8 +5,6 @@ from datetime import date, datetime, time
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from uuid import uuid4
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlmodel import Session, func, select
@@ -17,15 +15,24 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.match_lock import MatchLock
 from app.models.schedule_slot import ScheduleSlot
-from app.models.slot_lock import SlotLock
 from app.models.schedule_version import ScheduleVersion
+from app.models.slot_lock import SlotLock
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_time_window import TournamentTimeWindow
-from app.services.schedule_orchestrator import build_schedule_v1
-from app.utils.courts import court_label_for_index, parse_court_names
+from app.utils.conflict_report import (
+    ConflictReportSummary,
+    TeamConflictsSummary,
+    UnassignedMatchDetail,
+)
+from app.utils.courts import court_label_for_index
+from app.utils.rest_rules import auto_assign_with_rest
+from app.utils.sql import scalar_int
+from app.utils.version_guards import require_draft_version, require_final_version
+
+logger = logging.getLogger(__name__)
 
 
 def _court_label_to_str(value: object) -> str:
@@ -59,11 +66,7 @@ def _resolve_event_slot_durations(event: Event) -> tuple[int, int]:
                 standard_minutes = candidate_standard
 
     return wf_minutes, standard_minutes
-from app.utils.rest_rules import auto_assign_with_rest
-from app.utils.sql import scalar_int
-from app.utils.version_guards import require_draft_version, require_final_version
-# Phase 3D.1: Shared conflict computation
-from app.utils.conflict_report import ConflictReportSummary, UnassignedMatchDetail
+
 
 router = APIRouter()
 
@@ -243,6 +246,7 @@ def create_schedule_version(tournament_id: int, data: ScheduleVersionCreate, ses
 
 class ActiveVersionResponse(BaseModel):
     """Canonical active draft version for a tournament"""
+
     schedule_version_id: int
     status: str
     created_at: Optional[str] = None
@@ -281,9 +285,7 @@ def get_active_schedule_version(tournament_id: int, session: Session = Depends(g
         )
 
     max_version = session.exec(
-        select(func.max(ScheduleVersion.version_number)).where(
-            ScheduleVersion.tournament_id == tournament_id
-        )
+        select(func.max(ScheduleVersion.version_number)).where(ScheduleVersion.tournament_id == tournament_id)
     ).first()
     next_version = (max_version or 0) + 1
     new_version = ScheduleVersion(
@@ -556,28 +558,26 @@ def reset_draft_version(tournament_id: int, version_id: int, session: Session = 
 @router.delete("/tournaments/{tournament_id}/schedule/versions/{version_id}/matches")
 def wipe_schedule_version_matches(tournament_id: int, version_id: int, session: Session = Depends(get_session)):
     """Wipe all matches for a schedule version.
-    
+
     Verifies version belongs to tournament and is not finalized.
     Deletes all Match and MatchAssignment rows for the version.
     """
     version = session.get(ScheduleVersion, version_id)
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
-    
+
     if version.status == "final":
         raise HTTPException(status_code=409, detail="Cannot wipe matches for a finalized schedule version")
-    
+
     # Count matches before deletion
     match_count_before = scalar_int(
-        session.exec(
-            select(func.count(Match.id)).where(Match.schedule_version_id == version_id)
-        ).one()
+        session.exec(select(func.count(Match.id)).where(Match.schedule_version_id == version_id)).one()
     )
-    
+
     # Use existing helper to wipe matches (handles MatchAssignments correctly)
     wipe_matches_for_version(session, version_id)
     session.commit()
-    
+
     return {"deleted_matches": match_count_before}
 
 
@@ -907,9 +907,7 @@ def generate_slots(
     skipped_duplicates = 0
     existing_slot_keys = {
         (slot.day_date, slot.start_time, slot.court_number)
-        for slot in session.exec(
-            select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
-        ).all()
+        for slot in session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
     }
 
     print(f"[DEBUG] Generating slots with source={source}, version_id={version.id}")
@@ -969,7 +967,7 @@ def generate_slots(
                 is_manual_only = court_num > window.courts_available
                 current_minutes = start_minutes
                 court_slots = 0
-                
+
                 while current_minutes + window.block_minutes <= end_minutes:
                     # Calculate slot start time
                     slot_start_hour = current_minutes // 60
@@ -1006,7 +1004,7 @@ def generate_slots(
                     session.add(slot)
                     slots_created += 1
                     court_slots += 1
-                    
+
                     # Increment by block_minutes (not 15)
                     current_minutes += window.block_minutes
 
@@ -1030,9 +1028,8 @@ def generate_slots(
         # - later days use standard timing
         # - if only one duration exists, use that one
         from app.models import Event as EventModel
-        event_list = session.exec(
-            select(EventModel).where(EventModel.tournament_id == tournament_id)
-        ).all()
+
+        event_list = session.exec(select(EventModel).where(EventModel.tournament_id == tournament_id)).all()
         wf_candidates: list[int] = []
         standard_candidates: list[int] = []
         for ev in event_list:
@@ -1069,7 +1066,9 @@ def generate_slots(
             if end_minutes <= start_minutes:
                 continue  # Skip invalid time ranges
 
-            print(f"[DEBUG] Processing day: {day.date} {day.start_time}-{day.end_time}, courts={day.courts_available}, block={block_mins}min")
+            print(
+                f"[DEBUG] Processing day: {day.date} {day.start_time}-{day.end_time}, courts={day.courts_available}, block={block_mins}min"
+            )
 
             # Generate slots at block_minutes intervals for each court
             for court_num in range(1, day.courts_available + 1):
@@ -1297,9 +1296,7 @@ def generate_matches(
     version = get_or_create_draft_version(session, tournament_id, request.schedule_version_id)
 
     seen_event_ids: List[int] = [
-        e.id for e in session.exec(
-            select(Event).where(Event.tournament_id == tournament_id).order_by(Event.id)
-        ).all()
+        e.id for e in session.exec(select(Event).where(Event.tournament_id == tournament_id).order_by(Event.id)).all()
     ]
 
     # Get events to process
@@ -1344,9 +1341,7 @@ def generate_matches(
 
     # Version-global existing_codes: built once, passed through so second pass skips in-memory
     existing_codes: set[str] = set(
-        session.exec(
-            select(Match.match_code).where(Match.schedule_version_id == version.id)
-        ).all()
+        session.exec(select(Match.match_code).where(Match.schedule_version_id == version.id)).all()
     )
 
     events_expected: List[dict] = []
@@ -1395,7 +1390,7 @@ def generate_matches(
                     )
                     .limit(5)  # Sample a few matches
                 ).all()
-                
+
                 if sample_bracket_matches:
                     # Check if any bracket match has old placeholder format
                     for match in sample_bracket_matches:
@@ -1403,12 +1398,12 @@ def generate_matches(
                         placeholder_b = match.placeholder_side_b or ""
                         # Old format: "Division X TBD" or ends with " TBD" or starts with "Bracket"
                         if (
-                            placeholder_a.startswith("Division ") or
-                            placeholder_a.endswith(" TBD") or
-                            placeholder_a.startswith("Bracket ") or
-                            placeholder_b.startswith("Division ") or
-                            placeholder_b.endswith(" TBD") or
-                            placeholder_b.startswith("Bracket ")
+                            placeholder_a.startswith("Division ")
+                            or placeholder_a.endswith(" TBD")
+                            or placeholder_a.startswith("Bracket ")
+                            or placeholder_b.startswith("Division ")
+                            or placeholder_b.endswith(" TBD")
+                            or placeholder_b.startswith("Bracket ")
                         ):
                             needs_rebuild = True
                             rebuild_reason = "old placeholder format detected"
@@ -1449,17 +1444,19 @@ def generate_matches(
             # changed from 16 to 12), force a rebuild for this event.
             if existing_before == expected_count and not needs_rebuild:
                 per_event_breakdown[event.id] = {"event_name": event.name, "matches": 0}
-                events_expected.append({
-                    "event_id": event.id,
-                    "event_name": event.name,
-                    "expected": expected_count,
-                    "existing_before": existing_before,
-                    "generated_added": 0,
-                    "decision": "skip_complete",
-                    "reason": "existing>=expected and placeholders current",
-                })
+                events_expected.append(
+                    {
+                        "event_id": event.id,
+                        "event_name": event.name,
+                        "expected": expected_count,
+                        "existing_before": existing_before,
+                        "generated_added": 0,
+                        "decision": "skip_complete",
+                        "reason": "existing>=expected and placeholders current",
+                    }
+                )
                 continue
-            
+
             # If placeholders are stale OR inventory is over-generated, rebuild this event.
             if needs_rebuild or over_generated:
                 logger.info(
@@ -1486,20 +1483,26 @@ def generate_matches(
                 else:
                     decision = "rebuild_over_generated"
                     reason = "existing inventory exceeds expected"
-                events_expected.append({
-                    "event_id": event.id,
-                    "event_name": event.name,
-                    "expected": expected_count,
-                    "existing_before": len(wiped_codes),
-                    "generated_added": 0,
-                    "decision": decision,
-                    "reason": reason,
-                })
+                events_expected.append(
+                    {
+                        "event_id": event.id,
+                        "event_name": event.name,
+                        "expected": expected_count,
+                        "existing_before": len(wiped_codes),
+                        "generated_added": 0,
+                        "decision": decision,
+                        "reason": reason,
+                    }
+                )
 
             family = resolve_event_family(spec)
             logger.info(
                 "GENERATE_MATCHES: event_id=%s name=%s family=%s template_key=%s team_count=%s",
-                event.id, event.name, family, spec.template_key, spec.team_count
+                event.id,
+                event.name,
+                family,
+                spec.template_key,
+                spec.team_count,
             )
 
             # Get linked teams in seed order
@@ -1509,9 +1512,7 @@ def generate_matches(
             linked_team_ids = [t.id for t in linked_teams]
 
             # Generate matches via engine (existing_codes mutated in-place for idempotency)
-            matches, warnings = generate_matches_for_event(
-                session, version.id, spec, linked_team_ids, existing_codes
-            )
+            matches, warnings = generate_matches_for_event(session, version.id, spec, linked_team_ids, existing_codes)
 
             # Add matches to session
             for match in matches:
@@ -1520,15 +1521,17 @@ def generate_matches(
             matches_for_event = len(matches)
             total_matches += matches_for_event
             per_event_breakdown[event.id] = {"event_name": event.name, "matches": matches_for_event}
-            events_expected.append({
-                "event_id": event.id,
-                "event_name": event.name,
-                "expected": expected_count,
-                "existing_before": existing_before,
-                "generated_added": matches_for_event,
-                "decision": "generate_missing",
-                "reason": "existing<expected",
-            })
+            events_expected.append(
+                {
+                    "event_id": event.id,
+                    "event_name": event.name,
+                    "expected": expected_count,
+                    "existing_before": existing_before,
+                    "generated_added": matches_for_event,
+                    "decision": "generate_missing",
+                    "reason": "existing<expected",
+                }
+            )
 
             # Add any warnings from generation
             for w in warnings:
@@ -1550,8 +1553,7 @@ def generate_matches(
                 )
 
             null_team_count = sum(
-                1 for m in event_matches
-                if (m.team_a_id is None or m.team_b_id is None) and not _has_deps(m)
+                1 for m in event_matches if (m.team_a_id is None or m.team_b_id is None) and not _has_deps(m)
             )
 
             # Only enforce null-team check for RR_ONLY (which requires all teams upfront)
@@ -1582,15 +1584,17 @@ def generate_matches(
                 ).one()
             )
             reason = str(e)[:80] if str(e) else "exception"
-            events_expected.append({
-                "event_id": event.id,
-                "event_name": event.name,
-                "expected": exp,
-                "existing_before": existing_before,
-                "generated_added": 0,
-                "decision": "skipped_error",
-                "reason": reason,
-            })
+            events_expected.append(
+                {
+                    "event_id": event.id,
+                    "event_name": event.name,
+                    "expected": exp,
+                    "existing_before": existing_before,
+                    "generated_added": 0,
+                    "decision": "skipped_error",
+                    "reason": reason,
+                }
+            )
             continue
 
     if _transactional:
@@ -1599,8 +1603,7 @@ def generate_matches(
         session.commit()
 
     all_complete = len(events_expected) > 0 and all(
-        ev.get("existing_before", 0) + ev.get("generated_added", 0) >= ev.get("expected", 0)
-        for ev in events_expected
+        ev.get("existing_before", 0) + ev.get("generated_added", 0) >= ev.get("expected", 0) for ev in events_expected
     )
 
     finalized_event_ids = [e.id for e in events]
@@ -1608,15 +1611,17 @@ def generate_matches(
         if eid not in {ev["event_id"] for ev in events_expected}:
             evt = session.get(Event, eid)
             if evt:
-                events_expected.append({
-                    "event_id": evt.id,
-                    "event_name": evt.name,
-                    "expected": 0,
-                    "existing_before": 0,
-                    "generated_added": 0,
-                    "decision": "skipped_not_final",
-                    "reason": f"draw_status={evt.draw_status or 'null'}",
-                })
+                events_expected.append(
+                    {
+                        "event_id": evt.id,
+                        "event_name": evt.name,
+                        "expected": 0,
+                        "existing_before": 0,
+                        "generated_added": 0,
+                        "decision": "skipped_not_final",
+                        "reason": f"draw_status={evt.draw_status or 'null'}",
+                    }
+                )
     events_expected.sort(key=lambda x: x["event_id"])
     out: dict = {
         "schedule_version_id": version.id,
@@ -1940,24 +1945,22 @@ def create_assignment(tournament_id: int, data: AssignmentCreate, session: Sessi
     # Validate: Check if match would exceed day end time
     # Get the latest slot for this day to determine end time
     from app.models.tournament_day import TournamentDay
+
     tournament_day = session.exec(
         select(TournamentDay).where(
             TournamentDay.tournament_id == tournament_id,
             TournamentDay.date == slot.day_date,
-            TournamentDay.is_active == True,
+            TournamentDay.is_active,
         )
     ).first()
 
     if tournament_day and tournament_day.end_time:
         # Calculate day end in minutes
         day_end_minutes = tournament_day.end_time.hour * 60 + tournament_day.end_time.minute
-        
+
         # Check if match would exceed day end
         if match_end_minutes > day_end_minutes:
-            match_end_time = time(
-                hour=match_end_minutes // 60,
-                minute=match_end_minutes % 60
-            )
+            match_end_time = time(hour=match_end_minutes // 60, minute=match_end_minutes % 60)
             raise HTTPException(
                 status_code=400,
                 detail=f"Match would end at {match_end_time.strftime('%H:%M')}, but schedule ends at {tournament_day.end_time.strftime('%H:%M')} on {slot.day_date}",
@@ -1972,18 +1975,14 @@ def create_assignment(tournament_id: int, data: AssignmentCreate, session: Sessi
             )
             .order_by(ScheduleSlot.start_time.desc())
         ).first()
-        
+
         if latest_slot:
-            latest_slot_end_minutes = latest_slot.start_time.hour * 60 + latest_slot.start_time.minute + latest_slot.block_minutes
+            latest_slot_end_minutes = (
+                latest_slot.start_time.hour * 60 + latest_slot.start_time.minute + latest_slot.block_minutes
+            )
             if match_end_minutes > latest_slot_end_minutes:
-                match_end_time = time(
-                    hour=match_end_minutes // 60,
-                    minute=match_end_minutes % 60
-                )
-                latest_end_time = time(
-                    hour=latest_slot_end_minutes // 60,
-                    minute=latest_slot_end_minutes % 60
-                )
+                match_end_time = time(hour=match_end_minutes // 60, minute=match_end_minutes % 60)
+                latest_end_time = time(hour=latest_slot_end_minutes // 60, minute=latest_slot_end_minutes % 60)
                 raise HTTPException(
                     status_code=400,
                     detail=f"Match would end at {match_end_time.strftime('%H:%M')}, but last slot ends at {latest_end_time.strftime('%H:%M')} on {slot.day_date}",
@@ -2049,13 +2048,13 @@ def delete_assignment(tournament_id: int, assignment_id: int, session: Session =
 
 class ManualAssignmentRequest(BaseModel):
     """Request to manually assign/reassign a match to a slot"""
-    
+
     new_slot_id: int
 
 
 class SlotKey(BaseModel):
     """Stable slot identifier (UI doesn't need extra lookups)"""
-    
+
     day_date: str
     start_time: str
     court_number: int
@@ -2064,7 +2063,7 @@ class SlotKey(BaseModel):
 
 class ManualAssignmentResponse(BaseModel):
     """Response from manual assignment operation"""
-    
+
     assignment_id: int
     match_id: int
     slot_id: int
@@ -2072,7 +2071,7 @@ class ManualAssignmentResponse(BaseModel):
     assigned_by: str
     assigned_at: str
     validation_passed: bool
-    
+
     # Phase 3D.1: Enriched response (zero additional UI calls needed)
     slot_key: SlotKey
     conflicts_summary: ConflictReportSummary
@@ -2080,8 +2079,7 @@ class ManualAssignmentResponse(BaseModel):
 
 
 @router.patch(
-    "/tournaments/{tournament_id}/schedule/assignments/{assignment_id}",
-    response_model=ManualAssignmentResponse
+    "/tournaments/{tournament_id}/schedule/assignments/{assignment_id}", response_model=ManualAssignmentResponse
 )
 def manually_reassign_match(
     tournament_id: int,
@@ -2091,7 +2089,7 @@ def manually_reassign_match(
 ):
     """
     Manually reassign a match to a different slot (Manual Schedule Editor).
-    
+
     **Manual Editor Rules:**
     - Only works on DRAFT schedules (not finalized)
     - Creates locked=True assignments so auto-assign skips them
@@ -2100,51 +2098,51 @@ def manually_reassign_match(
       * Duration fit (match must fit in slot)
       * Stage ordering preserved (WF → MAIN → CONSOLATION → PLACEMENT)
       * Consolation rules (no violations)
-    
+
     **Workflow:**
     1. Admin drags match to new slot in UI
     2. UI calls this endpoint with new_slot_id
     3. Backend validates the move
     4. If valid: Updates assignment with locked=True
     5. If invalid: Returns 422 with validation error
-    
+
     **Undo Support:**
     - Clone draft version before making changes
     - Restore by switching back to cloned version
-    
+
     Args:
         tournament_id: Tournament ID
         assignment_id: Assignment ID to update
         request: New slot ID
-    
+
     Returns:
         Updated assignment with locked=True
-    
+
     Raises:
         404: Assignment/tournament/slot not found
         422: Validation failed (see error message for reason)
         400: Schedule is finalized (clone to draft first)
     """
     from app.utils.manual_assignment import (
-        manually_assign_match,
         ManualAssignmentValidationError,
+        manually_assign_match,
     )
-    
+
     # Validate tournament
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    
+
     # Get existing assignment
     assignment = session.get(MatchAssignment, assignment_id)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    
+
     # Verify assignment belongs to tournament
     version = session.get(ScheduleVersion, assignment.schedule_version_id)
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Assignment not found in tournament")
-    
+
     # Manually reassign (with validation)
     try:
         updated_assignment = manually_assign_match(
@@ -2155,15 +2153,15 @@ def manually_reassign_match(
             assigned_by="MANUAL",
         )
         session.commit()
-        
+
         # Phase 3D.1: Get slot for stable key
         slot = session.get(ScheduleSlot, updated_assignment.slot_id)
         if not slot:
             raise HTTPException(status_code=500, detail="Slot not found after assignment")
-        
+
         # Phase 3D.2: Recompute conflicts deterministically (service layer)
         from app.services.conflict_report_builder import ConflictReportBuilder
-        
+
         builder = ConflictReportBuilder()
         conflict_report = builder.compute(
             session=session,
@@ -2171,7 +2169,7 @@ def manually_reassign_match(
             schedule_version_id=assignment.schedule_version_id,
             event_id=None,  # No event filter for PATCH (recompute all)
         )
-        
+
         # Build enriched response
         return ManualAssignmentResponse(
             assignment_id=updated_assignment.id,
@@ -2392,7 +2390,7 @@ def get_schedule_conflicts(
     - Stage timeline and spillover warnings
     - Ordering integrity violations
     - Team overlap conflicts (for matches with known teams)
-    
+
     Phase 3D.1: Uses ConflictReportBuilder service (pure deterministic computation).
     """
     from app.services.conflict_report_builder import ConflictReportBuilder
@@ -2421,8 +2419,6 @@ def get_schedule_conflicts(
 # Team Conflicts Revalidation (Read-Only)
 # ============================================================================
 
-from app.utils.conflict_report import TeamConflictsSummary
-
 
 @router.get(
     "/tournaments/{tournament_id}/schedule/team-conflicts",
@@ -2435,22 +2431,22 @@ def get_team_conflicts(
 ):
     """
     Revalidate team overlap conflicts for a schedule version (read-only).
-    
+
     This endpoint checks for team scheduling conflicts where the same team
     is scheduled in overlapping time slots. It only evaluates matches where
     both team_a_id and team_b_id are known (not null).
-    
+
     Use this after:
     - Dependencies resolve and team IDs are populated
     - Manual edits to the schedule
     - Team assignments change
-    
+
     Returns:
         TeamConflictsSummary with:
         - known_team_conflicts_count: Number of detected overlaps
         - unknown_team_matches_count: Matches still without teams
         - conflicts: List of specific conflict details
-    
+
     Guarantees:
         - Read-only (does NOT mutate assignments)
         - Deterministic output ordering (sorted by match_id, team_id)
@@ -2476,11 +2472,11 @@ def get_team_conflicts(
         schedule_version_id=schedule_version_id,
         event_id=None,
     )
-    
+
     # Return just the team conflicts summary
     if report.team_conflicts:
         return report.team_conflicts
-    
+
     # Fallback if team_conflicts is None (shouldn't happen)
     return TeamConflictsSummary(
         known_team_conflicts_count=0,
@@ -2619,30 +2615,24 @@ def get_schedule_grid(
     # ========================================================================
     # Fetch locks
     # ========================================================================
-    m_locks = session.exec(
-        select(MatchLock).where(MatchLock.schedule_version_id == schedule_version_id)
-    ).all()
-    s_locks = session.exec(
-        select(SlotLock).where(SlotLock.schedule_version_id == schedule_version_id)
-    ).all()
+    m_locks = session.exec(select(MatchLock).where(MatchLock.schedule_version_id == schedule_version_id)).all()
+    s_locks = session.exec(select(SlotLock).where(SlotLock.schedule_version_id == schedule_version_id)).all()
     locked_match_set = {ml.match_id for ml in m_locks}
 
     # Build grid assignments (with locked flag)
     grid_assignments = []
     for assignment in assignments:
-        grid_assignments.append(GridAssignment(
-            id=assignment.id,
-            slot_id=assignment.slot_id,
-            match_id=assignment.match_id,
-            locked=assignment.match_id in locked_match_set,
-        ))
+        grid_assignments.append(
+            GridAssignment(
+                id=assignment.id,
+                slot_id=assignment.slot_id,
+                match_id=assignment.match_id,
+                locked=assignment.match_id in locked_match_set,
+            )
+        )
 
-    grid_match_locks = [
-        GridMatchLock(match_id=ml.match_id, slot_id=ml.slot_id) for ml in m_locks
-    ]
-    grid_slot_locks = [
-        GridSlotLock(slot_id=sl.slot_id, status=sl.status) for sl in s_locks
-    ]
+    grid_match_locks = [GridMatchLock(match_id=ml.match_id, slot_id=ml.slot_id) for ml in m_locks]
+    grid_slot_locks = [GridSlotLock(slot_id=sl.slot_id, status=sl.status) for sl in s_locks]
 
     # ========================================================================
     # Fetch matches
@@ -2736,6 +2726,7 @@ def get_schedule_grid(
 
 class MatchPreviewItem(BaseModel):
     """Single match in preview response"""
+
     id: int
     event_id: int
     match_code: str
@@ -2754,6 +2745,7 @@ class MatchPreviewItem(BaseModel):
 
 class MatchPreviewDiagnostics(BaseModel):
     """Version mismatch detection for preview"""
+
     requested_version_id: int
     matches_found: int
     grid_reported_matches_for_version: int
@@ -2772,6 +2764,7 @@ class MatchPreviewTeam(BaseModel):
 
 class MatchPreviewResponse(BaseModel):
     """Match preview for Schedule Builder review"""
+
     matches: List[MatchPreviewItem]
     counts_by_event: Dict[str, int]
     counts_by_stage: Dict[str, int]
@@ -2822,9 +2815,7 @@ def get_matches_preview(
         ).one()
     )
     total_matches_any_version = scalar_int(
-        session.exec(
-            select(func.count(Match.id)).where(Match.tournament_id == tournament_id)
-        ).one()
+        session.exec(select(func.count(Match.id)).where(Match.tournament_id == tournament_id)).one()
     )
     likely_version_mismatch = total_matches_any_version > 0 and matches_found == 0
 
@@ -2865,9 +2856,9 @@ def get_matches_preview(
 
     # Load teams for team_id -> name lookup in match cards
     all_event_ids = list(event_names.keys())
-    teams_for_preview = session.exec(
-        select(Team).where(Team.event_id.in_(all_event_ids))
-    ).all() if all_event_ids else []
+    teams_for_preview = (
+        session.exec(select(Team).where(Team.event_id.in_(all_event_ids))).all() if all_event_ids else []
+    )
     preview_teams = [
         MatchPreviewTeam(
             id=t.id,
@@ -2911,6 +2902,7 @@ def get_matches_preview(
 
 class MatchesGenerateOnlyRequest(BaseModel):
     """Optional body for generate matches only."""
+
     wipe_existing: bool = False
 
 
@@ -2954,7 +2946,10 @@ def generate_matches_only(
     wipe_existing = body.wipe_existing if body else False
     logger.info(
         "[GEN_MATCHES][%s] tournament=%s version=%s wipe=%s caller=ScheduleBuilder",
-        trace_id, tournament_id, version_id, wipe_existing,
+        trace_id,
+        tournament_id,
+        version_id,
+        wipe_existing,
     )
 
     tournament = session.get(Tournament, tournament_id)
@@ -2967,9 +2962,7 @@ def generate_matches_only(
 
     if wipe_existing:
         existing_count = scalar_int(
-            session.exec(
-                select(func.count(Match.id)).where(Match.schedule_version_id == version_id)
-            ).one()
+            session.exec(select(func.count(Match.id)).where(Match.schedule_version_id == version_id)).one()
         )
         if existing_count > 0:
             wipe_matches_for_version(session, version_id)
@@ -2984,13 +2977,7 @@ def generate_matches_only(
 
         per_event = result.get("per_event", {}) or {}
         events_expected_raw = result.get("events_expected", []) or []
-        events_included = sorted(
-            {
-                p["event_name"]
-                for p in per_event.values()
-                if p.get("matches", 0) > 0
-            }
-        )
+        events_included = sorted({p["event_name"] for p in per_event.values() if p.get("matches", 0) > 0})
         # Only true failures — not idempotent skip_complete or already-complete inventory.
         events_skipped = sorted(
             {
@@ -3001,7 +2988,8 @@ def generate_matches_only(
         )
 
         events_not_finalized = [
-            e.name for e in session.exec(
+            e.name
+            for e in session.exec(
                 select(Event).where(Event.tournament_id == tournament_id, Event.draw_status != "final")
             ).all()
         ]
@@ -3055,9 +3043,7 @@ def generate_slots_only(
     require_draft_version(session, version_id, tournament_id)
 
     existing_count = scalar_int(
-        session.exec(
-            select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
-        ).one()
+        session.exec(select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)).one()
     )
     if existing_count > 0:
         return SlotsGenerateOnlyResponse(
@@ -3157,9 +3143,7 @@ def assign_matches_by_scope(
     require_draft_version(session, version_id, tournament_id)
 
     slot_count = scalar_int(
-        session.exec(
-            select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
-        ).one()
+        session.exec(select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)).one()
     )
     if slot_count == 0:
         raise HTTPException(status_code=400, detail="No slots exist. Generate slots first.")
@@ -3229,9 +3213,7 @@ def assign_matches_by_ids(
     require_draft_version(session, version_id, tournament_id)
 
     slot_count = scalar_int(
-        session.exec(
-            select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
-        ).one()
+        session.exec(select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)).one()
     )
     if slot_count == 0:
         raise HTTPException(status_code=400, detail="No slots exist. Generate slots first.")
@@ -3353,7 +3335,7 @@ def auto_assign_with_rest_rules(
                 min_rest_minutes=min_rest_minutes,
                 require_court_type_match=require_court_type_match,
             )
-            
+
             # Commit the assignments
             session.commit()
 
@@ -3470,7 +3452,9 @@ def build_full_schedule(
     try:
         # 1. Generate slots (idempotent)
         slot_count = scalar_int(
-            session.exec(select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)).one()
+            session.exec(
+                select(func.count(ScheduleSlot.id)).where(ScheduleSlot.schedule_version_id == version_id)
+            ).one()
         )
         if slot_count == 0:
             slot_request = SlotGenerateRequest(source="auto", schedule_version_id=version_id, wipe_existing=False)
@@ -3503,9 +3487,7 @@ def build_full_schedule(
                 draw_plan = json.loads(event.draw_plan_json)
                 if draw_plan.get("wf_rounds", 0) > 0:
                     avoid_count = len(
-                        session.exec(
-                            select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)
-                        ).all()
+                        session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
                     )
                     if avoid_count > 0:
                         assign_wf_groups_v1(session, event.id, clear_existing=True, _transactional=True)
@@ -3600,6 +3582,7 @@ class PolicyBatchResult(BaseModel):
 
 class PolicyPlanPreviewResponse(BaseModel):
     """Preview of a daily policy plan (without executing it)."""
+
     day_date: str
     day_index: int
     total_match_ids: int
@@ -3609,6 +3592,7 @@ class PolicyPlanPreviewResponse(BaseModel):
 
 class PolicyRunResponse(BaseModel):
     """Result of executing a daily policy plan."""
+
     day_date: str
     total_assigned: int
     total_failed: int
@@ -3619,6 +3603,7 @@ class PolicyRunResponse(BaseModel):
 
 class PolicyDaysResponse(BaseModel):
     """List of schedule days available for policy placement."""
+
     days: List[str]
 
 
@@ -3746,6 +3731,7 @@ def run_policy(
 
 # ── One-button full schedule ──────────────────────────────────────────
 
+
 class FullPolicyDayResult(BaseModel):
     day: str
     assigned: int
@@ -3800,19 +3786,17 @@ def run_full_policy(
 
     require_draft_version(session, version_id, tournament_id)
 
-    from app.services.schedule_sequence import run_sequence_schedule
+    from app.models.policy_run import PolicyRun
     from app.services.policy_invariants import (
-        verify_full_schedule,
         hash_policy_input,
         hash_policy_output,
+        verify_full_schedule,
     )
-    from app.models.policy_run import PolicyRun
+    from app.services.schedule_sequence import run_sequence_schedule
 
     try:
         # ── Load locks ─────────────────────────────────────────────────
-        match_locks = session.exec(
-            select(MatchLock).where(MatchLock.schedule_version_id == version_id)
-        ).all()
+        match_locks = session.exec(select(MatchLock).where(MatchLock.schedule_version_id == version_id)).all()
         slot_locks = session.exec(
             select(SlotLock).where(
                 SlotLock.schedule_version_id == version_id,
@@ -3826,7 +3810,9 @@ def run_full_policy(
         if match_locks or slot_locks:
             logger.info(
                 "run_full_policy: %d match locks, %d blocked slots for version %d",
-                len(match_locks), len(slot_locks), version_id,
+                len(match_locks),
+                len(slot_locks),
+                version_id,
             )
 
         # Clear ALL existing assignments for this version before re-running.
@@ -3842,7 +3828,8 @@ def run_full_policy(
         if cleared_count:
             logger.info(
                 "run_full_policy: cleared %d existing assignments for version %d",
-                cleared_count, version_id,
+                cleared_count,
+                version_id,
             )
 
         # ── Pre-apply locked match assignments ─────────────────────────
@@ -3871,7 +3858,9 @@ def run_full_policy(
         # Pass locked/blocked info so the scheduler skips them
         locked_slot_ids = set(locked_slot_map.values())
         result = run_sequence_schedule(
-            session, tournament_id, version_id,
+            session,
+            tournament_id,
+            version_id,
             locked_match_ids=locked_match_ids,
             blocked_slot_ids=blocked_slot_ids | locked_slot_ids,
         )
@@ -3884,9 +3873,7 @@ def run_full_policy(
         output_h = hash_policy_output(session, version_id)
 
         # Build day_results for response
-        day_results_models = [
-            FullPolicyDayResult(**dr) for dr in result.day_results
-        ]
+        day_results_models = [FullPolicyDayResult(**dr) for dr in result.day_results]
 
         locks_snapshot = {
             "match_locks": sorted(
@@ -3945,7 +3932,8 @@ def run_full_policy(
         if not report.ok and force:
             logger.warning(
                 "run_full_policy: FORCE mode — %d invariant violations ignored for version %d",
-                len(report.violations), version_id,
+                len(report.violations),
+                version_id,
             )
 
         # All invariants passed — persist snapshot and commit
@@ -3987,7 +3975,7 @@ def run_full_policy(
             input_hash=input_h,
             output_hash=output_h,
             invariant_ok=report.ok,
-            invariant_violations=[v.to_dict() if hasattr(v, 'to_dict') else v for v in report.to_dict()["violations"]],
+            invariant_violations=[v.to_dict() if hasattr(v, "to_dict") else v for v in report.to_dict()["violations"]],
             invariant_stats=report.to_dict()["stats"],
             policy_run_id=policy_run.id,
         )
@@ -4002,6 +3990,7 @@ def run_full_policy(
 # ══════════════════════════════════════════════════════════════════════════
 # Schedule Report
 # ══════════════════════════════════════════════════════════════════════════
+
 
 class EventStageBreakdown(BaseModel):
     event_name: str
@@ -4049,31 +4038,24 @@ def get_schedule_report(
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
     # Load all slots for this version
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
-    ).all()
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
 
     # Load all assignments
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)).all()
     assigned_slot_ids = {a.slot_id for a in assignments}
-    match_id_to_assignment = {a.match_id: a for a in assignments}
+    {a.match_id: a for a in assignments}
 
     # Load all matches to get event/stage info
-    matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
     match_by_id = {m.id: m for m in matches}
 
     # Load events to get names
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_by_id = {e.id: e.name for e in events}
 
     # Group slots by day and time
     from collections import defaultdict
+
     slots_by_day_time: Dict[date, Dict[time, List[ScheduleSlot]]] = defaultdict(lambda: defaultdict(list))
     for slot in slots:
         slots_by_day_time[slot.day_date][slot.start_time].append(slot)
@@ -4084,13 +4066,13 @@ def get_schedule_report(
         time_slots_list: List[TimeSlotReport] = []
         for start_time in sorted(slots_by_day_time[day_date].keys()):
             day_slots = slots_by_day_time[day_date][start_time]
-            
+
             # Count totals
             total_courts = len(day_slots)
 
             # Count assigned matches for this time slot
             assigned_matches = sum(1 for s in day_slots if s.id in assigned_slot_ids)
-            
+
             # Build event/stage breakdown
             breakdown_dict: Dict[Tuple[int, str], int] = defaultdict(int)
             for slot in day_slots:
@@ -4102,32 +4084,38 @@ def get_schedule_report(
                         event_name = event_by_id.get(match.event_id, f"Event {match.event_id}")
                         stage = match.match_type or "UNKNOWN"
                         breakdown_dict[(match.event_id, stage)] += 1
-            
+
             # Convert breakdown to list
             breakdown_list: List[EventStageBreakdown] = []
             for (event_id, stage), count in sorted(breakdown_dict.items()):
                 event_name = event_by_id.get(event_id, f"Event {event_id}")
-                breakdown_list.append(EventStageBreakdown(
-                    event_name=event_name,
-                    stage=stage,
-                    match_count=count,
-                ))
-            
+                breakdown_list.append(
+                    EventStageBreakdown(
+                        event_name=event_name,
+                        stage=stage,
+                        match_count=count,
+                    )
+                )
+
             # Format time as HH:MM
             time_str = start_time.strftime("%H:%M")
-            
-            time_slots_list.append(TimeSlotReport(
-                time=time_str,
-                total_courts=total_courts,
-                assigned_matches=assigned_matches,
-                breakdown=breakdown_list,
-            ))
-        
-        days_list.append(DayReport(
-            day=str(day_date),
-            time_slots=time_slots_list,
-        ))
-    
+
+            time_slots_list.append(
+                TimeSlotReport(
+                    time=time_str,
+                    total_courts=total_courts,
+                    assigned_matches=assigned_matches,
+                    breakdown=breakdown_list,
+                )
+            )
+
+        days_list.append(
+            DayReport(
+                day=str(day_date),
+                time_slots=time_slots_list,
+            )
+        )
+
     return ScheduleReportResponse(days=days_list)
 
 
@@ -4164,6 +4152,7 @@ def get_quality_report(
 # ============================================================================
 # Policy Run Snapshots (Audit / Replay / Diff)
 # ============================================================================
+
 
 class PolicyRunSummary(BaseModel):
     id: int
@@ -4267,14 +4256,10 @@ def diff_policy_runs(
 
     # Compare day_results batches
     batches_a = {
-        b["label"]: b.get("assigned", 0)
-        for dr in snap_a.get("day_results", [])
-        for b in dr.get("batches", [])
+        b["label"]: b.get("assigned", 0) for dr in snap_a.get("day_results", []) for b in dr.get("batches", [])
     }
     batches_b = {
-        b["label"]: b.get("assigned", 0)
-        for dr in snap_b.get("day_results", [])
-        for b in dr.get("batches", [])
+        b["label"]: b.get("assigned", 0) for dr in snap_b.get("day_results", []) for b in dr.get("batches", [])
     }
     all_labels = sorted(set(batches_a.keys()) | set(batches_b.keys()))
     changed_batches = []
@@ -4282,12 +4267,14 @@ def diff_policy_runs(
         a_cnt = batches_a.get(label, 0)
         b_cnt = batches_b.get(label, 0)
         if a_cnt != b_cnt:
-            changed_batches.append({
-                "label": label,
-                "run_a_count": a_cnt,
-                "run_b_count": b_cnt,
-                "delta": b_cnt - a_cnt,
-            })
+            changed_batches.append(
+                {
+                    "label": label,
+                    "run_a_count": a_cnt,
+                    "run_b_count": b_cnt,
+                    "delta": b_cnt - a_cnt,
+                }
+            )
 
     def _summary(r):
         return PolicyRunSummary(
@@ -4377,12 +4364,12 @@ def replay_policy_run(
     5. Returns pass/fail with both hashes
     """
     from app.models.policy_run import PolicyRun
-    from app.services.schedule_sequence import run_sequence_schedule
     from app.services.policy_invariants import (
-        verify_full_schedule,
         hash_policy_input,
         hash_policy_output,
+        verify_full_schedule,
     )
+    from app.services.schedule_sequence import run_sequence_schedule
 
     original = session.get(PolicyRun, run_id)
     if not original or original.tournament_id != tournament_id:
@@ -4496,14 +4483,8 @@ def get_locks(
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
-    match_locks = session.exec(
-        select(MatchLock)
-        .where(MatchLock.schedule_version_id == version_id)
-    ).all()
-    slot_locks = session.exec(
-        select(SlotLock)
-        .where(SlotLock.schedule_version_id == version_id)
-    ).all()
+    match_locks = session.exec(select(MatchLock).where(MatchLock.schedule_version_id == version_id)).all()
+    slot_locks = session.exec(select(SlotLock).where(SlotLock.schedule_version_id == version_id)).all()
 
     return {
         "match_locks": sorted(

@@ -23,9 +23,9 @@ Day assignment:
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-import json
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlmodel import Session, select
@@ -50,16 +50,16 @@ PHASE_ORDER: Dict[Tuple[str, int], int] = {
     # Team Round 2: team's 2nd match
     ("WF", 2): 20,
     # Team Round 3: team's 3rd match
-    ("MAIN", 1): 30,            # MAIN QF
-    ("RR", 1): 31,              # RR R1
+    ("MAIN", 1): 30,  # MAIN QF
+    ("RR", 1): 31,  # RR R1
     # Team Round 4: team's 4th match (MAIN, then RR, then CONS)
-    ("MAIN", 2): 40,            # MAIN SF
-    ("RR", 2): 41,              # RR R2
-    ("CONSOLATION", 1): 42,     # CONS Semi (C1+C2)
+    ("MAIN", 2): 40,  # MAIN SF
+    ("RR", 2): 41,  # RR R2
+    ("CONSOLATION", 1): 42,  # CONS Semi (C1+C2)
     # Team Round 5: team's 5th match (MAIN, then RR, then CONS)
-    ("MAIN", 3): 50,            # MAIN Final
-    ("RR", 3): 51,              # RR R3
-    ("CONSOLATION", 2): 52,     # CONS Final+ (C3+C4+C5)
+    ("MAIN", 3): 50,  # MAIN Final
+    ("RR", 3): 51,  # RR R3
+    ("CONSOLATION", 2): 52,  # CONS Final+ (C3+C4+C5)
     # Placement (if any)
     ("PLACEMENT", 1): 60,
 }
@@ -73,6 +73,7 @@ STAGE_ORDER_FALLBACK = {"WF": 0, "RR": 1, "MAIN": 2, "CONSOLATION": 3, "PLACEMEN
 @dataclass
 class RankedMatch:
     """One entry in the master sequence."""
+
     rank: int
     match_id: int
     match_code: str
@@ -80,9 +81,9 @@ class RankedMatch:
     event_name: str
     match_type: str
     round_index: int
-    round_label: str        # e.g. "WF R1", "MAIN QF", "CONS R1"
-    matches_in_round: int   # how many matches in this event-round
-    global_round: int       # which interleave pass (0-based)
+    round_label: str  # e.g. "WF R1", "MAIN QF", "CONS R1"
+    matches_in_round: int  # how many matches in this event-round
+    global_round: int  # which interleave pass (0-based)
 
 
 def _round_label(match_type: str, round_index: int) -> str:
@@ -143,9 +144,8 @@ def _sort_events_for_sequence(events: List[Event]) -> List[Event]:
             automatic_events.append(event)
         else:
             manual_events.append((manual_order, event))
-    return (
-        [event for _, event in sorted(manual_events, key=lambda item: (item[0], item[1].id or 0))]
-        + sorted(automatic_events, key=lambda e: (-(e.team_count or 0), e.id))
+    return [event for _, event in sorted(manual_events, key=lambda item: (item[0], item[1].id or 0))] + sorted(
+        automatic_events, key=lambda e: (-(e.team_count or 0), e.id)
     )
 
 
@@ -218,7 +218,7 @@ def _compute_day_rotations(num_team_rounds: int) -> Dict[int, int]:
     """
     rotations: Dict[int, int] = {}
     for tr in range(num_team_rounds):
-        day_idx = tr // 2   # 2 team-rounds per day
+        day_idx = tr // 2  # 2 team-rounds per day
         rotations[tr] = day_idx
     return rotations
 
@@ -240,17 +240,13 @@ def build_master_sequence(
     Returns a list of RankedMatch objects, ranked 1..N.
     """
     # Load matches
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
     if not all_matches:
         return []
 
     # Load events for this tournament
     tournament_id = all_matches[0].tournament_id
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
 
     # Event ordering: explicit schedule order first, otherwise largest draw first.
     events_sorted = _sort_events_for_sequence(events)
@@ -266,12 +262,11 @@ def build_master_sequence(
         event_phases[e.id] = _build_event_phase_map(matches_by_event.get(e.id, []))
 
     # Collect all phase numbers across all events, sorted
-    all_phase_nums = sorted(set(
-        ph for pm in event_phases.values() for ph in pm.keys()
-    ))
+    all_phase_nums = sorted(set(ph for pm in event_phases.values() for ph in pm.keys()))
 
     # Group phases into team-rounds (tens digit: 10->R1, 20->R2, etc.)
     from itertools import groupby
+
     team_rounds = []
     for tr_key, phases_in_tr in groupby(all_phase_nums, key=lambda p: p // 10):
         team_rounds.append((tr_key, list(phases_in_tr)))
@@ -297,18 +292,20 @@ def build_master_sequence(
                 match_type, round_index, round_matches = phase_data
                 label = _round_label(match_type, round_index)
                 for m in round_matches:
-                    sequence.append(RankedMatch(
-                        rank=rank,
-                        match_id=m.id,
-                        match_code=m.match_code or "",
-                        event_id=e.id,
-                        event_name=e.name,
-                        match_type=match_type,
-                        round_index=round_index,
-                        round_label=label,
-                        matches_in_round=len(round_matches),
-                        global_round=global_round,
-                    ))
+                    sequence.append(
+                        RankedMatch(
+                            rank=rank,
+                            match_id=m.id,
+                            match_code=m.match_code or "",
+                            event_id=e.id,
+                            event_name=e.name,
+                            match_type=match_type,
+                            round_index=round_index,
+                            round_label=label,
+                            matches_in_round=len(round_matches),
+                            global_round=global_round,
+                        )
+                    )
                     rank += 1
 
     return sequence
@@ -318,10 +315,12 @@ def build_master_sequence(
 #  Slot Placement
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class DaySchedule:
     """Result of placing matches into one day."""
-    day_date: object            # date
+
+    day_date: object  # date
     matches_placed: int = 0
     total_slots: int = 0
     usable_slots: int = 0
@@ -350,8 +349,8 @@ def place_matches_into_slots(
     all_slots = session.exec(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
-            ScheduleSlot.is_active == True,
-            ScheduleSlot.is_manual_only == False,
+            ScheduleSlot.is_active,
+            not ScheduleSlot.is_manual_only,
         )
     ).all()
 
@@ -412,9 +411,9 @@ def place_matches_into_slots(
             usable_slots=usable,
         )
 
-        lines.append(f"\n{'='*80}")
+        lines.append(f"\n{'=' * 80}")
         lines.append(f"Day {day_idx + 1}: {day}  ({usable} usable slots)")
-        lines.append(f"{'='*80}")
+        lines.append(f"{'=' * 80}")
         for t, total, reserve, available in time_info:
             lines.append(f"  {t}:  {total} courts - {reserve} reserved = {available} usable")
         lines.append("")
@@ -540,7 +539,8 @@ def run_sequence_schedule(
     """
     import time as _time
     from datetime import datetime
-    from app.models import ScheduleSlot, MatchAssignment
+
+    from app.models import MatchAssignment, ScheduleSlot
 
     t0 = _time.monotonic()
 
@@ -549,11 +549,12 @@ def run_sequence_schedule(
 
     # ── Load all active slots (excluding blocked) ──────────────────
     all_slots = [
-        s for s in session.exec(
+        s
+        for s in session.exec(
             select(ScheduleSlot).where(
                 ScheduleSlot.schedule_version_id == schedule_version_id,
-                ScheduleSlot.is_active == True,
-                ScheduleSlot.is_manual_only == False,
+                ScheduleSlot.is_active,
+                not ScheduleSlot.is_manual_only,
             )
         ).all()
         if s.id not in _blocked
@@ -596,8 +597,10 @@ def run_sequence_schedule(
         seq = [rm for rm in seq if rm.match_id not in _locked]
 
     if not seq:
+
         class _Empty:
             pass
+
         r = _Empty()
         r.total_assigned = 0
         r.total_failed = 0
@@ -680,19 +683,18 @@ def run_sequence_schedule(
         day_ms = int((_time.monotonic() - day_t0) * 1000)
 
         # Build batch info for response (one entry per event+stage group)
-        batches = [
-            {"label": label, "assigned": cnt, "failed": 0}
-            for label, cnt in batch_summary.items()
-        ]
+        batches = [{"label": label, "assigned": cnt, "failed": 0} for label, cnt in batch_summary.items()]
 
-        day_results.append({
-            "day": str(day),
-            "assigned": placed,
-            "failed": failed,
-            "reserved_spares": day_reserved,
-            "duration_ms": day_ms,
-            "batches": batches,
-        })
+        day_results.append(
+            {
+                "day": str(day),
+                "assigned": placed,
+                "failed": failed,
+                "reserved_spares": day_reserved,
+                "duration_ms": day_ms,
+                "batches": batches,
+            }
+        )
 
     # Handle any final overflow as failures
     if overflow:
@@ -705,6 +707,7 @@ def run_sequence_schedule(
     # Return result object matching FullPolicyRunResponse expectations
     class _Result:
         pass
+
     result = _Result()
     result.total_assigned = total_assigned
     result.total_failed = total_failed
@@ -717,7 +720,9 @@ def run_sequence_schedule(
 def print_sequence(sequence: List[RankedMatch]) -> str:
     """Format the sequence as a readable table string."""
     lines = []
-    lines.append(f"{'Rank':<6} {'Event':<14} {'Stage':<14} {'Round':<14} {'Matches':<8} {'Match Code':<35} {'Match ID'}")
+    lines.append(
+        f"{'Rank':<6} {'Event':<14} {'Stage':<14} {'Round':<14} {'Matches':<8} {'Match Code':<35} {'Match ID'}"
+    )
     lines.append("-" * 110)
 
     current_gr = -1
@@ -736,6 +741,7 @@ def print_sequence(sequence: List[RankedMatch]) -> str:
 # ── Standalone runner ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
+
     sys.path.insert(0, ".")
     from app.database import engine
 

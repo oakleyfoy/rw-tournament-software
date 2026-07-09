@@ -2,17 +2,19 @@
 Desk Runtime Console: Staff-only endpoints for live tournament operations.
 Now Playing / Up Next, score entry, auto-advancement, working draft management.
 """
-import logging
+
 import json
+import logging
 import re
-from datetime import datetime, time as dt_time, timezone
+from datetime import datetime, timezone
+from datetime import time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlmodel import Session, select
 from sqlalchemy import func, or_
+from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models.court_state import TournamentCourtState
@@ -20,29 +22,29 @@ from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
+from app.models.match_lock import MatchLock
+from app.models.match_player_checkin import MatchPlayerCheckIn
+from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.slot_lock import SlotLock
-from app.models.player import Player
 from app.models.team import Team
 from app.models.team_player import TeamPlayer
-from app.models.match_lock import MatchLock
-from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.services.advancement_service import apply_advancement_with_details, resolve_all_dependencies
-from app.services.sms_automation import SmsAutomationEngine
+from app.services.reschedule_engine import (
+    RebuildDayConfig as RebuildDayConfigDC,
+)
 from app.services.reschedule_engine import (
     RescheduleParams,
-    compute_reschedule,
-    compute_feasibility,
-    apply_reschedule,
-    SCORING_FORMATS,
-    SCORING_FORMAT_LABELS,
-    RebuildDayConfig as RebuildDayConfigDC,
-    compute_rebuild_preview,
     apply_rebuild,
+    apply_reschedule,
+    compute_feasibility,
+    compute_rebuild_preview,
+    compute_reschedule,
 )
+from app.services.sms_automation import SmsAutomationEngine
 
 logger = logging.getLogger(__name__)
 _DEBUG_LOG_PATH = r"c:\RW Tournament Software\.cursor\debug.log"
@@ -217,9 +219,7 @@ def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[s
                 matched_names.add(short_alias)
 
     teams = session.exec(
-        select(Team)
-        .join(Event, Event.id == Team.event_id)
-        .where(Event.tournament_id == tournament_id)
+        select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament_id)
     ).all()
     for team in teams:
         for field in (team.display_name, team.name):
@@ -242,7 +242,12 @@ def _serialize_lookup_items(
             player_id=row.player_id,
             matched=bool(
                 row.player_id
-                or (matched_names is not None and any(alias in matched_names for alias in _lookup_name_keys(row.source_name or row.normalized_name)))
+                or (
+                    matched_names is not None
+                    and any(
+                        alias in matched_names for alias in _lookup_name_keys(row.source_name or row.normalized_name)
+                    )
+                )
             ),
             source_name=row.source_name,
             source_phone=row.source_phone,
@@ -348,9 +353,7 @@ def _resolve_lookup_player_ids(
         if _normalize_lookup_phone(p.phone_e164) and p.id is not None
     }
     player_by_email = {
-        _normalize_lookup_email(p.email): p.id
-        for p in players
-        if _normalize_lookup_email(p.email) and p.id is not None
+        _normalize_lookup_email(p.email): p.id for p in players if _normalize_lookup_email(p.email) and p.id is not None
     }
 
     players_by_name: Dict[str, List[int]] = {}
@@ -366,9 +369,7 @@ def _resolve_lookup_player_ids(
                 players_by_short_name.setdefault(short_name, []).append(player.id)
 
     teams = session.exec(
-        select(Team)
-        .join(Event, Event.id == Team.event_id)
-        .where(Event.tournament_id == tournament_id)
+        select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament_id)
     ).all()
     roster_names = {
         alias
@@ -401,16 +402,13 @@ def _resolve_lookup_player_ids(
             player_id = player_by_email[normalized_email]
         else:
             matched_ids = {
-                player_id_match
-                for key in normalized_names
-                for player_id_match in players_by_name.get(key, [])
+                player_id_match for key in normalized_names for player_id_match in players_by_name.get(key, [])
             }
             if len(matched_ids) == 1:
                 player_id = next(iter(matched_ids))
             elif normalized_short_name:
                 short_name_matches = {
-                    player_id_match
-                    for player_id_match in players_by_short_name.get(normalized_short_name, [])
+                    player_id_match for player_id_match in players_by_short_name.get(normalized_short_name, [])
                 }
                 if len(short_name_matches) == 1:
                     player_id = next(iter(short_name_matches))
@@ -767,6 +765,7 @@ class StatusResponse(BaseModel):
 
 # ── Impact models ────────────────────────────────────────────────────────
 
+
 class ImpactTarget(BaseModel):
     target_match_number: Optional[int] = None
     target_match_id: Optional[int] = None
@@ -842,6 +841,7 @@ class ConflictCheckResponse(BaseModel):
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
+
 def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
     if not score_json:
         return None
@@ -851,9 +851,7 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
         if "display" in score_json:
             return str(score_json["display"])
         if "sets" in score_json and isinstance(score_json["sets"], list):
-            return " ".join(
-                f"{s.get('a', 0)}-{s.get('b', 0)}" for s in score_json["sets"]
-            )
+            return " ".join(f"{s.get('a', 0)}-{s.get('b', 0)}" for s in score_json["sets"])
         if "a" in score_json and "b" in score_json:
             return f"{score_json['a']}-{score_json['b']}"
         if "score" in score_json:
@@ -934,9 +932,7 @@ def _build_checkin_snapshot(
         },
     )
     # endregion
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version.id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
     match_map = {m.id: m for m in all_matches}
     assignments = session.exec(
         select(MatchAssignment).where(
@@ -946,14 +942,14 @@ def _build_checkin_snapshot(
     assignment_map = {a.match_id: a for a in assignments}
     assignment_by_slot = {a.slot_id: a for a in assignments}
 
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
-    ).all()
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
     slot_map = {s.id: s for s in slots}
     sorted_slots = sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id))
 
     def _slot_key_for_slot(slot: ScheduleSlot) -> str:
-        slot_time = slot.start_time.strftime("%H:%M") if hasattr(slot.start_time, "strftime") else str(slot.start_time)[:5]
+        slot_time = (
+            slot.start_time.strftime("%H:%M") if hasattr(slot.start_time, "strftime") else str(slot.start_time)[:5]
+        )
         return f"{slot.day_date.isoformat()}|{slot_time}"
 
     slot_sort_key_by_match_id: Dict[int, tuple] = {}
@@ -976,16 +972,26 @@ def _build_checkin_snapshot(
             team_ids.add(m.team_a_id)
         if m.team_b_id:
             team_ids.add(m.team_b_id)
-    team_map = {
-        t.id: t for t in session.exec(
-            select(Team).where(Team.id.in_(list(team_ids)))  # type: ignore[arg-type]
-        ).all()
-    } if team_ids else {}
-    event_map = {
-        e.id: e for e in session.exec(
-            select(Event).where(Event.id.in_(list(event_ids)))  # type: ignore[arg-type]
-        ).all()
-    } if event_ids else {}
+    team_map = (
+        {
+            t.id: t
+            for t in session.exec(
+                select(Team).where(Team.id.in_(list(team_ids)))  # type: ignore[arg-type]
+            ).all()
+        }
+        if team_ids
+        else {}
+    )
+    event_map = (
+        {
+            e.id: e
+            for e in session.exec(
+                select(Event).where(Event.id.in_(list(event_ids)))  # type: ignore[arg-type]
+            ).all()
+        }
+        if event_ids
+        else {}
+    )
     candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
     for m in all_matches:
         status = (m.runtime_status or "SCHEDULED").upper()
@@ -1012,19 +1018,27 @@ def _build_checkin_snapshot(
         if m.team_b_id:
             side_team_ids.add(m.team_b_id)
 
-    team_player_rows = session.exec(
-        select(TeamPlayer)
-        .where(TeamPlayer.team_id.in_(list(side_team_ids)))  # type: ignore[arg-type]
-        .order_by(TeamPlayer.team_id, TeamPlayer.lineup_slot, TeamPlayer.id)
-    ).all() if side_team_ids else []
+    team_player_rows = (
+        session.exec(
+            select(TeamPlayer)
+            .where(TeamPlayer.team_id.in_(list(side_team_ids)))  # type: ignore[arg-type]
+            .order_by(TeamPlayer.team_id, TeamPlayer.lineup_slot, TeamPlayer.id)
+        ).all()
+        if side_team_ids
+        else []
+    )
     players_by_team: Dict[int, List[int]] = {}
     player_ids: set[int] = set()
     for row in team_player_rows:
         players_by_team.setdefault(row.team_id, []).append(row.player_id)
         player_ids.add(row.player_id)
-    players = session.exec(
-        select(Player).where(Player.id.in_(list(player_ids)))  # type: ignore[arg-type]
-    ).all() if player_ids else []
+    players = (
+        session.exec(
+            select(Player).where(Player.id.in_(list(player_ids)))  # type: ignore[arg-type]
+        ).all()
+        if player_ids
+        else []
+    )
     player_map = {p.id: p for p in players}
     lookup_rows = session.exec(
         select(TemporaryPlayerLookup)
@@ -1050,23 +1064,29 @@ def _build_checkin_snapshot(
         if len({row.id for row in rows if row.id is not None}) == 1
     }
 
-    team_checkins = session.exec(
-        select(MatchCheckIn).where(
-            MatchCheckIn.schedule_version_id == version.id,
-            MatchCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
-        )
-    ).all() if eligible_match_ids else []
+    team_checkins = (
+        session.exec(
+            select(MatchCheckIn).where(
+                MatchCheckIn.schedule_version_id == version.id,
+                MatchCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
+            )
+        ).all()
+        if eligible_match_ids
+        else []
+    )
     team_checkin_map = {(r.match_id, (r.side or "").upper()): r for r in team_checkins}
 
-    player_checkins = session.exec(
-        select(MatchPlayerCheckIn).where(
-            MatchPlayerCheckIn.schedule_version_id == version.id,
-            MatchPlayerCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
-        )
-    ).all() if eligible_match_ids else []
-    player_checkin_map = {
-        (r.match_id, (r.side or "").upper(), r.player_id): r for r in player_checkins
-    }
+    player_checkins = (
+        session.exec(
+            select(MatchPlayerCheckIn).where(
+                MatchPlayerCheckIn.schedule_version_id == version.id,
+                MatchPlayerCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
+            )
+        ).all()
+        if eligible_match_ids
+        else []
+    )
+    player_checkin_map = {(r.match_id, (r.side or "").upper(), r.player_id): r for r in player_checkins}
 
     def _to_day_label(d) -> str:
         weekday = d.strftime("%A")
@@ -1085,6 +1105,7 @@ def _build_checkin_snapshot(
 
     for m, a, s in eligible:
         match_status = (m.runtime_status or "SCHEDULED").upper()
+
         def build_side(side: str, team_id: Optional[int], fallback: Optional[str]) -> MatchCheckInSideState:
             side_key = side.upper()
             team_row = team_checkin_map.get((m.id, side_key))
@@ -1190,7 +1211,8 @@ def _build_checkin_snapshot(
                     fallback_player_id = lookup_row.player_id if lookup_row else None
                     fallback_checkin = (
                         player_checkin_map.get((m.id, side_key, fallback_player_id))
-                        if fallback_player_id is not None else None
+                        if fallback_player_id is not None
+                        else None
                     )
                     fallback_checked = bool(fallback_checkin and fallback_checkin.checked_in)
                     fallback_checked_at = fallback_checkin.checked_in_at if fallback_checkin else None
@@ -1249,16 +1271,14 @@ def _build_checkin_snapshot(
                 scheduled_time=_to_sched_label(s.start_time),
                 sort_time=s.start_time.strftime("%H:%M"),
                 slot_id=s.id,
-                team1_notes=getattr(team_map.get(m.team_a_id), 'notes', None) if m.team_a_id else None,
-                team2_notes=getattr(team_map.get(m.team_b_id), 'notes', None) if m.team_b_id else None,
+                team1_notes=getattr(team_map.get(m.team_a_id), "notes", None) if m.team_a_id else None,
+                team2_notes=getattr(team_map.get(m.team_b_id), "notes", None) if m.team_b_id else None,
                 side_a=side_a,
                 side_b=side_b,
                 match_ready=ready,
                 ready_at=ready_at,
                 checkin_enabled=bool(
-                    m.team_a_id
-                    and m.team_b_id
-                    and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
+                    m.team_a_id and m.team_b_id and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
                 ),
             )
         )
@@ -1288,10 +1308,7 @@ def _build_checkin_snapshot(
         )
     ready_items.sort(key=lambda x: (x.ready_at or "9999", x.day_label, x.scheduled_time or "", x.match_id))
 
-    active_courts = {
-        m.court_name for m in items
-        if m.court_name and (m.status in ("IN_PROGRESS", "PAUSED"))
-    }
+    active_courts = {m.court_name for m in items if m.court_name and (m.status in ("IN_PROGRESS", "PAUSED"))}
     closed_courts = {
         f"Court {s.court_label}" if not s.court_label.lower().startswith("court") else s.court_label
         for s in session.exec(
@@ -1320,11 +1337,7 @@ def _build_checkin_snapshot(
         for cm in checkin_matches
         if not cm.match_ready and cm.slot_id is not None and cm.slot_id in slot_map
     }
-    ready_slot_keys = {
-        slot_key_by_match_id[r.match_id]
-        for r in ready_items
-        if r.match_id in slot_key_by_match_id
-    }
+    ready_slot_keys = {slot_key_by_match_id[r.match_id] for r in ready_items if r.match_id in slot_key_by_match_id}
     playing_slot_keys = {
         slot_key_by_match_id[m.match_id]
         for m in items
@@ -1371,7 +1384,9 @@ def _build_checkin_snapshot(
     checkin_slot_options = list(slot_options_by_key.values())
     checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
     for option in checkin_slot_options:
-        rows = [checkin_match_map[mid] for mid in slot_match_ids_by_key.get(option.slot_key, []) if mid in checkin_match_map]
+        rows = [
+            checkin_match_map[mid] for mid in slot_match_ids_by_key.get(option.slot_key, []) if mid in checkin_match_map
+        ]
         rows.sort(key=lambda x: (x.match_number, x.match_id))
         checkin_slot_rows[option.slot_key] = rows
 
@@ -1528,9 +1543,7 @@ def _build_match_items(
     management_mode: str = MODE_CHECKIN_MANAGEMENT,
 ) -> tuple:
     """Build flat match list and court set. Returns (items, courts_set)."""
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version.id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
 
     if not all_matches:
         return [], set()
@@ -1545,9 +1558,7 @@ def _build_match_items(
     assignment_map = {a.match_id: a for a in assignments}
 
     slot_ids = list({a.slot_id for a in assignments})
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     team_ids = set()
@@ -1556,15 +1567,11 @@ def _build_match_items(
             team_ids.add(m.team_a_id)
         if m.team_b_id:
             team_ids.add(m.team_b_id)
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map = {t.id: t for t in teams}
 
     event_ids = list({m.event_id for m in all_matches})
-    events = session.exec(
-        select(Event).where(Event.id.in_(event_ids))
-    ).all()
+    events = session.exec(select(Event).where(Event.id.in_(event_ids))).all()
     event_map = {e.id: e for e in events}
 
     items: List[DeskMatchItem] = []
@@ -1628,42 +1635,48 @@ def _build_match_items(
             wt = team_map[m.winner_team_id]
             winner_disp = wt.display_name or wt.name or f"Team {m.winner_team_id}"
 
-        items.append(DeskMatchItem(
-            match_id=m.id,
-            match_number=m.id,
-            match_code=m.match_code or "",
-            stage=stage,
-            event_id=m.event_id,
-            event_name=ev_name,
-            division_name=div_name,
-            day_index=day_offset,
-            day_label=day_label,
-            scheduled_time=scheduled_time,
-            sort_time=sort_time,
-            court_name=court_name,
-            status=status,
-            team1_id=m.team_a_id,
-            team1_display=_team_display(m.team_a_id, m.placeholder_side_a, team_map),
-            team2_id=m.team_b_id,
-            team2_display=_team_display(m.team_b_id, m.placeholder_side_b, team_map),
-            score_display=score,
-            source_match_a_id=m.source_match_a_id,
-            source_match_b_id=m.source_match_b_id,
-            created_at=m.created_at.isoformat() if m.created_at else None,
-            started_at=m.started_at.isoformat() if m.started_at else None,
-            completed_at=m.completed_at.isoformat() if m.completed_at else None,
-            winner_display=winner_disp,
-            winner_team_id=m.winner_team_id,
-            duration_minutes=m.duration_minutes,
-            team1_defaulted=bool(team_map.get(m.team_a_id, None) and getattr(team_map[m.team_a_id], 'is_defaulted', False)),
-            team2_defaulted=bool(team_map.get(m.team_b_id, None) and getattr(team_map[m.team_b_id], 'is_defaulted', False)),
-            team1_notes=getattr(team_map.get(m.team_a_id), 'notes', None) if m.team_a_id else None,
-            team2_notes=getattr(team_map.get(m.team_b_id), 'notes', None) if m.team_b_id else None,
-            slot_id=slot.id if slot else None,
-            assignment_id=a.id if a else None,
-            court_number=slot.court_number if slot else None,
-            day_date=slot.day_date.isoformat() if slot else None,
-        ))
+        items.append(
+            DeskMatchItem(
+                match_id=m.id,
+                match_number=m.id,
+                match_code=m.match_code or "",
+                stage=stage,
+                event_id=m.event_id,
+                event_name=ev_name,
+                division_name=div_name,
+                day_index=day_offset,
+                day_label=day_label,
+                scheduled_time=scheduled_time,
+                sort_time=sort_time,
+                court_name=court_name,
+                status=status,
+                team1_id=m.team_a_id,
+                team1_display=_team_display(m.team_a_id, m.placeholder_side_a, team_map),
+                team2_id=m.team_b_id,
+                team2_display=_team_display(m.team_b_id, m.placeholder_side_b, team_map),
+                score_display=score,
+                source_match_a_id=m.source_match_a_id,
+                source_match_b_id=m.source_match_b_id,
+                created_at=m.created_at.isoformat() if m.created_at else None,
+                started_at=m.started_at.isoformat() if m.started_at else None,
+                completed_at=m.completed_at.isoformat() if m.completed_at else None,
+                winner_display=winner_disp,
+                winner_team_id=m.winner_team_id,
+                duration_minutes=m.duration_minutes,
+                team1_defaulted=bool(
+                    team_map.get(m.team_a_id, None) and getattr(team_map[m.team_a_id], "is_defaulted", False)
+                ),
+                team2_defaulted=bool(
+                    team_map.get(m.team_b_id, None) and getattr(team_map[m.team_b_id], "is_defaulted", False)
+                ),
+                team1_notes=getattr(team_map.get(m.team_a_id), "notes", None) if m.team_a_id else None,
+                team2_notes=getattr(team_map.get(m.team_b_id), "notes", None) if m.team_b_id else None,
+                slot_id=slot.id if slot else None,
+                assignment_id=a.id if a else None,
+                court_number=slot.court_number if slot else None,
+                day_date=slot.day_date.isoformat() if slot else None,
+            )
+        )
 
     items.sort(key=lambda x: (x.day_index, x.sort_time or "", x.court_name or ""))
     return items, courts_set
@@ -1680,9 +1693,7 @@ def _match_to_desk_item(
         team_ids.add(match.team_a_id)
     if match.team_b_id:
         team_ids.add(match.team_b_id)
-    teams = session.exec(
-        select(Team).where(Team.id.in_(list(team_ids)))
-    ).all() if team_ids else []
+    teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map = {t.id: t for t in teams}
 
     ev = session.get(Event, match.event_id)
@@ -1762,10 +1773,14 @@ def _match_to_desk_item(
         winner_display=winner_disp,
         winner_team_id=match.winner_team_id,
         duration_minutes=match.duration_minutes,
-        team1_defaulted=bool(team_map.get(match.team_a_id, None) and getattr(team_map[match.team_a_id], 'is_defaulted', False)),
-        team2_defaulted=bool(team_map.get(match.team_b_id, None) and getattr(team_map[match.team_b_id], 'is_defaulted', False)),
-        team1_notes=getattr(team_map.get(match.team_a_id), 'notes', None) if match.team_a_id else None,
-        team2_notes=getattr(team_map.get(match.team_b_id), 'notes', None) if match.team_b_id else None,
+        team1_defaulted=bool(
+            team_map.get(match.team_a_id, None) and getattr(team_map[match.team_a_id], "is_defaulted", False)
+        ),
+        team2_defaulted=bool(
+            team_map.get(match.team_b_id, None) and getattr(team_map[match.team_b_id], "is_defaulted", False)
+        ),
+        team1_notes=getattr(team_map.get(match.team_a_id), "notes", None) if match.team_a_id else None,
+        team2_notes=getattr(team_map.get(match.team_b_id), "notes", None) if match.team_b_id else None,
         slot_id=slot.id if slot else None,
         assignment_id=a.id if a else None,
         court_number=slot.court_number if slot else None,
@@ -1774,6 +1789,7 @@ def _match_to_desk_item(
 
 
 # ── C2.1 Desk Snapshot ─────────────────────────────────────────────────
+
 
 @router.get(
     "/desk/tournaments/{tournament_id}/snapshot",
@@ -1805,9 +1821,7 @@ def desk_snapshot(
     items, courts_set = _build_match_items(session, tournament, version, management_mode=management_mode)
 
     # Build slots array for the grid view
-    all_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)
-    ).all()
+    all_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
     all_assignments = session.exec(
         select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
     ).all()
@@ -1820,22 +1834,27 @@ def desk_snapshot(
         courts_set.add(court_display)
         st = s.start_time
         et = s.end_time
-        snapshot_slots.append(SnapshotSlot(
-            slot_id=s.id,
-            day_date=s.day_date.isoformat(),
-            start_time=st.strftime("%H:%M") if hasattr(st, "strftime") else str(st)[:5],
-            end_time=et.strftime("%H:%M") if hasattr(et, "strftime") else str(et)[:5],
-            court_number=s.court_number,
-            court_label=court_label,
-            block_minutes=s.block_minutes,
-            is_active=s.is_active,
-            assigned_match_id=slot_assignment_map.get(s.id),
-        ))
+        snapshot_slots.append(
+            SnapshotSlot(
+                slot_id=s.id,
+                day_date=s.day_date.isoformat(),
+                start_time=st.strftime("%H:%M") if hasattr(st, "strftime") else str(st)[:5],
+                end_time=et.strftime("%H:%M") if hasattr(et, "strftime") else str(et)[:5],
+                court_number=s.court_number,
+                court_label=court_label,
+                block_minutes=s.block_minutes,
+                is_active=s.is_active,
+                assigned_match_id=slot_assignment_map.get(s.id),
+            )
+        )
 
-    courts_sorted = sorted(courts_set, key=lambda c: (
-        int("".join(ch for ch in c if ch.isdigit()) or "0"),
-        c,
-    ))
+    courts_sorted = sorted(
+        courts_set,
+        key=lambda c: (
+            int("".join(ch for ch in c if ch.isdigit()) or "0"),
+            c,
+        ),
+    )
 
     now_playing: Dict[str, DeskMatchItem] = {}
     up_next: Dict[str, DeskMatchItem] = {}
@@ -1886,12 +1905,14 @@ def desk_snapshot(
         if len(scheduled) > 1:
             board_on = scheduled[1]
 
-        board.append(BoardCourtSlot(
-            court_name=court,
-            now_playing=board_now,
-            up_next=board_up,
-            on_deck=board_on,
-        ))
+        board.append(
+            BoardCourtSlot(
+                court_name=court,
+                now_playing=board_now,
+                up_next=board_up,
+                on_deck=board_on,
+            )
+        )
 
     checkin_matches: List[CheckInMatchItem] = []
     ready_queue: List[ReadyQueueItem] = []
@@ -1907,9 +1928,7 @@ def desk_snapshot(
             available_slots,
             checkin_slot_options,
             checkin_slot_rows,
-        ) = _build_checkin_snapshot(
-            session, tournament, version, items
-        )
+        ) = _build_checkin_snapshot(session, tournament, version, items)
 
     # region agent log
     _agent_debug_log(
@@ -2453,9 +2472,7 @@ def clear_temporary_player_lookups(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    rows = session.exec(
-        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
-    ).all()
+    rows = session.exec(select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)).all()
     deleted_count = len(rows)
     for row in rows:
         session.delete(row)
@@ -2494,7 +2511,9 @@ def assign_ready_match_to_slot(
         raise HTTPException(status_code=404, detail="Target slot not found")
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
-    checkin_matches, ready_queue, _available_courts, available_slots, _slot_options, _slot_rows = _build_checkin_snapshot(session, tournament, version, items)
+    checkin_matches, ready_queue, _available_courts, available_slots, _slot_options, _slot_rows = (
+        _build_checkin_snapshot(session, tournament, version, items)
+    )
     ready_ids = {r.match_id for r in ready_queue}
     if payload.match_id not in ready_ids:
         raise HTTPException(status_code=400, detail="Match is not ready to play")
@@ -2505,9 +2524,7 @@ def assign_ready_match_to_slot(
         # between snapshots. Accept any slot on a currently available court.
         target_court_label = target_slot.court_label or str(target_slot.court_number)
         target_court_name = (
-            f"Court {target_court_label}"
-            if not target_court_label.lower().startswith("court")
-            else target_court_label
+            f"Court {target_court_label}" if not target_court_label.lower().startswith("court") else target_court_label
         )
         available_court_names = {s.court_name for s in available_slots}
         if target_court_name not in available_court_names:
@@ -2553,10 +2570,12 @@ def assign_ready_match_to_slot(
             ).all()
             occupied_slot_ids = {a.slot_id for a in all_assignments}
             free_slot = session.exec(
-                select(ScheduleSlot).where(
+                select(ScheduleSlot)
+                .where(
                     ScheduleSlot.schedule_version_id == payload.version_id,
                     ~ScheduleSlot.id.in_(list(occupied_slot_ids)),  # type: ignore[arg-type]
-                ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
+                )
+                .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number, ScheduleSlot.id)
             ).first()
             if free_slot:
                 park_slot_id = free_slot.id
@@ -2709,6 +2728,7 @@ def create_working_draft(
 
 # ── C2.3 Finalize Match ────────────────────────────────────────────────
 
+
 @router.patch(
     "/desk/tournaments/{tournament_id}/matches/{match_id}/finalize",
     response_model=FinalizeResponse,
@@ -2791,9 +2811,7 @@ def finalize_match(
     # Auto-advance
     adv_result = apply_advancement_with_details(session, match.id)
 
-    management_mode = _normalize_management_mode(
-        getattr(tournament, "desk_management_mode", None)
-    )
+    management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
 
     # Auto-start next match on the same court (court-management only).
     auto_started_match_id = None
@@ -2809,11 +2827,13 @@ def finalize_match(
             if finalized_slot:
                 court_num = finalized_slot.court_number
                 court_slots = session.exec(
-                    select(ScheduleSlot).where(
+                    select(ScheduleSlot)
+                    .where(
                         ScheduleSlot.schedule_version_id == payload.version_id,
                         ScheduleSlot.court_number == court_num,
                         ScheduleSlot.day_date == finalized_slot.day_date,
-                    ).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
+                    )
+                    .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
                 ).all()
                 court_slot_ids = [s.id for s in court_slots]
                 if court_slot_ids:
@@ -2857,9 +2877,7 @@ def finalize_match(
     all_team_ids_needed = set(u["team_id"] for u in raw_updates)
 
     # Load downstream match objects to get opponent info
-    down_matches = session.exec(
-        select(Match).where(Match.id.in_(down_match_ids))
-    ).all() if down_match_ids else []
+    down_matches = session.exec(select(Match).where(Match.id.in_(down_match_ids))).all() if down_match_ids else []
     down_match_map = {m.id: m for m in down_matches}
 
     for dm in down_matches:
@@ -2868,24 +2886,28 @@ def finalize_match(
         if dm.team_b_id:
             all_team_ids_needed.add(dm.team_b_id)
 
-    adv_teams = session.exec(
-        select(Team).where(Team.id.in_(list(all_team_ids_needed)))
-    ).all() if all_team_ids_needed else []
+    adv_teams = (
+        session.exec(select(Team).where(Team.id.in_(list(all_team_ids_needed)))).all() if all_team_ids_needed else []
+    )
     adv_team_map = {t.id: t for t in adv_teams}
 
     # Load assignments and slots for downstream matches
-    down_assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == payload.version_id,
-            MatchAssignment.match_id.in_(down_match_ids),
-        )
-    ).all() if down_match_ids else []
+    down_assignments = (
+        session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == payload.version_id,
+                MatchAssignment.match_id.in_(down_match_ids),
+            )
+        ).all()
+        if down_match_ids
+        else []
+    )
     down_assign_map = {a.match_id: a for a in down_assignments}
 
     down_slot_ids = [a.slot_id for a in down_assignments]
-    down_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(down_slot_ids))
-    ).all() if down_slot_ids else []
+    down_slots = (
+        session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(down_slot_ids))).all() if down_slot_ids else []
+    )
     down_slot_map = {s.id: s for s in down_slots}
 
     downstream = []
@@ -2925,17 +2947,19 @@ def finalize_match(
                 opp = adv_team_map.get(opp_id)
                 opponent = (opp.display_name or opp.name) if opp else None
 
-        downstream.append(DownstreamUpdate(
-            match_id=u["match_id"],
-            slot_filled=u["slot_filled"],
-            team_id=u["team_id"],
-            team_name=team_name,
-            role=u.get("role", "WINNER"),
-            next_day=next_day,
-            next_time=next_time,
-            next_court=next_court,
-            opponent=opponent,
-        ))
+        downstream.append(
+            DownstreamUpdate(
+                match_id=u["match_id"],
+                slot_filled=u["slot_filled"],
+                team_id=u["team_id"],
+                team_name=team_name,
+                role=u.get("role", "WINNER"),
+                next_day=next_day,
+                next_time=next_time,
+                next_court=next_court,
+                opponent=opponent,
+            )
+        )
     warns = [
         AdvancementWarning(
             match_id=w["match_id"],
@@ -3072,6 +3096,7 @@ def send_finalize_match_sms(
 
 # ── C2.3b Correct Finalized Match ──────────────────────────────────────
 
+
 class CorrectMatchRequest(BaseModel):
     version_id: int
     score: str
@@ -3134,22 +3159,26 @@ def correct_match(
 
         for down in downstream_a:
             if (down.runtime_status or "SCHEDULED") == "FINAL":
-                warnings.append({
-                    "match_id": down.id,
-                    "reason": "DOWNSTREAM_ALREADY_FINAL",
-                    "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
-                })
+                warnings.append(
+                    {
+                        "match_id": down.id,
+                        "reason": "DOWNSTREAM_ALREADY_FINAL",
+                        "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
+                    }
+                )
             else:
                 down.team_a_id = None
                 session.add(down)
 
         for down in downstream_b:
             if (down.runtime_status or "SCHEDULED") == "FINAL":
-                warnings.append({
-                    "match_id": down.id,
-                    "reason": "DOWNSTREAM_ALREADY_FINAL",
-                    "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
-                })
+                warnings.append(
+                    {
+                        "match_id": down.id,
+                        "reason": "DOWNSTREAM_ALREADY_FINAL",
+                        "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
+                    }
+                )
             else:
                 down.team_b_id = None
                 session.add(down)
@@ -3190,7 +3219,9 @@ def correct_match(
         ).all()
         down_assign_map = {a.match_id: a for a in down_assignments}
         down_slot_ids = [a.slot_id for a in down_assignments]
-        down_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(down_slot_ids))).all() if down_slot_ids else []
+        down_slots = (
+            session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(down_slot_ids))).all() if down_slot_ids else []
+        )
         down_slot_map = {s.id: s for s in down_slots}
 
         for u in raw_updates:
@@ -3221,17 +3252,19 @@ def correct_match(
                 if opp_id and opp_id != u["team_id"]:
                     opp = adv_team_map.get(opp_id)
                     opponent = (opp.display_name or opp.name) if opp else None
-            downstream.append(DownstreamUpdate(
-                match_id=u["match_id"],
-                slot_filled=u["slot_filled"],
-                team_id=u["team_id"],
-                team_name=team_name,
-                role=u.get("role", "WINNER"),
-                next_day=next_day,
-                next_time=next_time,
-                next_court=next_court,
-                opponent=opponent,
-            ))
+            downstream.append(
+                DownstreamUpdate(
+                    match_id=u["match_id"],
+                    slot_filled=u["slot_filled"],
+                    team_id=u["team_id"],
+                    team_name=team_name,
+                    role=u.get("role", "WINNER"),
+                    next_day=next_day,
+                    next_time=next_time,
+                    next_court=next_court,
+                    opponent=opponent,
+                )
+            )
 
     warns = [
         AdvancementWarning(
@@ -3252,6 +3285,7 @@ def correct_match(
 
 # ── C2.3c Repair Advancement ────────────────────────────────────────────
 
+
 @router.post(
     "/desk/tournaments/{tournament_id}/repair-advancement",
 )
@@ -3270,15 +3304,13 @@ def repair_advancement(
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
 
     # Phase 1: Fix broken placeholders for BLW/BLL bracket QFs
     # BLW had W09-W16 → should be L01-L08
     # BLL had L09-L16 → should be L01-L08
     placeholder_fixes = 0
-    wf_r2_pattern = re.compile(r'^(.+_WF_R2_)([WL])(\d+)$')
+    wf_r2_pattern = re.compile(r"^(.+_WF_R2_)([WL])(\d+)$")
 
     for m in all_matches:
         if m.match_type not in ("MAIN", "CONSOLATION"):
@@ -3370,6 +3402,7 @@ def repair_advancement(
 
 
 # ── C2.4 Set Match Status ──────────────────────────────────────────────
+
 
 @router.patch(
     "/desk/tournaments/{tournament_id}/matches/{match_id}/status",
@@ -3484,6 +3517,7 @@ def set_match_status(
 
 # ── Impact endpoint ──────────────────────────────────────────────────────
 
+
 @router.get(
     "/desk/tournaments/{tournament_id}/impact",
     response_model=ImpactResponse,
@@ -3504,16 +3538,12 @@ def get_impact(
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
     if match_id:
-        all_matches = session.exec(
-            select(Match).where(Match.schedule_version_id == version_id)
-        ).all()
+        all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
         target_matches = [m for m in all_matches if m.id == match_id]
         if not target_matches:
             raise HTTPException(status_code=404, detail="Match not found in version")
     else:
-        all_matches = session.exec(
-            select(Match).where(Match.schedule_version_id == version_id)
-        ).all()
+        all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
         target_matches = all_matches
 
     match_by_id = {m.id: m for m in all_matches}
@@ -3526,32 +3556,32 @@ def get_impact(
     ).all()
     assignment_by_match_id = {a.match_id: a for a in assignments}
     slot_ids = list({a.slot_id for a in assignments})
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     event_ids = list({m.event_id for m in all_matches})
-    events = session.exec(
-        select(Event).where(Event.id.in_(event_ids))
-    ).all() if event_ids else []
+    events = session.exec(select(Event).where(Event.id.in_(event_ids))).all() if event_ids else []
     event_map = {e.id: e for e in events}
 
     # Build reverse index: upstream_match_id → list of (downstream_match, slot, role)
     downstream_map: Dict[int, List[dict]] = {}
     for m in all_matches:
         if m.source_match_a_id:
-            downstream_map.setdefault(m.source_match_a_id, []).append({
-                "downstream": m,
-                "slot": "team_a",
-                "role": (m.source_a_role or "WINNER").upper(),
-            })
+            downstream_map.setdefault(m.source_match_a_id, []).append(
+                {
+                    "downstream": m,
+                    "slot": "team_a",
+                    "role": (m.source_a_role or "WINNER").upper(),
+                }
+            )
         if m.source_match_b_id:
-            downstream_map.setdefault(m.source_match_b_id, []).append({
-                "downstream": m,
-                "slot": "team_b",
-                "role": (m.source_b_role or "WINNER").upper(),
-            })
+            downstream_map.setdefault(m.source_match_b_id, []).append(
+                {
+                    "downstream": m,
+                    "slot": "team_b",
+                    "role": (m.source_b_role or "WINNER").upper(),
+                }
+            )
 
     # Load team names
     team_ids = set()
@@ -3566,9 +3596,7 @@ def get_impact(
     team_map = {t.id: t for t in teams}
 
     # Load locks for this version
-    locks = session.exec(
-        select(MatchLock).where(MatchLock.schedule_version_id == version_id)
-    ).all()
+    locks = session.exec(select(MatchLock).where(MatchLock.schedule_version_id == version_id)).all()
     locked_match_ids = {lk.match_id for lk in locks}
 
     def _team_disp(tid, placeholder):
@@ -3736,22 +3764,24 @@ def get_impact(
         winner_terminal_label = _terminal_label(m, "WINNER") if winner_target is None else None
         loser_terminal_label = _terminal_label(m, "LOSER") if loser_target is None else None
 
-        impacts.append(MatchImpactItem(
-            match_id=m.id,
-            match_number=m.id,
-            match_code=m.match_code or "",
-            stage=stage,
-            status=status,
-            team1_display=_team_disp(m.team_a_id, m.placeholder_side_a),
-            team2_display=_team_disp(m.team_b_id, m.placeholder_side_b),
-            team1_id=m.team_a_id,
-            team2_id=m.team_b_id,
-            winner_team_id=m.winner_team_id,
-            winner_target=winner_target,
-            loser_target=loser_target,
-            winner_terminal_label=winner_terminal_label,
-            loser_terminal_label=loser_terminal_label,
-        ))
+        impacts.append(
+            MatchImpactItem(
+                match_id=m.id,
+                match_number=m.id,
+                match_code=m.match_code or "",
+                stage=stage,
+                status=status,
+                team1_display=_team_disp(m.team_a_id, m.placeholder_side_a),
+                team2_display=_team_disp(m.team_b_id, m.placeholder_side_b),
+                team1_id=m.team_a_id,
+                team2_id=m.team_b_id,
+                winner_team_id=m.winner_team_id,
+                winner_target=winner_target,
+                loser_target=loser_target,
+                winner_terminal_label=winner_terminal_label,
+                loser_terminal_label=loser_terminal_label,
+            )
+        )
 
     impacts.sort(key=lambda x: x.match_number)
 
@@ -3759,6 +3789,7 @@ def get_impact(
 
 
 # ── Conflict check endpoint ──────────────────────────────────────────────
+
 
 @router.post(
     "/desk/tournaments/{tournament_id}/conflicts/check",
@@ -3795,23 +3826,23 @@ def check_conflicts(
         return ConflictCheckResponse(conflicts=[])
 
     # Load all matches + assignments + slots for this version in bulk
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == payload.version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == payload.version_id)).all()
 
     match_ids_all = [m.id for m in all_matches]
-    assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == payload.version_id,
-            MatchAssignment.match_id.in_(match_ids_all),
-        )
-    ).all() if match_ids_all else []
+    assignments = (
+        session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == payload.version_id,
+                MatchAssignment.match_id.in_(match_ids_all),
+            )
+        ).all()
+        if match_ids_all
+        else []
+    )
     assignment_map = {a.match_id: a for a in assignments}
 
     slot_ids = list({a.slot_id for a in assignments})
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     # Team display names
@@ -3851,10 +3882,7 @@ def check_conflicts(
         t_display = team_name_map.get(tid, f"Team {tid}")
 
         # Build list of OTHER matches this team is in (same version, different match)
-        team_matches = [
-            m for m in all_matches
-            if m.id != match.id and (m.team_a_id == tid or m.team_b_id == tid)
-        ]
+        team_matches = [m for m in all_matches if m.id != match.id and (m.team_a_id == tid or m.team_b_id == tid)]
 
         # ── 1) Concurrent play: team already IN_PROGRESS elsewhere ───────
         for om in team_matches:
@@ -3865,12 +3893,14 @@ def check_conflicts(
                 if om_slot:
                     cl = om_slot.court_label or str(om_slot.court_number)
                     court_label = f"Court {cl}" if not cl.lower().startswith("court") else cl
-                conflicts.append(ConflictItem(
-                    code="TEAM_ALREADY_PLAYING",
-                    team_display=t_display,
-                    message=f"{t_display} is already playing (Match #{om.id} on {court_label}).",
-                    details={"match_number": om.id, "court_name": court_label},
-                ))
+                conflicts.append(
+                    ConflictItem(
+                        code="TEAM_ALREADY_PLAYING",
+                        team_display=t_display,
+                        message=f"{t_display} is already playing (Match #{om.id} on {court_label}).",
+                        details={"match_number": om.id, "court_name": court_label},
+                    )
+                )
                 break  # one warning per team is enough
 
         # ── 2) Daily cap: >2 matches on the same day ─────────────────────
@@ -3887,12 +3917,14 @@ def check_conflicts(
             # The current match would also count toward today
             if same_day_count >= DAILY_MATCH_CAP:
                 day_offset = (this_day - tournament.start_date).days + 1
-                conflicts.append(ConflictItem(
-                    code="DAY_CAP_EXCEEDED",
-                    team_display=t_display,
-                    message=f"{t_display} would have {same_day_count + 1} matches on Day {day_offset} (cap is {DAILY_MATCH_CAP}).",
-                    details={"day_index": day_offset, "count": same_day_count + 1, "cap": DAILY_MATCH_CAP},
-                ))
+                conflicts.append(
+                    ConflictItem(
+                        code="DAY_CAP_EXCEEDED",
+                        team_display=t_display,
+                        message=f"{t_display} would have {same_day_count + 1} matches on Day {day_offset} (cap is {DAILY_MATCH_CAP}).",
+                        details={"day_index": day_offset, "count": same_day_count + 1, "cap": DAILY_MATCH_CAP},
+                    )
+                )
 
         # ── 3) Rest time: insufficient gap from last match ───────────────
         if this_slot:
@@ -3918,17 +3950,24 @@ def check_conflicts(
                         closest_match_id = om.id
 
                 if closest_delta is not None and closest_delta < MIN_REST_MINUTES:
-                    conflicts.append(ConflictItem(
-                        code="REST_TOO_SHORT",
-                        team_display=t_display,
-                        message=f"{t_display} rest time would be {closest_delta} min (< {MIN_REST_MINUTES} min).",
-                        details={"rest_minutes": closest_delta, "min_required": MIN_REST_MINUTES, "prior_match": closest_match_id},
-                    ))
+                    conflicts.append(
+                        ConflictItem(
+                            code="REST_TOO_SHORT",
+                            team_display=t_display,
+                            message=f"{t_display} rest time would be {closest_delta} min (< {MIN_REST_MINUTES} min).",
+                            details={
+                                "rest_minutes": closest_delta,
+                                "min_required": MIN_REST_MINUTES,
+                                "prior_match": closest_match_id,
+                            },
+                        )
+                    )
 
     return ConflictCheckResponse(conflicts=conflicts)
 
 
 # ── Pool Projection models + endpoints ───────────────────────────────────
+
 
 class ProjectedTeamItem(BaseModel):
     team_id: int
@@ -4007,9 +4046,7 @@ def get_pool_projection(
             raise HTTPException(status_code=404, detail="Event not found")
         event_ids = [event_id]
     else:
-        all_events = session.exec(
-            select(Event).where(Event.tournament_id == tournament_id)
-        ).all()
+        all_events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
         event_ids = [e.id for e in all_events]
 
     projections: List[EventProjectionItem] = []
@@ -4017,38 +4054,40 @@ def get_pool_projection(
         proj = compute_wf_projection(session, tournament_id, version_id, eid)
         if proj is None:
             continue
-        projections.append(EventProjectionItem(
-            event_id=proj.event_id,
-            event_name=proj.event_name,
-            wf_complete=proj.wf_complete,
-            total_wf_matches=proj.total_wf_matches,
-            finalized_wf_matches=proj.finalized_wf_matches,
-            pools=[
-                ProjectedPoolItem(
-                    pool_label=p.pool_label,
-                    pool_display=p.pool_display,
-                    teams=[
-                        ProjectedTeamItem(
-                            team_id=t.team_id,
-                            team_display=t.team_display,
-                            seed_position=t.seed_position,
-                            bucket=t.bucket,
-                            status=t.status,
-                            wf_wins=t.wf_wins,
-                            wf_losses=t.wf_losses,
-                            wf_game_diff=t.wf_game_diff,
-                            wf_games_lost=t.wf_games_lost,
-                            wf2_game_diff=t.wf2_game_diff,
-                            wf2_games_lost=t.wf2_games_lost,
-                            placement_reason=t.placement_reason,
-                        )
-                        for t in p.teams
-                    ],
-                )
-                for p in proj.pools
-            ],
-            unresolved_teams=proj.unresolved_teams,
-        ))
+        projections.append(
+            EventProjectionItem(
+                event_id=proj.event_id,
+                event_name=proj.event_name,
+                wf_complete=proj.wf_complete,
+                total_wf_matches=proj.total_wf_matches,
+                finalized_wf_matches=proj.finalized_wf_matches,
+                pools=[
+                    ProjectedPoolItem(
+                        pool_label=p.pool_label,
+                        pool_display=p.pool_display,
+                        teams=[
+                            ProjectedTeamItem(
+                                team_id=t.team_id,
+                                team_display=t.team_display,
+                                seed_position=t.seed_position,
+                                bucket=t.bucket,
+                                status=t.status,
+                                wf_wins=t.wf_wins,
+                                wf_losses=t.wf_losses,
+                                wf_game_diff=t.wf_game_diff,
+                                wf_games_lost=t.wf_games_lost,
+                                wf2_game_diff=t.wf2_game_diff,
+                                wf2_games_lost=t.wf2_games_lost,
+                                placement_reason=t.placement_reason,
+                            )
+                            for t in p.teams
+                        ],
+                    )
+                    for p in proj.pools
+                ],
+                unresolved_teams=proj.unresolved_teams,
+            )
+        )
 
     return PoolProjectionResponse(
         tournament_id=tournament_id,
@@ -4124,6 +4163,7 @@ def confirm_pool_placement(
 
 # ── Standings models + endpoint ──────────────────────────────────────────
 
+
 class StandingsRow(BaseModel):
     team_id: int
     team_display: str
@@ -4146,9 +4186,7 @@ class StandingsEvent(BaseModel):
     event_name: str
     division_name: Optional[str] = None
     rows: List[StandingsRow]
-    tiebreak_notes: str = (
-        "Sorted by W/L, then Sets Lost (lowest), then Total Game Differential (highest to lowest)."
-    )
+    tiebreak_notes: str = "Sorted by W/L, then Sets Lost (lowest), then Total Game Differential (highest to lowest)."
     warnings: List[Dict[str, Any]] = []
 
 
@@ -4219,6 +4257,7 @@ def get_standings(
 
     # Group matches by event_id, then by pool (derived from match_code)
     from collections import defaultdict
+
     matches_by_event_pool: Dict[tuple, List[Match]] = defaultdict(list)
     for m in all_rr:
         pool = None
@@ -4271,13 +4310,57 @@ def get_standings(
 
             # Win/loss from winner_team_id
             if m.winner_team_id == a_id:
-                rows.setdefault(a_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
-                rows.setdefault(b_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
+                rows.setdefault(
+                    a_id,
+                    {
+                        "wins": 0,
+                        "losses": 0,
+                        "sets_won": 0,
+                        "sets_lost": 0,
+                        "games_won": 0,
+                        "games_lost": 0,
+                        "played": 0,
+                    },
+                )
+                rows.setdefault(
+                    b_id,
+                    {
+                        "wins": 0,
+                        "losses": 0,
+                        "sets_won": 0,
+                        "sets_lost": 0,
+                        "games_won": 0,
+                        "games_lost": 0,
+                        "played": 0,
+                    },
+                )
                 rows[a_id]["wins"] += 1
                 rows[b_id]["losses"] += 1
             elif m.winner_team_id == b_id:
-                rows.setdefault(a_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
-                rows.setdefault(b_id, {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "played": 0})
+                rows.setdefault(
+                    a_id,
+                    {
+                        "wins": 0,
+                        "losses": 0,
+                        "sets_won": 0,
+                        "sets_lost": 0,
+                        "games_won": 0,
+                        "games_lost": 0,
+                        "played": 0,
+                    },
+                )
+                rows.setdefault(
+                    b_id,
+                    {
+                        "wins": 0,
+                        "losses": 0,
+                        "sets_won": 0,
+                        "sets_lost": 0,
+                        "games_won": 0,
+                        "games_lost": 0,
+                        "played": 0,
+                    },
+                )
                 rows[b_id]["wins"] += 1
                 rows[a_id]["losses"] += 1
 
@@ -4328,28 +4411,30 @@ def get_standings(
         sorted_rows = base_sorted_rows
 
         label_suffix = f" — {div_name}" if div_name else ""
-        standings_events.append(StandingsEvent(
-            event_id=eid,
-            event_name=f"{ev_name}{label_suffix}",
-            division_name=div_name,
-            rows=[
-                StandingsRow(
-                    team_id=tid,
-                    team_display=_t_disp(tid),
-                    rank=idx + 1,
-                    set_diff=(r["sets_won"] - r["sets_lost"]),
-                    game_diff=(r["games_won"] - r["games_lost"]),
-                    rank_explanation=(
-                        f"W:{r['wins']} | "
-                        f"SetsLost:{r['sets_lost']} | "
-                        f"GameDiff:{(r['games_won'] - r['games_lost']):+d}"
-                    ),
-                    **r,
-                )
-                for idx, (tid, r) in enumerate(sorted_rows)
-            ],
-            warnings=warnings,
-        ))
+        standings_events.append(
+            StandingsEvent(
+                event_id=eid,
+                event_name=f"{ev_name}{label_suffix}",
+                division_name=div_name,
+                rows=[
+                    StandingsRow(
+                        team_id=tid,
+                        team_display=_t_disp(tid),
+                        rank=idx + 1,
+                        set_diff=(r["sets_won"] - r["sets_lost"]),
+                        game_diff=(r["games_won"] - r["games_lost"]),
+                        rank_explanation=(
+                            f"W:{r['wins']} | "
+                            f"SetsLost:{r['sets_lost']} | "
+                            f"GameDiff:{(r['games_won'] - r['games_lost']):+d}"
+                        ),
+                        **r,
+                    )
+                    for idx, (tid, r) in enumerate(sorted_rows)
+                ],
+                warnings=warnings,
+            )
+        )
 
     standings_events.sort(key=lambda e: (e.event_name, e.division_name or ""))
 
@@ -4361,6 +4446,7 @@ def get_standings(
 
 
 # ── Bulk Status Models ───────────────────────────────────────────────────
+
 
 class BulkPauseRequest(BaseModel):
     version_id: int
@@ -4378,6 +4464,7 @@ class BulkStatusResponse(BaseModel):
 
 
 # ── Desk Teams ───────────────────────────────────────────────────────────
+
 
 class DeskTeamItem(BaseModel):
     team_id: int
@@ -4409,9 +4496,7 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
     from app.models.sms_log import SmsLog
     from app.models.team_avoid_edge import TeamAvoidEdge
 
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_ids = [e.id for e in events]
     if not event_ids:
         return MergeDuplicateTeamsResponse(
@@ -4424,9 +4509,7 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
             sms_logs_relinked=0,
         )
 
-    teams = session.exec(
-        select(Team).where(Team.event_id.in_(event_ids))
-    ).all()
+    teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()
     teams_by_event: Dict[int, List[Team]] = {}
     for team in teams:
         teams_by_event.setdefault(team.event_id, []).append(team)
@@ -4512,9 +4595,13 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
                 canonical.seed = _prefer_team_value(canonical.seed, duplicate.seed)
                 canonical.display_name = _prefer_team_value(canonical.display_name, duplicate.display_name)
                 canonical.rating = _prefer_team_value(canonical.rating, duplicate.rating)
-                canonical.player1_cellphone = _prefer_team_value(canonical.player1_cellphone, duplicate.player1_cellphone)
+                canonical.player1_cellphone = _prefer_team_value(
+                    canonical.player1_cellphone, duplicate.player1_cellphone
+                )
                 canonical.player1_email = _prefer_team_value(canonical.player1_email, duplicate.player1_email)
-                canonical.player2_cellphone = _prefer_team_value(canonical.player2_cellphone, duplicate.player2_cellphone)
+                canonical.player2_cellphone = _prefer_team_value(
+                    canonical.player2_cellphone, duplicate.player2_cellphone
+                )
                 canonical.player2_email = _prefer_team_value(canonical.player2_email, duplicate.player2_email)
                 canonical.p1_cell = _prefer_team_value(canonical.p1_cell, duplicate.p1_cell)
                 canonical.p1_email = _prefer_team_value(canonical.p1_email, duplicate.p1_email)
@@ -4579,13 +4666,9 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
                 sms_logs_relinked += 1
                 session.add(log)
 
-            canonical_links = session.exec(
-                select(TeamPlayer).where(TeamPlayer.team_id == canonical.id)
-            ).all()
+            canonical_links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == canonical.id)).all()
             canonical_links_by_player = {link.player_id: link for link in canonical_links}
-            duplicate_links = session.exec(
-                select(TeamPlayer).where(TeamPlayer.team_id.in_(duplicate_ids))
-            ).all()
+            duplicate_links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(duplicate_ids))).all()
             for link in duplicate_links:
                 existing = canonical_links_by_player.get(link.player_id)
                 if existing:
@@ -4664,35 +4747,33 @@ def get_desk_teams(
     """List all teams across all events for this tournament."""
     from app.models.event import Event
 
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_map = {e.id: e.name for e in events}
     event_ids = list(event_map.keys())
     if not event_ids:
         return []
 
-    teams = session.exec(
-        select(Team).where(Team.event_id.in_(event_ids))
-    ).all()
+    teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()
 
     items = []
     for t in sorted(teams, key=lambda t: (event_map.get(t.event_id, ""), t.seed or 9999, t.id)):
-        items.append(DeskTeamItem(
-            team_id=t.id,
-            event_id=t.event_id,
-            event_name=event_map.get(t.event_id, ""),
-            seed=t.seed,
-            name=t.name,
-            display_name=t.display_name,
-            rating=t.rating,
-            player1_cellphone=t.player1_cellphone,
-            player1_email=t.player1_email,
-            player2_cellphone=t.player2_cellphone,
-            player2_email=t.player2_email,
-            is_defaulted=t.is_defaulted if t.is_defaulted else False,
-            notes=t.notes,
-        ))
+        items.append(
+            DeskTeamItem(
+                team_id=t.id,
+                event_id=t.event_id,
+                event_name=event_map.get(t.event_id, ""),
+                seed=t.seed,
+                name=t.name,
+                display_name=t.display_name,
+                rating=t.rating,
+                player1_cellphone=t.player1_cellphone,
+                player1_email=t.player1_email,
+                player2_cellphone=t.player2_cellphone,
+                player2_email=t.player2_email,
+                is_defaulted=t.is_defaulted if t.is_defaulted else False,
+                notes=t.notes,
+            )
+        )
     return items
 
 
@@ -4732,7 +4813,6 @@ def default_team_weekend(
     session: Session = Depends(get_session),
 ):
     """Mark a team as defaulted and auto-default all their remaining matches."""
-    from app.services.reschedule_engine import SCORING_FORMATS
 
     team = session.get(Team, team_id)
     if not team:
@@ -4745,9 +4825,7 @@ def default_team_weekend(
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(404, "Schedule version not found")
 
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == payload.version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == payload.version_id)).all()
 
     defaulted_ids: List[int] = []
 
@@ -4796,9 +4874,7 @@ def default_team_weekend(
         apply_advancement_with_details(session, mid)
 
     # Second pass: check if advancement placed the defaulted team into new matches
-    refreshed = session.exec(
-        select(Match).where(Match.schedule_version_id == payload.version_id)
-    ).all()
+    refreshed = session.exec(select(Match).where(Match.schedule_version_id == payload.version_id)).all()
     for m in refreshed:
         if m.id in defaulted_ids:
             continue
@@ -4820,6 +4896,7 @@ def default_team_weekend(
 
 # ── Court State Models ───────────────────────────────────────────────────
 
+
 class CourtStateItem(BaseModel):
     court_label: str
     is_closed: bool
@@ -4833,6 +4910,7 @@ class CourtStatePatchRequest(BaseModel):
 
 
 # ── Bulk Endpoints ───────────────────────────────────────────────────────
+
 
 @router.post(
     "/desk/tournaments/{tournament_id}/bulk/pause-in-progress",
@@ -4907,18 +4985,20 @@ def bulk_delay_after(
     ).all()
     match_ids = [m.id for m in matches]
 
-    assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == payload.version_id,
-            MatchAssignment.match_id.in_(match_ids),
-        )
-    ).all() if match_ids else []
+    assignments = (
+        session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == payload.version_id,
+                MatchAssignment.match_id.in_(match_ids),
+            )
+        ).all()
+        if match_ids
+        else []
+    )
     assignment_map = {a.match_id: a for a in assignments}
 
     slot_ids = list({a.slot_id for a in assignments})
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))
-    ).all() if slot_ids else []
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(slot_ids))).all() if slot_ids else []
     slot_map = {s.id: s for s in slots}
 
     updated_ids: List[int] = []
@@ -5033,6 +5113,7 @@ def bulk_undelay(
 
 # ── Court State Endpoints ────────────────────────────────────────────────
 
+
 @router.get(
     "/desk/tournaments/{tournament_id}/courts/state",
     response_model=List[CourtStateItem],
@@ -5048,11 +5129,7 @@ def get_court_states(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    states = session.exec(
-        select(TournamentCourtState).where(
-            TournamentCourtState.tournament_id == tournament_id
-        )
-    ).all()
+    states = session.exec(select(TournamentCourtState).where(TournamentCourtState.tournament_id == tournament_id)).all()
 
     return [
         CourtStateItem(
@@ -5125,6 +5202,7 @@ def patch_court_state(
 
 # ── Match Move endpoint ──────────────────────────────────────────────────
 
+
 class MoveMatchRequest(BaseModel):
     version_id: int
     target_slot_id: int
@@ -5148,7 +5226,6 @@ def move_match(
 ):
     """Move a match to a different slot (court/time). DRAFT only."""
     from app.utils.manual_assignment import (
-        ManualAssignmentValidationError,
         validate_slot_available,
     )
 
@@ -5176,7 +5253,10 @@ def move_match(
         raise HTTPException(status_code=404, detail="Target slot not found in version")
 
     available, reason = validate_slot_available(
-        session, payload.target_slot_id, payload.version_id, exclude_match_id=match_id,
+        session,
+        payload.target_slot_id,
+        payload.version_id,
+        exclude_match_id=match_id,
     )
     if not available:
         occupant = session.exec(
@@ -5245,6 +5325,7 @@ def move_match(
 
 # ── Match Swap endpoint ──────────────────────────────────────────────────
 
+
 class SwapMatchesRequest(BaseModel):
     version_id: int
     match_a_id: int
@@ -5310,7 +5391,8 @@ def swap_matches(
 
     if not assign_a or not assign_b:
         raise HTTPException(
-            status_code=400, detail="Both matches must be assigned to slots to swap",
+            status_code=400,
+            detail="Both matches must be assigned to slots to swap",
         )
 
     slot_a = assign_a.slot_id
@@ -5369,6 +5451,7 @@ def swap_matches(
 
 
 # ── Add Time Slot endpoint ───────────────────────────────────────────────
+
 
 class AddSlotRequest(BaseModel):
     version_id: int
@@ -5434,7 +5517,9 @@ def add_time_slots(
     session: Session = Depends(get_session),
 ):
     """Add individual time slots for specified courts. DRAFT only."""
-    from datetime import date as date_type, time as time_type
+    from datetime import date as date_type
+    from datetime import time as time_type
+
     from app.utils.courts import court_label_for_index
 
     tournament = session.get(Tournament, tournament_id)
@@ -5486,15 +5571,17 @@ def add_time_slots(
         session.add(slot)
         session.flush()
 
-        created.append(AddSlotItem(
-            slot_id=slot.id,
-            day_date=day.isoformat(),
-            start_time=payload.start_time,
-            end_time=payload.end_time,
-            court_number=cn,
-            court_label=label,
-            block_minutes=block,
-        ))
+        created.append(
+            AddSlotItem(
+                slot_id=slot.id,
+                day_date=day.isoformat(),
+                start_time=payload.start_time,
+                end_time=payload.end_time,
+                court_number=cn,
+                court_label=label,
+                block_minutes=block,
+            )
+        )
 
     session.commit()
     return AddSlotResponse(success=True, created_slots=created)
@@ -5510,7 +5597,8 @@ def delete_time_slots(
     session: Session = Depends(get_session),
 ):
     """Delete unassigned time slots for specified day/start/courts. DRAFT only."""
-    from datetime import date as date_type, time as time_type
+    from datetime import date as date_type
+    from datetime import time as time_type
 
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -5547,17 +5635,25 @@ def delete_time_slots(
     assignment_by_slot = {a.slot_id: a for a in assignments}
 
     match_ids = [a.match_id for a in assignments if a.match_id is not None]
-    matches = session.exec(
-        select(Match).where(Match.id.in_(match_ids))  # type: ignore
-    ).all() if match_ids else []
+    matches = (
+        session.exec(
+            select(Match).where(Match.id.in_(match_ids))  # type: ignore
+        ).all()
+        if match_ids
+        else []
+    )
     match_by_id = {m.id: m for m in matches if m.id is not None}
 
-    slot_locks = session.exec(
-        select(SlotLock).where(
-            SlotLock.schedule_version_id == payload.version_id,
-            SlotLock.slot_id.in_(slot_ids),  # type: ignore
-        )
-    ).all() if slot_ids else []
+    slot_locks = (
+        session.exec(
+            select(SlotLock).where(
+                SlotLock.schedule_version_id == payload.version_id,
+                SlotLock.slot_id.in_(slot_ids),  # type: ignore
+            )
+        ).all()
+        if slot_ids
+        else []
+    )
     locks_by_slot: Dict[int, List[SlotLock]] = {}
     for lock in slot_locks:
         locks_by_slot.setdefault(lock.slot_id, []).append(lock)
@@ -5606,6 +5702,7 @@ def delete_time_slots(
 
 
 # ── Add Court endpoint ───────────────────────────────────────────────────
+
 
 class AddCourtRequest(BaseModel):
     version_id: int
@@ -5682,7 +5779,6 @@ def add_court(
     session: Session = Depends(get_session),
 ):
     """Add a court to the tournament and optionally create matching time slots."""
-    import json as _json
 
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -6115,9 +6211,7 @@ def fill_court_slots(
             reference_windows[key] = s.block_minutes
 
     existing_on_target = {
-        (s.day_date, s.start_time, s.end_time)
-        for s in existing_slots
-        if s.court_number == court_number
+        (s.day_date, s.start_time, s.end_time) for s in existing_slots if s.court_number == court_number
     }
 
     created = 0
@@ -6151,6 +6245,7 @@ def fill_court_slots(
 
 # ── Reschedule models ────────────────────────────────────────────────────
 
+
 class FeasibilityRequest(BaseModel):
     version_id: int
     mode: str
@@ -6176,7 +6271,7 @@ class ReschedulePreviewRequest(BaseModel):
     mode: str  # PARTIAL_DAY | FULL_WASHOUT | COURT_LOSS
     affected_day: str  # ISO date
     unavailable_from: Optional[str] = None  # HH:MM
-    available_from: Optional[str] = None     # HH:MM
+    available_from: Optional[str] = None  # HH:MM
     unavailable_courts: Optional[List[int]] = None
     target_days: Optional[List[str]] = None
     extend_day_end: Optional[str] = None  # HH:MM
@@ -6232,6 +6327,7 @@ class RescheduleApplyResponse(BaseModel):
 
 # ── Reschedule endpoints ─────────────────────────────────────────────────
 
+
 @router.post(
     "/desk/tournaments/{tournament_id}/reschedule/feasibility",
     response_model=FeasibilityResponse,
@@ -6280,7 +6376,8 @@ def reschedule_preview(
     payload: ReschedulePreviewRequest,
     session: Session = Depends(get_session),
 ):
-    from datetime import date as _date, time as _time
+    from datetime import date as _date
+    from datetime import time as _time
 
     version = session.get(ScheduleVersion, payload.version_id)
     if not version or version.tournament_id != tournament_id:
@@ -6397,12 +6494,13 @@ def reschedule_apply(
 
 # ── Rebuild Remaining Schedule ──────────────────────────────────────────
 
+
 class RebuildDayConfigItem(BaseModel):
-    date: str         # ISO date
-    start_time: str   # HH:MM
-    end_time: str     # HH:MM
+    date: str  # ISO date
+    start_time: str  # HH:MM
+    end_time: str  # HH:MM
     courts: int
-    format: str       # REGULAR | PRO_SET_8 | PRO_SET_4
+    format: str  # REGULAR | PRO_SET_8 | PRO_SET_4
 
 
 class RebuildRequest(BaseModel):
@@ -6455,16 +6553,20 @@ class RebuildApplyResponse(BaseModel):
 
 
 def _parse_day_configs(items: List[RebuildDayConfigItem]) -> List[RebuildDayConfigDC]:
-    from datetime import date as _date, time as _time
+    from datetime import date as _date
+    from datetime import time as _time
+
     configs = []
     for item in items:
-        configs.append(RebuildDayConfigDC(
-            day_date=_date.fromisoformat(item.date),
-            start_time=_time.fromisoformat(item.start_time),
-            end_time=_time.fromisoformat(item.end_time),
-            courts=item.courts,
-            format=item.format,
-        ))
+        configs.append(
+            RebuildDayConfigDC(
+                day_date=_date.fromisoformat(item.date),
+                start_time=_time.fromisoformat(item.start_time),
+                end_time=_time.fromisoformat(item.end_time),
+                courts=item.courts,
+                format=item.format,
+            )
+        )
     return configs
 
 
@@ -6483,7 +6585,10 @@ def rebuild_preview(
 
     day_configs = _parse_day_configs(payload.days)
     preview = compute_rebuild_preview(
-        session, tournament_id, payload.version_id, day_configs,
+        session,
+        tournament_id,
+        payload.version_id,
+        day_configs,
         drop_consolation=payload.drop_consolation,
         day1_max_matches=payload.day1_max_matches,
     )
@@ -6510,9 +6615,7 @@ def rebuild_preview(
             )
             for m in preview.matches
         ],
-        per_day=[
-            RebuildDaySummary(**d) for d in preview.per_day
-        ],
+        per_day=[RebuildDaySummary(**d) for d in preview.per_day],
         dropped_count=preview.dropped_count,
         day1_match_count=preview.day1_match_count,
     )
@@ -6535,7 +6638,10 @@ def rebuild_apply(
 
     day_configs = _parse_day_configs(payload.days)
     result = apply_rebuild(
-        session, tournament_id, payload.version_id, day_configs,
+        session,
+        tournament_id,
+        payload.version_id,
+        day_configs,
         drop_consolation=payload.drop_consolation,
         day1_max_matches=payload.day1_max_matches,
     )

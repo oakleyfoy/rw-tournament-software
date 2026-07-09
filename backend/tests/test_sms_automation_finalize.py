@@ -38,10 +38,7 @@ def test_post_match_next_includes_winner_when_next_slot_is_earlier_same_day(sess
     session.add(ev)
     session.flush()
 
-    teams = [
-        Team(event_id=ev.id, name=f"T{i}", seed=i, display_name=f"T{i}")
-        for i in range(1, 5)
-    ]
+    teams = [Team(event_id=ev.id, name=f"T{i}", seed=i, display_name=f"T{i}") for i in range(1, 5)]
     session.add_all(teams)
     session.flush()
     ta, tb, tc, td = teams

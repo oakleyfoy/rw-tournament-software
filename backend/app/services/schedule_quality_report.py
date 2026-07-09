@@ -17,7 +17,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from sqlmodel import Session, select
 
@@ -26,7 +26,6 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
-from app.models.team import Team
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,7 @@ REST_MINUTES_SCORING_TO_SCORING = 90
 @dataclass
 class CheckResult:
     """Result of a single quality check."""
+
     name: str
     passed: bool
     summary: str
@@ -56,6 +56,7 @@ class CheckResult:
 @dataclass
 class QualityReport:
     """Full schedule quality report."""
+
     version_id: int
     overall_passed: bool
     checks: List[CheckResult]
@@ -87,18 +88,12 @@ def generate_quality_report(
             stats={},
         )
 
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
     all_assignments = session.exec(
         select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
     ).all()
-    all_slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
-    ).all()
-    events = session.exec(
-        select(Event).where(Event.tournament_id == tournament_id)
-    ).all()
+    all_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
 
     # Build lookup maps
     slot_by_id = {s.id: s for s in all_slots}
@@ -150,7 +145,8 @@ def _check_completeness(
 
     if not unassigned:
         return CheckResult(
-            "completeness", True,
+            "completeness",
+            True,
             f"All {total} matches assigned",
         )
 
@@ -165,7 +161,8 @@ def _check_completeness(
         details.append(f"{event_name} / {match_type}: {len(matches)} unassigned")
 
     return CheckResult(
-        "completeness", False,
+        "completeness",
+        False,
         f"{len(unassigned)} of {total} matches unassigned ({assigned}/{total} assigned)",
         details,
     )
@@ -202,7 +199,8 @@ def _check_sequencing(
         return CheckResult("sequencing", True, "All match dependencies satisfied")
 
     return CheckResult(
-        "sequencing", False,
+        "sequencing",
+        False,
         f"{len(violations)} sequencing violations",
         violations,
     )
@@ -256,7 +254,8 @@ def _check_rest_compliance(
         return CheckResult("rest_compliance", True, f"All rest gaps satisfied ({assigned_count} matches checked)")
 
     return CheckResult(
-        "rest_compliance", False,
+        "rest_compliance",
+        False,
         f"{len(violations)} rest violations",
         violations,
     )
@@ -283,15 +282,14 @@ def _check_daily_cap(
     for team_id, day_counts in team_day_counts.items():
         for day_date, count in day_counts.items():
             if count > 2:
-                violations.append(
-                    f"Team {team_id}: {count} matches on {day_date} (max 2)"
-                )
+                violations.append(f"Team {team_id}: {count} matches on {day_date} (max 2)")
 
     if not violations:
         return CheckResult("daily_cap", True, "No team exceeds 2 matches/day")
 
     return CheckResult(
-        "daily_cap", False,
+        "daily_cap",
+        False,
         f"{len(violations)} daily cap violations",
         violations,
     )
@@ -331,7 +329,8 @@ def _check_staggering(
         return CheckResult("staggering", True, "Events well-staggered across all days", details)
 
     return CheckResult(
-        "staggering", False,
+        "staggering",
+        False,
         f"{issues} day(s) with insufficient event staggering",
         details,
     )
@@ -357,20 +356,20 @@ def _check_spare_courts(
         spare_counts.append(spare)
 
         if spare < 1:
-            violations.append(
-                f"{day_date} {start_time}: {spare} spare courts ({assigned}/{total} used)"
-            )
+            violations.append(f"{day_date} {start_time}: {spare} spare courts ({assigned}/{total} used)")
 
     avg_spare = sum(spare_counts) / len(spare_counts) if spare_counts else 0
 
     if not violations:
         return CheckResult(
-            "spare_courts", True,
+            "spare_courts",
+            True,
             f"All time buckets have spare courts (avg {avg_spare:.1f} spare)",
         )
 
     return CheckResult(
-        "spare_courts", False,
+        "spare_courts",
+        False,
         f"{len(violations)} time bucket(s) with 0 spare courts",
         violations,
     )

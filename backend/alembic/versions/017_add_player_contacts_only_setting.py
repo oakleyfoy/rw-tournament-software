@@ -5,9 +5,9 @@ Revises: 016_add_sms_test_mode_settings
 Create Date: 2026-03-03
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "017_add_player_contacts_only_setting"
 down_revision = "016_add_sms_test_mode_settings"

@@ -1,11 +1,12 @@
 """Tests for SMS Phase 2: Send endpoints, log, settings, templates."""
 
+from datetime import date, datetime, time, timedelta, timezone
+
 import pytest
-from datetime import datetime, timedelta, timezone, date, time
 from sqlmodel import Session, select
 
 from app.models.sms_log import SmsLog
-from app.models.sms_template import SmsTemplate, DEFAULT_SMS_TEMPLATES
+from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.tournament_sms_settings import TournamentSmsSettings
 
 
@@ -32,9 +33,9 @@ def setup_tournament_with_teams(session: Session):
     Create a tournament with an event and 4 teams (2 with phones, 2 without).
     Returns (tournament, event, teams_list).
     """
-    from app.models.tournament import Tournament
     from app.models.event import Event
     from app.models.team import Team
+    from app.models.tournament import Tournament
 
     tournament = Tournament(
         name="SMS Phase 2 Test",
@@ -327,9 +328,7 @@ def test_player_lookup_does_not_auto_create_from_team_slots(
     assert resp.status_code == 200
     assert resp.json() == []
 
-    players = session.exec(
-        select(Player).where(Player.tournament_id == tournament.id)
-    ).all()
+    players = session.exec(select(Player).where(Player.tournament_id == tournament.id)).all()
     team_links = session.exec(select(TeamPlayer)).all()
     assert players == []
     assert team_links == []
@@ -483,28 +482,17 @@ def test_wipe_players_removes_all_player_related_rows(
     assert data["sms_logs_unlinked"] == 1
     assert data["matches_cleared"] == 2
 
-    assert session.exec(
-        select(Player).where(Player.tournament_id == tournament.id)
-    ).all() == []
+    assert session.exec(select(Player).where(Player.tournament_id == tournament.id)).all() == []
     assert session.exec(select(TeamPlayer)).all() == []
-    assert session.exec(
-        select(Team).where(Team.event_id == event.id)
-    ).all() == []
-    assert session.exec(
-        select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament.id)
-    ).all() == []
-    assert session.exec(
-        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)
-    ).all() == []
-    assert session.exec(
-        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament.id)
-    ).all() == []
-    assert session.exec(
-        select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament.id)
-    ).all() == []
-    assert session.exec(
-        select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)
-    ).all() == []
+    assert session.exec(select(Team).where(Team.event_id == event.id)).all() == []
+    assert session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament.id)).all() == []
+    assert session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament.id)).all() == []
+    assert (
+        session.exec(select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament.id)).all()
+        == []
+    )
+    assert session.exec(select(SmsConsentEvent).where(SmsConsentEvent.tournament_id == tournament.id)).all() == []
+    assert session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all() == []
 
     refreshed_match = session.get(type(match), match.id)
     assert refreshed_match is not None
@@ -518,9 +506,7 @@ def test_wipe_players_removes_all_player_related_rows(
     assert refreshed_downstream is not None
     assert refreshed_downstream.placeholder_side_a == f"Winner of Match #{match.id}"
 
-    logs = session.exec(
-        select(SmsLog).where(SmsLog.tournament_id == tournament.id)
-    ).all()
+    logs = session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all()
     assert len(logs) == 1
     assert logs[0].team_id is None
 
@@ -581,9 +567,7 @@ def test_team_text_with_legacy_player_cellphone_fields(client, session, setup_to
     assert data["message_type"] == "team_direct"
 
 
-def test_team_text_prefers_ui_edited_cellphones_over_stale_p_fields(
-    client, session, setup_tournament_with_teams
-):
+def test_team_text_prefers_ui_edited_cellphones_over_stale_p_fields(client, session, setup_tournament_with_teams):
     """
     Team send should use UI-edited cellphone fields when both field sets exist.
     """
@@ -628,9 +612,7 @@ def test_match_text(client, session, setup_tournament_with_teams):
     from app.models.match import Match
     from app.models.schedule_version import ScheduleVersion
 
-    version = ScheduleVersion(
-        tournament_id=tournament.id, version_number=1, status="draft"
-    )
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
     session.add(version)
     session.commit()
     session.refresh(version)
@@ -671,9 +653,7 @@ def test_match_text_no_teams_assigned(client, session, setup_tournament_with_tea
     from app.models.match import Match
     from app.models.schedule_version import ScheduleVersion
 
-    version = ScheduleVersion(
-        tournament_id=tournament.id, version_number=1, status="draft"
-    )
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
     session.add(version)
     session.commit()
     session.refresh(version)
@@ -710,9 +690,7 @@ def test_preview_match(client, session, setup_tournament_with_teams):
     from app.models.match import Match
     from app.models.schedule_version import ScheduleVersion
 
-    version = ScheduleVersion(
-        tournament_id=tournament.id, version_number=1, status="draft"
-    )
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
     session.add(version)
     session.commit()
     session.refresh(version)
@@ -809,9 +787,7 @@ def test_event_division_lookup_and_send(client, session, setup_tournament_with_t
     session.add(div2_match)
     session.commit()
 
-    lookup = client.get(
-        f"/api/tournaments/{tournament.id}/sms/event/{event.id}/divisions"
-    )
+    lookup = client.get(f"/api/tournaments/{tournament.id}/sms/event/{event.id}/divisions")
     assert lookup.status_code == 200
     rows = lookup.json()
     labels = [r["division_label"] for r in rows]
@@ -845,9 +821,7 @@ def test_match_lookup_filters_completed_vs_upcoming(client, session, setup_tourn
     from app.models.schedule_slot import ScheduleSlot
     from app.models.schedule_version import ScheduleVersion
 
-    version = ScheduleVersion(
-        tournament_id=tournament.id, version_number=1, status="draft"
-    )
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
     session.add(version)
     session.commit()
     session.refresh(version)
@@ -934,9 +908,7 @@ def test_match_lookup_filters_completed_vs_upcoming(client, session, setup_tourn
     assert all(r["match_id"] != upcoming_match.id for r in completed_rows)
 
 
-def test_match_lookup_uses_single_active_version_not_old_versions(
-    client, session, setup_tournament_with_teams
-):
+def test_match_lookup_uses_single_active_version_not_old_versions(client, session, setup_tournament_with_teams):
     """Lookup should only use active desk/public/final version, not all versions."""
     tournament, event, teams = setup_tournament_with_teams
     from app.models.match import Match
@@ -1031,9 +1003,7 @@ def test_preview_blast(client, session, setup_tournament_with_teams):
     assert len(data["recipients"]) == 2
 
     # Verify no SMS log entries were created (preview = no send)
-    logs = session.exec(
-        select(SmsLog).where(SmsLog.tournament_id == tournament.id)
-    ).all()
+    logs = session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all()
     assert len(logs) == 0
 
 
@@ -1042,7 +1012,7 @@ def test_html_anchor_message_converts_to_clickable_url(client, session, setup_to
     tournament, _, teams = setup_tournament_with_teams
     team = teams[0]
     raw_message = (
-        'Pick your clinic time and see all information online at '
+        "Pick your clinic time and see all information online at "
         '<a href="https://wartournaments.com/tournament/2026-las-vegas-nv/">'
         "Las Vegas Tournament</a>"
     )
@@ -1062,10 +1032,7 @@ def test_html_anchor_message_converts_to_clickable_url(client, session, setup_to
         )
     ).all()
     assert len(logs) == 2
-    expected_fragment = (
-        "Las Vegas Tournament: "
-        "https://wartournaments.com/tournament/2026-las-vegas-nv/"
-    )
+    expected_fragment = "Las Vegas Tournament: https://wartournaments.com/tournament/2026-las-vegas-nv/"
     for entry in logs:
         body = entry.message_body or ""
         assert "<a " not in body.lower()
@@ -1215,9 +1182,7 @@ def test_rollout_metrics_summary(client, session, setup_tournament_with_teams):
     assert data["recent_failures"][0]["error_message"] == "carrier reject"
 
 
-def test_rollout_metrics_normalizes_blank_trigger_in_failures(
-    client, session, setup_tournament_with_teams
-):
+def test_rollout_metrics_normalizes_blank_trigger_in_failures(client, session, setup_tournament_with_teams):
     """Legacy blank trigger values should not break rollout metrics."""
     tournament, _, teams = setup_tournament_with_teams
     now = datetime.now(timezone.utc)
@@ -1346,9 +1311,7 @@ def test_settings_player_contacts_only_toggle(client, session, setup_tournament_
     assert get_data["player_contacts_only"] is True
 
 
-def test_player_contacts_only_requires_player_links_for_new_teams(
-    client, session, setup_tournament_with_teams
-):
+def test_player_contacts_only_requires_player_links_for_new_teams(client, session, setup_tournament_with_teams):
     """With player-only mode enabled, new team phone fields require player-link sync."""
     tournament, event, _teams = setup_tournament_with_teams
     from app.models.team import Team
@@ -1423,9 +1386,7 @@ def test_test_mode_blocks_non_allowlisted_numbers(client, session, setup_tournam
     assert allowed[0]["phone"] == "+19013593035"
 
 
-def test_test_mode_blast_includes_allowlist_number_not_on_any_team(
-    client, session, setup_tournament_with_teams
-):
+def test_test_mode_blast_includes_allowlist_number_not_on_any_team(client, session, setup_tournament_with_teams):
     """Manual blast in test mode should still reach explicit test phones."""
     tournament, _, _ = setup_tournament_with_teams
 
@@ -1595,9 +1556,7 @@ def test_sync_player_contacts_populates_player_lookup(client, session, setup_tou
     assert send.json()["sent"] == 1
 
 
-def test_sync_player_contacts_endpoint_creates_links_for_new_team(
-    client, session, setup_tournament_with_teams
-):
+def test_sync_player_contacts_endpoint_creates_links_for_new_team(client, session, setup_tournament_with_teams):
     """Manual sync endpoint should create Player/TeamPlayer links after team edits."""
     tournament, event, _teams = setup_tournament_with_teams
     from app.models.team import Team
@@ -1640,9 +1599,7 @@ def test_sync_player_contacts_endpoint_creates_links_for_new_team(
     assert allowed.json()["sent"] == 1
 
 
-def test_sms_status_when_twilio_is_configured(
-    client, session, setup_tournament_with_teams, monkeypatch
-):
+def test_sms_status_when_twilio_is_configured(client, session, setup_tournament_with_teams, monkeypatch):
     """Status should report configured Twilio when env vars are present."""
     tournament, _, _ = setup_tournament_with_teams
     import app.services.twilio_service as twilio_mod
@@ -1662,9 +1619,7 @@ def test_sms_status_when_twilio_is_configured(
     twilio_mod._twilio_service = None
 
 
-def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
-    client, session, setup_tournament_with_teams
-):
+def test_first_match_runner_endpoint_dry_run_send_and_dedupe(client, session, setup_tournament_with_teams):
     """First-match 24h runner supports dry-run, send, and dedupe behavior."""
     tournament, event, teams = setup_tournament_with_teams
 
@@ -1737,9 +1692,7 @@ def test_first_match_runner_endpoint_dry_run_send_and_dedupe(
     assert len(logs) == 6
 
 
-def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
-    client, session, setup_tournament_with_teams
-):
+def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(client, session, setup_tournament_with_teams):
     """RR force resend endpoint should bypass prior dedupe keys for one event."""
     tournament, event, teams = setup_tournament_with_teams
     from app.models.match import Match
@@ -1854,9 +1807,7 @@ def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(
     assert len(rr_logs) == 9
 
 
-def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(
-    client, session, setup_tournament_with_teams
-):
+def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(client, session, setup_tournament_with_teams):
     """Runner scans all first matches regardless of auto_first_match toggle."""
     tournament, event, teams = setup_tournament_with_teams
 
@@ -1965,9 +1916,7 @@ def test_first_match_dry_run_reports_recipients_when_checkin_template_inactive(
     assert dry_data["sent"] == 3
 
 
-def test_first_match_runner_endpoint_window_param_is_ignored(
-    client, session, setup_tournament_with_teams
-):
+def test_first_match_runner_endpoint_window_param_is_ignored(client, session, setup_tournament_with_teams):
     """Window parameter should not affect eligibility when time constraints are disabled."""
     tournament, event, teams = setup_tournament_with_teams
 
@@ -2016,9 +1965,7 @@ def test_first_match_runner_endpoint_window_param_is_ignored(
     assert wide_data["outside_window"] == 0
 
 
-def test_manual_sms_workflow_preview_then_team_then_blast(
-    client, session, setup_tournament_with_teams
-):
+def test_manual_sms_workflow_preview_then_team_then_blast(client, session, setup_tournament_with_teams):
     """Validate the core manual workflow end-to-end."""
     tournament, _, teams = setup_tournament_with_teams
 
@@ -2049,11 +1996,7 @@ def test_manual_sms_workflow_preview_then_team_then_blast(
     assert blast_data["message_type"] == "tournament_blast"
 
     # Preview must not create logs; team+blast should create 5.
-    logs = session.exec(
-        select(SmsLog)
-        .where(SmsLog.tournament_id == tournament.id)
-        .order_by(SmsLog.id)
-    ).all()
+    logs = session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id).order_by(SmsLog.id)).all()
     assert len(logs) == 5
     assert all(log.status == "dry_run" for log in logs)
     assert [log.message_type for log in logs] == [

@@ -114,4 +114,3 @@ def test_admin_can_disable_user_and_cannot_disable_self(client, session: Session
         json={"is_active": False},
     )
     assert self_disable.status_code == 400
-

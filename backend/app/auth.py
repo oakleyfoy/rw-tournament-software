@@ -110,9 +110,7 @@ def get_user_from_token(session: Session, token: str) -> Optional[UserAccount]:
 
 
 def revoke_token(session: Session, token: str) -> None:
-    session_row = session.exec(
-        select(AuthSession).where(AuthSession.token_hash == hash_token(token))
-    ).first()
+    session_row = session.exec(select(AuthSession).where(AuthSession.token_hash == hash_token(token))).first()
     if not session_row:
         return
     session_row.revoked_at = datetime.utcnow()
@@ -179,4 +177,3 @@ def require_admin_user(
         )
     request.state.current_user = user
     return user
-

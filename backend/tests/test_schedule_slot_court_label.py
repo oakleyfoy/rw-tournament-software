@@ -2,6 +2,7 @@
 Court label must be a scalar string per slot, never a list.
 Regression: time_windows path was not unpacking get_court_labels() tuple, so court_label could be the warnings list.
 """
+
 from datetime import date, time
 
 import pytest
@@ -158,7 +159,9 @@ def test_generate_slots_respects_window_block_minutes(client: TestClient, sessio
 
     # Verify slots in database
     slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id).order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number)
+        select(ScheduleSlot)
+        .where(ScheduleSlot.schedule_version_id == version_id)
+        .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time, ScheduleSlot.court_number)
     ).all()
     assert len(slots) == 8
 
@@ -167,7 +170,7 @@ def test_generate_slots_respects_window_block_minutes(client: TestClient, sessio
     assert len(day1_slots) == 6  # 3 slots × 2 courts
     for slot in day1_slots:
         assert slot.block_minutes == 60, f"Window 1 slots must be 60 minutes, got {slot.block_minutes}"
-    
+
     # Verify start times for court 1 on day 1
     court1_day1 = [s for s in day1_slots if s.court_number == 1]
     assert len(court1_day1) == 3
@@ -183,7 +186,7 @@ def test_generate_slots_respects_window_block_minutes(client: TestClient, sessio
     assert len(day2_slots) == 2  # 2 slots × 1 court
     for slot in day2_slots:
         assert slot.block_minutes == 105, f"Window 2 slots must be 105 minutes, got {slot.block_minutes}"
-    
+
     # Verify start times for court 1 on day 2
     assert day2_slots[0].start_time == time(8, 0)
     assert day2_slots[0].end_time == time(9, 45)
@@ -339,9 +342,7 @@ def test_run_sequence_schedule_skips_manual_only_slots(session: Session):
     result = run_sequence_schedule(session, tournament.id, version.id)
     session.flush()
 
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
-    ).all()
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all()
     assigned_slot_ids = {a.slot_id for a in assignments}
     regular_slot_ids = {s.id for s in regular_slots}
     manual_only_slot_ids = {s.id for s in manual_only_slots}
@@ -350,4 +351,3 @@ def test_run_sequence_schedule_skips_manual_only_slots(session: Session):
     assert len(assignments) == 2
     assert assigned_slot_ids <= regular_slot_ids
     assert assigned_slot_ids.isdisjoint(manual_only_slot_ids)
-

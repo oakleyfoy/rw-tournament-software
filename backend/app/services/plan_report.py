@@ -9,7 +9,6 @@ Every list is returned in stable order:
   - errors/warnings sorted by (code, event_id, message)
 """
 
-import json
 import logging
 import re
 from collections import defaultdict
@@ -20,16 +19,15 @@ from sqlmodel import Session, select
 
 from app.services.draw_plan_engine import (
     DrawPlanSpec,
+    bracket_inventory,
     build_spec_from_event,
     compute_inventory,
     resolve_event_family,
-    bracket_inventory,
-    bracket_matches_for_guarantee,
 )
 from app.services.draw_plan_rules import (
     pool_config,
-    rr_round_count,
     rr_matches_per_pool,
+    rr_round_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -263,13 +261,14 @@ def _check_rr_placeholders(
         # Both sides must have SEED_ placeholder
         if not pa.startswith("SEED_") or not pb.startswith("SEED_"):
             rr_wired = False
-            errors.append(PlanReportError(
-                code="E_RR_MATCH_MISSING_PLACEHOLDER",
-                message=f"RR match {m.match_code} missing SEED_ placeholder "
-                        f"(side_a={pa!r}, side_b={pb!r})",
-                event_id=event_id,
-                context={"match_id": m.id, "match_code": m.match_code},
-            ))
+            errors.append(
+                PlanReportError(
+                    code="E_RR_MATCH_MISSING_PLACEHOLDER",
+                    message=f"RR match {m.match_code} missing SEED_ placeholder (side_a={pa!r}, side_b={pb!r})",
+                    event_id=event_id,
+                    context={"match_id": m.id, "match_code": m.match_code},
+                )
+            )
 
     return (rr_wired, bye_count)
 
@@ -309,17 +308,13 @@ def _check_rr_top2_last_round(
             continue
 
         # Find max round for this pool
-        max_round = max(
-            getattr(m, "round_index", 0) or getattr(m, "round_number", 0) or 0
-            for m in pool_matches
-        )
+        max_round = max(getattr(m, "round_index", 0) or getattr(m, "round_number", 0) or 0 for m in pool_matches)
         if max_round == 0:
             continue
 
         # Get matches in the last round
         last_round_matches = [
-            m for m in pool_matches
-            if (getattr(m, "round_index", 0) or getattr(m, "round_number", 0) or 0) == max_round
+            m for m in pool_matches if (getattr(m, "round_index", 0) or getattr(m, "round_number", 0) or 0) == max_round
         ]
 
         # Determine top-2 seeds for this pool
@@ -337,18 +332,19 @@ def _check_rr_top2_last_round(
                     break
 
         if not found:
-            errors.append(PlanReportError(
-                code="E_RR_TOP2_NOT_LAST_ROUND",
-                message=f"Pool {pool_label}: seeds {top1} and {top2} not matched "
-                        f"in final RR round {max_round}",
-                event_id=event_id,
-                context={
-                    "pool": pool_label,
-                    "top1_seed": top1,
-                    "top2_seed": top2,
-                    "last_round": max_round,
-                },
-            ))
+            errors.append(
+                PlanReportError(
+                    code="E_RR_TOP2_NOT_LAST_ROUND",
+                    message=f"Pool {pool_label}: seeds {top1} and {top2} not matched in final RR round {max_round}",
+                    event_id=event_id,
+                    context={
+                        "pool": pool_label,
+                        "top1_seed": top1,
+                        "top2_seed": top2,
+                        "last_round": max_round,
+                    },
+                )
+            )
 
 
 def _check_bracket_placeholders(
@@ -362,10 +358,7 @@ def _check_bracket_placeholders(
     Returns:
         bracket_wired: bool
     """
-    bracket_matches = [
-        m for m in matches
-        if getattr(m, "match_type", "") in ("MAIN", "CONSOLATION")
-    ]
+    bracket_matches = [m for m in matches if getattr(m, "match_type", "") in ("MAIN", "CONSOLATION")]
     if not bracket_matches:
         return True
 
@@ -382,24 +375,27 @@ def _check_bracket_placeholders(
             placeholder = getattr(m, side_attr, "") or ""
             if not placeholder:
                 bracket_wired = False
-                errors.append(PlanReportError(
-                    code="E_BRACKET_PLACEHOLDER_INVALID_SOURCE",
-                    message=f"Bracket match {m.match_code} has empty {side_attr}",
-                    event_id=event_id,
-                    context={"match_id": m.id, "match_code": m.match_code},
-                ))
+                errors.append(
+                    PlanReportError(
+                        code="E_BRACKET_PLACEHOLDER_INVALID_SOURCE",
+                        message=f"Bracket match {m.match_code} has empty {side_attr}",
+                        event_id=event_id,
+                        context={"match_id": m.id, "match_code": m.match_code},
+                    )
+                )
                 continue
 
             # Check against known patterns
             if not any(p.match(placeholder) for p in valid_patterns):
                 bracket_wired = False
-                errors.append(PlanReportError(
-                    code="E_BRACKET_PLACEHOLDER_INVALID_SOURCE",
-                    message=f"Bracket match {m.match_code} has invalid placeholder "
-                            f"{side_attr}={placeholder!r}",
-                    event_id=event_id,
-                    context={"match_id": m.id, "match_code": m.match_code, "placeholder": placeholder},
-                ))
+                errors.append(
+                    PlanReportError(
+                        code="E_BRACKET_PLACEHOLDER_INVALID_SOURCE",
+                        message=f"Bracket match {m.match_code} has invalid placeholder {side_attr}={placeholder!r}",
+                        event_id=event_id,
+                        context={"match_id": m.id, "match_code": m.match_code, "placeholder": placeholder},
+                    )
+                )
 
     return bracket_wired
 
@@ -410,10 +406,7 @@ def _check_cross_division_leak(
     errors: List[PlanReportError],
 ) -> None:
     """Check bracket matches don't reference sources from other divisions."""
-    bracket_matches = [
-        m for m in matches
-        if getattr(m, "match_type", "") in ("MAIN", "CONSOLATION")
-    ]
+    bracket_matches = [m for m in matches if getattr(m, "match_type", "") in ("MAIN", "CONSOLATION")]
     if not bracket_matches:
         return
 
@@ -434,17 +427,19 @@ def _check_cross_division_leak(
                 ref_code = placeholder.split(":", 1)[1]
                 ref_bracket = bracket_pattern.search(ref_code)
                 if ref_bracket and ref_bracket.group(1) != my_label:
-                    errors.append(PlanReportError(
-                        code="E_CROSS_DIVISION_LEAK",
-                        message=f"Match {mc} (bracket {my_label}) references "
-                                f"{ref_code} from bracket {ref_bracket.group(1)}",
-                        event_id=event_id,
-                        context={
-                            "match_code": mc,
-                            "my_bracket": my_label,
-                            "referenced_bracket": ref_bracket.group(1),
-                        },
-                    ))
+                    errors.append(
+                        PlanReportError(
+                            code="E_CROSS_DIVISION_LEAK",
+                            message=f"Match {mc} (bracket {my_label}) references "
+                            f"{ref_code} from bracket {ref_bracket.group(1)}",
+                            event_id=event_id,
+                            context={
+                                "match_code": mc,
+                                "my_bracket": my_label,
+                                "referenced_bracket": ref_bracket.group(1),
+                            },
+                        )
+                    )
 
 
 def _check_duplicate_placeholder_slots(
@@ -474,19 +469,21 @@ def _check_duplicate_placeholder_slots(
                 seed = _extract_seed(placeholder)
                 if seed is not None:
                     if seed in seen_seeds:
-                        errors.append(PlanReportError(
-                            code="E_DUPLICATE_PLACEHOLDER_SLOTS",
-                            message=f"Seed {seed} appears in multiple matches in "
-                                    f"pool {pool} round {rnd}: {seen_seeds[seed]} and {mc}",
-                            event_id=event_id,
-                            context={
-                                "seed": seed,
-                                "pool": pool,
-                                "round": rnd,
-                                "match_1": seen_seeds[seed],
-                                "match_2": mc,
-                            },
-                        ))
+                        errors.append(
+                            PlanReportError(
+                                code="E_DUPLICATE_PLACEHOLDER_SLOTS",
+                                message=f"Seed {seed} appears in multiple matches in "
+                                f"pool {pool} round {rnd}: {seen_seeds[seed]} and {mc}",
+                                event_id=event_id,
+                                context={
+                                    "seed": seed,
+                                    "pool": pool,
+                                    "round": rnd,
+                                    "match_1": seen_seeds[seed],
+                                    "match_2": mc,
+                                },
+                            )
+                        )
                     else:
                         seen_seeds[seed] = mc
 
@@ -534,10 +531,12 @@ def build_schedule_plan_report(
             schedule_version_id=version_id,
             version_status=None,
             ok=False,
-            blocking_errors=[PlanReportError(
-                code="E_TOURNAMENT_NOT_FOUND",
-                message=f"Tournament {tournament_id} not found",
-            )],
+            blocking_errors=[
+                PlanReportError(
+                    code="E_TOURNAMENT_NOT_FOUND",
+                    message=f"Tournament {tournament_id} not found",
+                )
+            ],
             warnings=[],
             events=[],
             totals=TotalsInfo(events=0, matches_total=0),
@@ -549,25 +548,25 @@ def build_schedule_plan_report(
     if version_id is not None:
         version = session.get(ScheduleVersion, version_id)
         if not version:
-            blocking_errors.append(PlanReportError(
-                code="E_VERSION_NOT_FOUND",
-                message=f"Schedule version {version_id} not found",
-            ))
+            blocking_errors.append(
+                PlanReportError(
+                    code="E_VERSION_NOT_FOUND",
+                    message=f"Schedule version {version_id} not found",
+                )
+            )
         elif version.tournament_id != tournament_id:
-            blocking_errors.append(PlanReportError(
-                code="E_VERSION_NOT_FOUND",
-                message=f"Schedule version {version_id} does not belong to tournament {tournament_id}",
-            ))
+            blocking_errors.append(
+                PlanReportError(
+                    code="E_VERSION_NOT_FOUND",
+                    message=f"Schedule version {version_id} does not belong to tournament {tournament_id}",
+                )
+            )
             version = None
         else:
             version_status = version.status
 
     # ── Load events (sorted by event_id for determinism) ─────────────────
-    all_events = session.exec(
-        select(Event)
-        .where(Event.tournament_id == tournament_id)
-        .order_by(Event.id)
-    ).all()
+    all_events = session.exec(select(Event).where(Event.tournament_id == tournament_id).order_by(Event.id)).all()
 
     # Only consider finalized events for the report
     finalized_events = [e for e in all_events if e.draw_status == "final"]
@@ -575,11 +574,13 @@ def build_schedule_plan_report(
     # Warn about non-finalized events
     for e in all_events:
         if e.draw_status != "final":
-            warnings.append(PlanReportError(
-                code="W_EVENT_NOT_FINALIZED",
-                message=f"Event '{e.name}' (id={e.id}) has draw_status='{e.draw_status or 'none'}'",
-                event_id=e.id,
-            ))
+            warnings.append(
+                PlanReportError(
+                    code="W_EVENT_NOT_FINALIZED",
+                    message=f"Event '{e.name}' (id={e.id}) has draw_status='{e.draw_status or 'none'}'",
+                    event_id=e.id,
+                )
+            )
 
     # ── Load actual matches (if version exists) ──────────────────────────
     matches_by_event: Dict[int, list] = defaultdict(list)
@@ -619,20 +620,23 @@ def build_schedule_plan_report(
         # ── Inventory validation errors from engine ──────────────────────
         if inv.has_errors():
             for err_msg in inv.errors:
-                blocking_errors.append(PlanReportError(
-                    code="E_DRAW_PLAN_INVALID",
-                    message=err_msg,
-                    event_id=event.id,
-                ))
+                blocking_errors.append(
+                    PlanReportError(
+                        code="E_DRAW_PLAN_INVALID",
+                        message=err_msg,
+                        event_id=event.id,
+                    )
+                )
 
         # ── E_EVENT_ZERO_MATCHES ─────────────────────────────────────────
         if expected_total == 0 and event.team_count >= 2:
-            blocking_errors.append(PlanReportError(
-                code="E_EVENT_ZERO_MATCHES",
-                message=f"Event '{event.name}' produces 0 expected matches "
-                        f"with {event.team_count} teams",
-                event_id=event.id,
-            ))
+            blocking_errors.append(
+                PlanReportError(
+                    code="E_EVENT_ZERO_MATCHES",
+                    message=f"Event '{event.name}' produces 0 expected matches with {event.team_count} teams",
+                    event_id=event.id,
+                )
+            )
 
         # ── Placeholder + inventory checks (only when version exists) ────
         rr_wired = True
@@ -642,66 +646,61 @@ def build_schedule_plan_report(
         if version is not None:
             # E_INVENTORY_MISMATCH
             if expected_total != actual_total:
-                blocking_errors.append(PlanReportError(
-                    code="E_INVENTORY_MISMATCH",
-                    message=f"Event '{event.name}': expected {expected_total} matches, "
-                            f"found {actual_total}",
-                    event_id=event.id,
-                    context={
-                        "expected": expected_total,
-                        "actual": actual_total,
-                    },
-                ))
+                blocking_errors.append(
+                    PlanReportError(
+                        code="E_INVENTORY_MISMATCH",
+                        message=f"Event '{event.name}': expected {expected_total} matches, found {actual_total}",
+                        event_id=event.id,
+                        context={
+                            "expected": expected_total,
+                            "actual": actual_total,
+                        },
+                    )
+                )
 
             # RR placeholder checks
-            rr_wired, bye_count = _check_rr_placeholders(
-                actual_matches, event.id, blocking_errors
-            )
+            rr_wired, bye_count = _check_rr_placeholders(actual_matches, event.id, blocking_errors)
 
             # RR top-2-last-round check
-            _check_rr_top2_last_round(
-                actual_matches, event.id, spec, family, blocking_errors
-            )
+            _check_rr_top2_last_round(actual_matches, event.id, spec, family, blocking_errors)
 
             # Bracket placeholder checks
-            bracket_wired = _check_bracket_placeholders(
-                actual_matches, event.id, blocking_errors
-            )
+            bracket_wired = _check_bracket_placeholders(actual_matches, event.id, blocking_errors)
 
             # Cross-division leak check
-            _check_cross_division_leak(
-                actual_matches, event.id, blocking_errors
-            )
+            _check_cross_division_leak(actual_matches, event.id, blocking_errors)
 
             # Duplicate placeholder slots check
-            _check_duplicate_placeholder_slots(
-                actual_matches, event.id, blocking_errors
-            )
+            _check_duplicate_placeholder_slots(actual_matches, event.id, blocking_errors)
 
             # Warnings
             if bye_count > 0:
-                warnings.append(PlanReportError(
-                    code="W_BYE_IN_PARTIAL_POOL",
-                    message=f"Event '{event.name}' has {bye_count} BYE match(es)",
-                    event_id=event.id,
-                    context={"bye_count": bye_count},
-                ))
+                warnings.append(
+                    PlanReportError(
+                        code="W_BYE_IN_PARTIAL_POOL",
+                        message=f"Event '{event.name}' has {bye_count} BYE match(es)",
+                        event_id=event.id,
+                        context={"bye_count": bye_count},
+                    )
+                )
 
             # Check WF R1 avoid-group conflicts on existing matches
             wf_r1 = [m for m in actual_matches if m.match_type == "WF" and m.round_index == 1]
             if wf_r1:
                 from app.models.team import Team as _Team
-                event_teams = session.exec(
-                    select(_Team).where(_Team.event_id == event.id)
-                ).all()
+
+                event_teams = session.exec(select(_Team).where(_Team.event_id == event.id)).all()
                 team_by_id = {t.id: t for t in event_teams}
                 for m in wf_r1:
                     ta = team_by_id.get(m.team_a_id) if m.team_a_id else None
                     tb = team_by_id.get(m.team_b_id) if m.team_b_id else None
-                    if (ta and tb
-                            and getattr(ta, "avoid_group", None)
-                            and getattr(tb, "avoid_group", None)
-                            and ta.avoid_group == tb.avoid_group):
+                    if (
+                        ta
+                        and tb
+                        and getattr(ta, "avoid_group", None)
+                        and getattr(tb, "avoid_group", None)
+                        and ta.avoid_group == tb.avoid_group
+                    ):
                         dn_a = getattr(ta, "display_name", None) or ta.name
                         dn_b = getattr(tb, "display_name", None) or tb.name
                         r1_msg = (
@@ -709,32 +708,37 @@ def build_schedule_plan_report(
                             f"pairs #{ta.seed} {dn_a} vs #{tb.seed} {dn_b} "
                             f"(both group '{ta.avoid_group}')"
                         )
-                        warnings.append(PlanReportError(
-                            code="W_WF_R1_AVOID_GROUP_CONFLICT",
-                            message=r1_msg,
-                            event_id=event.id,
-                            context={
-                                "match_code": m.match_code,
-                                "seed_a": ta.seed,
-                                "seed_b": tb.seed,
-                                "group": ta.avoid_group,
-                            },
-                        ))
-                        avoidance_r1_items.append(AvoidanceItemR1(
-                            match_id=m.id,
-                            match_code=m.match_code,
-                            seed_a=ta.seed,
-                            seed_b=tb.seed,
-                            team_a=dn_a,
-                            team_b=dn_b,
-                            avoid_group=ta.avoid_group,
-                            message=r1_msg,
-                        ))
+                        warnings.append(
+                            PlanReportError(
+                                code="W_WF_R1_AVOID_GROUP_CONFLICT",
+                                message=r1_msg,
+                                event_id=event.id,
+                                context={
+                                    "match_code": m.match_code,
+                                    "seed_a": ta.seed,
+                                    "seed_b": tb.seed,
+                                    "group": ta.avoid_group,
+                                },
+                            )
+                        )
+                        avoidance_r1_items.append(
+                            AvoidanceItemR1(
+                                match_id=m.id,
+                                match_code=m.match_code,
+                                seed_a=ta.seed,
+                                seed_b=tb.seed,
+                                team_a=dn_a,
+                                team_b=dn_b,
+                                avoid_group=ta.avoid_group,
+                                message=r1_msg,
+                            )
+                        )
 
             # Check WF R2 potential avoid-group conflicts (based on source R1 match groups)
             wf_r2 = [m for m in actual_matches if m.match_type == "WF" and m.round_index == 2]
             if wf_r2 and wf_r1:
                 from app.services.wf_wiring import groups_for_r1_match
+
                 # team_by_id already loaded above in the wf_r1 block
                 r1_by_id = {m.id: m for m in wf_r1}
                 for m in wf_r2:
@@ -750,44 +754,50 @@ def build_schedule_plan_report(
                                 f"sources {src_a.match_code} vs {src_b.match_code} "
                                 f"share avoid group(s) {sorted(overlap)}"
                             )
-                            warnings.append(PlanReportError(
-                                code="W_WF_R2_AVOID_GROUP_POTENTIAL_CONFLICT",
-                                message=r2_msg,
-                                event_id=event.id,
-                                context={
-                                    "match_code": m.match_code,
-                                    "source_a": src_a.match_code,
-                                    "source_b": src_b.match_code,
-                                    "overlapping_groups": sorted(overlap),
-                                },
-                            ))
-                            avoidance_r2_items.append(AvoidanceItemR2(
-                                match_id=m.id,
-                                match_code=m.match_code,
-                                source_match_codes=[src_a.match_code, src_b.match_code],
-                                overlap_groups=sorted(overlap),
-                                message=r2_msg,
-                            ))
+                            warnings.append(
+                                PlanReportError(
+                                    code="W_WF_R2_AVOID_GROUP_POTENTIAL_CONFLICT",
+                                    message=r2_msg,
+                                    event_id=event.id,
+                                    context={
+                                        "match_code": m.match_code,
+                                        "source_a": src_a.match_code,
+                                        "source_b": src_b.match_code,
+                                        "overlapping_groups": sorted(overlap),
+                                    },
+                                )
+                            )
+                            avoidance_r2_items.append(
+                                AvoidanceItemR2(
+                                    match_id=m.id,
+                                    match_code=m.match_code,
+                                    source_match_codes=[src_a.match_code, src_b.match_code],
+                                    overlap_groups=sorted(overlap),
+                                    message=r2_msg,
+                                )
+                            )
 
         # ── Build event report ───────────────────────────────────────────
-        event_reports.append(EventReport(
-            event_id=event.id,
-            name=event.name,
-            teams_count=event.team_count,
-            template_code=spec.template_key,
-            waterfall=wf_info,
-            pools=pools_info,
-            brackets=brackets_info,
-            placeholders=PlaceholderInfo(
-                rr_wired=rr_wired,
-                bracket_wired=bracket_wired,
-                bye_count=bye_count,
-            ),
-            inventory=InventoryInfo(
-                expected_total=expected_total,
-                actual_total=actual_total,
-            ),
-        ))
+        event_reports.append(
+            EventReport(
+                event_id=event.id,
+                name=event.name,
+                teams_count=event.team_count,
+                template_code=spec.template_key,
+                waterfall=wf_info,
+                pools=pools_info,
+                brackets=brackets_info,
+                placeholders=PlaceholderInfo(
+                    rr_wired=rr_wired,
+                    bracket_wired=bracket_wired,
+                    bye_count=bye_count,
+                ),
+                inventory=InventoryInfo(
+                    expected_total=expected_total,
+                    actual_total=actual_total,
+                ),
+            )
+        )
 
     # ── Sort errors and warnings for determinism ─────────────────────────
     blocking_errors.sort(key=lambda e: (e.code, e.event_id or 0, e.message))

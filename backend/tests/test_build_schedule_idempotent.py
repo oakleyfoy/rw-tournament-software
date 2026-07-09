@@ -8,9 +8,10 @@ Verifies that calling Build Schedule multiple times:
 - Refreshes slots and assignments correctly
 """
 
-import pytest
 from datetime import date, time
-from sqlmodel import Session, select, func
+
+import pytest
+from sqlmodel import Session, func, select
 
 from app.database import engine
 from app.models.event import Event
@@ -42,17 +43,20 @@ def idempotent_test_setup():
         # Create event with finalized draw
         # Note: draw_plan_json needs to be JSON-serializable for SQLite
         import json
+
         event = Event(
             tournament_id=tournament.id,
             name="Test Event",
             category="mixed",
             team_count=8,
             draw_status="final",
-            draw_plan_json=json.dumps({
-                "version": "1.0",
-                "template_type": "WF_TO_POOLS_DYNAMIC",
-                "wf_rounds": 1,
-            }),
+            draw_plan_json=json.dumps(
+                {
+                    "version": "1.0",
+                    "template_type": "WF_TO_POOLS_DYNAMIC",
+                    "wf_rounds": 1,
+                }
+            ),
             waterfall_match_length=60,
             standard_match_length=105,
         )
@@ -91,6 +95,7 @@ def idempotent_test_setup():
 
         # Cleanup
         from app.models.match_assignment import MatchAssignment
+
         for a in session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)).all():
             session.delete(a)
         for m in session.exec(select(Match).where(Match.schedule_version_id == version.id)).all():
@@ -113,7 +118,7 @@ class TestBuildScheduleIdempotency:
 
         with Session(engine) as session:
             # First build - generates matches
-            result1 = build_schedule_v1(
+            build_schedule_v1(
                 session=session,
                 tournament_id=setup["tournament_id"],
                 version_id=setup["version_id"],
@@ -132,7 +137,7 @@ class TestBuildScheduleIdempotency:
             assert match_count_after_build > 0, "No matches generated in first build"
 
             # Run auto-assign via second build (should NOT generate new matches)
-            result2 = build_schedule_v1(
+            build_schedule_v1(
                 session=session,
                 tournament_id=setup["tournament_id"],
                 version_id=setup["version_id"],
@@ -206,9 +211,7 @@ class TestBuildScheduleIdempotency:
             match_ids_2 = [m.id for m in matches_2]
 
             # Assertions
-            assert match_count_1 == match_count_2, (
-                f"Match count changed from {match_count_1} to {match_count_2}"
-            )
+            assert match_count_1 == match_count_2, f"Match count changed from {match_count_1} to {match_count_2}"
             assert match_codes_1 == match_codes_2, "Match codes changed after second build"
             assert match_ids_1 == match_ids_2, "Match IDs changed after second build"
             assert result1.summary.matches_generated == result2.summary.matches_generated, (

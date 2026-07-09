@@ -177,9 +177,7 @@ def get_time_windows_summary(tournament_id: int, session: Session = Depends(get_
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    use_time_windows = session.exec(
-        select(Tournament.use_time_windows).where(Tournament.id == tournament_id)
-    ).one()
+    use_time_windows = session.exec(select(Tournament.use_time_windows).where(Tournament.id == tournament_id)).one()
 
     if use_time_windows:
         capacity = resolve_tournament_capacity(session, tournament_id)

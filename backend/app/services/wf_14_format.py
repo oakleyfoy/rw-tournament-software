@@ -8,7 +8,7 @@ Fixed division mapping: A = ranks 1,3,6 · B = ranks 2,4,5.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
     from app.models.team import Team

@@ -19,7 +19,7 @@ Key differences from V1:
 4. **Partial assignments**: Can assign some matches even if others are blocked
 """
 
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlmodel import Session, select
@@ -31,15 +31,11 @@ from app.models.schedule_version import ScheduleVersion
 
 # Import V1 utilities that we reuse
 from app.utils.auto_assign import (
-    STAGE_PRECEDENCE,
-    VALID_STAGES,
-    AutoAssignError,
     AutoAssignValidationError,
     get_match_sort_key,
     get_slot_sort_key,
     validate_inputs,
 )
-
 
 # ============================================================================
 # V2-specific configuration
@@ -257,81 +253,84 @@ def is_slot_compatible_v2(
 
 
 def check_round_dependencies_for_auto_assign_v2(
-    session: Session,
-    match: Match,
-    slot: ScheduleSlot,
-    schedule_version_id: int,
-    assigned_match_ids: set
+    session: Session, match: Match, slot: ScheduleSlot, schedule_version_id: int, assigned_match_ids: set
 ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """
     Check round dependencies for auto-assign V2.
-    
+
     Only checks assigned prerequisites - doesn't block Round N matches if Round N-1 matches
     haven't been assigned yet (they'll be assigned in order).
-    
+
     Returns: (is_valid, conflict_reason, conflict_details)
     """
     # Round 1 matches have no dependencies
     if match.round_index is None or match.round_index <= 1:
         return True, None, None
-    
+
     # Find all prerequisite matches (Round N-1 in same event and stage)
     prerequisite_round = match.round_index - 1
-    
+
     prerequisite_matches = session.exec(
         select(Match).where(
             Match.schedule_version_id == schedule_version_id,
             Match.event_id == match.event_id,
             Match.match_type == match.match_type,
-            Match.round_index == prerequisite_round
+            Match.round_index == prerequisite_round,
         )
     ).all()
-    
+
     if not prerequisite_matches:
         # No prerequisites found - allow assignment
         return True, None, None
-    
+
     # Calculate target slot start time in minutes
     slot_start_minutes = slot.start_time.hour * 60 + slot.start_time.minute if slot.start_time else 0
-    
+
     # Check each prerequisite match - ALL must be assigned and finished
     # (Auto-assign processes matches in order, so this should normally be satisfied)
     for prereq_match in prerequisite_matches:
         if prereq_match.id not in assigned_match_ids:
             # ALL Round N-1 matches must be assigned before ANY Round N match can be scheduled
-            return False, CONFLICT_ROUND_DEPENDENCY, {
-                "prerequisite_match": prereq_match.match_code,
-                "prerequisite_round": prerequisite_round,
-                "reason": f"Cannot place Match: Round {match.round_index} cannot start before a Round {prerequisite_round} Match"
-            }
-        
+            return (
+                False,
+                CONFLICT_ROUND_DEPENDENCY,
+                {
+                    "prerequisite_match": prereq_match.match_code,
+                    "prerequisite_round": prerequisite_round,
+                    "reason": f"Cannot place Match: Round {match.round_index} cannot start before a Round {prerequisite_round} Match",
+                },
+            )
+
         # Get prerequisite assignment
         prereq_assignment = session.exec(
             select(MatchAssignment).where(
-                MatchAssignment.schedule_version_id == schedule_version_id,
-                MatchAssignment.match_id == prereq_match.id
+                MatchAssignment.schedule_version_id == schedule_version_id, MatchAssignment.match_id == prereq_match.id
             )
         ).first()
-        
+
         if not prereq_assignment:
             continue
-        
+
         prereq_slot = session.get(ScheduleSlot, prereq_assignment.slot_id)
         if not prereq_slot or not prereq_slot.start_time:
             continue
-        
+
         # Calculate prerequisite match end time
         prereq_start_minutes = prereq_slot.start_time.hour * 60 + prereq_slot.start_time.minute
         prereq_end_minutes = prereq_start_minutes + prereq_match.duration_minutes
-        
+
         # Check if prerequisite ends before target start
         if prereq_end_minutes > slot_start_minutes:
-            return False, CONFLICT_ROUND_DEPENDENCY, {
-                "prerequisite_match": prereq_match.match_code,
-                "prerequisite_round": prerequisite_round,
-                "reason": f"Cannot place Match: Round {match.round_index} cannot start before a Round {prerequisite_round} Match"
-            }
-    
+            return (
+                False,
+                CONFLICT_ROUND_DEPENDENCY,
+                {
+                    "prerequisite_match": prereq_match.match_code,
+                    "prerequisite_round": prerequisite_round,
+                    "reason": f"Cannot place Match: Round {match.round_index} cannot start before a Round {prerequisite_round} Match",
+                },
+            )
+
     return True, None, None
 
 
@@ -416,7 +415,7 @@ def auto_assign_v2(
     ).all()
 
     occupied_slot_ids = {a.slot_id for a in existing_assignments}
-    
+
     # Manual Schedule Editor: Track locked assignments
     # Locked matches should NOT be reassigned by auto-assign (admin overrides)
     locked_match_ids = {a.match_id for a in existing_assignments if a.locked}
@@ -447,7 +446,7 @@ def auto_assign_v2(
         # Manual Schedule Editor: Skip locked matches (admin has manually assigned them)
         if match.id in locked_match_ids:
             continue
-        
+
         assigned = False
         conflicts_for_match = []
 
@@ -466,7 +465,9 @@ def auto_assign_v2(
                     # Track conflict for reporting
                     conflict_record = {
                         "slot_id": slot.id,
-                        "slot_time": f"{slot.day_date} {slot.start_time}" if slot.day_date and slot.start_time else "N/A",
+                        "slot_time": f"{slot.day_date} {slot.start_time}"
+                        if slot.day_date and slot.start_time
+                        else "N/A",
                         "reason": round_deps_reason,
                         "details": round_deps_details or {},
                     }
@@ -555,4 +556,3 @@ def auto_assign_v2(
     result.duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
     return result
-

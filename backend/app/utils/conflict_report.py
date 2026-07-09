@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 class UnassignedMatchDetail(BaseModel):
     """Details about why a match is unassigned"""
-    
+
     match_id: int
     stage: str
     round_index: int
@@ -29,7 +29,7 @@ class UnassignedMatchDetail(BaseModel):
 
 class ConflictReportSummary(BaseModel):
     """Top-level summary of schedule state"""
-    
+
     tournament_id: int
     schedule_version_id: int
     total_slots: int
@@ -41,7 +41,7 @@ class ConflictReportSummary(BaseModel):
 
 class SlotPressure(BaseModel):
     """Slot availability pressure metrics"""
-    
+
     unused_slots_count: int
     unused_slots_by_day: dict
     unused_slots_by_court: dict
@@ -52,7 +52,7 @@ class SlotPressure(BaseModel):
 
 class StageTimeline(BaseModel):
     """Timeline information for a stage"""
-    
+
     stage: str
     first_assigned_start_time: Optional[str]
     last_assigned_start_time: Optional[str]
@@ -63,7 +63,7 @@ class StageTimeline(BaseModel):
 
 class OrderingViolation(BaseModel):
     """A detected ordering constraint violation"""
-    
+
     type: str
     earlier_match_id: int
     later_match_id: int
@@ -72,14 +72,14 @@ class OrderingViolation(BaseModel):
 
 class OrderingIntegrity(BaseModel):
     """Ordering constraint validation results"""
-    
+
     deterministic_order_ok: bool
     violations: List[OrderingViolation]
 
 
 class TeamConflictDetail(BaseModel):
     """A detected team overlap conflict (same team in two overlapping slots)"""
-    
+
     match_id: int
     match_code: str
     slot_id: int
@@ -92,7 +92,7 @@ class TeamConflictDetail(BaseModel):
 
 class TeamConflictsSummary(BaseModel):
     """Summary of team overlap conflicts for matches with known teams"""
-    
+
     known_team_conflicts_count: int
     unknown_team_matches_count: int
     conflicts: List[TeamConflictDetail]
@@ -100,11 +100,10 @@ class TeamConflictsSummary(BaseModel):
 
 class ConflictReportV1(BaseModel):
     """Complete conflict report for a schedule version"""
-    
+
     summary: ConflictReportSummary
     unassigned: List[UnassignedMatchDetail]
     slot_pressure: SlotPressure
     stage_timeline: List[StageTimeline]
     ordering_integrity: OrderingIntegrity
     team_conflicts: Optional[TeamConflictsSummary] = None  # Added for team overlap detection
-

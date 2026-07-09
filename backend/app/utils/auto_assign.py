@@ -16,8 +16,8 @@ Non-goals (V1):
 
 import re
 from collections import defaultdict
-from datetime import datetime, time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
 
@@ -179,7 +179,7 @@ def is_slot_compatible(slot: ScheduleSlot, match: Match, occupied_slot_ids: set)
 
 def _extract_division(match_code: str) -> str:
     """Extract bracket division from match_code (BWW/BWL/BLW/BLL), or '' if none."""
-    m = re.search(r'B(WW|WL|LW|LL)[_]', match_code or "")
+    m = re.search(r"B(WW|WL|LW|LL)[_]", match_code or "")
     return m.group(1) if m else ""
 
 
@@ -207,9 +207,7 @@ def _build_bracket_tier_cache(
         groups[key].append(m)
 
     for group_matches in groups.values():
-        sorted_group = sorted(
-            group_matches, key=lambda x: (x.round_index or 0, x.sequence_in_round or 0)
-        )
+        sorted_group = sorted(group_matches, key=lambda x: (x.round_index or 0, x.sequence_in_round or 0))
         n = len(sorted_group)
         if n == 0:
             continue
@@ -298,14 +296,10 @@ def check_round_dependencies_for_auto_assign(
 
     # Convert target slot to absolute minutes (days * 1440 + time)
     slot_day_offset = (slot.day_date.toordinal() if slot.day_date else 0) * 1440
-    slot_start_abs = slot_day_offset + (
-        slot.start_time.hour * 60 + slot.start_time.minute if slot.start_time else 0
-    )
+    slot_start_abs = slot_day_offset + (slot.start_time.hour * 60 + slot.start_time.minute if slot.start_time else 0)
 
     # ── Helper: check a list of prerequisite matches ──
-    def _check_prereqs(
-        prereqs: List[Match], label: str, use_rest_gap: bool = True
-    ) -> Tuple[bool, Optional[str]]:
+    def _check_prereqs(prereqs: List[Match], label: str, use_rest_gap: bool = True) -> Tuple[bool, Optional[str]]:
         """
         Verify all prerequisite matches are assigned and finished in time.
 
@@ -339,9 +333,7 @@ def check_round_dependencies_for_auto_assign(
 
             # Use absolute minutes (day * 1440 + time) for cross-day safety
             prereq_day_offset = (ps.day_date.toordinal() if ps.day_date else 0) * 1440
-            prereq_start = prereq_day_offset + (
-                ps.start_time.hour * 60 + ps.start_time.minute
-            )
+            prereq_start = prereq_day_offset + (ps.start_time.hour * 60 + ps.start_time.minute)
             prereq_end = prereq_start + pm.duration_minutes
 
             if use_rest_gap:
@@ -404,10 +396,7 @@ def check_round_dependencies_for_auto_assign(
         if (has_source_a or has_source_b) and all_version_matches:
             # Build lookup (caller should ideally cache this, but we
             # keep it safe for the rare fallback path)
-            match_by_id_local = (
-                match_by_id if match_by_id is not None
-                else {m.id: m for m in all_version_matches}
-            )
+            match_by_id_local = match_by_id if match_by_id is not None else {m.id: m for m in all_version_matches}
             source_prereqs: List[Match] = []
             if has_source_a and match.source_match_a_id in match_by_id_local:
                 source_prereqs.append(match_by_id_local[match.source_match_a_id])
@@ -418,7 +407,8 @@ def check_round_dependencies_for_auto_assign(
                 # Teams advance through brackets with natural wait times
                 # as they wait for other bracket matches to complete.
                 return _check_prereqs(
-                    source_prereqs, "source match prereqs",
+                    source_prereqs,
+                    "source match prereqs",
                     use_rest_gap=False,
                 )
             # Source links present but referenced matches not found — allow
@@ -433,14 +423,13 @@ def check_round_dependencies_for_auto_assign(
         if tier == "qf":
             return True, None  # QF matches are fully independent
 
-        prereqs = _get_bracket_prerequisites(
-            match, tier, all_version_matches, bracket_tier_cache
-        )
+        prereqs = _get_bracket_prerequisites(match, tier, all_version_matches, bracket_tier_cache)
         if not prereqs:
             return True, None
         # Bracket matches: ordering only, no extra rest gap
         return _check_prereqs(
-            prereqs, f"bracket {tier} prereqs",
+            prereqs,
+            f"bracket {tier} prereqs",
             use_rest_gap=False,
         )
 
@@ -535,8 +524,13 @@ def auto_assign_v1(session: Session, schedule_version_id: int, clear_existing: b
             if compatible:
                 # Check round dependencies
                 round_deps_ok, round_deps_reason = check_round_dependencies_for_auto_assign(
-                    session, match, slot, schedule_version_id, assigned_match_ids,
-                    bracket_tier_cache=bt_cache, all_version_matches=matches_sorted,
+                    session,
+                    match,
+                    slot,
+                    schedule_version_id,
+                    assigned_match_ids,
+                    bracket_tier_cache=bt_cache,
+                    all_version_matches=matches_sorted,
                     match_by_id=mid_cache,
                 )
                 if not round_deps_ok:
@@ -641,30 +635,25 @@ def assign_with_scope(
         raise AutoAssignValidationError(f"Schedule version {schedule_version_id} not found")
 
     # Load slots
-    slots = session.exec(
-        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == schedule_version_id)
-    ).all()
+    slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == schedule_version_id)).all()
     slots_sorted = sorted(slots, key=get_slot_sort_key)
     result.total_slots = len(slots_sorted)
     if not slots_sorted:
         raise AutoAssignValidationError("No slots exist. Generate slots first.")
 
     # Load all matches for version
-    matches = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
+    matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
 
     # Build event priority: largest draw first (team_count DESC), then by
     # event_id for deterministic tie-breaking within same-size events.
     from app.models.event import Event
+
     event_ids_in_matches = {m.event_id for m in matches}
     events = session.exec(
         select(Event).where(Event.id.in_(event_ids_in_matches))  # type: ignore[attr-defined]
     ).all()
     # Map event_id → (negative team_count for DESC, event_id for tie-break)
-    event_sort_key: Dict[int, Tuple] = {
-        e.id: (-(e.team_count or 0), e.id or 0) for e in events
-    }
+    event_sort_key: Dict[int, Tuple] = {e.id: (-(e.team_count or 0), e.id or 0) for e in events}
 
     # Filter by scope and event_id
     scope_matches = [m for m in matches if filter_fn(m) and (event_id is None or m.event_id == event_id)]
@@ -727,14 +716,15 @@ def assign_with_scope(
         return result
 
     validate_inputs(to_assign, slots_sorted, schedule_version_id)
-    occupied_slot_ids = {a.slot_id for a in session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
-    ).all()}
+    occupied_slot_ids = {
+        a.slot_id
+        for a in session.exec(
+            select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
+        ).all()
+    }
 
     # Build bracket-tier cache
-    all_ver_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
+    all_ver_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
     bt_cache = _build_bracket_tier_cache(all_ver_matches)
     mid_cache = {m.id: m for m in all_ver_matches}
 
@@ -747,8 +737,13 @@ def assign_with_scope(
             compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids)
             if compatible:
                 round_deps_ok, round_deps_reason = check_round_dependencies_for_auto_assign(
-                    session, match, slot, schedule_version_id, assigned_match_ids,
-                    bracket_tier_cache=bt_cache, all_version_matches=all_ver_matches,
+                    session,
+                    match,
+                    slot,
+                    schedule_version_id,
+                    assigned_match_ids,
+                    bracket_tier_cache=bt_cache,
+                    all_version_matches=all_ver_matches,
                     match_by_id=mid_cache,
                 )
                 if not round_deps_ok:
@@ -767,11 +762,17 @@ def assign_with_scope(
                 assigned_match_ids.add(match.id)
                 result.assigned_count += 1
                 if len(result.assigned_examples) < 10:
-                    result.assigned_examples.append({
-                        "match_id": match.id, "match_code": match.match_code, "stage": match.match_type,
-                        "slot_id": slot.id, "day": str(slot.day_date), "start_time": str(slot.start_time),
-                        "court": slot.court_label,
-                    })
+                    result.assigned_examples.append(
+                        {
+                            "match_id": match.id,
+                            "match_code": match.match_code,
+                            "stage": match.match_type,
+                            "slot_id": slot.id,
+                            "day": str(slot.day_date),
+                            "start_time": str(slot.start_time),
+                            "court": slot.court_label,
+                        }
+                    )
                 assigned = True
                 break
             else:
@@ -779,11 +780,17 @@ def assign_with_scope(
                     failure_reason = reason or "NO_COMPATIBLE_SLOT"
         if not assigned:
             result.unassigned_count += 1
-            result.unassigned_matches.append({
-                "match_id": match.id, "match_code": match.match_code, "stage": match.match_type,
-                "round_index": match.round_index, "sequence_in_round": match.sequence_in_round,
-                "duration_minutes": match.duration_minutes, "reason": failure_reason,
-            })
+            result.unassigned_matches.append(
+                {
+                    "match_id": match.id,
+                    "match_code": match.match_code,
+                    "stage": match.match_type,
+                    "round_index": match.round_index,
+                    "sequence_in_round": match.sequence_in_round,
+                    "duration_minutes": match.duration_minutes,
+                    "reason": failure_reason,
+                }
+            )
 
     session.flush()
     result.duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
@@ -836,7 +843,7 @@ def assign_by_match_ids(
     slots = session.exec(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
-            ScheduleSlot.is_active == True,
+            ScheduleSlot.is_active,
         )
     ).all()
     if target_day is not None:
@@ -854,9 +861,7 @@ def assign_by_match_ids(
 
     # Load only the requested matches
     match_id_set = set(match_ids)
-    all_matches = session.exec(
-        select(Match).where(Match.schedule_version_id == schedule_version_id)
-    ).all()
+    all_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
     target_matches = [m for m in all_matches if m.id in match_id_set]
 
     # Preserve caller's ordering: process matches in the order specified
@@ -899,8 +904,13 @@ def assign_by_match_ids(
             compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids)
             if compatible:
                 round_deps_ok, round_deps_reason = check_round_dependencies_for_auto_assign(
-                    session, match, slot, schedule_version_id, local_assigned_ids,
-                    bracket_tier_cache=bt_cache, all_version_matches=all_matches,
+                    session,
+                    match,
+                    slot,
+                    schedule_version_id,
+                    local_assigned_ids,
+                    bracket_tier_cache=bt_cache,
+                    all_version_matches=all_matches,
                     match_by_id=mid_cache,
                 )
                 if not round_deps_ok:
@@ -919,11 +929,17 @@ def assign_by_match_ids(
                 local_assigned_ids.add(match.id)
                 result.assigned_count += 1
                 if len(result.assigned_examples) < 10:
-                    result.assigned_examples.append({
-                        "match_id": match.id, "match_code": match.match_code, "stage": match.match_type,
-                        "slot_id": slot.id, "day": str(slot.day_date), "start_time": str(slot.start_time),
-                        "court": slot.court_label,
-                    })
+                    result.assigned_examples.append(
+                        {
+                            "match_id": match.id,
+                            "match_code": match.match_code,
+                            "stage": match.match_type,
+                            "slot_id": slot.id,
+                            "day": str(slot.day_date),
+                            "start_time": str(slot.start_time),
+                            "court": slot.court_label,
+                        }
+                    )
                 assigned = True
                 break
             else:
@@ -931,11 +947,17 @@ def assign_by_match_ids(
                     failure_reason = reason or "NO_COMPATIBLE_SLOT"
         if not assigned:
             result.unassigned_count += 1
-            result.unassigned_matches.append({
-                "match_id": match.id, "match_code": match.match_code, "stage": match.match_type,
-                "round_index": match.round_index, "sequence_in_round": match.sequence_in_round,
-                "duration_minutes": match.duration_minutes, "reason": failure_reason,
-            })
+            result.unassigned_matches.append(
+                {
+                    "match_id": match.id,
+                    "match_code": match.match_code,
+                    "stage": match.match_type,
+                    "round_index": match.round_index,
+                    "sequence_in_round": match.sequence_in_round,
+                    "duration_minutes": match.duration_minutes,
+                    "reason": failure_reason,
+                }
+            )
 
     session.flush()
     result.duration_ms = int((datetime.utcnow() - start_time_ts).total_seconds() * 1000)

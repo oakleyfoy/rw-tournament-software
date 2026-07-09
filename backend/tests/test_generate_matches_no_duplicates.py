@@ -11,15 +11,14 @@ import json
 from datetime import date, time
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.database import get_session
 from app.main import app
-from app.models import Event, Match, ScheduleSlot, ScheduleVersion, Team, Tournament, TournamentDay
+from app.models import Event, Match, ScheduleVersion, Team, Tournament, TournamentDay
 from app.services.schedule_orchestrator import build_schedule_v1
-from fastapi.testclient import TestClient
-
 
 # ============================================================================
 # Fixtures
@@ -107,7 +106,7 @@ def two_event_setup_fixture(session: Session):
 
         # Create teams for event
         for t in range(team_count):
-            team = Team(event_id=event.id, name=f"{name} Team {t+1}", seed=t + 1, rating=1000.0)
+            team = Team(event_id=event.id, name=f"{name} Team {t + 1}", seed=t + 1, rating=1000.0)
             session.add(team)
         session.commit()
 
@@ -196,7 +195,10 @@ def test_build_schedule_succeeds_no_integrity_error(client, session, two_event_s
     data = response.json()
     assert data["status"] == "success"
     assert data["summary"]["matches_generated"] > 0
-    assert data["summary"]["matches_generated"] == data["summary"]["assignments_created"] + data["summary"]["unassigned_matches"]
+    assert (
+        data["summary"]["matches_generated"]
+        == data["summary"]["assignments_created"] + data["summary"]["unassigned_matches"]
+    )
 
 
 def test_auto_assign_succeeds(client, session, two_event_setup):
