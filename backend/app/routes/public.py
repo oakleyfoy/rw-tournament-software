@@ -1086,6 +1086,80 @@ class RoundRobinResponse(BaseModel):
     show_court_info: bool = True
 
 
+_CD_PLACEMENT_POOL_CODE = "CD_PLACEMENT"
+
+
+def _build_rr_match_box(
+    m: Match,
+    team_map: Dict[int, Team],
+    assignment_map: Dict[int, Any],
+    slot_map: Dict[int, Any],
+    display_round_index: int,
+) -> RRMatchBox:
+    import json
+
+    line1 = _rr_team_line(m.team_a_id, m.placeholder_side_a, team_map)
+    line2 = _rr_team_line(m.team_b_id, m.placeholder_side_b, team_map)
+
+    status = (m.runtime_status or "SCHEDULED").upper()
+    score_display = None
+    if m.score_json:
+        try:
+            sd = json.loads(m.score_json) if isinstance(m.score_json, str) else m.score_json
+            if isinstance(sd, dict) and sd.get("display"):
+                score_display = sd["display"]
+            elif isinstance(sd, str):
+                score_display = sd
+        except Exception:
+            pass
+
+    winner_name = None
+    if m.winner_team_id:
+        wt = team_map.get(m.winner_team_id)
+        if wt:
+            winner_name = wt.display_name or wt.name
+
+    court_display = None
+    day_display = None
+    time_display = None
+    a = assignment_map.get(m.id)
+    if a:
+        slot = slot_map.get(a.slot_id)
+        if slot:
+            court_display = f"Court {slot.court_number}" if slot.court_number else None
+            if slot.day_date:
+                from datetime import date as date_type
+
+                dd = slot.day_date
+                if isinstance(dd, str):
+                    dd = date_type.fromisoformat(dd)
+                day_display = dd.strftime("%A, %B %d, %Y")
+            if slot.start_time:
+                st = slot.start_time
+                if isinstance(st, str):
+                    parts = st.split(":")
+                    h, mi = int(parts[0]), int(parts[1])
+                    ampm = "AM" if h < 12 else "PM"
+                    h12 = h % 12 or 12
+                    time_display = f"{h12}:{mi:02d} {ampm}"
+                else:
+                    time_display = st.strftime("%I:%M %p").lstrip("0")
+
+    return RRMatchBox(
+        match_id=m.id,
+        match_code=m.match_code,
+        round_index=display_round_index,
+        line1=line1,
+        line2=line2,
+        status=status,
+        score_display=score_display,
+        court_label=court_display,
+        day_display=day_display,
+        time_display=time_display,
+        winner_name=winner_name,
+    )
+
+
 @router.get(
     "/public/tournaments/{tournament_id}/events/{event_id}/roundrobin",
     response_model=Union[RoundRobinResponse, NotPublishedResponse],
@@ -1127,21 +1201,23 @@ def public_round_robin(
     # WF_14 loser-flight pools (C/D) are 3-team round robins encoded as
     # consolation matches. Surface them as additional divisions alongside A/B.
     # The Sunday cross-pool placement matches are not part of a single pool RR.
-    cons_pool_matches = session.exec(
+    all_cons_matches = session.exec(
         select(Match).where(
             Match.event_id == event_id,
             Match.schedule_version_id == version.id,
             Match.match_code.contains("_CONS_"),
         )
     ).all()
+    # Sunday cross-pool placement (III#1 vs IV#1, …) is shown as its own round,
+    # not folded into a single pool's round robin.
+    cross_matches = [m for m in all_cons_matches if "_CONS_SUN_" in (m.match_code or "").upper()]
     cons_pool_matches = [
         m
-        for m in cons_pool_matches
-        if (m.placement_type or "") != "WF14_CONS_CROSS"
-        and _rr_pool_code_for_match(m.match_code) is not None
+        for m in all_cons_matches
+        if m not in cross_matches and _rr_pool_code_for_match(m.match_code) is not None
     ]
 
-    display_matches = list(rr_matches) + list(cons_pool_matches)
+    display_matches = list(rr_matches) + list(cons_pool_matches) + list(cross_matches)
 
     if not display_matches:
         return RoundRobinResponse(
@@ -1194,69 +1270,8 @@ def public_round_robin(
                 event_id,
                 m.round_index,
             )
-            line1 = _rr_team_line(m.team_a_id, m.placeholder_side_a, team_map)
-            line2 = _rr_team_line(m.team_b_id, m.placeholder_side_b, team_map)
-
-            status = (m.runtime_status or "SCHEDULED").upper()
-            score_display = None
-            if m.score_json:
-                import json
-
-                try:
-                    sd = json.loads(m.score_json) if isinstance(m.score_json, str) else m.score_json
-                    if isinstance(sd, dict) and sd.get("display"):
-                        score_display = sd["display"]
-                    elif isinstance(sd, str):
-                        score_display = sd
-                except Exception:
-                    pass
-
-            winner_name = None
-            if m.winner_team_id:
-                wt = team_map.get(m.winner_team_id)
-                if wt:
-                    winner_name = wt.display_name or wt.name
-
-            court_display = None
-            day_display = None
-            time_display = None
-            a = assignment_map.get(m.id)
-            if a:
-                slot = slot_map.get(a.slot_id)
-                if slot:
-                    court_display = f"Court {slot.court_number}" if slot.court_number else None
-                    if slot.day_date:
-                        from datetime import date as date_type
-
-                        dd = slot.day_date
-                        if isinstance(dd, str):
-                            dd = date_type.fromisoformat(dd)
-                        day_display = dd.strftime("%A, %B %d, %Y")
-                    if slot.start_time:
-                        st = slot.start_time
-                        if isinstance(st, str):
-                            parts = st.split(":")
-                            h, mi = int(parts[0]), int(parts[1])
-                            ampm = "AM" if h < 12 else "PM"
-                            h12 = h % 12 or 12
-                            time_display = f"{h12}:{mi:02d} {ampm}"
-                        else:
-                            time_display = st.strftime("%I:%M %p").lstrip("0")
-
             boxes.append(
-                RRMatchBox(
-                    match_id=m.id,
-                    match_code=m.match_code,
-                    round_index=display_round_index,
-                    line1=line1,
-                    line2=line2,
-                    status=status,
-                    score_display=score_display,
-                    court_label=court_display,
-                    day_display=day_display,
-                    time_display=time_display,
-                    winner_name=winner_name,
-                )
+                _build_rr_match_box(m, team_map, assignment_map, slot_map, display_round_index)
             )
 
         pools.append(
@@ -1357,6 +1372,21 @@ def public_round_robin(
             )
         )
 
+    # Cross-pool placement round (III#1 vs IV#1, …) — appended as its own
+    # section beneath Divisions III/IV. Not scored as a pool.
+    if cross_matches:
+        cross_boxes = [
+            _build_rr_match_box(m, team_map, assignment_map, slot_map, m.round_index or 1)
+            for m in sorted(cross_matches, key=lambda m: m.sequence_in_round or 0)
+        ]
+        pools.append(
+            RRPool(
+                pool_code=_CD_PLACEMENT_POOL_CODE,
+                pool_label="Placement Round (III vs IV)",
+                matches=cross_boxes,
+            )
+        )
+
     return RoundRobinResponse(
         tournament_name=tournament.name,
         event_name=event.name,
@@ -1376,6 +1406,10 @@ def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: 
             return f"Seed {placeholder[5:]}"
         if placeholder.startswith("ConsL"):
             return f"Cons Seed {placeholder[5:]}"
+        # Cross-pool placement slots: C{n}=Division III #{n}, D{n}=Division IV #{n}.
+        if len(placeholder) == 2 and placeholder[0] in ("C", "D") and placeholder[1].isdigit():
+            div = "III" if placeholder[0] == "C" else "IV"
+            return f"{div} #{placeholder[1]}"
         return placeholder
     return "TBD"
 

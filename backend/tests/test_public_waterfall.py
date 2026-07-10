@@ -504,8 +504,10 @@ def test_public_roundrobin_wf14_includes_consolation_pools_c_and_d(client, sessi
     _mk("WOM_CONS_SAT1_D02", "MAIN", 2, 2, "ConsL3", "ConsL5")
     _mk("WOM_CONS_SAT2_D02", "MAIN", 3, 2, "ConsL2", "ConsL3")
 
-    # Sunday cross-pool placement — must NOT appear inside a pool RR.
+    # Sunday cross-pool placement — its own round, not inside a pool RR.
     _mk("WOM_CONS_SUN_01", "PLACEMENT", 1, 1, "C1", "D1", placement_type="WF14_CONS_CROSS")
+    _mk("WOM_CONS_SUN_02", "PLACEMENT", 1, 2, "C2", "D2", placement_type="WF14_CONS_CROSS")
+    _mk("WOM_CONS_SUN_03", "PLACEMENT", 1, 3, "C3", "D3", placement_type="WF14_CONS_CROSS")
 
     tournament.public_schedule_version_id = version.id
     session.add(tournament)
@@ -516,16 +518,24 @@ def test_public_roundrobin_wf14_includes_consolation_pools_c_and_d(client, sessi
     body = resp.json()
 
     pools = {p["pool_code"]: p for p in body["pools"]}
-    assert set(pools) == {"POOLA", "POOLB", "POOLC", "POOLD"}
+    assert set(pools) == {"POOLA", "POOLB", "POOLC", "POOLD", "CD_PLACEMENT"}
     assert pools["POOLC"]["pool_label"] == "Division III"
     assert pools["POOLD"]["pool_label"] == "Division IV"
 
-    # Pool C is a full 3-team round robin (3 matches), no Sunday cross-placement.
+    # Pool C/D are full 3-team round robins (3 matches each), no cross-placement.
     assert len(pools["POOLC"]["matches"]) == 3
     assert len(pools["POOLD"]["matches"]) == 3
-    all_codes = [b["match_code"] for p in body["pools"] for b in p["matches"]]
-    assert "WOM_CONS_SUN_01" not in all_codes
+    for pc in ("POOLC", "POOLD"):
+        codes = [b["match_code"] for b in pools[pc]["matches"]]
+        assert not any("_SUN_" in c for c in codes)
 
     # Placeholders render cleanly.
     c_lines = {pools["POOLC"]["matches"][0]["line1"], pools["POOLC"]["matches"][0]["line2"]}
     assert "Cons Seed 1" in c_lines
+
+    # Cross-pool placement round (III#1 vs IV#1, …) is its own section, sorted last.
+    assert body["pools"][-1]["pool_code"] == "CD_PLACEMENT"
+    placement = pools["CD_PLACEMENT"]
+    assert len(placement["matches"]) == 3
+    lines = [(b["line1"], b["line2"]) for b in placement["matches"]]
+    assert lines == [("III #1", "IV #1"), ("III #2", "IV #2"), ("III #3", "IV #3")]

@@ -176,8 +176,13 @@ function shortenTvTeamLine(text: string | null | undefined): string {
 
 // ── Pool section ────────────────────────────────────────────────────────
 
+const CD_PLACEMENT_POOL_CODE = 'CD_PLACEMENT'
+
 function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
-  const title = `${eventName} Round Robin ${pool.pool_label}`.toUpperCase()
+  const isPlacement = pool.pool_code === CD_PLACEMENT_POOL_CODE
+  const title = isPlacement
+    ? `${eventName} ${pool.pool_label}`.toUpperCase()
+    : `${eventName} Round Robin ${pool.pool_label}`.toUpperCase()
 
   const rounds = Array.from(
     pool.matches.reduce((acc, match) => {
@@ -221,18 +226,20 @@ function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventNa
             alignItems: 'center',
             flexWrap: 'wrap',
           }}>
-            <div style={{
-              width: 64,
-              fontSize: 11,
-              fontWeight: 700,
-              color: '#1a237e',
-              textTransform: 'uppercase',
-              letterSpacing: 0.5,
-              flexShrink: 0,
-              textAlign: 'center',
-            }}>
-              Round {roundIndex || ri + 1}
-            </div>
+            {!isPlacement && (
+              <div style={{
+                width: 64,
+                fontSize: 11,
+                fontWeight: 700,
+                color: '#1a237e',
+                textTransform: 'uppercase',
+                letterSpacing: 0.5,
+                flexShrink: 0,
+                textAlign: 'center',
+              }}>
+                Round {roundIndex || ri + 1}
+              </div>
+            )}
             {matches.map(m => (
               <RRMatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
             ))}
@@ -678,10 +685,15 @@ export default function PublicRoundRobinPage() {
     () => new Map((data?.standings || []).map((standing) => [standing.pool_code, standing])),
     [data?.standings]
   )
+  const placementPools = useMemo(
+    () => poolsSorted.filter((p) => p.pool_code === CD_PLACEMENT_POOL_CODE),
+    [poolsSorted]
+  )
   const poolPairs = useMemo(() => {
+    const regular = poolsSorted.filter((p) => p.pool_code !== CD_PLACEMENT_POOL_CODE)
     const pairs: RRPool[][] = []
-    for (let i = 0; i < poolsSorted.length; i += 2) {
-      pairs.push(poolsSorted.slice(i, i + 2))
+    for (let i = 0; i < regular.length; i += 2) {
+      pairs.push(regular.slice(i, i + 2))
     }
     return pairs
   }, [poolsSorted])
@@ -1009,6 +1021,12 @@ export default function PublicRoundRobinPage() {
                       <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
                     </div>
                   ))}
+                </div>
+              ))}
+
+              {placementPools.map(pool => (
+                <div key={pool.pool_code} style={{ width: '100%', marginBottom: 20 }}>
+                  <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
                 </div>
               ))}
 
