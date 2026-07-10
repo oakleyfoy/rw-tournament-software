@@ -110,6 +110,28 @@ def _phase_key(k: Tuple[str, int]) -> int:
     return STAGE_ORDER_FALLBACK.get(k[0], 99) * 10 + k[1]
 
 
+# WF_14_TOP2_BYE consolation flight carries the intended play day in its match
+# code (CONS_FRI / CONS_SAT1 / CONS_SAT2). Those matches are stored as MAIN with
+# round_index 1/2/3, which would otherwise sequence them into team-rounds 3/4/5
+# (Sat/Sat/Sun). The WF R1 losers only play one waterfall round, so their
+# consolation is really their 2nd/3rd/4th tournament match — map each block to
+# the team-round that lands it on the tagged day (units digit 2 = consolation).
+_CONS_FLIGHT_PHASE: Dict[str, int] = {
+    "CONS_FRI": 22,  # losers' 2nd match → team-round 2 (Friday, with WF R2)
+    "CONS_SAT1": 32,  # losers' 3rd match → team-round 3 (Saturday)
+    "CONS_SAT2": 42,  # losers' 4th match → team-round 4 (Saturday)
+}
+
+
+def _cons_flight_phase(match_code: Optional[str]) -> Optional[int]:
+    """Return an override phase for WF_14 day-tagged consolation matches, else None."""
+    code = (match_code or "").upper()
+    for tag, phase in _CONS_FLIGHT_PHASE.items():
+        if tag in code:
+            return phase
+    return None
+
+
 def _get_manual_schedule_order(event: Event) -> Optional[int]:
     """Return explicit schedule priority when configured on the draw."""
     raw = getattr(event, "schedule_profile_json", None)
@@ -169,7 +191,10 @@ def _build_event_phase_map(
     # Map to phase number
     result: Dict[int, Tuple[str, int, List[Match]]] = {}
     for (mt, ri), match_list in groups.items():
-        phase = _phase_key((mt, ri))
+        # WF_14 consolation blocks are day-tagged in the match code; honor that
+        # tag so they land on the correct day instead of following MAIN round_index.
+        override = _cons_flight_phase(match_list[0].match_code if match_list else None)
+        phase = override if override is not None else _phase_key((mt, ri))
         result[phase] = (mt, ri, match_list)
 
     return result

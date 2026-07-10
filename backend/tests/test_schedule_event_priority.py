@@ -198,3 +198,65 @@ def test_interleave_match_lists_round_robin_alternates_events():
     )
     merged = _interleave_match_lists_round_robin([[rr_mixed_a, rr_mixed_b], [main_womens]])
     assert [m.id for m in merged[:3]] == [101, 201, 102]
+
+
+def test_cons_flight_phase_maps_day_tags():
+    from app.services.schedule_sequence import _cons_flight_phase
+
+    assert _cons_flight_phase("WOM_CONS_FRI_01") == 22
+    assert _cons_flight_phase("WOM_CONS_SAT1_02") == 32
+    assert _cons_flight_phase("WOM_CONS_SAT2_01") == 42
+    # Sunday cross-division placement is not a MAIN-tagged block; stays untouched.
+    assert _cons_flight_phase("WOM_CONS_SUN_02") is None
+    assert _cons_flight_phase("W_MAIN_QF_01") is None
+    assert _cons_flight_phase(None) is None
+
+
+def test_wf14_consolation_blocks_land_on_tagged_team_rounds():
+    """CONS_FRI -> Fri team-round, CONS_SAT1/2 -> Sat team-rounds, CONS_SUN -> Sun."""
+    from app.models.match import Match
+    from app.services.schedule_sequence import _build_event_phase_map
+
+    def _m(mid: int, code: str, mtype: str, ri: int) -> Match:
+        return Match(
+            id=mid,
+            tournament_id=1,
+            event_id=18,
+            schedule_version_id=1,
+            match_code=code,
+            match_type=mtype,
+            round_number=ri,
+            round_index=ri,
+            sequence_in_round=1,
+            duration_minutes=60,
+            placeholder_side_a="a",
+            placeholder_side_b="b",
+        )
+
+    matches = [
+        _m(1, "WOM_WF_R1_01", "WF", 1),
+        _m(2, "WOM_WF_R2_01", "WF", 2),
+        _m(3, "WOM_CONS_FRI_01", "MAIN", 1),
+        _m(4, "WOM_CONS_SAT1_01", "MAIN", 2),
+        _m(5, "WOM_CONS_SAT2_01", "MAIN", 3),
+        _m(6, "WOM_CONS_SUN_01", "PLACEMENT", 1),
+    ]
+
+    phase_map = _build_event_phase_map(matches)
+    # phase -> match_code of first match in that phase group
+    code_by_phase = {phase: data[2][0].match_code for phase, data in phase_map.items()}
+
+    # team-round = tens digit of the phase (WF R1 = tr1, WF R2 = tr2, ...)
+    def team_round(code: str) -> int:
+        phase = next(p for p, c in code_by_phase.items() if c == code)
+        return phase // 10
+
+    # Friday = team-rounds 1 & 2
+    assert team_round("WOM_WF_R1_01") == 1
+    assert team_round("WOM_WF_R2_01") == 2
+    assert team_round("WOM_CONS_FRI_01") == 2
+    # Saturday = team-rounds 3 & 4
+    assert team_round("WOM_CONS_SAT1_01") == 3
+    assert team_round("WOM_CONS_SAT2_01") == 4
+    # Sunday = team-rounds 5 & 6 (placement stays phase 60 -> tr 6)
+    assert team_round("WOM_CONS_SUN_01") == 6
