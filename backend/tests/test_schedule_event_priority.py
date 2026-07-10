@@ -200,6 +200,32 @@ def test_interleave_match_lists_round_robin_alternates_events():
     assert [m.id for m in merged[:3]] == [101, 201, 102]
 
 
+def test_is_bye_match_detection():
+    from app.models.match import Match
+    from app.services.schedule_sequence import is_bye_match
+
+    def _m(code: str, pa: str, pb: str, tb) -> Match:
+        return Match(
+            id=1,
+            tournament_id=1,
+            event_id=1,
+            schedule_version_id=1,
+            match_code=code,
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=10,
+            team_b_id=tb,
+            placeholder_side_a=pa,
+            placeholder_side_b=pb,
+        )
+
+    assert is_bye_match(_m("WOM_WF_R1_BYE_TOP", "Team 1", "BYE", None)) is True
+    assert is_bye_match(_m("WOM_WF_R1_01", "Team 1", "Team 7", 20)) is False
+
+
 def test_cons_flight_phase_maps_day_tags():
     from app.services.schedule_sequence import _cons_flight_phase
 

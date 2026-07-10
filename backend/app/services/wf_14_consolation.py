@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.models.event import Event
 from app.models.match import Match
 from app.models.team import Team
+from app.services.wf_14_format import POOL_C_RANKS, POOL_D_RANKS
 
 
 def _event_template(event: Event) -> Optional[str]:
@@ -63,7 +64,7 @@ def compute_loser_rank_to_team(
     Map consolation rank 1..6 → team_id (1 = best original seed among R1 losers).
     Returns None until all six WF R1 losers are known (match FINAL).
     """
-    r1 = session.exec(
+    r1_all = session.exec(
         select(Match).where(
             Match.event_id == event_id,
             Match.schedule_version_id == schedule_version_id,
@@ -71,6 +72,9 @@ def compute_loser_rank_to_team(
             Match.round_index == 1,
         )
     ).all()
+    # Ignore the two auto-won bye matches (no opponent); only the 6 played R1 games
+    # produce consolation losers.
+    r1 = [m for m in r1_all if m.team_a_id and m.team_b_id and "_BYE" not in (m.match_code or "").upper()]
     if len(r1) != 6:
         return None
 
@@ -188,8 +192,8 @@ def refresh_wf14_consolation_placement(
     if not rank_to_team:
         return 0
 
-    div_a_teams = [rank_to_team[r] for r in (1, 3, 6) if r in rank_to_team]
-    div_b_teams = [rank_to_team[r] for r in (2, 4, 5) if r in rank_to_team]
+    div_a_teams = [rank_to_team[r] for r in POOL_C_RANKS if r in rank_to_team]
+    div_b_teams = [rank_to_team[r] for r in POOL_D_RANKS if r in rank_to_team]
     if len(div_a_teams) != 3 or len(div_b_teams) != 3:
         return 0
 
@@ -211,8 +215,9 @@ def refresh_wf14_consolation_placement(
     stand_a = _division_ranks_for_team_ids(session, div_a_teams, cons_main)
     stand_b = _division_ranks_for_team_ids(session, div_b_teams, cons_main)
 
-    slot_to_team_a = {f"A{stand_a[tid]}": tid for tid in div_a_teams}
-    slot_to_team_b = {f"B{stand_b[tid]}": tid for tid in div_b_teams}
+    # Pool C standings map to C1..C3, Pool D to D1..D3 (Sunday cross placement).
+    slot_to_team_a = {f"C{stand_a[tid]}": tid for tid in div_a_teams}
+    slot_to_team_b = {f"D{stand_b[tid]}": tid for tid in div_b_teams}
 
     placement = session.exec(
         select(Match).where(

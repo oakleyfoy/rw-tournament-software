@@ -81,13 +81,19 @@ def test_wf14_consolation_fills_after_r1(session):
     session.add_all(matches)
     session.commit()
 
-    r1 = session.exec(
+    r1_all = session.exec(
         select(Match).where(
             Match.schedule_version_id == version.id,
             Match.match_type == "WF",
             Match.round_index == 1,
         )
     ).all()
+    # Two of the R1 rows are auto-won byes (no opponent); only the 6 played games
+    # produce consolation losers.
+    byes = [m for m in r1_all if "_BYE" in m.match_code]
+    r1 = [m for m in r1_all if m not in byes]
+    assert len(byes) == 2
+    assert len(r1) == 6
 
     for m in r1:
         assert m.team_a_id and m.team_b_id

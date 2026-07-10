@@ -132,6 +132,15 @@ def _cons_flight_phase(match_code: Optional[str]) -> Optional[int]:
     return None
 
 
+def is_bye_match(m: Match) -> bool:
+    """A structural bye (one side has no opponent) never needs a court."""
+    if "_BYE" in (m.match_code or "").upper():
+        return True
+    pa = (m.placeholder_side_a or "").strip().upper()
+    pb = (m.placeholder_side_b or "").strip().upper()
+    return pa == "BYE" or pb == "BYE"
+
+
 def _get_manual_schedule_order(event: Event) -> Optional[int]:
     """Return explicit schedule priority when configured on the draw."""
     raw = getattr(event, "schedule_profile_json", None)
@@ -266,6 +275,11 @@ def build_master_sequence(
     """
     # Load matches
     all_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
+    if not all_matches:
+        return []
+
+    # Structural byes (no opponent) advance automatically and never take a court.
+    all_matches = [m for m in all_matches if not is_bye_match(m)]
     if not all_matches:
         return []
 

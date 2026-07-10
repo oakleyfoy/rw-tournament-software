@@ -162,6 +162,43 @@ def generate_wf_14_matches(
     session.flush()
 
     # -------------------------------------------------------------------------
+    # WF R1 byes — #1 seed (top) and #2 seed (bottom) advance with no opponent.
+    # Auto-finalized 8-0 so the bracket shows them winning into R2. These carry
+    # no opponent (team_b_id=None) and are skipped by the court scheduler.
+    # -------------------------------------------------------------------------
+    def _bye_match(tag: str, team, seq: int) -> Optional[Match]:
+        if team is None:
+            return None
+        name = _team_display_name(team)
+        return Match(
+            tournament_id=spec.tournament_id,
+            event_id=spec.event_id,
+            schedule_version_id=version_id,
+            match_code=f"{prefix}WF_R1_BYE_{tag}",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=seq,
+            team_a_id=team.id,
+            team_b_id=None,
+            placeholder_side_a=name,
+            placeholder_side_b="BYE",
+            duration_minutes=spec.waterfall_minutes,
+            runtime_status="FINAL",
+            status="complete",
+            winner_team_id=team.id,
+            score_json={"display": "8-0", "team_a_games": 8, "team_b_games": 0, "bye": True},
+        )
+
+    bye_top = _bye_match("TOP", bye_a, WF_R1_MATCHES + 1)
+    bye_bot = _bye_match("BOT", bye_b, WF_R1_MATCHES + 2)
+    bye_matches = [m for m in (bye_top, bye_bot) if m is not None]
+    matches.extend(bye_matches)
+    if bye_matches:
+        session.add_all(bye_matches)
+        session.flush()
+
+    # -------------------------------------------------------------------------
     # WF R2 — 8 teams: 2 rating byes + 6 R1 winners (4 matches)
     # -------------------------------------------------------------------------
     r1_wins_sorted = sorted(r1_matches, key=lambda m: m.sequence_in_round or 0)
@@ -199,6 +236,9 @@ def generate_wf_14_matches(
     bye_b_name = _team_display_name(bye_b)
     bye_a_id = bye_a.id if bye_a else None
     bye_b_id = bye_b.id if bye_b else None
+    # Bye teams are pre-bound onto R2 (their R1 bye is auto-won). We intentionally
+    # do NOT set source_match for the bye side: byes are never assigned a court, and
+    # a source link would trip the "upstream must be scheduled earlier" invariant.
 
     # W1..W6 = R1 winners by sequence
     def w_ph(idx: int) -> str:
@@ -263,7 +303,7 @@ def generate_wf_14_matches(
                 tournament_id=spec.tournament_id,
                 event_id=spec.event_id,
                 schedule_version_id=version_id,
-                match_code=f"{prefix}CONS_{cp.schedule_tag}_{cp.sequence:02d}",
+                match_code=f"{prefix}CONS_{cp.schedule_tag}_{cp.pool}{cp.sequence:02d}",
                 match_type="MAIN",
                 round_number=cons_round,
                 round_index=cons_round,
