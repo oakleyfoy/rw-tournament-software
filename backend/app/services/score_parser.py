@@ -116,8 +116,19 @@ def _parse_structured_sets(sets_list: list) -> Optional[ParsedScore]:
     a_games = 0
     b_games = 0
     for s in sets_list:
-        a = int(s.get("a", 0))
-        b = int(s.get("b", 0))
+        if isinstance(s, dict):
+            a_raw = s.get("a", s.get("team_a", 0))
+            b_raw = s.get("b", s.get("team_b", 0))
+        elif isinstance(s, (list, tuple)) and len(s) >= 2:
+            a_raw, b_raw = s[0], s[1]
+        else:
+            # Unrecognized set shape — skip rather than crash the caller.
+            continue
+        try:
+            a = int(a_raw or 0)
+            b = int(b_raw or 0)
+        except (TypeError, ValueError):
+            continue
         sets.append((a, b))
         if not _is_match_tiebreak_set(a, b):
             a_games += a

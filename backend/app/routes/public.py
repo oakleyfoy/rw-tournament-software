@@ -1323,7 +1323,10 @@ def public_round_robin(
             rows_data[a_id]["played"] += 1
             rows_data[b_id]["played"] += 1
 
-            parsed = _parse_score(m.score_json)
+            try:
+                parsed = _parse_score(m.score_json)
+            except Exception:
+                parsed = None
             if parsed:
                 a_sets_won = parsed.team_a_sets_won
                 b_sets_won = parsed.team_b_sets_won
