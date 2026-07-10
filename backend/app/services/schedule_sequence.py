@@ -713,6 +713,19 @@ def run_sequence_schedule(
     if overflow:
         total_failed = len(overflow)
 
+    # Capture the matches that could not be placed so callers can show
+    # exactly which matches failed and why (capacity ran out on the last day).
+    failed_matches = [
+        {
+            "match_id": rm.match_id,
+            "match_code": rm.match_code,
+            "event_name": rm.event_name,
+            "round_label": rm.round_label,
+            "reason": "NO_SLOT_REMAINING",
+        }
+        for rm in overflow
+    ]
+
     session.flush()
 
     elapsed_ms = int((_time.monotonic() - t0) * 1000)
@@ -727,6 +740,7 @@ def run_sequence_schedule(
     result.total_reserved_spares = total_reserved
     result.duration_ms = elapsed_ms
     result.day_results = day_results
+    result.failed_matches = failed_matches
     return result
 
 

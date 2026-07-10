@@ -1693,6 +1693,13 @@ export interface FullPolicyRunResponse {
     consolation_partial: number
   } | null
   policy_run_id?: number | null
+  failed_matches?: Array<{
+    match_id: number
+    match_code: string
+    event_name: string
+    round_label: string
+    reason: string
+  }> | null
 }
 
 export async function runFullPolicy(

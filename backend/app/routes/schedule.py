@@ -3759,6 +3759,7 @@ class FullPolicyRunResponse(BaseModel):
     invariant_violations: Optional[List[dict]] = None
     invariant_stats: Optional[dict] = None
     policy_run_id: Optional[int] = None
+    failed_matches: Optional[List[dict]] = None
 
 
 @router.post(
@@ -3984,6 +3985,7 @@ def run_full_policy(
             invariant_violations=[v.to_dict() if hasattr(v, "to_dict") else v for v in report.to_dict()["violations"]],
             invariant_stats=report.to_dict()["stats"],
             policy_run_id=policy_run.id,
+            failed_matches=getattr(result, "failed_matches", None),
         )
     except HTTPException:
         raise  # re-raise 409s as-is

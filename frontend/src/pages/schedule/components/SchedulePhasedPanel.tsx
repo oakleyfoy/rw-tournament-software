@@ -495,8 +495,13 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
       const invariantMsg = result.invariant_ok === false
         ? ' [INVARIANT VIOLATIONS DETECTED]'
         : result.invariant_ok === true ? ' [ALL INVARIANTS PASS]' : ''
+      const failedMsg = result.failed_matches && result.failed_matches.length > 0
+        ? ` Unplaced: ${result.failed_matches
+            .map((m) => `${m.event_name} ${m.round_label} (${m.match_code})`)
+            .join(', ')}.`
+        : ''
       showToast(
-        `Full schedule: ${result.total_assigned} placed, ${result.total_failed} failed.${invariantMsg} ${daysSummary}`,
+        `Full schedule: ${result.total_assigned} placed, ${result.total_failed} failed.${invariantMsg}${failedMsg} ${daysSummary}`,
         result.total_failed > 0 ? 'warning' : 'success'
       )
       onRefresh()
