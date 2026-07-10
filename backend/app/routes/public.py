@@ -572,21 +572,48 @@ def public_waterfall(
     )
     r2_matches = [m for m in wf_matches if m.round_index == 2]
 
-    # Build R1→R2 mappings
-    # For each R1 match, find which R2 winner and R2 loser it feeds into
+    # Bye R1 matches (top seeds that advance with no opponent) are pre-bound
+    # directly onto an R2 side by team id — they carry no source_match link.
+    def _is_bye_r1(m: Match) -> bool:
+        return "_BYE" in (m.match_code or "").upper() or (
+            m.team_b_id is None and (m.placeholder_side_b or "").strip().upper() == "BYE"
+        )
+
+    bye_r1_by_team: Dict[int, Match] = {
+        m.winner_team_id: m
+        for m in r1_matches
+        if _is_bye_r1(m) and m.winner_team_id is not None
+    }
+
+    # Build R1→R2 mappings.
+    # For each R2 match, resolve the R1 match feeding each side — either the
+    # source_match (WINNER/LOSER of an R1 match) or, for a bye, the R1 bye match
+    # whose winner is pre-bound onto that side.  Feeders are recorded in bracket
+    # side order (A then B) so the display can place them top-to-bottom.
     r1_to_winner: Dict[int, Match] = {}
     r1_to_loser: Dict[int, Match] = {}
+    r2_ordered_feeders: Dict[int, List[Match]] = {}
 
     for r2 in r2_matches:
-        is_winner_match = r2.source_a_role == "WINNER"
-        is_loser_match = r2.source_a_role == "LOSER"
-
-        for src_id in [r2.source_match_a_id, r2.source_match_b_id]:
+        role = r2.source_a_role or r2.source_b_role
+        feeders: List[Match] = []
+        for src_id, side_team_id in [
+            (r2.source_match_a_id, r2.team_a_id),
+            (r2.source_match_b_id, r2.team_b_id),
+        ]:
+            feeder: Optional[Match] = None
             if src_id and src_id in all_matches_by_id:
-                if is_winner_match:
-                    r1_to_winner[src_id] = r2
-                elif is_loser_match:
-                    r1_to_loser[src_id] = r2
+                feeder = all_matches_by_id[src_id]
+            elif side_team_id and side_team_id in bye_r1_by_team:
+                feeder = bye_r1_by_team[side_team_id]
+            if feeder is None:
+                continue
+            feeders.append(feeder)
+            if role == "LOSER":
+                r1_to_loser[feeder.id] = r2
+            else:
+                r1_to_winner[feeder.id] = r2
+        r2_ordered_feeders[r2.id] = feeders
 
     # Load teams
     team_ids = set()
@@ -615,20 +642,22 @@ def public_waterfall(
     # Reorder R1 matches so the two that share the same R2 winner
     # destination are consecutive.  The frontend groups every 2 rows
     # into a visual pair, so this ensures correct advancement display.
-    r1_by_id = {m.id: m for m in r1_matches}
+    # A bye feeder keeps its bracket side (side A on top, side B on bottom);
+    # two real source matches keep the historical sequence ordering.
     paired_r1_ids: set = set()
     ordered_r1: List[Match] = []
 
     for r2w in sorted(
-        [r2 for r2 in r2_matches if r2.source_a_role == "WINNER"],
+        [r2 for r2 in r2_matches if (r2.source_a_role or r2.source_b_role) == "WINNER"],
         key=lambda r2: (r2.sequence_in_round or 0, r2.id),
     ):
-        src_ids = [sid for sid in [r2w.source_match_a_id, r2w.source_match_b_id] if sid and sid in r1_by_id]
-        src_ids.sort(key=lambda sid: (r1_by_id[sid].sequence_in_round or 0, sid))
-        for sid in src_ids:
-            if sid not in paired_r1_ids:
-                ordered_r1.append(r1_by_id[sid])
-                paired_r1_ids.add(sid)
+        feeders = list(r2_ordered_feeders.get(r2w.id, []))
+        if not any(_is_bye_r1(f) for f in feeders):
+            feeders.sort(key=lambda f: (f.sequence_in_round or 0, f.id))
+        for feeder in feeders:
+            if feeder.id not in paired_r1_ids:
+                ordered_r1.append(feeder)
+                paired_r1_ids.add(feeder.id)
 
     for r1 in r1_matches:
         if r1.id not in paired_r1_ids:
@@ -965,6 +994,26 @@ _POOL_LABELS = {
     "POOLH": "Division VIII",
 }
 
+
+def _rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
+    """Resolve the pool code (POOLA..POOLH) for a pool round-robin match.
+
+    Handles both standard RR pools (``..._POOLA_RR_01``) and the WF_14
+    loser-flight consolation pools, which are 3-team round robins encoded as
+    ``..._CONS_<DAYTAG>_<POOL><SEQ>`` (e.g. ``WOM_CONS_FRI_C01`` → POOLC).
+    """
+    if not match_code:
+        return None
+    upper = match_code.upper()
+    if "_RR_" in upper:
+        head = match_code.split("_RR_")[0]
+        return head.split("_")[-1].upper() or None
+    if "_CONS_" in upper:
+        last = upper.split("_")[-1]  # e.g. "C01" or "01" (Sunday cross-placement)
+        if last and last[0].isalpha():
+            return f"POOL{last[0]}"
+    return None
+
 # Temporary live-display override for the current women's Jekyll RR board.
 # The tournament director requested RR rounds 1 and 2 to appear swapped on
 # the public draws page for this one event, without changing scores/teams.
@@ -1075,7 +1124,26 @@ def public_round_robin(
     # Defensive filter: only true RR pool matches should drive RR cards/standings.
     rr_matches = [m for m in rr_matches if "_RR_" in (m.match_code or "").upper()]
 
-    if not rr_matches:
+    # WF_14 loser-flight pools (C/D) are 3-team round robins encoded as
+    # consolation matches. Surface them as additional divisions alongside A/B.
+    # The Sunday cross-pool placement matches are not part of a single pool RR.
+    cons_pool_matches = session.exec(
+        select(Match).where(
+            Match.event_id == event_id,
+            Match.schedule_version_id == version.id,
+            Match.match_code.contains("_CONS_"),
+        )
+    ).all()
+    cons_pool_matches = [
+        m
+        for m in cons_pool_matches
+        if (m.placement_type or "") != "WF14_CONS_CROSS"
+        and _rr_pool_code_for_match(m.match_code) is not None
+    ]
+
+    display_matches = list(rr_matches) + list(cons_pool_matches)
+
+    if not display_matches:
         return RoundRobinResponse(
             tournament_name=tournament.name,
             event_name=event.name,
@@ -1084,7 +1152,7 @@ def public_round_robin(
         )
 
     team_ids = set()
-    for m in rr_matches:
+    for m in display_matches:
         if m.team_a_id:
             team_ids.add(m.team_a_id)
         if m.team_b_id:
@@ -1092,7 +1160,7 @@ def public_round_robin(
     teams = session.exec(select(Team).where(Team.id.in_(list(team_ids)))).all() if team_ids else []
     team_map: Dict[int, Team] = {t.id: t for t in teams}
 
-    rr_ids = {m.id for m in rr_matches}
+    rr_ids = {m.id for m in display_matches}
     assignments = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == version.id,
@@ -1104,9 +1172,10 @@ def public_round_robin(
     slot_map = {s.id: s for s in slots}
 
     pool_matches: Dict[str, List[Match]] = {}
-    for m in rr_matches:
-        parts = m.match_code.split("_RR_")
-        pool_key = parts[0].split("_")[-1] if parts else "POOLA"
+    for m in display_matches:
+        pool_key = _rr_pool_code_for_match(m.match_code)
+        if not pool_key:
+            continue
         pool_matches.setdefault(pool_key, []).append(m)
 
     pools: List[RRPool] = []
@@ -1305,6 +1374,8 @@ def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: 
     if placeholder:
         if placeholder.startswith("SEED_"):
             return f"Seed {placeholder[5:]}"
+        if placeholder.startswith("ConsL"):
+            return f"Cons Seed {placeholder[5:]}"
         return placeholder
     return "TBD"
 

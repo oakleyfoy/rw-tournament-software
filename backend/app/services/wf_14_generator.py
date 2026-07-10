@@ -248,11 +248,16 @@ def generate_wf_14_matches(
     def w_src(idx: int) -> int:
         return r1_wins_sorted[idx].id
 
+    # R2 bracket wiring:
+    #   Top:    #1 seed (bye) vs winner of match 2
+    #   Middle: winner match 3 vs winner match 4
+    #   Middle: winner match 5 vs winner match 6
+    #   Bottom: winner of match 1 vs #2 seed (bye)
     r2_defs = [
-        (bye_a_id, bye_a_name, None, None, w_ph(5), w_src(5)),
-        (None, w_ph(0), w_src(0), None, w_ph(1), w_src(1)),
+        (bye_a_id, bye_a_name, None, None, w_ph(1), w_src(1)),
         (None, w_ph(2), w_src(2), None, w_ph(3), w_src(3)),
-        (None, w_ph(4), w_src(4), bye_b_id, bye_b_name, None),
+        (None, w_ph(4), w_src(4), None, w_ph(5), w_src(5)),
+        (None, w_ph(0), w_src(0), bye_b_id, bye_b_name, None),
     ]
     r2_matches: List[Match] = []
     for seq, (ta_id, ta_ph, src_a, tb_id, tb_ph, src_b) in enumerate(r2_defs, start=1):

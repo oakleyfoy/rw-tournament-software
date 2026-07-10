@@ -329,3 +329,203 @@ def test_public_waterfall_bracket_four_division_names_from_final_r2(client, sess
     assert row["r2_loser_bracket_loser_name"] == "Dana / Dee"
     assert row["r2_winner_team_name"] == "Alice / Ann"
     assert row["r2_loser_team_name"] == "Bob / Ben"
+
+
+def test_public_waterfall_wf14_byes_render_top_and_bottom(client, session):
+    """WF_14 bye R1 matches are pre-bound onto R2 sides (no source_match).
+
+    The #1 seed bye should render at the TOP paired with its R2 winner box,
+    and the #2 seed bye at the BOTTOM — even though neither carries a
+    source_match link.
+    """
+    from app.models.team import Team
+
+    tournament = Tournament(
+        name="WF14 Bye Layout",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=14,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_14_TOP2_BYE","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.flush()
+
+    alex = Team(event_id=event.id, name="Alex / Torrie", seed=1)
+    cat = Team(event_id=event.id, name="Catalina / Gricel", seed=2)
+    m1a = Team(event_id=event.id, name="Lori / Paulina", seed=3)
+    m2a = Team(event_id=event.id, name="Maria / Marie", seed=4)
+    session.add_all([alex, cat, m1a, m2a])
+    session.flush()
+
+    def _mk(code, seq, **kw):
+        m = Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=code,
+            match_type="WF",
+            round_number=kw.pop("round_number", 1),
+            round_index=kw.pop("round_index", 1),
+            sequence_in_round=seq,
+            duration_minutes=60,
+            **kw,
+        )
+        session.add(m)
+        session.flush()
+        return m
+
+    match1 = _mk("WOM_WF_R1_01", 1, team_a_id=m1a.id, placeholder_side_a="Seed 3", placeholder_side_b="Seed 12")
+    match2 = _mk("WOM_WF_R1_02", 2, team_a_id=m2a.id, placeholder_side_a="Seed 4", placeholder_side_b="Seed 11")
+    bye_top = _mk(
+        "WOM_WF_R1_BYE_TOP", 7,
+        team_a_id=alex.id, team_b_id=None,
+        placeholder_side_a="Alex / Torrie", placeholder_side_b="BYE",
+        winner_team_id=alex.id, runtime_status="FINAL", status="complete",
+    )
+    bye_bot = _mk(
+        "WOM_WF_R1_BYE_BOT", 8,
+        team_a_id=cat.id, team_b_id=None,
+        placeholder_side_a="Catalina / Gricel", placeholder_side_b="BYE",
+        winner_team_id=cat.id, runtime_status="FINAL", status="complete",
+    )
+
+    # R2 top: #1 seed (bye, side A) vs winner of match 2 (side B, source).
+    r2_top = _mk(
+        "WOM_WF_R2_01", 1, round_number=2, round_index=2,
+        team_a_id=alex.id,
+        placeholder_side_a="Alex / Torrie", placeholder_side_b="W(R1_2)",
+        source_match_b_id=match2.id, source_b_role="WINNER",
+    )
+    # R2 bottom: winner of match 1 (side A, source) vs #2 seed (bye, side B).
+    r2_bot = _mk(
+        "WOM_WF_R2_02", 2, round_number=2, round_index=2,
+        team_b_id=cat.id,
+        placeholder_side_a="W(R1_1)", placeholder_side_b="Catalina / Gricel",
+        source_match_a_id=match1.id, source_a_role="WINNER",
+    )
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/waterfall")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+
+    center_ids = [r["center_box"]["match_id"] for r in rows]
+    # Top bye first, then its R2 partner (match 2); bottom bye last.
+    assert center_ids[0] == bye_top.id
+    assert center_ids[1] == match2.id
+    assert center_ids[-1] == bye_bot.id
+
+    # The top bye row carries the R2 box where the #1 seed plays.
+    top_winner = rows[0]["winner_box"]
+    assert top_winner is not None
+    assert top_winner["match_id"] == r2_top.id
+    assert top_winner["team_a_id"] == alex.id
+
+    # The bottom bye's partner row (winner of match 1) carries the bottom R2 box.
+    m1_row = next(r for r in rows if r["center_box"]["match_id"] == match1.id)
+    assert m1_row["winner_box"] is not None
+    assert m1_row["winner_box"]["match_id"] == r2_bot.id
+    assert m1_row["winner_box"]["team_b_id"] == cat.id
+
+
+def test_public_roundrobin_wf14_includes_consolation_pools_c_and_d(client, session):
+    """WF_14 loser-flight pools C/D (3-team RRs stored as consolation matches)
+    should appear as Division III / IV alongside the winner-flight A/B pools."""
+    tournament = Tournament(
+        name="WF14 Pools CD",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=14,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_14_TOP2_BYE","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.flush()
+
+    def _mk(code, mtype, rnd, seq, pa, pb, **kw):
+        m = Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=code,
+            match_type=mtype,
+            round_number=rnd,
+            round_index=rnd,
+            sequence_in_round=seq,
+            duration_minutes=90,
+            placeholder_side_a=pa,
+            placeholder_side_b=pb,
+            **kw,
+        )
+        session.add(m)
+        return m
+
+    # Winner-flight pools A/B (standard RR).
+    _mk("WOM_POOLA_RR_01", "RR", 1, 1, "SEED_1", "SEED_4")
+    _mk("WOM_POOLB_RR_01", "RR", 1, 1, "SEED_2", "SEED_3")
+
+    # Loser-flight pools C {1,4,6} and D {2,3,5} — 3-team round robins.
+    _mk("WOM_CONS_FRI_C01", "MAIN", 1, 1, "ConsL1", "ConsL6")
+    _mk("WOM_CONS_SAT1_C01", "MAIN", 2, 1, "ConsL4", "ConsL6")
+    _mk("WOM_CONS_SAT2_C01", "MAIN", 3, 1, "ConsL1", "ConsL4")
+    _mk("WOM_CONS_FRI_D02", "MAIN", 1, 2, "ConsL2", "ConsL5")
+    _mk("WOM_CONS_SAT1_D02", "MAIN", 2, 2, "ConsL3", "ConsL5")
+    _mk("WOM_CONS_SAT2_D02", "MAIN", 3, 2, "ConsL2", "ConsL3")
+
+    # Sunday cross-pool placement — must NOT appear inside a pool RR.
+    _mk("WOM_CONS_SUN_01", "PLACEMENT", 1, 1, "C1", "D1", placement_type="WF14_CONS_CROSS")
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    pools = {p["pool_code"]: p for p in body["pools"]}
+    assert set(pools) == {"POOLA", "POOLB", "POOLC", "POOLD"}
+    assert pools["POOLC"]["pool_label"] == "Division III"
+    assert pools["POOLD"]["pool_label"] == "Division IV"
+
+    # Pool C is a full 3-team round robin (3 matches), no Sunday cross-placement.
+    assert len(pools["POOLC"]["matches"]) == 3
+    assert len(pools["POOLD"]["matches"]) == 3
+    all_codes = [b["match_code"] for p in body["pools"] for b in p["matches"]]
+    assert "WOM_CONS_SUN_01" not in all_codes
+
+    # Placeholders render cleanly.
+    c_lines = {pools["POOLC"]["matches"][0]["line1"], pools["POOLC"]["matches"][0]["line2"]}
+    assert "Cons Seed 1" in c_lines
