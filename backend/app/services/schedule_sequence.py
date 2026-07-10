@@ -346,11 +346,12 @@ def place_matches_into_slots(
     from app.models import ScheduleSlot
 
     # ── Load slots grouped by day and time ───────────────────────────
+    # Policy sequence uses every active court, including extra/manual-only slots
+    # from Days & Courts (courts_available + extra_courts).
     all_slots = session.exec(
         select(ScheduleSlot).where(
             ScheduleSlot.schedule_version_id == schedule_version_id,
             ScheduleSlot.is_active,
-            ScheduleSlot.is_manual_only.is_(False),
         )
     ).all()
 
@@ -547,14 +548,13 @@ def run_sequence_schedule(
     _locked = locked_match_ids or set()
     _blocked = blocked_slot_ids or set()
 
-    # ── Load all active slots (excluding blocked) ──────────────────
+    # ── Load all active slots (excluding blocked), including manual-only extras ──
     all_slots = [
         s
         for s in session.exec(
             select(ScheduleSlot).where(
                 ScheduleSlot.schedule_version_id == schedule_version_id,
                 ScheduleSlot.is_active,
-                ScheduleSlot.is_manual_only.is_(False),
             )
         ).all()
         if s.id not in _blocked

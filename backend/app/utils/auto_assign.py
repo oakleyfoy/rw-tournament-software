@@ -150,7 +150,13 @@ def validate_inputs(matches: List[Match], slots: List[ScheduleSlot], schedule_ve
             )
 
 
-def is_slot_compatible(slot: ScheduleSlot, match: Match, occupied_slot_ids: set) -> Tuple[bool, Optional[str]]:
+def is_slot_compatible(
+    slot: ScheduleSlot,
+    match: Match,
+    occupied_slot_ids: set,
+    *,
+    allow_manual_only: bool = False,
+) -> Tuple[bool, Optional[str]]:
     """
     Check if a slot is compatible for a match.
 
@@ -165,7 +171,7 @@ def is_slot_compatible(slot: ScheduleSlot, match: Match, occupied_slot_ids: set)
     if slot.id in occupied_slot_ids:
         return False, "SLOT_OCCUPIED"
 
-    if slot.is_manual_only:
+    if slot.is_manual_only and not allow_manual_only:
         return False, "MANUAL_ONLY_SLOT"
 
     # Check duration compatibility
@@ -805,6 +811,7 @@ def assign_by_match_ids(
     target_time: Optional[Any] = None,
     min_start_time: Optional[Any] = None,
     blocked_slot_ids: Optional[set] = None,
+    allow_manual_only_slots: bool = False,
 ) -> AutoAssignResult:
     """
     Assign a specific subset of matches by their IDs.
@@ -828,6 +835,9 @@ def assign_by_match_ids(
             start_time.  Used by consolation fill to target a specific
             time slot.
         blocked_slot_ids: Slot IDs to exclude (blocked or locked-occupied).
+        allow_manual_only_slots: When True, policy/desk automation may use slots
+            marked is_manual_only (extra courts from Days & Courts). Default False
+            for manual subset assigns from the schedule UI.
 
     Returns:
         AutoAssignResult with assigned/unassigned counts and details
@@ -854,6 +864,8 @@ def assign_by_match_ids(
         slots = [s for s in slots if s.start_time > min_start_time]
     if blocked_slot_ids:
         slots = [s for s in slots if s.id not in blocked_slot_ids]
+    if not allow_manual_only_slots:
+        slots = [s for s in slots if not s.is_manual_only]
     slots_sorted = sorted(slots, key=get_slot_sort_key)
     result.total_slots = len(slots_sorted)
     if not slots_sorted:
@@ -901,7 +913,9 @@ def assign_by_match_ids(
         assigned = False
         failure_reason = "NO_COMPATIBLE_SLOT"
         for slot in slots_sorted:
-            compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids)
+            compatible, reason = is_slot_compatible(
+                slot, match, occupied_slot_ids, allow_manual_only=allow_manual_only_slots
+            )
             if compatible:
                 round_deps_ok, round_deps_reason = check_round_dependencies_for_auto_assign(
                     session,

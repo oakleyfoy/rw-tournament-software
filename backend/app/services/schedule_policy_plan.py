@@ -744,6 +744,7 @@ def _fill_spare_courts_with_consolation(
                 match_ids=batch_ids,
                 target_day=day_date,
                 blocked_slot_ids=blocked_slot_ids,
+                allow_manual_only_slots=True,
             )
             session.flush()
             slot_assigned = [ex["match_id"] for ex in assign_result.assigned_examples]
@@ -2081,6 +2082,7 @@ def run_daily_policy(
                 match_ids=kept_ids,
                 target_day=day_date,
                 blocked_slot_ids=blocked_slot_ids,
+                allow_manual_only_slots=True,
             )
             session.flush()
 
@@ -2267,6 +2269,7 @@ def run_daily_policy(
                         match_ids=[failed_match.id],
                         target_day=day_date,
                         blocked_slot_ids=blocked_slot_ids,
+                        allow_manual_only_slots=True,
                     )
                     session.flush()
                     if assign_result.assigned_count > 0:
@@ -2288,6 +2291,7 @@ def run_daily_policy(
                     match_ids=deferred_main_ids,
                     target_day=day_date,
                     blocked_slot_ids=blocked_slot_ids,
+                    allow_manual_only_slots=True,
                 )
                 session.flush()
 

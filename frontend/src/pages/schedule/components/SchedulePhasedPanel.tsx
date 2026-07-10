@@ -1802,7 +1802,11 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
                       }}
                     >
                       <div style={{ marginBottom: '8px', fontWeight: 600 }}>
-                        {timeTo12Hour(timeSlot.time)} — {timeSlot.total_courts} courts ({timeSlot.assigned_matches} assigned)
+                        {timeTo12Hour(timeSlot.time)} —{' '}
+                        {timeSlot.manual_only_courts != null && timeSlot.manual_only_courts > 0
+                          ? `${timeSlot.auto_courts ?? timeSlot.total_courts} auto courts (+${timeSlot.manual_only_courts} manual-only)`
+                          : `${timeSlot.total_courts} courts`}{' '}
+                        ({timeSlot.assigned_matches} assigned)
                       </div>
                       {timeSlot.breakdown.length > 0 ? (
                         <table

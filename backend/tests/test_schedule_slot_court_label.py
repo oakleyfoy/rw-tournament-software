@@ -253,7 +253,8 @@ def test_generate_slots_marks_extra_courts_manual_only(client: TestClient, sessi
     assert all(s.is_manual_only for s in extra_slots)
 
 
-def test_run_sequence_schedule_skips_manual_only_slots(session: Session):
+def test_run_sequence_schedule_uses_manual_only_courts_for_policy(session: Session):
+    """Full policy sequence uses extra (manual-only) courts so AM blocks can fill."""
     from app.services.schedule_sequence import run_sequence_schedule
 
     tournament = Tournament(
@@ -347,7 +348,7 @@ def test_run_sequence_schedule_skips_manual_only_slots(session: Session):
     regular_slot_ids = {s.id for s in regular_slots}
     manual_only_slot_ids = {s.id for s in manual_only_slots}
 
-    assert result.total_assigned == 2
-    assert len(assignments) == 2
-    assert assigned_slot_ids <= regular_slot_ids
-    assert assigned_slot_ids.isdisjoint(manual_only_slot_ids)
+    assert result.total_assigned == 4
+    assert len(assignments) == 4
+    assert assigned_slot_ids <= regular_slot_ids | manual_only_slot_ids
+    assert len(assigned_slot_ids & manual_only_slot_ids) == 2

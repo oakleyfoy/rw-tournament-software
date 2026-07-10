@@ -4008,6 +4008,8 @@ class TimeSlotReport(BaseModel):
     time: str  # HH:MM format
     total_courts: int
     assigned_matches: int
+    auto_courts: int = 0
+    manual_only_courts: int = 0
     breakdown: List[EventStageBreakdown]
 
 
@@ -4075,6 +4077,8 @@ def get_schedule_report(
 
             # Count totals
             total_courts = len(day_slots)
+            manual_only_courts = sum(1 for s in day_slots if s.is_manual_only)
+            auto_courts = total_courts - manual_only_courts
 
             # Count assigned matches for this time slot
             assigned_matches = sum(1 for s in day_slots if s.id in assigned_slot_ids)
@@ -4111,6 +4115,8 @@ def get_schedule_report(
                     time=time_str,
                     total_courts=total_courts,
                     assigned_matches=assigned_matches,
+                    auto_courts=auto_courts,
+                    manual_only_courts=manual_only_courts,
                     breakdown=breakdown_list,
                 )
             )

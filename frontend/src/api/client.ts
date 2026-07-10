@@ -1542,6 +1542,8 @@ export interface TimeSlotReport {
   time: string
   total_courts: number
   assigned_matches: number
+  auto_courts?: number
+  manual_only_courts?: number
   breakdown: EventStageBreakdown[]
 }
 
