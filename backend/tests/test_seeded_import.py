@@ -232,8 +232,7 @@ def _finalized_mixed_tournament(session):
 
 
 _COMBINED_HEADER = (
-    "Seed\tFirst names team\tFull name city state team\tDraw\tLevel\t"
-    "Cell phone first player\tEmail first player"
+    "Seed\tFirst names team\tFull name city state team\tDraw\tLevel\tCell phone first player\tEmail first player"
 )
 
 
@@ -245,9 +244,7 @@ def test_combined_import_refreshes_finalized_roster_in_place(client, session):
 
     lines = [_COMBINED_HEADER]
     for seed in range(1, 17):
-        lines.append(
-            f"{seed}\tTeam {seed}\tTeam {seed}, City, ST\tMixed\t9.0\t555000{seed:04d}\tp{seed}@x.com"
-        )
+        lines.append(f"{seed}\tTeam {seed}\tTeam {seed}, City, ST\tMixed\t9.0\t555000{seed:04d}\tp{seed}@x.com")
     payload = {"text": "\n".join(lines)}
 
     resp = client.post(
@@ -290,9 +287,7 @@ def test_combined_import_blocks_identity_change_on_finalized_team(client, sessio
 
     # Roster untouched by the rejected import.
     session.expire_all()
-    seed1 = session.exec(
-        select(Team).where(Team.event_id == event.id, Team.seed == 1)
-    ).first()
+    seed1 = session.exec(select(Team).where(Team.event_id == event.id, Team.seed == 1)).first()
     assert seed1.name == "Team 1, City, ST"
 
 
@@ -306,9 +301,7 @@ def test_reopen_draw_clears_matches_and_unblocks_combined_import(client, session
     for seed in range(1, 17):
         lines.append(f"{seed}\tNew {seed}\tNew Team {seed}, City, ST\tMixed\t9.0\t5550000000\tp@x.com")
     payload = {"text": "\n".join(lines)}
-    blocked = client.post(
-        f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload
-    )
+    blocked = client.post(f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload)
     assert blocked.status_code == 409, blocked.text
 
     # Reopen the draw → clears matches, sets draft.
@@ -322,9 +315,7 @@ def test_reopen_draw_clears_matches_and_unblocks_combined_import(client, session
     assert session.exec(select(Match).where(Match.event_id == event.id)).all() == []
 
     # Now the new roster imports successfully.
-    ok = client.post(
-        f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload
-    )
+    ok = client.post(f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload)
     assert ok.status_code == 200, ok.text
 
     session.expire_all()
@@ -364,9 +355,7 @@ def test_combined_import_caps_wf14_event_to_14_teams(client, session):
         lines.append(f"{seed}\tW {seed}\tWomen Team {seed}, City, ST\tWomens\t9.0\t5550000000\tp@x.com")
     payload = {"text": "\n".join(lines)}
 
-    resp = client.post(
-        f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload
-    )
+    resp = client.post(f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert any("dropping 2 extra row(s): seeds [15, 16]" in w for w in body["warnings"]), body["warnings"]

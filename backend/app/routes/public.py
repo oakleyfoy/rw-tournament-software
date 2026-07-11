@@ -595,9 +595,7 @@ def public_waterfall(
         )
 
     bye_r1_by_team: Dict[int, Match] = {
-        m.winner_team_id: m
-        for m in r1_matches
-        if _is_bye_r1(m) and m.winner_team_id is not None
+        m.winner_team_id: m for m in r1_matches if _is_bye_r1(m) and m.winner_team_id is not None
     }
 
     # Build R1→R2 mappings.
@@ -1029,6 +1027,7 @@ def _rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
             return f"POOL{last[0]}"
     return None
 
+
 # Temporary live-display override for the current women's Jekyll RR board.
 # The tournament director requested RR rounds 1 and 2 to appear swapped on
 # the public draws page for this one event, without changing scores/teams.
@@ -1185,6 +1184,48 @@ def public_round_robin(
     version_id: Optional[int] = Query(None),
     session: Session = Depends(get_session),
 ):
+    """Public read-only round robin pools for an event.
+
+    Never 500s on data issues: on any unexpected error we log the full
+    traceback and return an empty (but valid) response so the public page
+    degrades gracefully instead of showing an HTTP 500.
+    """
+    try:
+        return _public_round_robin_impl(tournament_id, event_id, version_id, session)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "public_round_robin failed for tournament=%s event=%s version=%s",
+            tournament_id,
+            event_id,
+            version_id,
+        )
+        try:
+            tournament = session.get(Tournament, tournament_id)
+            event = session.get(Event, event_id)
+            return RoundRobinResponse(
+                tournament_name=tournament.name if tournament else "",
+                event_name=event.name if event else "",
+                pools=[],
+                show_court_info=True,
+            )
+        except Exception:
+            logger.exception("public_round_robin fallback response also failed")
+            return RoundRobinResponse(
+                tournament_name="",
+                event_name="",
+                pools=[],
+                show_court_info=True,
+            )
+
+
+def _public_round_robin_impl(
+    tournament_id: int,
+    event_id: int,
+    version_id: Optional[int],
+    session: Session,
+):
     """Public read-only round robin pools for an event."""
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
@@ -1227,9 +1268,7 @@ def public_round_robin(
     # not folded into a single pool's round robin.
     cross_matches = [m for m in all_cons_matches if "_CONS_SUN_" in (m.match_code or "").upper()]
     cons_pool_matches = [
-        m
-        for m in all_cons_matches
-        if m not in cross_matches and _rr_pool_code_for_match(m.match_code) is not None
+        m for m in all_cons_matches if m not in cross_matches and _rr_pool_code_for_match(m.match_code) is not None
     ]
 
     display_matches = list(rr_matches) + list(cons_pool_matches) + list(cross_matches)
@@ -1286,9 +1325,7 @@ def public_round_robin(
                 m.round_index,
             )
             try:
-                boxes.append(
-                    _build_rr_match_box(m, team_map, assignment_map, slot_map, display_round_index)
-                )
+                boxes.append(_build_rr_match_box(m, team_map, assignment_map, slot_map, display_round_index))
             except Exception:
                 logger.exception(
                     "public_round_robin: failed to build RR box for match %s (%s)",
@@ -1400,9 +1437,7 @@ def public_round_robin(
         try:
             standings_list.append(_compute_pool_standings(pool_code))
         except Exception:
-            logger.exception(
-                "public_round_robin: failed to compute standings for pool %s", pool_code
-            )
+            logger.exception("public_round_robin: failed to compute standings for pool %s", pool_code)
 
     # Cross-pool placement round (III#1 vs IV#1, …) — appended as its own
     # section beneath Divisions III/IV. Not scored as a pool.
@@ -1410,9 +1445,7 @@ def public_round_robin(
         cross_boxes = []
         for m in sorted(cross_matches, key=lambda m: m.sequence_in_round or 0):
             try:
-                cross_boxes.append(
-                    _build_rr_match_box(m, team_map, assignment_map, slot_map, m.round_index or 1)
-                )
+                cross_boxes.append(_build_rr_match_box(m, team_map, assignment_map, slot_map, m.round_index or 1))
             except Exception:
                 logger.exception(
                     "public_round_robin: failed to build cross-placement box for match %s (%s)",

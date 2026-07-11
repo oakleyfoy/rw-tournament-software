@@ -392,31 +392,51 @@ def test_public_waterfall_wf14_byes_render_top_and_bottom(client, session):
     match1 = _mk("WOM_WF_R1_01", 1, team_a_id=m1a.id, placeholder_side_a="Seed 3", placeholder_side_b="Seed 12")
     match2 = _mk("WOM_WF_R1_02", 2, team_a_id=m2a.id, placeholder_side_a="Seed 4", placeholder_side_b="Seed 11")
     bye_top = _mk(
-        "WOM_WF_R1_BYE_TOP", 7,
-        team_a_id=alex.id, team_b_id=None,
-        placeholder_side_a="Alex / Torrie", placeholder_side_b="BYE",
-        winner_team_id=alex.id, runtime_status="FINAL", status="complete",
+        "WOM_WF_R1_BYE_TOP",
+        7,
+        team_a_id=alex.id,
+        team_b_id=None,
+        placeholder_side_a="Alex / Torrie",
+        placeholder_side_b="BYE",
+        winner_team_id=alex.id,
+        runtime_status="FINAL",
+        status="complete",
     )
     bye_bot = _mk(
-        "WOM_WF_R1_BYE_BOT", 8,
-        team_a_id=cat.id, team_b_id=None,
-        placeholder_side_a="Catalina / Gricel", placeholder_side_b="BYE",
-        winner_team_id=cat.id, runtime_status="FINAL", status="complete",
+        "WOM_WF_R1_BYE_BOT",
+        8,
+        team_a_id=cat.id,
+        team_b_id=None,
+        placeholder_side_a="Catalina / Gricel",
+        placeholder_side_b="BYE",
+        winner_team_id=cat.id,
+        runtime_status="FINAL",
+        status="complete",
     )
 
     # R2 top: #1 seed (bye, side A) vs winner of match 2 (side B, source).
     r2_top = _mk(
-        "WOM_WF_R2_01", 1, round_number=2, round_index=2,
+        "WOM_WF_R2_01",
+        1,
+        round_number=2,
+        round_index=2,
         team_a_id=alex.id,
-        placeholder_side_a="Alex / Torrie", placeholder_side_b="W(R1_2)",
-        source_match_b_id=match2.id, source_b_role="WINNER",
+        placeholder_side_a="Alex / Torrie",
+        placeholder_side_b="W(R1_2)",
+        source_match_b_id=match2.id,
+        source_b_role="WINNER",
     )
     # R2 bottom: winner of match 1 (side A, source) vs #2 seed (bye, side B).
     r2_bot = _mk(
-        "WOM_WF_R2_02", 2, round_number=2, round_index=2,
+        "WOM_WF_R2_02",
+        2,
+        round_number=2,
+        round_index=2,
         team_b_id=cat.id,
-        placeholder_side_a="W(R1_1)", placeholder_side_b="Catalina / Gricel",
-        source_match_a_id=match1.id, source_a_role="WINNER",
+        placeholder_side_a="W(R1_1)",
+        placeholder_side_b="Catalina / Gricel",
+        source_match_a_id=match1.id,
+        source_a_role="WINNER",
     )
 
     tournament.public_schedule_version_id = version.id
@@ -607,33 +627,58 @@ def test_public_roundrobin_wf14_finalized_cons_scores_do_not_500(client, session
 
     # Pool C: teams 1,4,6.  Various finalized score shapes.
     _mk(
-        "WOM_CONS_FRI_C01", 1, 1, teams["t1"], teams["t6"],
-        runtime_status="FINAL", winner_team_id=teams["t1"].id,
+        "WOM_CONS_FRI_C01",
+        1,
+        1,
+        teams["t1"],
+        teams["t6"],
+        runtime_status="FINAL",
+        winner_team_id=teams["t1"].id,
         # sets stored as list-of-lists (the production shape that 500'd).
         score_json={"sets": [[6, 2], [6, 3]], "display": "6-2, 6-3"},
     )
     _mk(
-        "WOM_CONS_SAT1_C01", 2, 1, teams["t4"], teams["t6"],
-        runtime_status="FINAL", winner_team_id=teams["t4"].id,
+        "WOM_CONS_SAT1_C01",
+        2,
+        1,
+        teams["t4"],
+        teams["t6"],
+        runtime_status="FINAL",
+        winner_team_id=teams["t4"].id,
         # sets as dicts.
         score_json={"sets": [{"a": 6, "b": 4}, {"a": 7, "b": 5}]},
     )
     _mk(
-        "WOM_CONS_SAT2_C01", 3, 1, teams["t1"], teams["t4"],
-        runtime_status="FINAL", winner_team_id=teams["t1"].id,
+        "WOM_CONS_SAT2_C01",
+        3,
+        1,
+        teams["t1"],
+        teams["t4"],
+        runtime_status="FINAL",
+        winner_team_id=teams["t1"].id,
         # retired string only.
         score_json={"display": "6-1 (RET)"},
     )
 
     # Pool D: teams 2,3,5.
     _mk(
-        "WOM_CONS_FRI_D02", 1, 2, teams["t2"], teams["t5"],
-        runtime_status="FINAL", winner_team_id=teams["t2"].id,
+        "WOM_CONS_FRI_D02",
+        1,
+        2,
+        teams["t2"],
+        teams["t5"],
+        runtime_status="FINAL",
+        winner_team_id=teams["t2"].id,
         score_json={"display": "8-4"},
     )
     _mk(
-        "WOM_CONS_SAT1_D02", 2, 2, teams["t3"], teams["t5"],
-        runtime_status="FINAL", winner_team_id=teams["t3"].id,
+        "WOM_CONS_SAT1_D02",
+        2,
+        2,
+        teams["t3"],
+        teams["t5"],
+        runtime_status="FINAL",
+        winner_team_id=teams["t3"].id,
         # garbage sets element mixed with a valid pair.
         score_json={"sets": [None, "x", [6, 3]]},
     )
@@ -715,3 +760,49 @@ def test_public_draws_list_wf14_has_no_bracket_divisions(client, session):
     assert ev["divisions"] == []
     assert ev["has_waterfall"] is True
     assert ev["has_round_robin"] is True
+
+
+def test_public_roundrobin_never_500s_when_build_raises(client, session, monkeypatch):
+    """Hard guarantee: if the round-robin build raises for any reason, the public
+    endpoint must degrade to a valid empty 200 response, never an HTTP 500."""
+    import app.routes.public as public_module
+
+    tournament = Tournament(
+        name="RR Never 500",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=14,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_14_TOP2_BYE","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.flush()
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated corrupt data")
+
+    monkeypatch.setattr(public_module, "_public_round_robin_impl", _boom)
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["pools"] == []
+    assert body["event_name"] == "Womens"
