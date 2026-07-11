@@ -1257,7 +1257,9 @@ def _public_round_robin_impl(
     # not folded into a single pool's round robin.
     cross_matches = [m for m in all_cons_matches if "_CONS_SUN_" in (m.match_code or "").upper()]
     cons_pool_matches = [
-        m for m in all_cons_matches if m not in cross_matches and _rr_pool_code_for_match(m.match_code) is not None
+        m
+        for m in all_cons_matches
+        if "_CONS_SUN_" not in (m.match_code or "").upper() and _rr_pool_code_for_match(m.match_code) is not None
     ]
 
     display_matches = list(rr_matches) + list(cons_pool_matches) + list(cross_matches)
