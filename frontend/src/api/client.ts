@@ -2177,10 +2177,15 @@ export interface RoundRobinResponse {
 
 export async function getPublicRoundRobin(
   tournamentId: number,
-  eventId: number
+  eventId: number,
+  versionId?: number | null
 ): Promise<RoundRobinResponse> {
+  const qs =
+    versionId != null && Number.isFinite(versionId)
+      ? `?version_id=${encodeURIComponent(String(versionId))}`
+      : ''
   return fetchJson<RoundRobinResponse>(
-    `${API_BASE_URL}/public/tournaments/${tournamentId}/events/${eventId}/roundrobin`
+    `${API_BASE_URL}/public/tournaments/${tournamentId}/events/${eventId}/roundrobin${qs}`
   )
 }
 

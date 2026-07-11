@@ -629,6 +629,8 @@ export default function PublicRoundRobinPage() {
   const [searchParams] = useSearchParams()
   const captureMode = searchParams.get('capture_packet') === '1'
   const tvMode = searchParams.get('tv') === '1'
+  const versionIdParam = searchParams.get('version_id')
+  const versionId = versionIdParam ? parseInt(versionIdParam, 10) : null
 
   const [data, setData] = useState<RoundRobinResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -644,7 +646,7 @@ export default function PublicRoundRobinPage() {
       setNotPublished(false)
       setError(null)
       try {
-        const resp: any = await getPublicRoundRobin(tid, eid)
+        const resp: any = await getPublicRoundRobin(tid, eid, versionId)
         if (cancelled) return
         if (resp.status === 'NOT_PUBLISHED') {
           setNotPublished(true)
@@ -669,7 +671,7 @@ export default function PublicRoundRobinPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [tid, eid])
+  }, [tid, eid, versionId])
 
   const handlePrint = useCallback(() => {
     injectPrintStyles()

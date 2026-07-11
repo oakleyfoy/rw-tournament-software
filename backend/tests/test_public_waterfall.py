@@ -762,13 +762,12 @@ def test_public_draws_list_wf14_has_no_bracket_divisions(client, session):
     assert ev["has_round_robin"] is True
 
 
-def test_public_roundrobin_never_500s_when_build_raises(client, session, monkeypatch):
-    """Hard guarantee: if the round-robin build raises for any reason, the public
-    endpoint must degrade to a valid empty 200 response, never an HTTP 500."""
-    import app.routes.public as public_module
+def test_public_roundrobin_mixed_sequence_in_round_sorts(client, session):
+    """Production rows may mix int/str sequence_in_round; sorting must not crash."""
+    from app.models.team import Team
 
     tournament = Tournament(
-        name="RR Never 500",
+        name="RR Mixed Seq",
         location="KC",
         timezone="America/Chicago",
         start_date=date(2026, 7, 24),
@@ -783,7 +782,7 @@ def test_public_roundrobin_never_500s_when_build_raises(client, session, monkeyp
 
     event = Event(
         tournament_id=tournament.id,
-        name="Womens",
+        name="Women's",
         category="womens",
         team_count=14,
         draw_status="final",
@@ -792,17 +791,43 @@ def test_public_roundrobin_never_500s_when_build_raises(client, session, monkeyp
     session.add(event)
     session.flush()
 
+    t1 = Team(tournament_id=tournament.id, event_id=event.id, name="A", seed=1)
+    t2 = Team(tournament_id=tournament.id, event_id=event.id, name="B", seed=2)
+    session.add(t1)
+    session.add(t2)
+    session.flush()
+
+    def _mk(code, seq, seq_type=int):
+        seq_val = seq if seq_type is str else seq
+        session.add(
+            Match(
+                tournament_id=tournament.id,
+                event_id=event.id,
+                schedule_version_id=version.id,
+                match_code=code,
+                match_type="RR",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=seq_val,
+                duration_minutes=90,
+                placeholder_side_a="SEED_1",
+                placeholder_side_b="SEED_2",
+                team_a_id=t1.id,
+                team_b_id=t2.id,
+                score_json={"display": 8},
+            )
+        )
+
+    _mk("WOM_WOM_E18_POOLA_RR_01", 1, int)
+    _mk("WOM_WOM_E18_POOLA_RR_02", "2", str)
+
     tournament.public_schedule_version_id = version.id
     session.add(tournament)
     session.commit()
 
-    def _boom(*args, **kwargs):
-        raise RuntimeError("simulated corrupt data")
-
-    monkeypatch.setattr(public_module, "_public_round_robin_impl", _boom)
-
     resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["pools"] == []
-    assert body["event_name"] == "Womens"
+    assert len(body["pools"]) == 1
+    assert len(body["pools"][0]["matches"]) == 2
+    assert body["pools"][0]["matches"][0]["score_display"] == "8"

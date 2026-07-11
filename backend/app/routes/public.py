@@ -1008,6 +1008,16 @@ _POOL_LABELS = {
 }
 
 
+def _safe_int_field(value: Any, default: int = 0) -> int:
+    """Coerce DB values for sorting/display (handles str/int mix in production rows)."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
     """Resolve the pool code (POOLA..POOLH) for a pool round-robin match.
 
@@ -1041,7 +1051,7 @@ def _public_rr_display_round(
     event_id: int,
     round_index: Optional[int],
 ) -> int:
-    round_value = int(round_index or 0)
+    round_value = _safe_int_field(round_index, 0)
     if (tournament_id, event_id) in _PUBLIC_RR_SWAP_FIRST_TWO_ROUNDS:
         if round_value == 1:
             return 2
@@ -1120,8 +1130,8 @@ def _build_rr_match_box(
     if m.score_json:
         try:
             sd = json.loads(m.score_json) if isinstance(m.score_json, str) else m.score_json
-            if isinstance(sd, dict) and sd.get("display"):
-                score_display = sd["display"]
+            if isinstance(sd, dict) and sd.get("display") is not None:
+                score_display = str(sd["display"])
             elif isinstance(sd, str):
                 score_display = sd
         except Exception:
@@ -1184,12 +1194,7 @@ def public_round_robin(
     version_id: Optional[int] = Query(None),
     session: Session = Depends(get_session),
 ):
-    """Public read-only round robin pools for an event.
-
-    Never 500s on data issues: on any unexpected error we log the full
-    traceback and return an empty (but valid) response so the public page
-    degrades gracefully instead of showing an HTTP 500.
-    """
+    """Public read-only round robin pools for an event."""
     try:
         return _public_round_robin_impl(tournament_id, event_id, version_id, session)
     except HTTPException:
@@ -1201,23 +1206,7 @@ def public_round_robin(
             event_id,
             version_id,
         )
-        try:
-            tournament = session.get(Tournament, tournament_id)
-            event = session.get(Event, event_id)
-            return RoundRobinResponse(
-                tournament_name=tournament.name if tournament else "",
-                event_name=event.name if event else "",
-                pools=[],
-                show_court_info=True,
-            )
-        except Exception:
-            logger.exception("public_round_robin fallback response also failed")
-            return RoundRobinResponse(
-                tournament_name="",
-                event_name="",
-                pools=[],
-                show_court_info=True,
-            )
+        raise
 
 
 def _public_round_robin_impl(
@@ -1261,7 +1250,7 @@ def _public_round_robin_impl(
         select(Match).where(
             Match.event_id == event_id,
             Match.schedule_version_id == version.id,
-            Match.match_code.contains("_CONS_"),
+            Match.match_code.contains("_CONS_", autoescape=True),
         )
     ).all()
     # Sunday cross-pool placement (III#1 vs IV#1, …) is shown as its own round,
@@ -1291,11 +1280,16 @@ def _public_round_robin_impl(
     team_map: Dict[int, Team] = {t.id: t for t in teams}
 
     rr_ids = {m.id for m in display_matches}
-    assignments = session.exec(
-        select(MatchAssignment).where(
-            MatchAssignment.schedule_version_id == version.id,
-        )
-    ).all()
+    assignments = (
+        session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == version.id,
+                MatchAssignment.match_id.in_(list(rr_ids)),
+            )
+        ).all()
+        if rr_ids
+        else []
+    )
     assignment_map = {a.match_id: a for a in assignments if a.match_id in rr_ids}
     slot_ids = {a.slot_id for a in assignment_map.values()}
     slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.id.in_(list(slot_ids)))).all() if slot_ids else []
@@ -1314,7 +1308,8 @@ def _public_round_robin_impl(
             pool_matches[pool_code],
             key=lambda m: (
                 _public_rr_display_round(tournament_id, event_id, m.round_index),
-                m.sequence_in_round or 0,
+                _safe_int_field(m.sequence_in_round, 0),
+                m.match_code or "",
             ),
         )
         boxes: List[RRMatchBox] = []
@@ -1443,9 +1438,20 @@ def _public_round_robin_impl(
     # section beneath Divisions III/IV. Not scored as a pool.
     if cross_matches:
         cross_boxes = []
-        for m in sorted(cross_matches, key=lambda m: m.sequence_in_round or 0):
+        for m in sorted(
+            cross_matches,
+            key=lambda m: (_safe_int_field(m.sequence_in_round, 0), m.match_code or ""),
+        ):
             try:
-                cross_boxes.append(_build_rr_match_box(m, team_map, assignment_map, slot_map, m.round_index or 1))
+                cross_boxes.append(
+                    _build_rr_match_box(
+                        m,
+                        team_map,
+                        assignment_map,
+                        slot_map,
+                        _safe_int_field(m.round_index, 1) or 1,
+                    )
+                )
             except Exception:
                 logger.exception(
                     "public_round_robin: failed to build cross-placement box for match %s (%s)",
