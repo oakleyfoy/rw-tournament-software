@@ -337,6 +337,47 @@ function ArrowConnector({ direction, layout }: { direction: 'left' | 'right'; la
   )
 }
 
+function isByeBox(box: PublicMatchBox | null): boolean {
+  if (!box) return false
+  return /^\s*bye\s*$/i.test(box.line2 || '') || /^\s*bye\s*$/i.test(box.line1 || '')
+}
+
+// A left-pointing line (with arrowhead) representing a loser exiting a match.
+function LoserExitLine({ layout }: { layout: WaterfallLayout }) {
+  return (
+    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center' }}>
+      <div style={{ width: '100%', height: 1, backgroundColor: '#c0392b' }} />
+      <div style={{
+        position: 'absolute',
+        left: 0,
+        width: 0,
+        height: 0,
+        borderTop: `${Math.max(3, Math.round(layout.connectorWidth * 0.16))}px solid transparent`,
+        borderBottom: `${Math.max(3, Math.round(layout.connectorWidth * 0.16))}px solid transparent`,
+        borderRight: `${Math.max(5, Math.round(layout.connectorWidth * 0.25))}px solid #c0392b`,
+      }} />
+    </div>
+  )
+}
+
+// Full-width left column of loser-exit lines, one per real (non-bye) R1 box.
+function LoserExitLines({ boxes, width, layout }: {
+  boxes: (PublicMatchBox | null)[]
+  width: number
+  layout: WaterfallLayout
+}) {
+  const lanes = boxes.filter((b): b is PublicMatchBox => Boolean(b))
+  return (
+    <div style={{ width, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: layout.rowGap }}>
+      {lanes.map((box, i) => (
+        <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+          {!isByeBox(box) && <LoserExitLine layout={layout} />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 const DIV_CODE_MAP: Record<string, string> = {
   'Division I': 'BWW',
   'Division II': 'BWL',
@@ -502,6 +543,8 @@ function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }:
   divisionType: 'bracket' | 'roundrobin'
   layout: WaterfallLayout
 }) {
+  const hasLoserBracket = Boolean(pair.loser) || Boolean(pair.loser_dest)
+
   return (
     <div data-row-pair style={{
       display: 'flex',
@@ -510,43 +553,54 @@ function WaterfallRowPair({ pair, tournamentId, eventId, divisionType, layout }:
       marginBottom: layout.rowMarginBottom,
       minHeight: layout.rowMinHeight,
     }}>
-      {/* Loser destination (far left) */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        width: layout.destBoxWidth,
-        flexShrink: 0,
-      }}>
-        {pair.loser_dest && (
-          <DestinationBox
-            label={pair.loser_dest}
-            teamName={pair.r2_loser_team_name}
-            winnerPathTeamName={pair.r2_loser_bracket_winner_name}
-            loserPathTeamName={pair.r2_loser_bracket_loser_name}
-            tournamentId={tournamentId}
-            eventId={eventId}
-            divisionType={divisionType}
-            layout={layout}
-          />
-        )}
-      </div>
+      {hasLoserBracket ? (
+        <>
+          {/* Loser destination (far left) */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: layout.destBoxWidth,
+            flexShrink: 0,
+          }}>
+            {pair.loser_dest && (
+              <DestinationBox
+                label={pair.loser_dest}
+                teamName={pair.r2_loser_team_name}
+                winnerPathTeamName={pair.r2_loser_bracket_winner_name}
+                loserPathTeamName={pair.r2_loser_bracket_loser_name}
+                tournamentId={tournamentId}
+                eventId={eventId}
+                divisionType={divisionType}
+                layout={layout}
+              />
+            )}
+          </div>
 
-      {/* Arrow: destination ← loser box */}
-      {pair.loser_dest && <ArrowConnector direction="left" layout={layout} />}
-      {!pair.loser_dest && <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />}
+          {/* Arrow: destination ← loser box */}
+          {pair.loser_dest && <ArrowConnector direction="left" layout={layout} />}
+          {!pair.loser_dest && <div style={{ width: layout.connectorWidth, flexShrink: 0 }} />}
 
-      {/* Loser box (left) */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        width: layout.sideBoxWidth,
-        flexShrink: 0,
-      }}>
-        {pair.loser ? <MatchBoxCard box={pair.loser} variant="loser" layout={layout} /> : <div style={{ width: layout.sideBoxWidth }} />}
-      </div>
+          {/* Loser box (left) */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            width: layout.sideBoxWidth,
+            flexShrink: 0,
+          }}>
+            {pair.loser ? <MatchBoxCard box={pair.loser} variant="loser" layout={layout} /> : <div style={{ width: layout.sideBoxWidth }} />}
+          </div>
 
-      {/* Arrow: loser ← center */}
-      <ArrowConnector direction="left" layout={layout} />
+          {/* Arrow: loser ← center */}
+          <ArrowConnector direction="left" layout={layout} />
+        </>
+      ) : (
+        /* No loser bracket: draw a loser-exit line out of each real R1 match. */
+        <LoserExitLines
+          boxes={[pair.r1_a, pair.r1_b]}
+          width={layout.destBoxWidth + layout.sideBoxWidth + layout.connectorWidth * 2}
+          layout={layout}
+        />
+      )}
 
       {/* Center column: two R1 boxes stacked */}
       <div style={{

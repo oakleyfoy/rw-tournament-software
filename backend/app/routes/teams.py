@@ -1211,33 +1211,50 @@ def import_combined_teams(
 
         work_items.append((event, valid_rows))
 
-    for event, _valid_rows in work_items:
-        existing_for_event = session.exec(select(Team).where(Team.event_id == event.id)).all()
-        wipe_ids = [t.id for t in existing_for_event if t.id is not None]
-        blocked = _blocked_team_ids_for_finalized_matches(session, event, wipe_ids)
-        if blocked:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f'Cannot replace roster for "{event.name}": '
-                    f"{len(blocked)} team(s) are still assigned to finalized matches or a finalized schedule version. "
-                    "Clear those assignments before re-importing."
-                ),
-            )
+    def _norm_team_name(value: Optional[str]) -> str:
+        return " ".join((value or "").split()).strip().lower()
 
     for event, valid_rows in work_items:
         existing_for_event = session.exec(select(Team).where(Team.event_id == event.id)).all()
         wipe_ids = [t.id for t in existing_for_event if t.id is not None]
-        if wipe_ids:
-            warnings.extend(
-                _safe_remove_teams_from_event(
-                    session,
-                    event,
-                    wipe_ids,
-                    removal_summary="existing team(s) cleared before combined import",
-                )
+        blocked = _blocked_team_ids_for_finalized_matches(session, event, wipe_ids)
+        if not blocked:
+            continue
+
+        # Teams locked into finalized matches / a finalized schedule version may be
+        # refreshed in place (towel/contact/player info) as long as the incoming
+        # sheet keeps the *same* team at that seed. Only block when the import would
+        # change who plays a finalized match (a different team at a locked seed).
+        incoming_by_seed = {r["seed"]: r for r in valid_rows}
+        existing_by_id = {t.id: t for t in existing_for_event}
+        conflicts: List[str] = []
+        for tid in blocked:
+            team = existing_by_id.get(tid)
+            if team is None:
+                continue
+            incoming = incoming_by_seed.get(team.seed)
+            if incoming is None:
+                # Not in the sheet — kept in place, never removed. No identity change.
+                continue
+            if _norm_team_name(incoming.get("full_name")) != _norm_team_name(team.name):
+                conflicts.append(f"seed {team.seed}: '{team.name}' \u2192 '{incoming.get('full_name')}'")
+
+        if conflicts:
+            shown = "; ".join(conflicts[:6])
+            more = "" if len(conflicts) <= 6 else f" (+{len(conflicts) - 6} more)"
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f'Cannot replace roster for "{event.name}": '
+                    f"{len(conflicts)} team(s) locked into finalized matches would be reassigned to a "
+                    f"different team ({shown}{more}). Clear those assignments before changing who plays."
+                ),
             )
 
+    for event, valid_rows in work_items:
+        # Update in place: _upsert_seeded_rows_for_event refreshes matching seeds,
+        # removes only stale non-finalized teams, and leaves finalized teams intact.
+        # No full wipe — team IDs (and their finalized assignments) are preserved.
         imported, updated, event_warnings, event_teams = _upsert_seeded_rows_for_event(session, event, valid_rows)
         imported_count += imported
         updated_count += updated

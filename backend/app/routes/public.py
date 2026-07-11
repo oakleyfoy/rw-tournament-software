@@ -450,14 +450,29 @@ def public_draws_list(
                 Match.match_code.isnot(None),
             )
         ).all()
+
+        # Waterfall-to-pools formats (e.g. WF_14) have no bracket divisions —
+        # their flights are surfaced as Round Robin pools (A/B/C/D). Don't show
+        # Division I–IV buttons for them, even if stale bracket codes linger.
+        template_type = None
+        if e.draw_plan_json:
+            try:
+                import json as _json
+
+                template_type = (_json.loads(e.draw_plan_json) or {}).get("template_type")
+            except Exception:
+                template_type = None
+        pools_only_format = template_type in ("WF_14_TOP2_BYE", "WF_TO_POOLS_DYNAMIC")
+
         _DIV_ORDER = ["BWW", "BWL", "BLW", "BLL"]
         found = set()
-        for mc in bracket_codes:
-            if not mc:
-                continue
-            for dc in _DIV_ORDER:
-                if f"_{dc}_" in mc:
-                    found.add(dc)
+        if not pools_only_format:
+            for mc in bracket_codes:
+                if not mc:
+                    continue
+                for dc in _DIV_ORDER:
+                    if f"_{dc}_" in mc:
+                        found.add(dc)
         for dc in _DIV_ORDER:
             if dc in found:
                 divs.append(DivisionItem(code=dc, label=_DIV_LABELS[dc]))
@@ -1270,9 +1285,16 @@ def public_round_robin(
                 event_id,
                 m.round_index,
             )
-            boxes.append(
-                _build_rr_match_box(m, team_map, assignment_map, slot_map, display_round_index)
-            )
+            try:
+                boxes.append(
+                    _build_rr_match_box(m, team_map, assignment_map, slot_map, display_round_index)
+                )
+            except Exception:
+                logger.exception(
+                    "public_round_robin: failed to build RR box for match %s (%s)",
+                    m.id,
+                    m.match_code,
+                )
 
         pools.append(
             RRPool(
@@ -1378,10 +1400,18 @@ def public_round_robin(
     # Cross-pool placement round (III#1 vs IV#1, …) — appended as its own
     # section beneath Divisions III/IV. Not scored as a pool.
     if cross_matches:
-        cross_boxes = [
-            _build_rr_match_box(m, team_map, assignment_map, slot_map, m.round_index or 1)
-            for m in sorted(cross_matches, key=lambda m: m.sequence_in_round or 0)
-        ]
+        cross_boxes = []
+        for m in sorted(cross_matches, key=lambda m: m.sequence_in_round or 0):
+            try:
+                cross_boxes.append(
+                    _build_rr_match_box(m, team_map, assignment_map, slot_map, m.round_index or 1)
+                )
+            except Exception:
+                logger.exception(
+                    "public_round_robin: failed to build cross-placement box for match %s (%s)",
+                    m.id,
+                    m.match_code,
+                )
         pools.append(
             RRPool(
                 pool_code=_CD_PLACEMENT_POOL_CODE,

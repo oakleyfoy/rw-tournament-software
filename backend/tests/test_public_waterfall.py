@@ -539,3 +539,179 @@ def test_public_roundrobin_wf14_includes_consolation_pools_c_and_d(client, sessi
     assert len(placement["matches"]) == 3
     lines = [(b["line1"], b["line2"]) for b in placement["matches"]]
     assert lines == [("III #1", "IV #1"), ("III #2", "IV #2"), ("III #3", "IV #3")]
+
+
+def test_public_roundrobin_wf14_finalized_cons_scores_do_not_500(client, session):
+    """Regression: finalized consolation (C/D) pool matches whose score_json uses
+    varied real-world shapes (list-of-lists sets, dict sets, retired string,
+    plain display) must not 500 the public round-robin endpoint."""
+    from app.models.team import Team
+
+    tournament = Tournament(
+        name="WF14 Cons Scores",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=14,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_14_TOP2_BYE","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.flush()
+
+    # Six real loser-flight teams for pools C {1,4,6} and D {2,3,5}.
+    teams: dict[str, Team] = {}
+    for i in range(1, 7):
+        t = Team(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            name=f"Cons Team {i}",
+            seed=i,
+        )
+        session.add(t)
+        session.flush()
+        teams[f"t{i}"] = t
+
+    def _mk(code, rnd, seq, a, b, **kw):
+        m = Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=code,
+            match_type="MAIN",
+            round_number=rnd,
+            round_index=rnd,
+            sequence_in_round=seq,
+            duration_minutes=90,
+            placeholder_side_a="",
+            placeholder_side_b="",
+            team_a_id=a.id,
+            team_b_id=b.id,
+            **kw,
+        )
+        session.add(m)
+        return m
+
+    # Pool C: teams 1,4,6.  Various finalized score shapes.
+    _mk(
+        "WOM_CONS_FRI_C01", 1, 1, teams["t1"], teams["t6"],
+        runtime_status="FINAL", winner_team_id=teams["t1"].id,
+        # sets stored as list-of-lists (the production shape that 500'd).
+        score_json={"sets": [[6, 2], [6, 3]], "display": "6-2, 6-3"},
+    )
+    _mk(
+        "WOM_CONS_SAT1_C01", 2, 1, teams["t4"], teams["t6"],
+        runtime_status="FINAL", winner_team_id=teams["t4"].id,
+        # sets as dicts.
+        score_json={"sets": [{"a": 6, "b": 4}, {"a": 7, "b": 5}]},
+    )
+    _mk(
+        "WOM_CONS_SAT2_C01", 3, 1, teams["t1"], teams["t4"],
+        runtime_status="FINAL", winner_team_id=teams["t1"].id,
+        # retired string only.
+        score_json={"display": "6-1 (RET)"},
+    )
+
+    # Pool D: teams 2,3,5.
+    _mk(
+        "WOM_CONS_FRI_D02", 1, 2, teams["t2"], teams["t5"],
+        runtime_status="FINAL", winner_team_id=teams["t2"].id,
+        score_json={"display": "8-4"},
+    )
+    _mk(
+        "WOM_CONS_SAT1_D02", 2, 2, teams["t3"], teams["t5"],
+        runtime_status="FINAL", winner_team_id=teams["t3"].id,
+        # garbage sets element mixed with a valid pair.
+        score_json={"sets": [None, "x", [6, 3]]},
+    )
+    _mk("WOM_CONS_SAT2_D02", 3, 2, teams["t2"], teams["t3"])
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    pools = {p["pool_code"]: p for p in body["pools"]}
+    assert {"POOLC", "POOLD"} <= set(pools)
+    # Standings computed without crashing.
+    standings = {s["pool_code"]: s for s in body["standings"]}
+    assert "POOLC" in standings and "POOLD" in standings
+
+
+def test_public_draws_list_wf14_has_no_bracket_divisions(client, session):
+    """A WF_14 (waterfall→pools) event must not expose Division I–IV bracket
+    buttons — even if stale bracket-coded matches linger from an older draw."""
+    tournament = Tournament(
+        name="WF14 No Divs",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=14,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_14_TOP2_BYE","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.flush()
+
+    def _mk(code, mtype, rnd, seq):
+        session.add(
+            Match(
+                tournament_id=tournament.id,
+                event_id=event.id,
+                schedule_version_id=version.id,
+                match_code=code,
+                match_type=mtype,
+                round_number=rnd,
+                round_index=rnd,
+                sequence_in_round=seq,
+                duration_minutes=90,
+                placeholder_side_a="",
+                placeholder_side_b="",
+            )
+        )
+
+    _mk("WOM_WF_R1_01", "WF", 1, 1)
+    _mk("WOM_POOLA_RR_01", "RR", 1, 1)
+    _mk("WOM_CONS_FRI_C01", "MAIN", 1, 1)
+    # Stale bracket-division match left over from a previous draw structure.
+    _mk("WOM_BWW_01", "BRACKET", 1, 1)
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/draws")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    ev = next(e for e in body["events"] if e["event_id"] == event.id)
+    assert ev["divisions"] == []
+    assert ev["has_waterfall"] is True
+    assert ev["has_round_robin"] is True
