@@ -281,6 +281,15 @@ def delete_team(event_id: int, team_id: int, session: Session = Depends(get_sess
 
     # Delete team
     session.delete(team)
+    session.flush()
+
+    # Keep event.team_count aligned with the actual roster so fixed-size draw
+    # templates (e.g. WF_14_TOP2_BYE) validate against the real team total.
+    remaining = len(session.exec(select(Team).where(Team.event_id == event_id)).all())
+    if event.team_count != remaining:
+        event.team_count = remaining
+        session.add(event)
+
     session.commit()
     _sync_player_contacts_if_enabled(session, event.tournament_id)
 
@@ -770,6 +779,35 @@ def _make_display_name(full_name: str) -> str:
     return " / ".join(firsts) if firsts else name
 
 
+def _fixed_team_capacity(event: Event) -> Optional[int]:
+    """Return the required team count for a fixed-capacity draw template, else None.
+
+    Templates whose family allows exactly one team count (e.g. WF_14_TOP2_BYE = 14)
+    should not accept more team rows than they use. Variable-capacity templates
+    (RR, dynamic pools, brackets) return None so their fields are left untouched.
+    """
+    if not event.draw_plan_json:
+        return None
+    try:
+        import json as _json
+
+        template_type = (_json.loads(event.draw_plan_json) or {}).get("template_type")
+    except Exception:
+        return None
+    if not template_type:
+        return None
+    try:
+        from app.services.draw_plan_engine import normalize_template_key
+        from app.services.draw_plan_rules import ALLOWED_TEAM_COUNTS
+
+        allowed = ALLOWED_TEAM_COUNTS.get(normalize_template_key(template_type))
+    except Exception:
+        return None
+    if allowed and len(allowed) == 1:
+        return next(iter(allowed))
+    return None
+
+
 def _blocked_team_ids_for_finalized_matches(
     session: Session,
     event: Event,
@@ -1200,6 +1238,20 @@ def import_combined_teams(
 
         if not valid_rows:
             continue
+
+        # Fixed-capacity draw templates (e.g. WF_14_TOP2_BYE = 14) only ever use a
+        # set number of teams. Keep the top seeds and drop extra rows so the event's
+        # team_count stays valid instead of blocking generation with an oversized field.
+        cap = _fixed_team_capacity(event)
+        if cap is not None and len(valid_rows) > cap:
+            valid_rows.sort(key=lambda r: r["seed"])
+            dropped = valid_rows[cap:]
+            valid_rows = valid_rows[:cap]
+            seen_seeds = {row["seed"] for row in valid_rows}
+            warnings.append(
+                f"{event.name}: draw uses {cap} teams — dropping "
+                f"{len(dropped)} extra row(s): seeds {sorted(r['seed'] for r in dropped)}."
+            )
 
         max_seed = max(row["seed"] for row in valid_rows)
         missing = set(range(1, max_seed + 1)) - seen_seeds

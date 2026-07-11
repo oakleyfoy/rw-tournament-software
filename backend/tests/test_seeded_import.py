@@ -331,3 +331,88 @@ def test_reopen_draw_clears_matches_and_unblocks_combined_import(client, session
     teams_after = session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed)).all()
     assert len(teams_after) == 16
     assert all(t.name.startswith("New Team ") for t in teams_after)
+
+
+def test_combined_import_caps_wf14_event_to_14_teams(client, session):
+    """A WF_14 event (14-team format) must not balloon past 14 teams when the
+    sheet has extra rows — extras are dropped and team_count stays 14."""
+    tournament = Tournament(
+        name="WF14 Cap",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=0,
+        draw_status="draft",
+        draw_plan_json='{"template_type":"WF_14_TOP2_BYE","wf_rounds":2,"guarantee":4}',
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    lines = [_COMBINED_HEADER]
+    for seed in range(1, 17):  # 16 rows for a 14-team draw
+        lines.append(f"{seed}\tW {seed}\tWomen Team {seed}, City, ST\tWomens\t9.0\t5550000000\tp@x.com")
+    payload = {"text": "\n".join(lines)}
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert any("dropping 2 extra row(s): seeds [15, 16]" in w for w in body["warnings"]), body["warnings"]
+
+    session.expire_all()
+    teams_after = session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed)).all()
+    assert [t.seed for t in teams_after] == list(range(1, 15))
+    event_after = session.get(Event, event.id)
+    assert event_after.team_count == 14
+
+
+def test_delete_team_syncs_event_team_count(client, session):
+    """Deleting a team updates event.team_count so fixed-size templates validate."""
+    tournament = Tournament(
+        name="Delete Sync",
+        location="KC",
+        timezone="America/Chicago",
+        start_date=date(2026, 7, 24),
+        end_date=date(2026, 7, 26),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Womens",
+        category="womens",
+        team_count=16,
+        draw_status="draft",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    teams = []
+    for seed in range(1, 17):
+        t = Team(event_id=event.id, name=f"Team {seed}", seed=seed)
+        session.add(t)
+        session.flush()
+        teams.append(t)
+    session.commit()
+
+    resp = client.delete(f"/api/events/{event.id}/teams/{teams[15].id}")
+    assert resp.status_code == 204, resp.text
+
+    session.expire_all()
+    event_after = session.get(Event, event.id)
+    assert event_after.team_count == 15
