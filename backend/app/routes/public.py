@@ -1308,7 +1308,8 @@ def public_round_robin(
     from app.services.score_parser import parse_score as _parse_score
 
     standings_list: List[RRPoolStandings] = []
-    for pool_code in sorted(pool_matches.keys()):
+
+    def _compute_pool_standings(pool_code: str) -> RRPoolStandings:
         matches_in_pool = pool_matches[pool_code]
 
         pool_team_ids: set = set()
@@ -1389,13 +1390,19 @@ def public_round_robin(
         )
         sorted_rows = base_sorted_rows
 
-        standings_list.append(
-            RRPoolStandings(
-                pool_code=pool_code,
-                pool_label=_POOL_LABELS.get(pool_code, pool_code),
-                rows=[RRStandingsRow(team_id=tid, team_display=_disp(tid), **r) for tid, r in sorted_rows],
-            )
+        return RRPoolStandings(
+            pool_code=pool_code,
+            pool_label=_POOL_LABELS.get(pool_code, pool_code),
+            rows=[RRStandingsRow(team_id=tid, team_display=_disp(tid), **r) for tid, r in sorted_rows],
         )
+
+    for pool_code in sorted(pool_matches.keys()):
+        try:
+            standings_list.append(_compute_pool_standings(pool_code))
+        except Exception:
+            logger.exception(
+                "public_round_robin: failed to compute standings for pool %s", pool_code
+            )
 
     # Cross-pool placement round (III#1 vs IV#1, …) — appended as its own
     # section beneath Divisions III/IV. Not scored as a pool.

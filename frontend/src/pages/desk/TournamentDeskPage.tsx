@@ -2946,9 +2946,13 @@ function DrawsTab({
       if (!map[m.event_id]) {
         map[m.event_id] = { name: m.event_name, hasWF: false, hasBracket: false, hasRR: false }
       }
+      // WF_14 loser-flight pools (C/D) are stored as MAIN matches (stage BRACKET)
+      // but are round-robin pools, not bracket divisions — count them as RR.
+      const isWf14ConsPool =
+        m.stage === 'BRACKET' && (m.match_code || '').toUpperCase().includes('_CONS_')
       if (m.stage === 'WF') map[m.event_id].hasWF = true
-      if (m.stage === 'BRACKET' || m.stage === 'CONS') map[m.event_id].hasBracket = true
-      if (m.stage === 'RR') map[m.event_id].hasRR = true
+      if ((m.stage === 'BRACKET' && !isWf14ConsPool) || m.stage === 'CONS') map[m.event_id].hasBracket = true
+      if (m.stage === 'RR' || isWf14ConsPool) map[m.event_id].hasRR = true
     }
     return Object.entries(map).sort(([, a], [, b]) => a.name.localeCompare(b.name))
   }, [matches])
