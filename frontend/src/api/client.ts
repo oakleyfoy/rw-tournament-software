@@ -505,6 +505,12 @@ export async function finalizeDrawPlan(eventId: number, guaranteeSelected: numbe
   });
 }
 
+export async function reopenDrawPlan(eventId: number): Promise<{ id: number; draw_status: string; matches_cleared: number }> {
+  return fetchJson<{ id: number; draw_status: string; matches_cleared: number }>(`${API_BASE_URL}/events/${eventId}/draw-plan/reopen`, {
+    method: 'POST',
+  });
+}
+
 // Schedule Builder — authoritative match inventory (read-only)
 export interface ScheduleBuilderEvent {
   event_id: number;

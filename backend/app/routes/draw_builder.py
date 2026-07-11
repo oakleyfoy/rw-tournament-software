@@ -121,6 +121,41 @@ def update_draw_plan(event_id: int, plan_data: DrawPlanUpdate, session: Session 
     }
 
 
+class ReopenDraftResponse(BaseModel):
+    id: int
+    draw_status: str
+    matches_cleared: int
+
+
+@router.post("/events/{event_id}/draw-plan/reopen", response_model=ReopenDraftResponse)
+def reopen_draw_plan(event_id: int, session: Session = Depends(get_session)):
+    """Reopen a finalized draw as a draft, clearing its generated matches.
+
+    Unlike a plain status flip, this also purges the event's matches (and their
+    assignment/check-in/lock rows). That releases teams that were locked into a
+    finalized schedule version / FINAL matches so the roster can be re-imported,
+    after which the draw can be re-finalized to regenerate matches.
+    """
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    matches_before = len(session.exec(select(Match).where(Match.event_id == event_id)).all())
+    _purge_matches_for_event_draw_rebuild(session, event_id)
+
+    event.draw_status = "draft"
+    event.guarantee_selected = None
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    return ReopenDraftResponse(
+        id=event.id,
+        draw_status=event.draw_status or "draft",
+        matches_cleared=matches_before,
+    )
+
+
 class FinalizeRequest(BaseModel):
     guarantee_selected: int
 

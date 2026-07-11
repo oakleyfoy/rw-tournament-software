@@ -31,6 +31,7 @@ import {
   SchedulePlanReport,
   updateDrawPlan,
   finalizeDrawPlan,
+  reopenDrawPlan,
   updateEvent,
   updateTournament,
   Tournament,
@@ -826,24 +827,25 @@ function DrawBuilder() {
     // Store scroll position before reopen
     const scrollY = window.scrollY
 
+    const confirmed = window.confirm(
+      `Reopen "${event.name}" as a draft?\n\nThis clears the generated matches for this event so the roster can be edited/re-imported. ` +
+      `Any scheduled slots and entered results for this event's matches will be removed. You can re-finalize afterward to regenerate matches.`
+    )
+    if (!confirmed) return
+
     try {
       setSaving(prev => ({ ...prev, [event.id]: true }))
 
-      await updateDrawPlan(event.id, {
-        draw_plan_json: event.draw_plan_json,
-        schedule_profile_json: event.schedule_profile_json || null,
-        wf_block_minutes: event.wf_block_minutes || null,
-        standard_block_minutes: event.standard_block_minutes || null,
-      })
+      // Reopen clears this event's matches (releasing teams locked into a
+      // finalized schedule) and sets the draw back to draft.
+      const result = await reopenDrawPlan(event.id)
 
-      // Manually update event status to draft via updateEvent
-      const { updateEvent } = await import('../api/client')
-      await updateEvent(event.id, {
-        draw_status: 'draft',
-        guarantee_selected: null,
-      })
-
-      showToast('Event reopened as draft', 'success')
+      showToast(
+        result.matches_cleared > 0
+          ? `Event reopened as draft — ${result.matches_cleared} match(es) cleared. Re-import roster if needed, then finalize to regenerate.`
+          : 'Event reopened as draft',
+        'success'
+      )
       await loadData()
       
       // Restore scroll position after React re-renders

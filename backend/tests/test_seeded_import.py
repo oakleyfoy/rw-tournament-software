@@ -294,3 +294,40 @@ def test_combined_import_blocks_identity_change_on_finalized_team(client, sessio
         select(Team).where(Team.event_id == event.id, Team.seed == 1)
     ).first()
     assert seed1.name == "Team 1, City, ST"
+
+
+def test_reopen_draw_clears_matches_and_unblocks_combined_import(client, session):
+    """Reopening a finalized draw purges its matches, which releases the locked
+    teams so a brand-new roster can be imported cleanly."""
+    tournament, event, teams = _finalized_mixed_tournament(session)
+
+    # Sanity: a straight identity-changing import is blocked while finalized.
+    lines = [_COMBINED_HEADER]
+    for seed in range(1, 17):
+        lines.append(f"{seed}\tNew {seed}\tNew Team {seed}, City, ST\tMixed\t9.0\t5550000000\tp@x.com")
+    payload = {"text": "\n".join(lines)}
+    blocked = client.post(
+        f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload
+    )
+    assert blocked.status_code == 409, blocked.text
+
+    # Reopen the draw → clears matches, sets draft.
+    reopen = client.post(f"/api/events/{event.id}/draw-plan/reopen")
+    assert reopen.status_code == 200, reopen.text
+    body = reopen.json()
+    assert body["draw_status"] == "draft"
+    assert body["matches_cleared"] == 8
+
+    session.expire_all()
+    assert session.exec(select(Match).where(Match.event_id == event.id)).all() == []
+
+    # Now the new roster imports successfully.
+    ok = client.post(
+        f"/api/tournaments/{tournament.id}/teams/import-combined", json=payload
+    )
+    assert ok.status_code == 200, ok.text
+
+    session.expire_all()
+    teams_after = session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed)).all()
+    assert len(teams_after) == 16
+    assert all(t.name.startswith("New Team ") for t in teams_after)
