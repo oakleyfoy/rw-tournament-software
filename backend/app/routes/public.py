@@ -1233,6 +1233,20 @@ def _public_round_robin_impl(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
+    from app.services.wf_14_consolation import is_wf14_event
+
+    is_wf14 = is_wf14_event(event)
+
+    def _pool_label(pool_code: str) -> str:
+        # WF_14 loser flight is one "Division III" split into two pools (C/D),
+        # not two separate divisions.
+        if is_wf14:
+            if pool_code == "POOLC":
+                return "Division III \u00b7 Pool C"
+            if pool_code == "POOLD":
+                return "Division III \u00b7 Pool D"
+        return _POOL_LABELS.get(pool_code, pool_code)
+
     rr_matches = session.exec(
         select(Match).where(
             Match.event_id == event_id,
@@ -1333,7 +1347,7 @@ def _public_round_robin_impl(
         pools.append(
             RRPool(
                 pool_code=pool_code,
-                pool_label=_POOL_LABELS.get(pool_code, pool_code),
+                pool_label=_pool_label(pool_code),
                 matches=boxes,
             )
         )
@@ -1426,7 +1440,7 @@ def _public_round_robin_impl(
 
         return RRPoolStandings(
             pool_code=pool_code,
-            pool_label=_POOL_LABELS.get(pool_code, pool_code),
+            pool_label=_pool_label(pool_code),
             rows=[RRStandingsRow(team_id=tid, team_display=_disp(tid), **r) for tid, r in sorted_rows],
         )
 
@@ -1463,7 +1477,7 @@ def _public_round_robin_impl(
         pools.append(
             RRPool(
                 pool_code=_CD_PLACEMENT_POOL_CODE,
-                pool_label="Placement Round (III vs IV)",
+                pool_label="Division III Placement (Pool C vs Pool D)",
                 matches=cross_boxes,
             )
         )
@@ -1487,10 +1501,9 @@ def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: 
             return f"Seed {placeholder[5:]}"
         if placeholder.startswith("ConsL"):
             return f"Cons Seed {placeholder[5:]}"
-        # Cross-pool placement slots: C{n}=Division III #{n}, D{n}=Division IV #{n}.
+        # Cross-pool placement slots within Division III: C{n}=Pool C #{n}, D{n}=Pool D #{n}.
         if len(placeholder) == 2 and placeholder[0] in ("C", "D") and placeholder[1].isdigit():
-            div = "III" if placeholder[0] == "C" else "IV"
-            return f"{div} #{placeholder[1]}"
+            return f"Pool {placeholder[0]} #{placeholder[1]}"
         return placeholder
     return "TBD"
 

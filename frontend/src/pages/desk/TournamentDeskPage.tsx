@@ -3224,6 +3224,9 @@ function PoolProjectionPanel({
       {allEvents.map(evt => {
         const pct = evt.total_wf_matches > 0 ? Math.round((evt.finalized_wf_matches / evt.total_wf_matches) * 100) : 0
         const isScheduleCollapsed = collapsedSchedules[evt.event_id] ?? false
+        // WF_14 loser flight (Division III = Pools C/D) is split mid-tournament on
+        // the live version, so it is not gated behind DRAFT like the winner flight.
+        const isWf14LoserFlight = evt.pools.some(p => p.pool_label === 'POOLC' || p.pool_label === 'POOLD')
         return (
           <div key={evt.event_id} style={{ marginBottom: 14, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, padding: '10px 12px 0' }}>
@@ -3380,8 +3383,8 @@ function PoolProjectionPanel({
               )
             })()}
 
-            {/* Confirm placement button */}
-            {evt.wf_complete && isDraft && (
+            {/* Confirm placement / split pools button */}
+            {evt.wf_complete && (isDraft || isWf14LoserFlight) && (
               <button
                 onClick={() => setConfirmEvt(evt)}
                 disabled={placing}
@@ -3391,7 +3394,9 @@ function PoolProjectionPanel({
                   cursor: placing ? 'not-allowed' : 'pointer', opacity: placing ? 0.6 : 1,
                 }}
               >
-                {placing ? 'Placing...' : 'Confirm Pool Placement'}
+                {placing
+                  ? (isWf14LoserFlight ? 'Splitting...' : 'Placing...')
+                  : (isWf14LoserFlight ? 'Split Pools' : 'Confirm Pool Placement')}
               </button>
             )}
 
@@ -3587,11 +3592,26 @@ function PoolProjectionPanel({
             backgroundColor: '#fff', borderRadius: 8, padding: 20, zIndex: 2000,
             boxShadow: '0 8px 32px rgba(0,0,0,0.25)', minWidth: 300, maxWidth: 400,
           }}>
-            <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#1a237e' }}>Confirm Pool Placement</h3>
-            <p style={{ fontSize: 11, color: '#555', margin: '0 0 12px' }}>
-              Place teams into RR pools for <strong>{confirmEvt.event_name}</strong>?
-              This will assign teams to all RR match slots.
-            </p>
+            {(() => {
+              const isWf14Loser = confirmEvt.pools.some(p => p.pool_label === 'POOLC' || p.pool_label === 'POOLD')
+              return (
+                <>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#1a237e' }}>
+                    {isWf14Loser ? 'Split Division III Pools' : 'Confirm Pool Placement'}
+                  </h3>
+                  <p style={{ fontSize: 11, color: '#555', margin: '0 0 12px' }}>
+                    {isWf14Loser ? (
+                      <>Split the 6 WF Round-1 losers into Division III (Pool C / Pool D) for{' '}
+                      <strong>{confirmEvt.event_name}</strong>? This assigns them to their pool and
+                      placement match slots.</>
+                    ) : (
+                      <>Place teams into RR pools for <strong>{confirmEvt.event_name}</strong>?
+                      This will assign teams to all RR match slots.</>
+                    )}
+                  </p>
+                </>
+              )
+            })()}
             <div style={{ fontSize: 10, marginBottom: 12 }}>
               {confirmEvt.pools.map(p => (
                 <div key={p.pool_label} style={{ marginBottom: 4 }}>

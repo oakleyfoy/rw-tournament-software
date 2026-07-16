@@ -539,8 +539,9 @@ def test_public_roundrobin_wf14_includes_consolation_pools_c_and_d(client, sessi
 
     pools = {p["pool_code"]: p for p in body["pools"]}
     assert set(pools) == {"POOLA", "POOLB", "POOLC", "POOLD", "CD_PLACEMENT"}
-    assert pools["POOLC"]["pool_label"] == "Division III"
-    assert pools["POOLD"]["pool_label"] == "Division IV"
+    # Loser flight is one "Division III" split into two pools (C/D), no "Division IV".
+    assert pools["POOLC"]["pool_label"] == "Division III \u00b7 Pool C"
+    assert pools["POOLD"]["pool_label"] == "Division III \u00b7 Pool D"
 
     # Pool C/D are full 3-team round robins (3 matches each), no cross-placement.
     assert len(pools["POOLC"]["matches"]) == 3
@@ -553,12 +554,17 @@ def test_public_roundrobin_wf14_includes_consolation_pools_c_and_d(client, sessi
     c_lines = {pools["POOLC"]["matches"][0]["line1"], pools["POOLC"]["matches"][0]["line2"]}
     assert "Cons Seed 1" in c_lines
 
-    # Cross-pool placement round (III#1 vs IV#1, …) is its own section, sorted last.
+    # Cross-pool placement round (Pool C vs Pool D) is its own section, sorted last.
     assert body["pools"][-1]["pool_code"] == "CD_PLACEMENT"
     placement = pools["CD_PLACEMENT"]
+    assert placement["pool_label"] == "Division III Placement (Pool C vs Pool D)"
     assert len(placement["matches"]) == 3
     lines = [(b["line1"], b["line2"]) for b in placement["matches"]]
-    assert lines == [("III #1", "IV #1"), ("III #2", "IV #2"), ("III #3", "IV #3")]
+    assert lines == [
+        ("Pool C #1", "Pool D #1"),
+        ("Pool C #2", "Pool D #2"),
+        ("Pool C #3", "Pool D #3"),
+    ]
 
 
 def test_public_roundrobin_wf14_finalized_cons_scores_do_not_500(client, session):

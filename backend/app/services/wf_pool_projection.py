@@ -131,6 +131,109 @@ class EventProjection:
     unresolved_teams: List[Dict[str, Any]]
 
 
+def compute_wf14_loser_projection(
+    session: Session,
+    tournament_id: int,
+    version_id: int,
+    event_id: int,
+) -> Optional[EventProjection]:
+    """
+    Loser-flight (Division III) projection for a WF_14_TOP2_BYE event.
+
+    The 6 WF R1 losers are reseeded 1..6 by original seed and split into two
+    pools within a single "Division III": Pool C (ranks 1,4,6) and Pool D
+    (ranks 2,3,5). Placement is deterministic and depends only on WF R1, so
+    ``wf_complete`` becomes true once all six non-bye WF R1 matches are FINAL.
+    """
+    from app.services.wf_14_consolation import compute_loser_rank_to_team
+    from app.services.wf_14_format import POOL_C_RANKS, POOL_D_RANKS
+
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        return None
+
+    # The 6 real (non-bye) WF R1 matches produce the consolation losers.
+    r1_all = session.exec(
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version_id,
+            Match.event_id == event_id,
+            Match.match_type == "WF",
+            Match.round_index == 1,
+        )
+    ).all()
+    r1_real = [m for m in r1_all if m.team_a_id and m.team_b_id and "_BYE" not in (m.match_code or "").upper()]
+
+    total_wf = len(r1_real)
+    finalized_wf = sum(1 for m in r1_real if (m.runtime_status or "SCHEDULED").upper() == "FINAL")
+
+    rank_to_team = compute_loser_rank_to_team(session, event_id, version_id)
+    wf_complete = rank_to_team is not None
+
+    # Per-team WF R1 games for/against (for the standings preview).
+    r1_games: Dict[int, Tuple[int, int]] = {}
+    for m in r1_real:
+        if (m.runtime_status or "").upper() != "FINAL" or not m.winner_team_id:
+            continue
+        parsed = parse_score(m.score_json)
+        if not parsed:
+            continue
+        a_games, b_games = parsed.team_a_games, parsed.team_b_games
+        if not _is_retired_score(m.score_json):
+            if m.winner_team_id == m.team_a_id and b_games > a_games:
+                a_games, b_games = b_games, a_games
+            elif m.winner_team_id == m.team_b_id and a_games > b_games:
+                a_games, b_games = b_games, a_games
+        r1_games[m.team_a_id] = (a_games, b_games)
+        r1_games[m.team_b_id] = (b_games, a_games)
+
+    def _seed_of(tid: int) -> int:
+        t = session.get(Team, tid)
+        return t.seed if t and t.seed is not None else 999999
+
+    def _disp(tid: int) -> str:
+        t = session.get(Team, tid)
+        return (t.display_name or t.name or f"Team {tid}") if t else f"Team {tid}"
+
+    def _team_for_rank(rank: int) -> Optional[ProjectedTeam]:
+        if not rank_to_team:
+            return None
+        tid = rank_to_team.get(rank)
+        if not tid:
+            return None
+        gf, ga = r1_games.get(tid, (0, 0))
+        return ProjectedTeam(
+            team_id=tid,
+            team_display=_disp(tid),
+            seed_position=_seed_of(tid),
+            bucket=BUCKET_NAMES_1R.get(BUCKET_L, "L"),
+            status="confirmed" if wf_complete else "pending",
+            wf_wins=0,
+            wf_losses=1,
+            wf_game_diff=gf - ga,
+            wf_games_lost=ga,
+            placement_reason=f"WF R1 loser reseed rank {rank}",
+        )
+
+    pools: List[ProjectedPool] = []
+    for pool_label, pool_display, ranks in (
+        ("POOLC", "Division III \u00b7 Pool C", POOL_C_RANKS),
+        ("POOLD", "Division III \u00b7 Pool D", POOL_D_RANKS),
+    ):
+        teams = [pt for r in ranks if (pt := _team_for_rank(r)) is not None]
+        pools.append(ProjectedPool(pool_label=pool_label, pool_display=pool_display, teams=teams))
+
+    return EventProjection(
+        event_id=event_id,
+        event_name=event.name,
+        wf_complete=wf_complete,
+        total_wf_matches=total_wf,
+        finalized_wf_matches=finalized_wf,
+        pools=pools,
+        unresolved_teams=[],
+    )
+
+
 def compute_wf_projection(
     session: Session,
     tournament_id: int,
@@ -141,6 +244,11 @@ def compute_wf_projection(
     event = session.get(Event, event_id)
     if not event or event.tournament_id != tournament_id:
         return None
+
+    from app.services.wf_14_consolation import is_wf14_event
+
+    if is_wf14_event(event):
+        return compute_wf14_loser_projection(session, tournament_id, version_id, event_id)
 
     draw_plan = {}
     if event.draw_plan_json:

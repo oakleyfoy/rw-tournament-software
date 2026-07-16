@@ -4106,6 +4106,10 @@ def confirm_pool_placement(
     session: Session = Depends(get_session),
 ):
     """Confirm pool placement — resolves SEED_N placeholders on RR matches."""
+    from app.services.wf_14_consolation import (
+        is_wf14_event,
+        refresh_wf14_consolation_after_advancement,
+    )
     from app.services.wf_pool_projection import apply_pool_placement, compute_wf_projection
 
     tournament = session.get(Tournament, tournament_id)
@@ -4116,7 +4120,12 @@ def confirm_pool_placement(
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
-    if version.status != "draft":
+    event = session.get(Event, payload.event_id) if payload.event_id is not None else None
+    is_wf14 = bool(event and is_wf14_event(event))
+
+    # The WF_14 loser-flight split runs mid-tournament (after WF R1) on the live
+    # version, so it is not restricted to DRAFT versions like the winner flight.
+    if not is_wf14 and version.status != "draft":
         raise HTTPException(status_code=400, detail="Pool placement only allowed on DRAFT versions")
 
     # Check WF completeness
@@ -4129,16 +4138,22 @@ def confirm_pool_placement(
             detail=f"WF not complete: {proj.finalized_wf_matches}/{proj.total_wf_matches} finalized",
         )
 
-    try:
-        result = apply_pool_placement(
-            session,
-            tournament_id,
-            payload.version_id,
-            payload.event_id,
-            payload.pools,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if is_wf14:
+        # Deterministic reseed of the 6 WF R1 losers into Division III (Pools C/D)
+        # plus wiring of the Sunday cross-placement matches.
+        updated = refresh_wf14_consolation_after_advancement(session, payload.event_id, payload.version_id)
+        result = {"updated_matches": updated, "assignments": []}
+    else:
+        try:
+            result = apply_pool_placement(
+                session,
+                tournament_id,
+                payload.version_id,
+                payload.event_id,
+                payload.pools,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
