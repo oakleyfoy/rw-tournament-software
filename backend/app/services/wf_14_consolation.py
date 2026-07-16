@@ -329,3 +329,114 @@ def refresh_wf14_consolation_after_advancement(
     n = refresh_wf14_consolation_main_slots(session, event_id, schedule_version_id)
     n += refresh_wf14_consolation_placement(session, event_id, schedule_version_id)
     return n
+
+
+def _resolve_seed_values(session: Session, event_id: int, team_ids: List[int]) -> Dict[int, int]:
+    """Best-effort original-seed value per team (tolerant of missing Team.seed)."""
+    wanted = set(team_ids)
+    result: Dict[int, int] = {}
+    for tid in wanted:
+        t = session.get(Team, tid)
+        if t and t.seed is not None:
+            result[tid] = t.seed
+    if len(result) < len(wanted):
+        from app.utils.team_injection import get_deterministic_teams
+
+        order = {t.id: i + 1 for i, t in enumerate(get_deterministic_teams(session, event_id))}
+        for tid in wanted:
+            if tid not in result:
+                result[tid] = 1000 + order.get(tid, tid)
+    return result
+
+
+def wf14_winner_flight_teams(
+    session: Session,
+    event_id: int,
+    schedule_version_id: int,
+) -> Optional[Dict[str, List[int]]]:
+    """
+    Division I/II split once WF R2 is complete.
+
+    Pool A (Division I) = the 4 WF R2 winners; Pool B (Division II) = the 4 WF R2
+    losers. Each pool is ordered by original seed (best seed first). Returns None
+    until all four real WF R2 matches are FINAL with a recorded winner.
+    """
+    r2_all = session.exec(
+        select(Match).where(
+            Match.event_id == event_id,
+            Match.schedule_version_id == schedule_version_id,
+            Match.match_type == "WF",
+            Match.round_index == 2,
+        )
+    ).all()
+    r2 = [m for m in r2_all if m.team_a_id and m.team_b_id and "_BYE" not in (m.match_code or "").upper()]
+    if len(r2) != 4:
+        return None
+
+    winners: List[int] = []
+    losers: List[int] = []
+    for m in r2:
+        if (m.runtime_status or "").upper() != "FINAL" or not m.winner_team_id:
+            return None
+        w = m.winner_team_id
+        loser = m.team_b_id if w == m.team_a_id else m.team_a_id
+        winners.append(w)
+        losers.append(loser)
+
+    seed_map = _resolve_seed_values(session, event_id, winners + losers)
+    winners.sort(key=lambda tid: (seed_map.get(tid, 10**6), tid))
+    losers.sort(key=lambda tid: (seed_map.get(tid, 10**6), tid))
+    return {"POOLA": winners, "POOLB": losers}
+
+
+def refresh_wf14_winner_flight(
+    session: Session,
+    event_id: int,
+    schedule_version_id: int,
+) -> int:
+    """Fill Division I/II pool RR matches (Pool A/B) after WF R2 completes."""
+    split = wf14_winner_flight_teams(session, event_id, schedule_version_id)
+    if not split:
+        return 0
+
+    # Pool A → global seed slots 1..4, Pool B → 5..8 (matches wire_rr_match_placeholders).
+    seed_to_team: Dict[int, int] = {}
+    for i, tid in enumerate(split["POOLA"]):
+        seed_to_team[i + 1] = tid
+    for i, tid in enumerate(split["POOLB"]):
+        seed_to_team[5 + i] = tid
+
+    rr_matches = [
+        m
+        for m in session.exec(
+            select(Match).where(
+                Match.event_id == event_id,
+                Match.schedule_version_id == schedule_version_id,
+                Match.match_type == "RR",
+            )
+        ).all()
+        if "_POOLA_RR" in (m.match_code or "").upper() or "_POOLB_RR" in (m.match_code or "").upper()
+    ]
+
+    seed_pattern = re.compile(r"^SEED_(\d+)$")
+    updated = 0
+    for m in rr_matches:
+        changed = False
+        ma = seed_pattern.match(m.placeholder_side_a or "")
+        if ma:
+            tid = seed_to_team.get(int(ma.group(1)))
+            if tid and m.team_a_id != tid:
+                m.team_a_id = tid
+                changed = True
+        mb = seed_pattern.match(m.placeholder_side_b or "")
+        if mb:
+            tid = seed_to_team.get(int(mb.group(1)))
+            if tid and m.team_b_id != tid:
+                m.team_b_id = tid
+                changed = True
+        if changed:
+            session.add(m)
+            updated += 1
+    if updated:
+        session.commit()
+    return updated

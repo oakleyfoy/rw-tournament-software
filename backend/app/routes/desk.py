@@ -4109,6 +4109,7 @@ def confirm_pool_placement(
     from app.services.wf_14_consolation import (
         event_uses_wf14,
         refresh_wf14_consolation_after_advancement,
+        refresh_wf14_winner_flight,
     )
     from app.services.wf_pool_projection import apply_pool_placement, compute_wf_projection
 
@@ -4139,8 +4140,10 @@ def confirm_pool_placement(
 
     if is_wf14:
         # Deterministic reseed of the 6 WF R1 losers into Division III (Pools C/D)
-        # plus wiring of the Sunday cross-placement matches.
+        # plus wiring of the Sunday cross-placement matches. Also fills the winner
+        # flight (Division I/II = Pool A/B) once WF R2 is complete.
         updated = refresh_wf14_consolation_after_advancement(session, payload.event_id, payload.version_id)
+        updated += refresh_wf14_winner_flight(session, payload.event_id, payload.version_id)
         result = {"updated_matches": updated, "assignments": []}
     else:
         try:

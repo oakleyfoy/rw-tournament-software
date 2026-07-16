@@ -41,6 +41,31 @@ def _finalize_r1(session, version_id):
     return r1
 
 
+def _finalize_r2(session, version_id):
+    """Resolve R2 team ids from R1 winners/byes and finalize (team_a wins)."""
+    r2_all = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version_id,
+            Match.match_type == "WF",
+            Match.round_index == 2,
+        )
+    ).all()
+    r2 = [m for m in r2_all if "_BYE" not in (m.match_code or "").upper()]
+    for m in r2:
+        if m.source_match_a_id and not m.team_a_id:
+            src = session.get(Match, m.source_match_a_id)
+            m.team_a_id = src.winner_team_id if src else None
+        if m.source_match_b_id and not m.team_b_id:
+            src = session.get(Match, m.source_match_b_id)
+            m.team_b_id = src.winner_team_id if src else None
+        m.runtime_status = "FINAL"
+        m.winner_team_id = m.team_a_id
+        m.score_json = {"display": "8-4", "team_a_games": 8, "team_b_games": 4}
+        session.add(m)
+    session.commit()
+    return r2
+
+
 def _finalize_match(session, match: Match, winner_a: bool):
     match.runtime_status = "FINAL"
     match.winner_team_id = match.team_a_id if winner_a else match.team_b_id
@@ -245,7 +270,7 @@ def test_wf14_loser_projection_shape(session):
     assert proj is not None
     assert proj.wf_complete is False
     labels = {p.pool_label for p in proj.pools}
-    assert labels == {"POOLC", "POOLD"}
+    assert {"POOLC", "POOLD"} <= labels
 
     _finalize_r1(session, version.id)
 
@@ -344,6 +369,54 @@ def test_wf14_cross_placement_cannot_lock_before_final_day(client, session):
     # Final day (Sunday) is allowed.
     r_ok = client.post(base, json={"match_id": cross.id, "slot_id": last.id})
     assert r_ok.status_code == 201, r_ok.text
+
+
+def test_wf14_winner_flight_fills_division_i_and_ii(client, session):
+    """After WF R2, the projection exposes Division I/II and placement fills them."""
+    from app.models.match_assignment import MatchAssignment  # noqa: F401
+
+    tournament, event, version = _build_wf14_event_with_matches(session)
+    r1 = _finalize_r1(session, version.id)
+    _finalize_r2(session, version.id)
+
+    proj = compute_wf_projection(session, tournament.id, version.id, event.id)
+    assert proj is not None
+    pool_by_label = {p.pool_label: p for p in proj.pools}
+    assert set(pool_by_label) >= {"POOLA", "POOLB", "POOLC", "POOLD"}
+    assert pool_by_label["POOLA"].pool_display == "Division I"
+    assert pool_by_label["POOLB"].pool_display == "Division II"
+    # Winner flight is 8 teams split 4/4.
+    assert len(pool_by_label["POOLA"].teams) == 4
+    assert len(pool_by_label["POOLB"].teams) == 4
+
+    # Placement fills the Pool A/B RR matches with real team ids.
+    resp = client.post(
+        f"/api/desk/tournaments/{tournament.id}/pool-placement",
+        json={
+            "version_id": version.id,
+            "event_id": event.id,
+            "pools": [{"pool_label": p.pool_label, "team_ids": [t.team_id for t in p.teams]} for p in proj.pools],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    pool_a_rr = [
+        m
+        for m in session.exec(
+            select(Match).where(
+                Match.schedule_version_id == version.id,
+                Match.match_type == "RR",
+            )
+        ).all()
+        if "_POOLA_RR" in (m.match_code or "").upper()
+    ]
+    assert pool_a_rr
+    winner_ids = {t.team_id for t in pool_by_label["POOLA"].teams}
+    filled = [m for m in pool_a_rr if m.team_a_id in winner_ids and m.team_b_id in winner_ids]
+    assert filled, "Pool A RR matches should be filled with WF R2 winners"
+    # Sanity: those winners were not among the R1 losers.
+    r1_losers = {(m.team_b_id if m.winner_team_id == m.team_a_id else m.team_a_id) for m in r1}
+    assert not (winner_ids & r1_losers)
 
 
 def test_wf14_repair_placement_day_moves_match_to_final_day(client, session):
@@ -456,7 +529,7 @@ def test_wf14_detected_by_matches_when_template_is_stale(client, session):
     # Projection must be the loser flight (Division III / Pools C+D), not generic.
     proj = compute_wf_projection(session, event.tournament_id, version.id, event.id)
     assert proj is not None
-    assert {p.pool_label for p in proj.pools} == {"POOLC", "POOLD"}
+    assert {"POOLC", "POOLD"} <= {p.pool_label for p in proj.pools}
 
     resp = client.post(
         f"/api/desk/tournaments/{tournament.id}/pool-placement",

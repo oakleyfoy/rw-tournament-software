@@ -138,14 +138,25 @@ def compute_wf14_loser_projection(
     event_id: int,
 ) -> Optional[EventProjection]:
     """
-    Loser-flight (Division III) projection for a WF_14_TOP2_BYE event.
+    Full WF_14_TOP2_BYE projection: winner flight (Division I/II) + loser flight
+    (Division III).
 
-    The 6 WF R1 losers are reseeded 1..6 by original seed and split into two
-    pools within a single "Division III": Pool C (ranks 1,4,6) and Pool D
-    (ranks 2,3,5). Placement is deterministic and depends only on WF R1, so
-    ``wf_complete`` becomes true once all six non-bye WF R1 matches are FINAL.
+    Winner flight (available once WF R2 is complete):
+      - Pool A / Division I  = the 4 WF R2 winners
+      - Pool B / Division II = the 4 WF R2 losers
+
+    Loser flight (available once WF R1 is complete):
+      - The 6 WF R1 losers reseeded 1..6 by original seed and split into a single
+        "Division III": Pool C (ranks 1,4,6) and Pool D (ranks 2,3,5).
+
+    ``wf_complete`` becomes true once the loser flight is resolvable (all six
+    non-bye WF R1 matches FINAL), so the split can run mid-tournament; the winner
+    flight fills opportunistically once R2 is also done.
     """
-    from app.services.wf_14_consolation import compute_loser_rank_to_team
+    from app.services.wf_14_consolation import (
+        compute_loser_rank_to_team,
+        wf14_winner_flight_teams,
+    )
     from app.services.wf_14_format import POOL_C_RANKS, POOL_D_RANKS
 
     event = session.get(Event, event_id)
@@ -164,8 +175,19 @@ def compute_wf14_loser_projection(
     ).all()
     r1_real = [m for m in r1_all if m.team_a_id and m.team_b_id and "_BYE" not in (m.match_code or "").upper()]
 
-    total_wf = len(r1_real)
-    finalized_wf = sum(1 for m in r1_real if (m.runtime_status or "SCHEDULED").upper() == "FINAL")
+    r2_all = session.exec(
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version_id,
+            Match.event_id == event_id,
+            Match.match_type == "WF",
+            Match.round_index == 2,
+        )
+    ).all()
+    r2_real = [m for m in r2_all if m.team_a_id and m.team_b_id and "_BYE" not in (m.match_code or "").upper()]
+
+    total_wf = len(r1_real) + len(r2_real)
+    finalized_wf = sum(1 for m in (r1_real + r2_real) if (m.runtime_status or "SCHEDULED").upper() == "FINAL")
 
     rank_to_team = compute_loser_rank_to_team(session, event_id, version_id)
     wf_complete = rank_to_team is not None
@@ -216,6 +238,31 @@ def compute_wf14_loser_projection(
         )
 
     pools: List[ProjectedPool] = []
+
+    # ── Winner flight (Division I / II), available once WF R2 is complete ──
+    winner_split = wf14_winner_flight_teams(session, event_id, version_id)
+    for pool_label, pool_display, wins, losses, bucket in (
+        ("POOLA", "Division I", 2, 0, "WW"),
+        ("POOLB", "Division II", 1, 1, "WL"),
+    ):
+        w_teams: List[ProjectedTeam] = []
+        if winner_split:
+            for tid in winner_split[pool_label]:
+                w_teams.append(
+                    ProjectedTeam(
+                        team_id=tid,
+                        team_display=_disp(tid),
+                        seed_position=_seed_of(tid),
+                        bucket=bucket,
+                        status="confirmed",
+                        wf_wins=wins,
+                        wf_losses=losses,
+                        placement_reason=("WF R2 winner" if pool_label == "POOLA" else "WF R2 loser"),
+                    )
+                )
+        pools.append(ProjectedPool(pool_label=pool_label, pool_display=pool_display, teams=w_teams))
+
+    # ── Loser flight (Division III · Pool C / D), available after WF R1 ──
     for pool_label, pool_display, ranks in (
         ("POOLC", "Division III \u00b7 Pool C", POOL_C_RANKS),
         ("POOLD", "Division III \u00b7 Pool D", POOL_D_RANKS),
