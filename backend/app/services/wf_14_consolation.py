@@ -5,7 +5,8 @@ WF_14_TOP2_BYE consolation flight: rank R1 losers by seed, fill MAIN + Sunday pl
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional
 
 from sqlmodel import Session, select
 
@@ -104,18 +105,58 @@ def compute_loser_rank_to_team(
     if len(r1) != 6:
         return None
 
-    losers: List[Tuple[int, int]] = []  # (seed, team_id)
+    loser_ids: List[int] = []
     for m in r1:
         lid = _loser_id_from_final(m)
         if lid is None:
+            # A real R1 match is not finalized (or has no recorded winner) yet.
             return None
-        team = session.get(Team, lid)
-        if not team or team.seed is None:
-            return None
-        losers.append((team.seed, lid))
+        loser_ids.append(lid)
 
-    losers.sort(key=lambda x: x[0])
-    return {rank: team_id for rank, (_, team_id) in enumerate(losers, start=1)}
+    # Reseed the 6 losers by original seed. Be resilient to missing Team.seed
+    # (common in duplicated/re-imported events): fall back to the WF R1
+    # "Seed N" placeholder, then a deterministic team order, so the split never
+    # silently blanks out just because a seed value is absent.
+    seed_map = _resolve_loser_seed_values(session, event_id, r1, loser_ids)
+    loser_ids.sort(key=lambda tid: (seed_map.get(tid, 10**6), tid))
+    return {rank: team_id for rank, team_id in enumerate(loser_ids, start=1)}
+
+
+_SEED_PLACEHOLDER_RE = re.compile(r"(?:play)?seed\s+(\d+)", re.IGNORECASE)
+
+
+def _resolve_loser_seed_values(
+    session: Session,
+    event_id: int,
+    r1_matches: List[Match],
+    loser_ids: List[int],
+) -> Dict[int, int]:
+    """Best-effort original-seed value per loser team (tolerant of missing Team.seed)."""
+    wanted = set(loser_ids)
+    result: Dict[int, int] = {}
+
+    for tid in wanted:
+        t = session.get(Team, tid)
+        if t and t.seed is not None:
+            result[tid] = t.seed
+
+    if len(result) < len(wanted):
+        for m in r1_matches:
+            for tid, ph in ((m.team_a_id, m.placeholder_side_a), (m.team_b_id, m.placeholder_side_b)):
+                if tid in wanted and tid not in result and ph:
+                    md = _SEED_PLACEHOLDER_RE.search(ph)
+                    if md:
+                        result[tid] = int(md.group(1))
+
+    if len(result) < len(wanted):
+        from app.utils.team_injection import get_deterministic_teams
+
+        order = {t.id: i + 1 for i, t in enumerate(get_deterministic_teams(session, event_id))}
+        for tid in wanted:
+            if tid not in result:
+                result[tid] = 1000 + order.get(tid, tid)
+
+    return result
 
 
 def _parse_cons_rank(placeholder: str) -> Optional[int]:

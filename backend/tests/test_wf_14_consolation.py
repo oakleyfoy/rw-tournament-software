@@ -15,7 +15,10 @@ from app.services.advancement_service import (
     apply_advancement_with_details,
 )
 from app.services.draw_plan_engine import DrawPlanSpec, generate_matches_for_event
-from app.services.wf_14_consolation import compute_loser_rank_to_team
+from app.services.wf_14_consolation import (
+    compute_loser_rank_to_team,
+    refresh_wf14_consolation_after_advancement,
+)
 from app.services.wf_pool_projection import compute_wf_projection
 
 
@@ -291,6 +294,31 @@ def test_wf14_split_pools_on_live_version(client, session):
     for m in cons_pool:
         assert m.team_a_id is not None, f"{m.match_code} side A not populated"
         assert m.team_b_id is not None, f"{m.match_code} side B not populated"
+
+
+def test_wf14_loser_reseed_resilient_to_missing_seeds(session):
+    """Reseed must not blank out just because losing teams lack a Team.seed
+    (common in duplicated/re-imported events)."""
+    from app.models.team import Team
+
+    _tournament, event, version = _build_wf14_event_with_matches(session)
+    _finalize_r1(session, version.id)
+
+    # Wipe seeds on every team to simulate a re-imported roster with no seeds.
+    for t in session.exec(select(Team).where(Team.event_id == event.id)).all():
+        t.seed = None
+        session.add(t)
+    session.commit()
+
+    ranks = compute_loser_rank_to_team(session, event.id, version.id)
+    assert ranks is not None
+    assert len(ranks) == 6
+    # 6 distinct teams reseeded 1..6.
+    assert sorted(ranks.keys()) == [1, 2, 3, 4, 5, 6]
+    assert len(set(ranks.values())) == 6
+
+    n = refresh_wf14_consolation_after_advancement(session, event.id, version.id)
+    assert n > 0
 
 
 def test_wf14_detected_by_matches_when_template_is_stale(client, session):
