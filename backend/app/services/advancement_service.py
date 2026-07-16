@@ -383,6 +383,14 @@ def apply_advancement_with_details(session: Session, match_id: int) -> Dict[str,
     updates.extend(auto_updates)
     warnings.extend(auto_warnings)
 
+    # WF_14 loser flights: once all six R1 losers are known, populate the
+    # Division III/IV (Pool C/D) consolation matches and Sunday cross placement.
+    event = session.get(Event, match.event_id)
+    if event:
+        from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
+
+        refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
+
     return {"downstream_updates": updates, "warnings": warnings}
 
 
