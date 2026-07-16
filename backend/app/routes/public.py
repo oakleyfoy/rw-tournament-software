@@ -1233,9 +1233,9 @@ def _public_round_robin_impl(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
-    from app.services.wf_14_consolation import is_wf14_event
+    from app.services.wf_14_consolation import event_uses_wf14
 
-    is_wf14 = is_wf14_event(event)
+    is_wf14 = event_uses_wf14(session, event_id, version.id)
 
     def _pool_label(pool_code: str) -> str:
         # WF_14 loser flight is one "Division III" split into two pools (C/D),

@@ -34,6 +34,32 @@ def is_wf14_event(event: Event) -> bool:
     return _event_template(event) == "WF_14_TOP2_BYE"
 
 
+def event_uses_wf14(
+    session: Session,
+    event_id: int,
+    schedule_version_id: Optional[int] = None,
+) -> bool:
+    """
+    Robust WF_14 detection.
+
+    Prefers the draw-plan template, but also recognizes an event by its
+    generated WF_14 signature matches (the Sunday cross-placement carries
+    ``placement_type == "WF14_CONS_CROSS"``). This keeps loser-flight behavior
+    working for duplicated/older events whose ``draw_plan_json`` template string
+    no longer says ``WF_14_TOP2_BYE`` even though the matches are WF_14.
+    """
+    event = session.get(Event, event_id)
+    if event and is_wf14_event(event):
+        return True
+    q = select(Match).where(
+        Match.event_id == event_id,
+        Match.placement_type == "WF14_CONS_CROSS",
+    )
+    if schedule_version_id is not None:
+        q = q.where(Match.schedule_version_id == schedule_version_id)
+    return session.exec(q).first() is not None
+
+
 def _team_label(session: Session, team_id: Optional[int]) -> str:
     if team_id is None:
         return "TBD"
@@ -257,8 +283,7 @@ def refresh_wf14_consolation_after_advancement(
     event_id: int,
     schedule_version_id: int,
 ) -> int:
-    event = session.get(Event, event_id)
-    if not event or not is_wf14_event(event):
+    if not event_uses_wf14(session, event_id, schedule_version_id):
         return 0
     n = refresh_wf14_consolation_main_slots(session, event_id, schedule_version_id)
     n += refresh_wf14_consolation_placement(session, event_id, schedule_version_id)

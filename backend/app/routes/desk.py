@@ -4107,7 +4107,7 @@ def confirm_pool_placement(
 ):
     """Confirm pool placement — resolves SEED_N placeholders on RR matches."""
     from app.services.wf_14_consolation import (
-        is_wf14_event,
+        event_uses_wf14,
         refresh_wf14_consolation_after_advancement,
     )
     from app.services.wf_pool_projection import apply_pool_placement, compute_wf_projection
@@ -4120,8 +4120,7 @@ def confirm_pool_placement(
     if not version or version.tournament_id != tournament_id:
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
-    event = session.get(Event, payload.event_id) if payload.event_id is not None else None
-    is_wf14 = bool(event and is_wf14_event(event))
+    is_wf14 = payload.event_id is not None and event_uses_wf14(session, payload.event_id, payload.version_id)
 
     # The WF_14 loser-flight split runs mid-tournament (after WF R1) on the live
     # version, so it is not restricted to DRAFT versions like the winner flight.

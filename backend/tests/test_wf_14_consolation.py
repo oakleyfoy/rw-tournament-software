@@ -293,6 +293,44 @@ def test_wf14_split_pools_on_live_version(client, session):
         assert m.team_b_id is not None, f"{m.match_code} side B not populated"
 
 
+def test_wf14_detected_by_matches_when_template_is_stale(client, session):
+    """Duplicated/stale events whose draw_plan template no longer says WF_14 must
+    still be recognized (via WF14_CONS_CROSS matches) so Split Pools works."""
+    from app.services.wf_14_consolation import event_uses_wf14
+
+    tournament, event, version = _build_wf14_event_with_matches(session)
+    # Simulate a stale/duplicated event whose template string is generic.
+    event.draw_plan_json = json.dumps({"template_type": "WF_TO_POOLS_DYNAMIC"})
+    session.add(event)
+    version.status = "final"
+    session.add(version)
+    session.commit()
+
+    assert event_uses_wf14(session, event.id, version.id) is True
+
+    _finalize_r1(session, version.id)
+
+    # Projection must be the loser flight (Division III / Pools C+D), not generic.
+    proj = compute_wf_projection(session, event.tournament_id, version.id, event.id)
+    assert proj is not None
+    assert {p.pool_label for p in proj.pools} == {"POOLC", "POOLD"}
+
+    resp = client.post(
+        f"/api/desk/tournaments/{tournament.id}/pool-placement",
+        json={"version_id": version.id, "event_id": event.id, "pools": []},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["updated_matches"] > 0
+
+    rr = client.get(
+        f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin?version_id={version.id}"
+    ).json()
+    label_by_code = {p["pool_code"]: p["pool_label"] for p in rr["pools"]}
+    assert label_by_code.get("POOLC", "").startswith("Division III")
+    assert label_by_code.get("POOLD", "").startswith("Division III")
+    assert "Division IV" not in " ".join(label_by_code.values())
+
+
 def test_wf14_public_roundrobin_division_iii_labels(client, session):
     """Public RR shows C/D under one Division III and the relabeled placement round."""
     tournament, event, version = _build_wf14_event_with_matches(session)

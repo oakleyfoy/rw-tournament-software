@@ -245,9 +245,9 @@ def compute_wf_projection(
     if not event or event.tournament_id != tournament_id:
         return None
 
-    from app.services.wf_14_consolation import is_wf14_event
+    from app.services.wf_14_consolation import event_uses_wf14
 
-    if is_wf14_event(event):
+    if event_uses_wf14(session, event_id, version_id):
         return compute_wf14_loser_projection(session, tournament_id, version_id, event_id)
 
     draw_plan = {}
