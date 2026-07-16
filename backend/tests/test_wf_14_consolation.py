@@ -1,7 +1,7 @@
 """WF14 consolation rank fill and Sunday placement advancement."""
 
 import json
-from datetime import date
+from datetime import date, time
 
 from sqlmodel import select
 
@@ -294,6 +294,56 @@ def test_wf14_split_pools_on_live_version(client, session):
     for m in cons_pool:
         assert m.team_a_id is not None, f"{m.match_code} side A not populated"
         assert m.team_b_id is not None, f"{m.match_code} side B not populated"
+
+
+def test_wf14_cross_placement_cannot_lock_before_final_day(client, session):
+    """WF_14 Sunday placement match must not be lockable to an earlier day."""
+    from app.models.schedule_slot import ScheduleSlot
+
+    tournament, event, version = _build_wf14_event_with_matches(session)
+
+    early = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 3, 1),
+        court_number=1,
+        court_label="1",
+        start_time=time(9, 0),
+        end_time=time(10, 30),
+        block_minutes=90,
+        is_active=True,
+    )
+    last = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 3, 3),
+        court_number=1,
+        court_label="1",
+        start_time=time(9, 0),
+        end_time=time(10, 30),
+        block_minutes=90,
+        is_active=True,
+    )
+    session.add_all([early, last])
+    session.commit()
+    session.refresh(early)
+    session.refresh(last)
+
+    cross = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.placement_type == "WF14_CONS_CROSS",
+        )
+    ).first()
+    assert cross is not None
+
+    base = f"/api/tournaments/{tournament.id}/schedule/versions/{version.id}/locks/match"
+    # Friday (pre-final) is rejected.
+    r_bad = client.post(base, json={"match_id": cross.id, "slot_id": early.id})
+    assert r_bad.status_code == 409, r_bad.text
+    # Final day (Sunday) is allowed.
+    r_ok = client.post(base, json={"match_id": cross.id, "slot_id": last.id})
+    assert r_ok.status_code == 201, r_ok.text
 
 
 def test_wf14_loser_reseed_resilient_to_missing_seeds(session):

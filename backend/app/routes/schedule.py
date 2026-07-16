@@ -3822,6 +3822,48 @@ def run_full_policy(
                 version_id,
             )
 
+        # ── Auto-heal stale WF_14 Sunday-placement locks ────────────────
+        # WF_14 cross-placement matches (Division III C-vs-D) are the tournament's
+        # final round and must land on the last day. Duplicated tournaments can
+        # carry a leftover MatchLock that pins one of these to an earlier day
+        # (e.g. Friday), which run_full_policy would otherwise re-apply forever.
+        # Drop such invalid locks so the sequence scheduler places them on the
+        # final day naturally.
+        if match_locks:
+            _slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)).all()
+            _slot_day = {s.id: s.day_date for s in _slots}
+            _last_day = max((s.day_date for s in _slots if s.day_date is not None), default=None)
+            _cross_ids = {
+                m.id
+                for m in session.exec(
+                    select(Match).where(
+                        Match.schedule_version_id == version_id,
+                        Match.placement_type == "WF14_CONS_CROSS",
+                    )
+                ).all()
+            }
+            stale_locks = [
+                ml
+                for ml in match_locks
+                if ml.match_id in _cross_ids
+                and _last_day is not None
+                and _slot_day.get(ml.slot_id) is not None
+                and _slot_day[ml.slot_id] < _last_day
+            ]
+            if stale_locks:
+                stale_ids = {ml.id for ml in stale_locks}
+                for ml in stale_locks:
+                    session.delete(ml)
+                session.flush()
+                match_locks = [ml for ml in match_locks if ml.id not in stale_ids]
+                locked_match_ids = {ml.match_id for ml in match_locks}
+                locked_slot_map = {ml.match_id: ml.slot_id for ml in match_locks}
+                logger.info(
+                    "run_full_policy: dropped %d stale WF_14 placement lock(s) pinned before final day for version %d",
+                    len(stale_locks),
+                    version_id,
+                )
+
         # Clear ALL existing assignments for this version before re-running.
         existing_assignments = session.exec(
             select(MatchAssignment).where(
@@ -4554,6 +4596,19 @@ def create_match_lock(
     slot = session.get(ScheduleSlot, data.slot_id)
     if not slot or slot.schedule_version_id != version_id:
         raise HTTPException(status_code=404, detail="Slot not found in this version")
+
+    # WF_14 cross-placement (Division III C-vs-D) is the final round: never allow
+    # pinning it to a day before the last tournament day.
+    if match.placement_type == "WF14_CONS_CROSS":
+        day_dates = session.exec(
+            select(ScheduleSlot.day_date).where(ScheduleSlot.schedule_version_id == version_id)
+        ).all()
+        last_day = max((d for d in day_dates if d is not None), default=None)
+        if last_day is not None and slot.day_date is not None and slot.day_date < last_day:
+            raise HTTPException(
+                status_code=409,
+                detail="WF_14 placement matches can only be locked to the final tournament day.",
+            )
 
     # Slot must not be blocked
     slot_block = session.exec(
