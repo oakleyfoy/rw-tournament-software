@@ -1578,6 +1578,11 @@ def _derive_division(match_code: str, match_type: str) -> Optional[str]:
     return None
 
 
+def _cap_first(value: str) -> str:
+    """Uppercase only the first character, preserving internal casing (e.g. McDonald)."""
+    return (value[:1].upper() + value[1:]) if value else value
+
+
 def _schedule_short_player_name(value: Optional[str]) -> str:
     raw = " ".join((value or "").strip().split())
     if not raw:
@@ -1589,12 +1594,12 @@ def _schedule_short_player_name(value: Optional[str]) -> str:
             second_segment_words = segments[1].split()
             # "Last, First" -> use first token from the second segment.
             if len(first_segment_words) == 1 and second_segment_words:
-                return second_segment_words[0]
+                return _cap_first(second_segment_words[0])
             # "First Last, City, ST" -> use the first token from the name segment.
             if first_segment_words:
-                return first_segment_words[0]
+                return _cap_first(first_segment_words[0])
     parts = raw.split()
-    return parts[0] if parts else raw
+    return _cap_first(parts[0]) if parts else raw
 
 
 def _schedule_short_team_name(value: Optional[str]) -> str:

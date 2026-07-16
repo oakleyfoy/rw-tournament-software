@@ -837,3 +837,15 @@ def test_public_roundrobin_mixed_sequence_in_round_sorts(client, session):
     assert len(body["pools"]) == 1
     assert len(body["pools"][0]["matches"]) == 2
     assert body["pools"][0]["matches"][0]["score_display"] == "8"
+
+
+def test_short_team_name_capitalizes_first_names():
+    from app.routes.public import _schedule_short_player_name, _schedule_short_team_name
+
+    # Lowercase first-name entries get title-cased on the first letter only.
+    assert _schedule_short_team_name("elena rossi / marija petrova") == "Elena / Marija"
+    assert _schedule_short_player_name("kate") == "Kate"
+    # "Last, First" ordering.
+    assert _schedule_short_player_name("Smith, elena") == "Elena"
+    # Internal capitals (McDonald, O'Brien) are preserved.
+    assert _schedule_short_player_name("McDonald Jones") == "McDonald"
