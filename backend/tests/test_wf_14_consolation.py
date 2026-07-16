@@ -346,6 +346,71 @@ def test_wf14_cross_placement_cannot_lock_before_final_day(client, session):
     assert r_ok.status_code == 201, r_ok.text
 
 
+def test_wf14_repair_placement_day_moves_match_to_final_day(client, session):
+    """Repair endpoint relocates a WF_14 placement match stuck on an early day."""
+    from app.models.match_assignment import MatchAssignment
+    from app.models.schedule_slot import ScheduleSlot
+
+    tournament, event, version = _build_wf14_event_with_matches(session)
+
+    def _slot(day, court):
+        s = ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            day_date=day,
+            court_number=court,
+            court_label=str(court),
+            start_time=time(9, 0),
+            end_time=time(11, 0),
+            block_minutes=120,
+            is_active=True,
+        )
+        session.add(s)
+        return s
+
+    friday = _slot(date(2026, 3, 1), 1)
+    sunday = _slot(date(2026, 3, 3), 1)
+    session.commit()
+    session.refresh(friday)
+    session.refresh(sunday)
+
+    cross = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.placement_type == "WF14_CONS_CROSS",
+        )
+    ).first()
+    assert cross is not None
+
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=cross.id,
+            slot_id=friday.id,
+            assigned_by="TEST",
+        )
+    )
+    session.commit()
+
+    resp = client.post(
+        f"/api/desk/tournaments/{tournament.id}/repair-placement-day",
+        json={"version_id": version.id, "event_id": event.id},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["moved"] == 1
+
+    moved = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version.id,
+            MatchAssignment.match_id == cross.id,
+        )
+    ).first()
+    assert moved is not None
+    moved_slot = session.get(ScheduleSlot, moved.slot_id)
+    assert moved_slot.day_date == date(2026, 3, 3)
+
+
 def test_wf14_loser_reseed_resilient_to_missing_seeds(session):
     """Reseed must not blank out just because losing teams lack a Team.seed
     (common in duplicated/re-imported events)."""

@@ -8,6 +8,7 @@ import {
   getPoolProjection,
   getDeskStandings,
   confirmPoolPlacement,
+  repairPlacementDay,
   checkDeskConflicts,
   createWorkingDraft,
   deskFinalizeMatch,
@@ -3192,6 +3193,27 @@ function PoolProjectionPanel({
     }
   }
 
+  const handleRepairPlacementDay = async (evt: EventProjection) => {
+    setPlacing(true)
+    try {
+      const resp = await repairPlacementDay(tournamentId, {
+        version_id: versionId,
+        event_id: evt.event_id,
+      })
+      if (resp.moved === 0 && resp.unscheduled === 0) {
+        setToast('Placement matches are already on the final day')
+      } else {
+        setToast(`Fixed placement day: ${resp.moved} moved, ${resp.unscheduled} unscheduled`)
+      }
+      fetchProjection()
+      onPlacementComplete?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Repair failed')
+    } finally {
+      setPlacing(false)
+    }
+  }
+
   if (loading && !data) return <div style={{ padding: 8, color: '#888', fontSize: 11 }}>Loading projections...</div>
   if (error) return <div style={{ padding: 8, color: '#c62828', fontSize: 11 }}>{error}</div>
   if (!data || data.events.length === 0) return <div style={{ padding: 8, color: '#888', fontSize: 11 }}>No WF events found.</div>
@@ -3384,21 +3406,37 @@ function PoolProjectionPanel({
             })()}
 
             {/* Confirm placement / split pools button */}
-            {evt.wf_complete && (isDraft || isWf14LoserFlight) && (
-              <button
-                onClick={() => setConfirmEvt(evt)}
-                disabled={placing}
-                style={{
-                  marginTop: 6, padding: '4px 12px', fontSize: 10, fontWeight: 700,
-                  backgroundColor: '#1a237e', color: '#fff', border: 'none', borderRadius: 3,
-                  cursor: placing ? 'not-allowed' : 'pointer', opacity: placing ? 0.6 : 1,
-                }}
-              >
-                {placing
-                  ? (isWf14LoserFlight ? 'Splitting...' : 'Placing...')
-                  : (isWf14LoserFlight ? 'Split Pools' : 'Confirm Pool Placement')}
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {evt.wf_complete && (isDraft || isWf14LoserFlight) && (
+                <button
+                  onClick={() => setConfirmEvt(evt)}
+                  disabled={placing}
+                  style={{
+                    marginTop: 6, padding: '4px 12px', fontSize: 10, fontWeight: 700,
+                    backgroundColor: '#1a237e', color: '#fff', border: 'none', borderRadius: 3,
+                    cursor: placing ? 'not-allowed' : 'pointer', opacity: placing ? 0.6 : 1,
+                  }}
+                >
+                  {placing
+                    ? (isWf14LoserFlight ? 'Splitting...' : 'Placing...')
+                    : (isWf14LoserFlight ? 'Split Pools' : 'Confirm Pool Placement')}
+                </button>
+              )}
+              {isWf14LoserFlight && (
+                <button
+                  onClick={() => handleRepairPlacementDay(evt)}
+                  disabled={placing}
+                  title="Move the Division III placement (C vs D) match to the final tournament day if it landed earlier."
+                  style={{
+                    marginTop: 6, padding: '4px 12px', fontSize: 10, fontWeight: 700,
+                    backgroundColor: '#fff', color: '#1a237e', border: '1px solid #1a237e', borderRadius: 3,
+                    cursor: placing ? 'not-allowed' : 'pointer', opacity: placing ? 0.6 : 1,
+                  }}
+                >
+                  {placing ? 'Fixing...' : 'Fix Placement Day'}
+                </button>
+              )}
+            </div>
 
             {(() => {
               const eventStandings = (standings?.events || []).filter(se => se.event_id === evt.event_id)

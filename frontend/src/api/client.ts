@@ -3195,6 +3195,24 @@ export async function confirmPoolPlacement(
   )
 }
 
+export interface RepairPlacementDayResponse {
+  success: boolean
+  moved: number
+  unscheduled: number
+  cleared_locks: number
+  messages: string[]
+}
+
+export async function repairPlacementDay(
+  tournamentId: number,
+  payload: { version_id: number; event_id?: number | null }
+): Promise<RepairPlacementDayResponse> {
+  return fetchJson<RepairPlacementDayResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/repair-placement-day`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
 // ── Reschedule ──────────────────────────────────────────────────────────
 
 export interface FormatFeasibilityItem {

@@ -5337,6 +5337,152 @@ def move_match(
     return MoveMatchResponse(success=True, match=item, warnings=warnings)
 
 
+# ── WF_14 placement-day repair ───────────────────────────────────────────
+
+
+class RepairPlacementDayRequest(BaseModel):
+    version_id: int
+    event_id: Optional[int] = None
+
+
+class RepairPlacementDayResponse(BaseModel):
+    success: bool
+    moved: int
+    unscheduled: int
+    cleared_locks: int
+    messages: List[str] = []
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/repair-placement-day",
+    response_model=RepairPlacementDayResponse,
+)
+def repair_placement_day(
+    tournament_id: int,
+    payload: RepairPlacementDayRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Relocate WF_14 Division III cross-placement matches (CONS_SUN / WF14_CONS_CROSS)
+    onto an open slot on the final tournament day.
+
+    These matches are the tournament's last round and must be played on the final
+    day. Duplicated tournaments can carry a leftover assignment/lock that pins one
+    to an earlier day (e.g. Friday); this clears the lock and moves it to the last
+    day so it stops reappearing in the earlier day's queue.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.is_active,
+        )
+    ).all()
+    if not slots:
+        raise HTTPException(status_code=400, detail="No active slots for this version")
+    last_day = max((s.day_date for s in slots if s.day_date is not None), default=None)
+    if last_day is None:
+        raise HTTPException(status_code=400, detail="Slots have no dates")
+
+    q = select(Match).where(
+        Match.schedule_version_id == payload.version_id,
+        Match.placement_type == "WF14_CONS_CROSS",
+    )
+    if payload.event_id is not None:
+        q = q.where(Match.event_id == payload.event_id)
+    cross_matches = session.exec(q).all()
+
+    assignments = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == payload.version_id)
+    ).all()
+    assign_by_match = {a.match_id: a for a in assignments}
+    occupied = {a.slot_id for a in assignments}
+    blocked = {
+        sl.slot_id
+        for sl in session.exec(
+            select(SlotLock).where(
+                SlotLock.schedule_version_id == payload.version_id,
+                SlotLock.status == "BLOCKED",
+            )
+        ).all()
+    }
+
+    last_day_slots = sorted(
+        (s for s in slots if s.day_date == last_day),
+        key=lambda s: (s.start_time or dt_time(0, 0), s.court_number or 0, s.id or 0),
+    )
+
+    moved = 0
+    unscheduled = 0
+    cleared_locks = 0
+    messages: List[str] = []
+
+    for m in cross_matches:
+        if (m.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED", "FINAL"):
+            continue
+        a = assign_by_match.get(m.id)
+        cur_slot = session.get(ScheduleSlot, a.slot_id) if a else None
+        if cur_slot is not None and cur_slot.day_date == last_day:
+            continue  # already on the final day
+
+        # Clear any schedule-builder lock pinning this match to the wrong day.
+        for lk in session.exec(
+            select(MatchLock).where(
+                MatchLock.schedule_version_id == payload.version_id,
+                MatchLock.match_id == m.id,
+            )
+        ).all():
+            session.delete(lk)
+            cleared_locks += 1
+
+        open_slot = next((s for s in last_day_slots if s.id not in occupied and s.id not in blocked), None)
+        if open_slot is not None:
+            if a is not None:
+                occupied.discard(a.slot_id)
+                a.slot_id = open_slot.id
+                a.assigned_by = "WF14_PLACEMENT_FIX"
+                a.assigned_at = datetime.utcnow()
+                a.locked = False
+                session.add(a)
+            else:
+                a = MatchAssignment(
+                    schedule_version_id=payload.version_id,
+                    match_id=m.id,
+                    slot_id=open_slot.id,
+                    assigned_by="WF14_PLACEMENT_FIX",
+                    assigned_at=datetime.utcnow(),
+                    locked=False,
+                )
+                session.add(a)
+                assign_by_match[m.id] = a
+            occupied.add(open_slot.id)
+            moved += 1
+            messages.append(f"{m.match_code}: moved to {last_day} {open_slot.start_time} court {open_slot.court_label}")
+        elif a is not None:
+            # No open final-day slot: unschedule from the wrong day so it stops
+            # showing in the early queue; it can be dropped onto a court manually.
+            occupied.discard(a.slot_id)
+            session.delete(a)
+            del assign_by_match[m.id]
+            unscheduled += 1
+            messages.append(f"{m.match_code}: no open final-day slot; unscheduled")
+
+    session.commit()
+    return RepairPlacementDayResponse(
+        success=True,
+        moved=moved,
+        unscheduled=unscheduled,
+        cleared_locks=cleared_locks,
+        messages=messages,
+    )
+
+
 # ── Match Swap endpoint ──────────────────────────────────────────────────
 
 
