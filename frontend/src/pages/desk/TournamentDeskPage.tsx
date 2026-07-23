@@ -1330,7 +1330,21 @@ function MatchDrawer({
       })
       setResult(resp)
       setFinalized(true)
-      setFinalizeSmsPreview(resp.sms_preview ?? null)
+      const preview = resp.sms_preview ?? null
+      // When SMS can't send anything because it's turned off (tournament texts
+      // off, post-match automation off, or template inactive), don't bother
+      // popping the preview modal — just finalize.
+      const smsOffReasons = ['texts_disabled', 'automation_disabled', 'template_inactive']
+      const smsFullyOff =
+        preview != null &&
+        preview.recipients.length === 0 &&
+        smsOffReasons.includes(preview.disabled_reason || '')
+      if (smsFullyOff) {
+        setFinalizeSmsPreview(null)
+        setStatusMsg('Match finalized.')
+      } else {
+        setFinalizeSmsPreview(preview)
+      }
       onRefreshKeepOpen()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to finalize')
