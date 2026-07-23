@@ -300,20 +300,20 @@ def _parse_temporary_player_lookup_rows(raw_text: str) -> List[Dict[str, Optiona
     index_map = {name: idx for idx, name in enumerate(header_cells)}
     name_idx = index_map.get("player_name")
     color_idx = index_map.get("towel_color")
-    if name_idx is None or color_idx is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Header row must include Player Name, Towel Color, and Report URL columns",
-        )
     report_idx = index_map.get("report_url")
-    if report_idx is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Header row must include Player Name, Towel Color, and Report URL columns",
-        )
+
+    has_header = name_idx is not None and color_idx is not None
+    if has_header:
+        data_lines = lines[1:]
+    else:
+        # No header row: assume positional columns Player Name, Towel Color,
+        # Report URL (the last is optional). This lets users paste raw Excel
+        # rows without first adding a header line.
+        name_idx, color_idx, report_idx = 0, 1, 2
+        data_lines = lines
 
     parsed: List[Dict[str, Optional[str]]] = []
-    for raw_line in lines[1:]:
+    for raw_line in data_lines:
         fields = raw_line.split("\t")
 
         def _field(idx: Optional[int]) -> Optional[str]:
@@ -337,7 +337,10 @@ def _parse_temporary_player_lookup_rows(raw_text: str) -> List[Dict[str, Optiona
         )
 
     if not parsed:
-        raise HTTPException(status_code=400, detail="No valid player rows found in pasted data")
+        raise HTTPException(
+            status_code=400,
+            detail="No valid rows found. Use tab-separated columns: Player Name, Towel Color, optional Report URL.",
+        )
     return parsed
 
 

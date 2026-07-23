@@ -11237,7 +11237,7 @@ export default function TournamentDeskPage() {
                         </div>
                       </div>
                       <div style={{ fontSize: 12, color: '#546e7a', marginBottom: 6 }}>
-                        Paste Excel rows with exactly these headers: <strong>Player Name</strong>, <strong>Towel Color</strong>, <strong>Report URL</strong>. Leave the report URL cell blank if you do not want the pill clickable.
+                        Paste tab-separated columns in this order: <strong>Player Name</strong>, <strong>Towel Color</strong>, <strong>Report URL</strong>. A header row is optional. The Report URL column is optional — leave it out or blank if you do not want the pill clickable.
                       </div>
                       <textarea
                         value={lookupImportText}

@@ -3368,6 +3368,39 @@ def test_temporary_player_lookup_import_enriches_checkin_snapshot(client, sessio
     assert player_state["report_url"] == "https://example.com/reports/alpha-1"
 
 
+def test_temporary_player_lookup_import_without_header_positional(client, session):
+    """Pasting raw rows (no header) uses positional columns: name, color, optional URL."""
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    m1 = matches[0]
+
+    alpha_players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Alpha Player 1\tOrange\thttps://example.com/reports/alpha-1\n"
+                "Zzq Nobody\tBlack\n"  # unknown player, and no report URL column at all
+            )
+        },
+    )
+    assert import_resp.status_code == 200, import_resp.text
+    imported = import_resp.json()
+    assert imported["imported_count"] == 2
+    assert imported["matched_count"] == 1
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == m1.id)
+    player_state = next(p for p in match_state["side_a"]["players"] if p["player_id"] == alpha_players[0].id)
+    assert player_state["towel_color"] == "Orange"
+    assert player_state["report_url"] == "https://example.com/reports/alpha-1"
+
+
 def test_towels_show_on_all_team_checkin_matches(client, session):
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
     m1 = matches[0]
