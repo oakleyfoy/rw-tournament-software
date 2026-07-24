@@ -3214,10 +3214,12 @@ function PoolProjectionPanel({
         version_id: versionId,
         event_id: evt.event_id,
       })
-      if (resp.moved === 0 && resp.unscheduled === 0) {
+      if (resp.moved === 0 && resp.needs_slot === 0) {
         setToast('Placement matches are already on the final day')
+      } else if (resp.needs_slot > 0) {
+        setToast(`Placed ${resp.moved}; ${resp.needs_slot} still need an open final-day court/slot`)
       } else {
-        setToast(`Fixed placement day: ${resp.moved} moved, ${resp.unscheduled} unscheduled`)
+        setToast(`Fixed placement day: ${resp.moved} placed on the final day`)
       }
       fetchProjection()
       onPlacementComplete?.()

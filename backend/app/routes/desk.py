@@ -5354,7 +5354,7 @@ class RepairPlacementDayRequest(BaseModel):
 class RepairPlacementDayResponse(BaseModel):
     success: bool
     moved: int
-    unscheduled: int
+    needs_slot: int
     cleared_locks: int
     messages: List[str] = []
 
@@ -5425,7 +5425,7 @@ def repair_placement_day(
     )
 
     moved = 0
-    unscheduled = 0
+    needs_slot = 0
     cleared_locks = 0
     messages: List[str] = []
 
@@ -5437,6 +5437,17 @@ def repair_placement_day(
         if cur_slot is not None and cur_slot.day_date == last_day:
             continue  # already on the final day
 
+        open_slot = next((s for s in last_day_slots if s.id not in occupied and s.id not in blocked), None)
+        if open_slot is None:
+            # Nowhere to put it on the final day. Leave the match exactly where it
+            # is (do NOT delete its assignment — that would make it vanish from the
+            # schedule). Report so the desk knows to free a final-day court/slot.
+            needs_slot += 1
+            messages.append(
+                f"{m.match_code}: no open slot on {last_day}; add/free a court on the final day, then run again"
+            )
+            continue
+
         # Clear any schedule-builder lock pinning this match to the wrong day.
         for lk in session.exec(
             select(MatchLock).where(
@@ -5447,43 +5458,33 @@ def repair_placement_day(
             session.delete(lk)
             cleared_locks += 1
 
-        open_slot = next((s for s in last_day_slots if s.id not in occupied and s.id not in blocked), None)
-        if open_slot is not None:
-            if a is not None:
-                occupied.discard(a.slot_id)
-                a.slot_id = open_slot.id
-                a.assigned_by = "WF14_PLACEMENT_FIX"
-                a.assigned_at = datetime.utcnow()
-                a.locked = False
-                session.add(a)
-            else:
-                a = MatchAssignment(
-                    schedule_version_id=payload.version_id,
-                    match_id=m.id,
-                    slot_id=open_slot.id,
-                    assigned_by="WF14_PLACEMENT_FIX",
-                    assigned_at=datetime.utcnow(),
-                    locked=False,
-                )
-                session.add(a)
-                assign_by_match[m.id] = a
-            occupied.add(open_slot.id)
-            moved += 1
-            messages.append(f"{m.match_code}: moved to {last_day} {open_slot.start_time} court {open_slot.court_label}")
-        elif a is not None:
-            # No open final-day slot: unschedule from the wrong day so it stops
-            # showing in the early queue; it can be dropped onto a court manually.
+        if a is not None:
             occupied.discard(a.slot_id)
-            session.delete(a)
-            del assign_by_match[m.id]
-            unscheduled += 1
-            messages.append(f"{m.match_code}: no open final-day slot; unscheduled")
+            a.slot_id = open_slot.id
+            a.assigned_by = "WF14_PLACEMENT_FIX"
+            a.assigned_at = datetime.utcnow()
+            a.locked = False
+            session.add(a)
+        else:
+            a = MatchAssignment(
+                schedule_version_id=payload.version_id,
+                match_id=m.id,
+                slot_id=open_slot.id,
+                assigned_by="WF14_PLACEMENT_FIX",
+                assigned_at=datetime.utcnow(),
+                locked=False,
+            )
+            session.add(a)
+            assign_by_match[m.id] = a
+        occupied.add(open_slot.id)
+        moved += 1
+        messages.append(f"{m.match_code}: moved to {last_day} {open_slot.start_time} court {open_slot.court_label}")
 
     session.commit()
     return RepairPlacementDayResponse(
         success=True,
         moved=moved,
-        unscheduled=unscheduled,
+        needs_slot=needs_slot,
         cleared_locks=cleared_locks,
         messages=messages,
     )

@@ -3198,7 +3198,7 @@ export async function confirmPoolPlacement(
 export interface RepairPlacementDayResponse {
   success: boolean
   moved: number
-  unscheduled: number
+  needs_slot: number
   cleared_locks: number
   messages: string[]
 }

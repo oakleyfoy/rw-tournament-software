@@ -484,6 +484,90 @@ def test_wf14_repair_placement_day_moves_match_to_final_day(client, session):
     assert moved_slot.day_date == date(2026, 3, 3)
 
 
+def test_wf14_repair_placement_day_is_non_destructive_and_places_unscheduled(client, session):
+    """Repair must never delete a placement assignment when no final-day slot is
+    free, and must place an unscheduled placement match once a slot opens up."""
+    from app.models.match_assignment import MatchAssignment
+    from app.models.schedule_slot import ScheduleSlot
+
+    tournament, event, version = _build_wf14_event_with_matches(session)
+
+    def _slot(day, court):
+        s = ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=version.id,
+            day_date=day,
+            court_number=court,
+            court_label=str(court),
+            start_time=time(8, 0),
+            end_time=time(10, 0),
+            block_minutes=120,
+            is_active=True,
+        )
+        session.add(s)
+        return s
+
+    friday = _slot(date(2026, 3, 1), 1)
+    sunday1 = _slot(date(2026, 3, 3), 1)
+    session.commit()
+    session.refresh(friday)
+    session.refresh(sunday1)
+
+    crosses = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.placement_type == "WF14_CONS_CROSS",
+        )
+    ).all()
+    assert len(crosses) == 3
+
+    # cross[0] occupies the only Sunday slot; cross[1] is stuck on Friday; cross[2] unscheduled.
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=crosses[0].id, slot_id=sunday1.id))
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=crosses[1].id, slot_id=friday.id))
+    session.commit()
+
+    resp = client.post(
+        f"/api/desk/tournaments/{tournament.id}/repair-placement-day",
+        json={"version_id": version.id, "event_id": event.id},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["moved"] == 0
+    assert body["needs_slot"] == 2
+
+    # Non-destructive: cross[1]'s Friday assignment must still exist.
+    stuck = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == version.id,
+            MatchAssignment.match_id == crosses[1].id,
+        )
+    ).first()
+    assert stuck is not None
+
+    # Open two more Sunday slots and re-run: the Friday one moves and the unscheduled one is placed.
+    _slot(date(2026, 3, 3), 2)
+    _slot(date(2026, 3, 3), 3)
+    session.commit()
+
+    resp2 = client.post(
+        f"/api/desk/tournaments/{tournament.id}/repair-placement-day",
+        json={"version_id": version.id, "event_id": event.id},
+    )
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["moved"] == 2
+
+    # All three placement matches now sit on the final day.
+    for c in crosses:
+        a = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == version.id,
+                MatchAssignment.match_id == c.id,
+            )
+        ).first()
+        assert a is not None
+        assert session.get(ScheduleSlot, a.slot_id).day_date == date(2026, 3, 3)
+
+
 def test_wf14_loser_reseed_resilient_to_missing_seeds(session):
     """Reseed must not blank out just because losing teams lack a Team.seed
     (common in duplicated/re-imported events)."""
