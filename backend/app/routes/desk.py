@@ -4147,7 +4147,11 @@ def confirm_pool_placement(
         # flight (Division I/II = Pool A/B) once WF R2 is complete.
         updated = refresh_wf14_consolation_after_advancement(session, payload.event_id, payload.version_id)
         updated += refresh_wf14_winner_flight(session, payload.event_id, payload.version_id)
-        result = {"updated_matches": updated, "assignments": []}
+        # Ensure the full Division III placement round (C1/D1..C3/D3) exists and is
+        # scheduled on the final day. Older draws could be missing the C3-vs-D3
+        # match entirely; this backfills and places it as part of Split Pools.
+        placement_fix = _repair_wf14_placement_day(session, payload.version_id, payload.event_id)
+        result = {"updated_matches": updated, "assignments": [], "placement_fix": placement_fix}
     else:
         try:
             result = apply_pool_placement(
@@ -5418,70 +5422,71 @@ def _ensure_wf14_cross_placement_matches(
     return created
 
 
-@router.post(
-    "/desk/tournaments/{tournament_id}/repair-placement-day",
-    response_model=RepairPlacementDayResponse,
-)
-def repair_placement_day(
-    tournament_id: int,
-    payload: RepairPlacementDayRequest,
-    session: Session = Depends(get_session),
-):
-    """
-    Relocate WF_14 Division III cross-placement matches (CONS_SUN / WF14_CONS_CROSS)
-    onto an open slot on the final tournament day.
+def _repair_wf14_placement_day(
+    session: Session,
+    version_id: int,
+    event_id: Optional[int] = None,
+) -> Dict[str, object]:
+    """Backfill + place all WF_14 Division III cross-placement matches on the final day.
 
-    These matches are the tournament's last round and must be played on the final
-    day. Duplicated tournaments can carry a leftover assignment/lock that pins one
-    to an earlier day (e.g. Friday); this clears the lock and moves it to the last
-    day so it stops reappearing in the earlier day's queue.
+    Best-effort and side-effecting but does NOT commit (the caller commits). Safe
+    to call from both the dedicated repair endpoint and the Split Pools flow.
+    Never deletes an existing assignment (non-destructive).
     """
-    tournament = session.get(Tournament, tournament_id)
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
-    version = session.get(ScheduleVersion, payload.version_id)
-    if not version or version.tournament_id != tournament_id:
-        raise HTTPException(status_code=404, detail="Schedule version not found")
+    result: Dict[str, object] = {
+        "moved": 0,
+        "needs_slot": 0,
+        "cleared_locks": 0,
+        "created": 0,
+        "messages": [],
+    }
+    messages: List[str] = []
 
     slots = session.exec(
         select(ScheduleSlot).where(
-            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.schedule_version_id == version_id,
             ScheduleSlot.is_active,
         )
     ).all()
-    if not slots:
-        raise HTTPException(status_code=400, detail="No active slots for this version")
     last_day = max((s.day_date for s in slots if s.day_date is not None), default=None)
-    if last_day is None:
-        raise HTTPException(status_code=400, detail="Slots have no dates")
 
     q = select(Match).where(
-        Match.schedule_version_id == payload.version_id,
+        Match.schedule_version_id == version_id,
         Match.placement_type == "WF14_CONS_CROSS",
     )
-    if payload.event_id is not None:
-        q = q.where(Match.event_id == payload.event_id)
+    if event_id is not None:
+        q = q.where(Match.event_id == event_id)
     cross_matches = session.exec(q).all()
 
     # Some events were generated before the 3rd cross-placement pairing (C3 vs D3)
     # existed, so only CONS_SUN_01/02 were ever created. Backfill any missing
     # Sunday cross-placement matches so all of Division III's placement round is
     # present before we try to schedule it.
-    created_matches = _ensure_wf14_cross_placement_matches(session, cross_matches, payload.version_id)
+    created_matches = _ensure_wf14_cross_placement_matches(session, cross_matches, version_id)
     if created_matches:
         session.flush()
         cross_matches = session.exec(q).all()
+    result["created"] = created_matches
 
-    assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == payload.version_id)
-    ).all()
+    # Without dated slots we can still have created the missing match(es); just
+    # can't place them yet.
+    if not slots or last_day is None:
+        if created_matches:
+            messages.insert(0, f"Created {created_matches} missing placement match(es) (e.g. C3 vs D3)")
+        result["needs_slot"] = len(
+            [m for m in cross_matches if (m.runtime_status or "SCHEDULED").upper() not in ("FINAL",)]
+        )
+        result["messages"] = messages
+        return result
+
+    assignments = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)).all()
     assign_by_match = {a.match_id: a for a in assignments}
     occupied = {a.slot_id for a in assignments}
     blocked = {
         sl.slot_id
         for sl in session.exec(
             select(SlotLock).where(
-                SlotLock.schedule_version_id == payload.version_id,
+                SlotLock.schedule_version_id == version_id,
                 SlotLock.status == "BLOCKED",
             )
         ).all()
@@ -5495,7 +5500,6 @@ def repair_placement_day(
     moved = 0
     needs_slot = 0
     cleared_locks = 0
-    messages: List[str] = []
 
     for m in cross_matches:
         if (m.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED", "FINAL"):
@@ -5519,7 +5523,7 @@ def repair_placement_day(
         # Clear any schedule-builder lock pinning this match to the wrong day.
         for lk in session.exec(
             select(MatchLock).where(
-                MatchLock.schedule_version_id == payload.version_id,
+                MatchLock.schedule_version_id == version_id,
                 MatchLock.match_id == m.id,
             )
         ).all():
@@ -5535,7 +5539,7 @@ def repair_placement_day(
             session.add(a)
         else:
             a = MatchAssignment(
-                schedule_version_id=payload.version_id,
+                schedule_version_id=version_id,
                 match_id=m.id,
                 slot_id=open_slot.id,
                 assigned_by="WF14_PLACEMENT_FIX",
@@ -5548,16 +5552,47 @@ def repair_placement_day(
         moved += 1
         messages.append(f"{m.match_code}: moved to {last_day} {open_slot.start_time} court {open_slot.court_label}")
 
-    session.commit()
     if created_matches:
         messages.insert(0, f"Created {created_matches} missing placement match(es) (e.g. C3 vs D3)")
+
+    result.update(moved=moved, needs_slot=needs_slot, cleared_locks=cleared_locks, messages=messages)
+    return result
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/repair-placement-day",
+    response_model=RepairPlacementDayResponse,
+)
+def repair_placement_day(
+    tournament_id: int,
+    payload: RepairPlacementDayRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Ensure the WF_14 Division III cross-placement matches (C1/D1..C3/D3) exist and
+    sit on an open slot on the final tournament day.
+
+    These matches are the tournament's last round and must be played on the final
+    day. Older/duplicated events may be missing the C3-vs-D3 match entirely, or
+    carry a leftover assignment/lock that pins one to an earlier day; this
+    reconstructs any missing match and moves them to the last day.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    res = _repair_wf14_placement_day(session, payload.version_id, payload.event_id)
+    session.commit()
     return RepairPlacementDayResponse(
         success=True,
-        moved=moved,
-        needs_slot=needs_slot,
-        cleared_locks=cleared_locks,
-        created=created_matches,
-        messages=messages,
+        moved=int(res["moved"]),
+        needs_slot=int(res["needs_slot"]),
+        cleared_locks=int(res["cleared_locks"]),
+        created=int(res["created"]),
+        messages=list(res["messages"]),
     )
 
 
