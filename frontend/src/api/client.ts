@@ -3200,6 +3200,7 @@ export interface RepairPlacementDayResponse {
   moved: number
   needs_slot: number
   cleared_locks: number
+  created: number
   messages: string[]
 }
 

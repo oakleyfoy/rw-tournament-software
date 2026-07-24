@@ -5356,7 +5356,66 @@ class RepairPlacementDayResponse(BaseModel):
     moved: int
     needs_slot: int
     cleared_locks: int
+    created: int = 0
     messages: List[str] = []
+
+
+def _ensure_wf14_cross_placement_matches(
+    session: Session,
+    existing: List[Match],
+    version_id: int,
+) -> int:
+    """Create any missing WF_14 Sunday cross-placement matches (C1/D1..C3/D3).
+
+    Older/duplicated events may have been generated before the full set of
+    ``CONS_PLACEMENT_PAIRINGS`` existed, leaving e.g. only CONS_SUN_01/02. We
+    reconstruct the missing ones from an existing sibling so the whole Division
+    III placement round is present. Returns the number created.
+    """
+    from app.services.wf_14_format import CONS_PLACEMENT_PAIRINGS
+
+    if not existing:
+        # Nothing to template from and no event context to safely create — skip.
+        return 0
+
+    template = existing[0]
+    prefix = ""
+    code = template.match_code or ""
+    marker = "CONS_SUN_"
+    if marker in code:
+        prefix = code[: code.index(marker)]
+
+    have_seq = set()
+    for m in existing:
+        c = (m.match_code or "").upper()
+        if "CONS_SUN_" in c:
+            try:
+                have_seq.add(int(c.rsplit("_", 1)[1]))
+            except (ValueError, IndexError):
+                pass
+
+    created = 0
+    for idx, (slot_a, slot_b) in enumerate(CONS_PLACEMENT_PAIRINGS, start=1):
+        if idx in have_seq:
+            continue
+        session.add(
+            Match(
+                tournament_id=template.tournament_id,
+                event_id=template.event_id,
+                schedule_version_id=version_id,
+                match_code=f"{prefix}CONS_SUN_{idx:02d}",
+                match_type="PLACEMENT",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=idx,
+                placeholder_side_a=slot_a,
+                placeholder_side_b=slot_b,
+                placement_type="WF14_CONS_CROSS",
+                duration_minutes=template.duration_minutes,
+            )
+        )
+        created += 1
+    return created
 
 
 @router.post(
@@ -5403,6 +5462,15 @@ def repair_placement_day(
     if payload.event_id is not None:
         q = q.where(Match.event_id == payload.event_id)
     cross_matches = session.exec(q).all()
+
+    # Some events were generated before the 3rd cross-placement pairing (C3 vs D3)
+    # existed, so only CONS_SUN_01/02 were ever created. Backfill any missing
+    # Sunday cross-placement matches so all of Division III's placement round is
+    # present before we try to schedule it.
+    created_matches = _ensure_wf14_cross_placement_matches(session, cross_matches, payload.version_id)
+    if created_matches:
+        session.flush()
+        cross_matches = session.exec(q).all()
 
     assignments = session.exec(
         select(MatchAssignment).where(MatchAssignment.schedule_version_id == payload.version_id)
@@ -5481,11 +5549,14 @@ def repair_placement_day(
         messages.append(f"{m.match_code}: moved to {last_day} {open_slot.start_time} court {open_slot.court_label}")
 
     session.commit()
+    if created_matches:
+        messages.insert(0, f"Created {created_matches} missing placement match(es) (e.g. C3 vs D3)")
     return RepairPlacementDayResponse(
         success=True,
         moved=moved,
         needs_slot=needs_slot,
         cleared_locks=cleared_locks,
+        created=created_matches,
         messages=messages,
     )
 

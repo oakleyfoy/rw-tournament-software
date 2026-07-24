@@ -568,6 +568,77 @@ def test_wf14_repair_placement_day_is_non_destructive_and_places_unscheduled(cli
         assert session.get(ScheduleSlot, a.slot_id).day_date == date(2026, 3, 3)
 
 
+def test_wf14_repair_backfills_missing_cross_placement_match(client, session):
+    """Events generated before the C3-vs-D3 pairing existed only have 2 cross
+    matches; repair must recreate the missing one and place it on the final day."""
+    from app.models.match_assignment import MatchAssignment  # noqa: F401
+    from app.models.schedule_slot import ScheduleSlot
+
+    tournament, event, version = _build_wf14_event_with_matches(session)
+
+    # Simulate a stale draw: delete the third cross-placement match.
+    crosses = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.placement_type == "WF14_CONS_CROSS",
+        )
+    ).all()
+    assert len(crosses) == 3
+    third = max(crosses, key=lambda m: m.match_code or "")
+    session.delete(third)
+    session.commit()
+
+    remaining = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.placement_type == "WF14_CONS_CROSS",
+        )
+    ).all()
+    assert len(remaining) == 2
+
+    for court in (1, 2, 3):
+        session.add(
+            ScheduleSlot(
+                tournament_id=tournament.id,
+                schedule_version_id=version.id,
+                day_date=date(2026, 3, 3),
+                court_number=court,
+                court_label=str(court),
+                start_time=time(8, 0),
+                end_time=time(10, 0),
+                block_minutes=120,
+                is_active=True,
+            )
+        )
+    session.commit()
+
+    resp = client.post(
+        f"/api/desk/tournaments/{tournament.id}/repair-placement-day",
+        json={"version_id": version.id, "event_id": event.id},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["created"] == 1
+
+    # All three cross-placement matches exist again and are on the final day.
+    final = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == version.id,
+            Match.placement_type == "WF14_CONS_CROSS",
+        )
+    ).all()
+    assert len(final) == 3
+    for m in final:
+        a = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == version.id,
+                MatchAssignment.match_id == m.id,
+            )
+        ).first()
+        assert a is not None
+        assert session.get(ScheduleSlot, a.slot_id).day_date == date(2026, 3, 3)
+
+
 def test_wf14_loser_reseed_resilient_to_missing_seeds(session):
     """Reseed must not blank out just because losing teams lack a Team.seed
     (common in duplicated/re-imported events)."""
