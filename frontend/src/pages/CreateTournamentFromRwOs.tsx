@@ -13,6 +13,8 @@ import {
   type RwOsDrawPlan,
   type RwOsEventSummary,
   type RwOsImportResponse,
+  type RwOsRatingReviewPlayer,
+  type RwOsRatingReviewTeam,
   type RwOsSplitOption,
 } from '../api/client'
 import { showToast } from '../utils/toast'
@@ -29,6 +31,64 @@ function formatDate(value: string): string {
 function formatRating(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return 'unrated'
   return value.toFixed(2)
+}
+
+function formatNtrp(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return 'Missing'
+  return value.toFixed(1).replace(/\.0$/, '.0')
+}
+
+function playerRwId(player: RwOsRatingReviewPlayer): string {
+  return player.rwId || player.rw_id || ''
+}
+
+function reviewStatusLabel(status: string): string {
+  if (status === 'partial') return 'Partial rating'
+  if (status === 'missing') return 'Missing ratings'
+  return status
+}
+
+function RatingReviewWarning({ teams }: { teams: RwOsRatingReviewTeam[] }) {
+  const [open, setOpen] = useState(false)
+  if (!teams.length) return null
+  const count = teams.length
+  const headline =
+    count === 1
+      ? '1 team needs rating review. Recommendation confidence is lower.'
+      : `${count} teams need rating review. Recommendation confidence is lower.`
+
+  return (
+    <div className="warning-banner rating-review-warning">
+      <p className="rating-review-headline">⚠ {headline}</p>
+      <button className="link-button rating-review-toggle" type="button" onClick={() => setOpen((value) => !value)}>
+        {open ? 'View teams needing review ▴' : 'View teams needing review ▾'}
+      </button>
+      {open && (
+        <div className="rating-review-list">
+          <h4>Teams needing rating review</h4>
+          <ol>
+            {teams.map((team) => (
+              <li key={team.teamKey}>
+                <strong>{team.name}</strong>
+                <div className="rating-review-status">{reviewStatusLabel(team.ratingStatus)}</div>
+                {[team.player1, team.player2].map((player) => (
+                  <div key={`${team.teamKey}-${playerRwId(player)}-${player.name}`} className="rating-review-player">
+                    <div>{player.name}</div>
+                    {playerRwId(player) ? <div>RW_ID: {playerRwId(player)}</div> : null}
+                    <div>NTRP: {formatNtrp(player.rating)}</div>
+                  </div>
+                ))}
+                <div className="rating-review-combined">
+                  Combined used by planner:{' '}
+                  {team.teamRating == null ? 'Not available' : formatNtrp(team.teamRating)}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function formatStructure(sizes: number[]): string {
@@ -266,12 +326,7 @@ function DrawPlanner({
         Current: {current} · Expected: {expected}
       </p>
       {draw.planningNote && <div className="info-banner">{draw.planningNote}</div>}
-      {draw.ratingReviewNeeded > 0 && (
-        <div className="warning-banner">
-          {draw.ratingReviewNeeded} team{draw.ratingReviewNeeded === 1 ? '' : 's'} need rating review.
-          Recommendation confidence is lower.
-        </div>
-      )}
+      <RatingReviewWarning teams={draw.ratingReviewTeams || []} />
       {expected === 0 && <p className="meta">Forecast is 0 — no bracket plan was generated for this draw.</p>}
       {recommended && (
         <>

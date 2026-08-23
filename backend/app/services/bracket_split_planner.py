@@ -272,6 +272,35 @@ def _preview_team(rank: int, team: SnapshotTeam) -> dict[str, Any]:
     }
 
 
+def _review_player(player) -> dict[str, Any]:
+    return {
+        "name": player.name,
+        "rwId": player.rw_id,
+        "rw_id": player.rw_id,
+        "rating": player.rating,
+    }
+
+
+def rating_review_teams(teams: list[SnapshotTeam]) -> list[dict[str, Any]]:
+    """Identify current snapshot teams with partial or missing ratings. Display only."""
+    rows = []
+    for team in teams:
+        if team.rating_status not in {RATING_STATUS_PARTIAL, RATING_STATUS_MISSING}:
+            continue
+        rows.append(
+            {
+                "teamKey": team.team_key,
+                "name": _team_display_name(team),
+                "drawKind": team.draw_kind,
+                "ratingStatus": team.rating_status,
+                "teamRating": team.team_rating,
+                "player1": _review_player(team.player1),
+                "player2": _review_player(team.player2),
+            }
+        )
+    return rows
+
+
 def _neighborhood(sorted_teams: list[SnapshotTeam], cut_after: int, window: int = 2) -> list[dict[str, Any]]:
     if cut_after < 1 or cut_after > len(sorted_teams):
         return []
@@ -590,7 +619,10 @@ def analyze_custom_structure(
     target = current_count if forecast_count is None else forecast_count
     validate_custom_sizes(sizes, target)
     typical_gap = _median(_adjacent_gaps([team.team_rating for team in sorted_teams]))
-    generated = [analyze_option(sorted_teams, parts, typical_gap, current_count=current_count) for parts in generate_split_sizes(target)]
+    generated = [
+        analyze_option(sorted_teams, parts, typical_gap, current_count=current_count)
+        for parts in generate_split_sizes(target)
+    ]
     custom_raw = analyze_option(sorted_teams, sizes, typical_gap, current_count=current_count)
     known_gaps = [
         cut["ratingGap"]
@@ -641,6 +673,7 @@ def plan_draw(
             "unratedCount": unrated_count,
             "partialCount": partial_count,
             "ratingReviewNeeded": unrated_count + partial_count,
+            "ratingReviewTeams": rating_review_teams(sorted_teams),
             "byeLogicApplicable": BYE_LOGIC_APPLICABLE,
             "generatedCount": 0,
             "optionCount": 0,
@@ -702,6 +735,7 @@ def plan_draw(
         "unratedCount": unrated_count,
         "partialCount": partial_count,
         "ratingReviewNeeded": unrated_count + partial_count,
+        "ratingReviewTeams": rating_review_teams(sorted_teams),
         "byeLogicApplicable": BYE_LOGIC_APPLICABLE,
         "generatedCount": len(scored),
         "optionCount": len(selected),

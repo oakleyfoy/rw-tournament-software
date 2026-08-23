@@ -458,6 +458,23 @@ export interface RwOsSplitOption {
   }
 }
 
+export interface RwOsRatingReviewPlayer {
+  name: string
+  rwId?: string
+  rw_id?: string
+  rating: number | null
+}
+
+export interface RwOsRatingReviewTeam {
+  teamKey: string
+  name: string
+  drawKind: string
+  ratingStatus: string
+  teamRating: number | null
+  player1: RwOsRatingReviewPlayer
+  player2: RwOsRatingReviewPlayer
+}
+
 export interface RwOsDrawPlan {
   drawKind: string
   drawLabel: string
@@ -469,6 +486,7 @@ export interface RwOsDrawPlan {
   unratedCount: number
   partialCount: number
   ratingReviewNeeded: number
+  ratingReviewTeams?: RwOsRatingReviewTeam[]
   optionCount?: number
   topOptionCount?: number
   generatedCount?: number
@@ -480,6 +498,8 @@ export interface RwOsDrawPlan {
     name: string
     teamRating: number | null
     ratingStatus: string
+    player1?: RwOsRatingReviewPlayer
+    player2?: RwOsRatingReviewPlayer
   }>
 }
 
