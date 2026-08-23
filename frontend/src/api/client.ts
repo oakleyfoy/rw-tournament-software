@@ -31,6 +31,8 @@ export interface Tournament {
   shared_screen_config_json?: string | null;
   /** JSON `{"day_orders":[[event_id,...],...]}` — schedule policy prefix per calendar day */
   event_schedule_day_orders_json?: string | null;
+  source_rw_os_tournament_id?: number | null;
+  source_rw_os_organization_slug?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -360,6 +362,215 @@ export async function createTournament(payload: TournamentCreate): Promise<Tourn
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export interface RwOsEventSummary {
+  organizationSlug: string
+  tournamentId: number
+  eventName: string
+  eventDate: string
+  teamCount: number
+  draws: string[]
+  updatedAt?: string
+  version?: string
+  alreadyImported?: boolean
+  available?: boolean
+}
+
+export interface RwOsSnapshotPlayer {
+  rw_id: string
+  name: string
+  rating: number | null
+}
+
+export interface RwOsSnapshotTeam {
+  teamKey: string
+  drawKind: string
+  drawLabel: string
+  player1: RwOsSnapshotPlayer
+  player2: RwOsSnapshotPlayer
+  teamRating: number | null
+  ratingStatus: string
+  status: string
+  bucket: string
+}
+
+export interface RwOsCutAnalysis {
+  fromLabel: string
+  toLabel: string
+  upperRank: number
+  lowerRank: number
+  upperTeamName: string
+  lowerTeamName: string
+  upperRating: number | null
+  lowerRating: number | null
+  ratingGap: number | null
+  quality: string
+  neighborhood: Array<{
+    rank: number
+    name: string
+    teamRating: number | null
+    isCutBoundary: boolean
+  }>
+}
+
+export interface RwOsBracketPreview {
+  label: string
+  letter: string
+  size: number
+  rankStart: number
+  rankEnd: number
+  highestRating: number | null
+  lowestRating: number | null
+  averageRating: number | null
+  medianRating: number | null
+  ratingSpread: number | null
+  teams: Array<{
+    rank: number
+    teamKey: string
+    name: string
+    teamRating: number | null
+    ratingStatus: string
+  }>
+}
+
+export interface RwOsSplitOption {
+  optionKey: string
+  sizes: number[]
+  brackets: RwOsBracketPreview[]
+  cuts: RwOsCutAnalysis[]
+  recommended: boolean
+  score: {
+    cutQuality: number
+    sizeQuality: number
+    tinyBracketPenalty: number
+    unratedTeamPenalty: number
+    total: number
+    reasons: string[]
+  }
+}
+
+export interface RwOsDrawPlan {
+  drawKind: string
+  drawLabel: string
+  teamCount: number
+  unratedCount: number
+  partialCount: number
+  ratingReviewNeeded: number
+  optionCount?: number
+  topOptionCount?: number
+  options: RwOsSplitOption[]
+  teams?: Array<{
+    rank: number
+    teamKey: string
+    name: string
+    teamRating: number | null
+    ratingStatus: string
+  }>
+}
+
+export interface RwOsImportResponse {
+  import: {
+    id: number
+    tournamentId: number
+    organizationSlug: string
+    sourceTournamentId: number
+    eventName: string
+    eventDate: string
+    importedAt: string | null
+    sourceUpdatedAt: string | null
+    sourceVersion: string | null
+    sourceTeamCount: number
+    sourceHash: string
+    validationStatus: string
+    validationIssues: Array<{ code: string; message: string; team_key?: string | null }>
+    refreshDiff: {
+      addedCount: number
+      withdrawnCount: number
+      partnerChanges: unknown[]
+      drawChanges: unknown[]
+      ratingChanges: unknown[]
+      changed: boolean
+    } | null
+    planStatus: string
+    approvedAt: string | null
+    teams: RwOsSnapshotTeam[]
+    waitlistTeams: RwOsSnapshotTeam[]
+  }
+  planner: {
+    draws: RwOsDrawPlan[]
+    maxBracketSize: number
+    minBracketSize: number
+    preferredBracketSizes: number[]
+    byeLogicApplicable: boolean
+    teamRatingFormula: string
+  }
+  drawCounts: Record<string, number>
+  waitlistCount: number
+  approvedPlans: Array<{
+    drawKind: string
+    optionKey: string
+    approved: boolean
+    isRecommended: boolean
+    brackets: Array<{ label: string; size: number; rankStart: number; rankEnd: number }>
+  }>
+  selectedPlans: Array<{
+    drawKind: string
+    optionKey: string
+    approved: boolean
+    isRecommended: boolean
+  }>
+  bracketsCreated: boolean
+}
+
+export async function listRwOsEvents(): Promise<{
+  events: RwOsEventSummary[]
+  source?: 'fixtures' | 'live'
+}> {
+  return fetchJson<{ events: RwOsEventSummary[]; source?: 'fixtures' | 'live' }>(`${API_BASE_URL}/rw-os/events`)
+}
+
+export async function createRwOsImport(tournamentId: number, organizationSlug = 'rw'): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports`, {
+    method: 'POST',
+    body: JSON.stringify({ tournament_id: tournamentId, organization_slug: organizationSlug }),
+  })
+}
+
+export async function getRwOsImport(importId: number): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}`)
+}
+
+export async function refreshRwOsImport(importId: number, apply = false): Promise<{
+  diff: NonNullable<RwOsImportResponse['import']['refreshDiff']> & { addedTeams?: unknown[]; withdrawnTeams?: unknown[] }
+  applied: boolean
+  importResponse: RwOsImportResponse
+}> {
+  return fetchJson(`${API_BASE_URL}/rw-os/imports/${importId}/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({ apply }),
+  })
+}
+
+export async function selectRwOsStructure(
+  importId: number,
+  drawKind: string,
+  optionKey: string,
+): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}/select-structure`, {
+    method: 'POST',
+    body: JSON.stringify({ draw_kind: drawKind, option_key: optionKey }),
+  })
+}
+
+export async function approveRwOsPlan(
+  importId: number,
+  selections: Record<string, string>,
+): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ selections }),
+  })
 }
 
 export async function getTournament(id: number): Promise<Tournament> {

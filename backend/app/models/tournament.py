@@ -32,6 +32,8 @@ class Tournament(SQLModel, table=True):
         default=None,
         foreign_key="scheduleversion.id",
     )
+    source_rw_os_tournament_id: Optional[int] = Field(default=None, index=True)
+    source_rw_os_organization_slug: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"onupdate": datetime.utcnow})
 

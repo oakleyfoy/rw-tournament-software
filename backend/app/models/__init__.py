@@ -22,6 +22,7 @@ from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
+from app.models.tournament_import import TournamentDrawPlan, TournamentImport
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.models.user_account import UserAccount
@@ -29,6 +30,8 @@ from app.models.user_account import UserAccount
 __all__ = [
     "Tournament",
     "TournamentDay",
+    "TournamentImport",
+    "TournamentDrawPlan",
     "TournamentCourtState",
     "Event",
     "EventCategory",

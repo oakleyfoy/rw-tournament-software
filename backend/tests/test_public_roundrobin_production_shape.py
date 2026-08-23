@@ -181,10 +181,7 @@ def _seed_wom_e18_event(session):
 
 def test_public_roundrobin_wom_e18_production_shape(client, session):
     tournament, event, version = _seed_wom_e18_event(session)
-    resp = client.get(
-        f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin"
-        f"?version_id={version.id}"
-    )
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin?version_id={version.id}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     codes = {p["pool_code"] for p in body["pools"]}
