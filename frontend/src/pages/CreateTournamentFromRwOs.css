@@ -1,0 +1,139 @@
+.create-from-rwos .subhead {
+  margin-top: 8px;
+  max-width: 720px;
+}
+
+.create-from-rwos h2 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.create-from-rwos h3 {
+  margin: 0 0 12px;
+}
+
+.create-from-rwos select {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--theme-input-border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.event-summary {
+  display: grid;
+  gap: 4px;
+  margin: 16px 0;
+  padding: 12px 16px;
+  background: var(--theme-table-row-hover);
+  border-radius: 6px;
+}
+
+.manual-link {
+  margin-top: 16px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--theme-primary-btn);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.meta {
+  color: #5b6b78;
+  font-size: 13px;
+}
+
+.warning-banner {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: #fff3cd;
+  border-left: 4px solid #ffc107;
+  border-radius: 4px;
+}
+
+.draw-planner {
+  display: grid;
+  gap: 16px;
+}
+
+.option-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.split-option {
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  background: #fff;
+}
+
+.split-option.recommended {
+  border-color: var(--theme-success);
+  box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.15);
+}
+
+.split-option.selected {
+  border-color: var(--theme-primary-btn);
+}
+
+.score-line,
+.why-list {
+  font-size: 14px;
+}
+
+.why-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.bracket-range,
+.cut-block {
+  padding: 10px 12px;
+  background: var(--theme-table-row-hover);
+  border-radius: 6px;
+}
+
+.neighborhood {
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.cut-line {
+  font-weight: 700;
+}
+
+.cut-marker {
+  color: var(--theme-danger-btn);
+}
+
+.team-preview-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.btn-small {
+  margin-top: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.approve-card {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 960px) {
+  .option-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

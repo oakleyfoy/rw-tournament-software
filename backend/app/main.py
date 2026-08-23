@@ -36,6 +36,7 @@ from app.routes import (
     plan_report,
     public,
     runtime,
+    rw_os_import,
     schedule,
     schedule_builder,
     schedule_sanity,
@@ -197,6 +198,7 @@ app.include_router(
 
 # Enhanced team import (no extra prefix — router has its own /api/events/{id}/teams/import)
 app.include_router(team_import.router, dependencies=_protected_deps)
+app.include_router(rw_os_import.router, prefix="/api", dependencies=_protected_deps)
 app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"], dependencies=_protected_deps)
 
 

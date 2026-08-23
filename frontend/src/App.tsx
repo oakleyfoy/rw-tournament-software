@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'
 import TournamentList from './pages/TournamentList'
+import CreateTournamentFromRwOs from './pages/CreateTournamentFromRwOs'
 import TournamentSetup from './pages/TournamentSetup'
 import DrawBuilder from './pages/DrawBuilder'
 import ScheduleBuilderPage from './pages/ScheduleBuilderPage'
@@ -53,6 +54,7 @@ function App() {
         <Route element={<RequireAuthLayout />}>
           <Route path="/" element={<TournamentList />} />
           <Route path="/tournaments" element={<TournamentList />} />
+          <Route path="/tournaments/new" element={<CreateTournamentFromRwOs />} />
           <Route path="/tournaments/:id/setup" element={<TournamentSetup />} />
           <Route path="/tournaments/:id/draw-builder" element={<DrawBuilder />} />
           <Route path="/tournaments/:id/schedule-builder" element={<ScheduleBuilderPage />} />

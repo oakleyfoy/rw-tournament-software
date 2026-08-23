@@ -140,6 +140,8 @@ class TournamentResponse(BaseModel):
     public_schedule_version_id: Optional[int] = None
     shared_screen_config_json: Optional[str] = None
     event_schedule_day_orders_json: Optional[str] = None
+    source_rw_os_tournament_id: Optional[int] = None
+    source_rw_os_organization_slug: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

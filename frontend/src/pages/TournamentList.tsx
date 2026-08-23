@@ -159,7 +159,7 @@ function TournamentList() {
   }
 
   const handleCreateClick = () => {
-    navigate('/tournaments/new/setup')
+    navigate('/tournaments/new')
   }
 
   const handleSettingsClick = () => {
