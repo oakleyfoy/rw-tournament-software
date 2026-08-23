@@ -440,10 +440,14 @@ def score_option(
     has_unavoidable_small: bool,
 ) -> dict[str, Any]:
     sizes = tuple(option["sizes"])
-    reasons: list[str] = []
+    positives: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
     known_cuts = [cut for cut in option["cuts"] if not cut.get("provisional")]
     provisional_cuts = [cut for cut in option["cuts"] if cut.get("provisional")]
     cut_gaps = [cut["ratingGap"] for cut in known_cuts if cut.get("ratingGap") is not None]
+
+    def _add(target: list[dict[str, str]], code: str, message: str) -> None:
+        target.append({"type": "positive" if target is positives else "warning", "code": code, "message": message})
 
     if max_cut_gap and max_cut_gap > 0 and known_cuts:
         raw_cut = sum(cut_gaps) if cut_gaps else 0.0
@@ -456,74 +460,105 @@ def score_option(
         cut_quality = 10.0 if cut_gaps else 4.0
 
     for cut in known_cuts:
-        gap = cut.get("ratingGap")
-        gap_text = f"{gap:.2f}" if gap is not None else "n/a"
-        prefix = "+" if cut.get("quality") in {"Strong", "Good"} else "-"
-        reasons.append(f"{prefix} {cut['quality']} natural rating break after #{cut['upperRank']} · Gap {gap_text}")
+        rank = cut["upperRank"]
+        quality = cut.get("quality")
+        if quality == "Strong":
+            _add(positives, "strong_cut", f"Strong natural rating break after team #{rank}.")
+        elif quality == "Good":
+            _add(positives, "reasonable_cut", f"Reasonable rating separation after team #{rank}.")
+        elif quality == "No Natural Break":
+            _add(warnings, "weak_cut", f"Little rating separation after team #{rank}.")
+        else:
+            _add(warnings, "weak_cut", f"The rating cut after team #{rank} is weak.")
     if len(sizes) == 1:
-        reasons.append("+ Single bracket — no rating cut required")
+        _add(positives, "single_bracket", "Single bracket — no rating cut required.")
 
     operational_count = sum(1 for size in sizes if is_operational_size(size))
     awkward_count = sum(1 for size in sizes if is_awkward_size(size))
     size_quality = SIZE_QUALITY_PER_OPERATIONAL * operational_count
     if operational_count == len(sizes) and sizes:
         size_quality += ALL_OPERATIONAL_BONUS
-        reasons.append("+ All bracket sizes operationally preferred")
+        _add(positives, "preferred_sizes", "All brackets use preferred operating sizes.")
     if len(sizes) == 1 and MIN_BRACKET_SIZE <= sizes[0] <= MAX_BRACKET_SIZE:
         size_quality += SINGLE_BRACKET_BONUS
-        reasons.append("+ One healthy-sized bracket")
+        _add(positives, "healthy_single", "One healthy-sized bracket.")
     elif len(sizes) > 1:
         if max(sizes) - min(sizes) <= 8:
             size_quality += BALANCE_BONUS
-            reasons.append("+ Balanced field sizes")
+            _add(positives, "balanced_sizes", "Bracket sizes are reasonably balanced.")
         else:
-            reasons.append("- Bracket sizes are usable but uneven")
-        if len(sizes) > 1:
-            size_quality += max(0.0, 8.0 - pstdev(sizes))
+            _add(warnings, "uneven_sizes", "Bracket sizes are usable but uneven.")
+        size_quality += max(0.0, 8.0 - pstdev(sizes))
 
     min_brackets = max(1, (forecast_count + MAX_BRACKET_SIZE - 1) // MAX_BRACKET_SIZE)
     extra_penalty = 0.0
     if len(sizes) > min_brackets:
         extra_penalty = EXTRA_BRACKET_PENALTY * (len(sizes) - min_brackets)
-        reasons.append("- Extra brackets beyond the minimum needed for the field")
+        _add(warnings, "extra_brackets", "This plan uses more brackets than needed for the field.")
 
     awkward_penalty = AWKWARD_SIZE_PENALTY * awkward_count
     if awkward_count and cut_quality >= MATERIAL_CUT_IMPROVEMENT:
         rebate = min(awkward_penalty, MATERIAL_CUT_IMPROVEMENT * (cut_quality / CUT_QUALITY_MAX))
         awkward_penalty -= rebate
-        reasons.append("+ Rating-cut improvement is large enough to justify an awkward size")
-    elif awkward_count:
-        reasons.append(f"- Awkward bracket size penalty ({awkward_count} non-standard size(s))")
+        _add(positives, "material_cut_justifies_size", "The rating cut is strong enough to justify a less clean size.")
+    for size in sizes:
+        if is_awkward_size(size):
+            _add(warnings, "awkward_size", f"{size}-team bracket is less operationally clean.")
 
     tiny_penalty = 0.0
     tiny_parts = [size for size in sizes if size < MIN_BRACKET_SIZE]
     very_small = [size for size in sizes if size in SMALL_FINAL_RANGE]
     if tiny_parts and not has_unavoidable_small:
         tiny_penalty += TINY_UNDER_8_PENALTY * len(tiny_parts)
-        reasons.append("- Contains an undersized bracket below 8")
+        for size in tiny_parts:
+            _add(warnings, "tiny_bracket", f"{size}-team bracket is below the minimum operating size.")
     elif very_small and forecast_count >= 16 and len(sizes) > 1:
         tiny_penalty += VERY_SMALL_PENALTY * len(very_small)
-        reasons.append("- Penalized for an unnecessarily tiny final bracket")
+        for size in very_small:
+            _add(warnings, "small_bracket", f"{size}-team bracket is smaller than preferred.")
+    elif forecast_count >= 16 and len(sizes) > 1:
+        for size in sizes:
+            if size == 12:
+                _add(warnings, "small_bracket", f"{size}-team bracket is smaller than preferred.")
+    if (
+        not tiny_parts
+        and not very_small
+        and not any(size == 12 and forecast_count >= 16 and len(sizes) > 1 for size in sizes)
+    ):
+        if sizes:
+            _add(positives, "no_small_brackets", "No undersized brackets.")
 
     provisional_penalty = PROVISIONAL_CUT_PENALTY * len(provisional_cuts)
     if forecast_count > current_count:
         provisional_penalty += UNKNOWN_FUTURE_PENALTY
         unknown = forecast_count - current_count
-        reasons.append(
-            f"- {unknown} additional team{'s' if unknown != 1 else ''} not yet known. "
-            "Final rating cut positions may move as registration changes."
+        _add(
+            warnings,
+            "unknown_future",
+            f"{unknown} additional team{'s' if unknown != 1 else ''} {'are' if unknown != 1 else 'is'} not yet known. "
+            "Final rating cut positions may move as registration changes.",
         )
     if provisional_cuts:
-        reasons.append("- One or more cuts are provisional because expected teams have not registered")
+        _add(warnings, "provisional_cut", "This cut depends on teams that have not registered yet.")
+    elif option["cuts"]:
+        _add(positives, "known_cuts", "All rating cuts are based on currently registered teams.")
     if forecast_count < current_count:
-        reasons.append(
-            f"Planning target is {current_count - forecast_count} team(s) below the current registration count. "
-            f"Rating cut analysis is based on the current {current_count}-team field."
+        shrink = current_count - forecast_count
+        _add(
+            warnings,
+            "forecast_shrink",
+            f"Planning target is {shrink} team{'s' if shrink != 1 else ''} below the current registration count. "
+            f"Rating cut analysis is based on the current {current_count}-team field.",
         )
 
     unrated_penalty = (UNRATED_PENALTY * unrated_count) + (PARTIAL_PENALTY * partial_count)
-    if unrated_count or partial_count:
-        reasons.append(f"- {unrated_count + partial_count} current team(s) need rating review — confidence is lower")
+    review_count = unrated_count + partial_count
+    if review_count:
+        _add(
+            warnings,
+            "rating_review",
+            f"{review_count} team{'s' if review_count != 1 else ''} need{'s' if review_count == 1 else ''} rating review, so recommendation confidence is lower.",
+        )
 
     total = round(
         cut_quality
@@ -544,7 +579,8 @@ def score_option(
         "unratedTeamPenalty": round(unrated_penalty, 3),
         "extraBracketPenalty": round(extra_penalty, 3),
         "total": total,
-        "reasons": reasons,
+        "reasons": [item["message"] for item in positives + warnings],
+        "explanations": {"reasons": positives, "warnings": warnings},
     }
 
 
@@ -604,6 +640,8 @@ def build_scored_option(
         max_cut_gap=max_cut_gap,
         has_unavoidable_small=has_unavoidable_small,
     )
+    option["reasons"] = option["score"]["explanations"]["reasons"]
+    option["warnings"] = option["score"]["explanations"]["warnings"]
     option["recommended"] = False
     return option
 
@@ -701,7 +739,15 @@ def plan_draw(
             max_cut_gap=max_cut_gap,
             has_unavoidable_small=has_unavoidable_small,
         )
-        scored.append({**option, "score": score, "recommended": False})
+        scored.append(
+            {
+                **option,
+                "score": score,
+                "reasons": score["explanations"]["reasons"],
+                "warnings": score["explanations"]["warnings"],
+                "recommended": False,
+            }
+        )
 
     scored.sort(
         key=lambda option: (option["score"]["total"], option["score"]["cutQuality"], -len(option["sizes"])),

@@ -15,6 +15,7 @@ import {
   type RwOsImportResponse,
   type RwOsRatingReviewPlayer,
   type RwOsRatingReviewTeam,
+  type RwOsExplanation,
   type RwOsSplitOption,
 } from '../api/client'
 import { showToast } from '../utils/toast'
@@ -145,6 +146,15 @@ function TeamPreview({
   )
 }
 
+function optionExplanations(option: RwOsSplitOption): { reasons: RwOsExplanation[]; warnings: RwOsExplanation[] } {
+  if (option.reasons || option.warnings) {
+    return { reasons: option.reasons || [], warnings: option.warnings || [] }
+  }
+  const fromScore = option.score.explanations
+  if (fromScore) return { reasons: fromScore.reasons || [], warnings: fromScore.warnings || [] }
+  return { reasons: [], warnings: [] }
+}
+
 function OptionCard({
   option,
   selected,
@@ -160,25 +170,57 @@ function OptionCard({
   drawTeams: NonNullable<RwOsDrawPlan['teams']>
   badge?: string
 }) {
+  const { reasons, warnings } = optionExplanations(option)
+  const recommended = Boolean(option.recommended || badge === 'RECOMMENDED')
   return (
-    <article className={`split-option ${option.recommended ? 'recommended' : ''} ${option.custom ? 'custom' : ''} ${selected ? 'selected' : ''}`}>
+    <article className={`split-option ${recommended ? 'recommended' : ''} ${option.custom ? 'custom' : ''} ${selected ? 'selected' : ''}`}>
       <header>
-        <h4>
-          {badge ? `${badge} — ` : ''}
-          {formatStructure(option.sizes)}
-        </h4>
-        <p className="score-line">
-          Score {option.score.total.toFixed(1)} · Cut {option.score.cutQuality.toFixed(1)} · Size {option.score.sizeQuality.toFixed(1)}
-          {option.score.awkwardSizePenalty ? ` · Awkward −${option.score.awkwardSizePenalty.toFixed(1)}` : ''}
-          {option.score.tinyBracketPenalty ? ` · Tiny −${option.score.tinyBracketPenalty.toFixed(1)}` : ''}
-          {option.score.provisionalCutPenalty ? ` · Provisional −${option.score.provisionalCutPenalty.toFixed(1)}` : ''}
-        </p>
+        <p className="option-badge">{badge || (recommended ? 'RECOMMENDED' : 'ALTERNATIVE')}</p>
+        <h4>{formatStructure(option.sizes)}</h4>
       </header>
-      <ul className="why-list">
-        {option.score.reasons.map((reason) => (
-          <li key={reason}>{reason}</li>
-        ))}
-      </ul>
+      {recommended ? (
+        <div className="why-block">
+          <h5>Why we recommend it</h5>
+          <ul className="why-list positives">
+            {reasons.map((reason) => (
+              <li key={`${reason.code}-${reason.message}`}>✓ {reason.message}</li>
+            ))}
+          </ul>
+          {warnings.length > 0 && (
+            <>
+              <h5>Tradeoffs</h5>
+              <ul className="why-list warnings">
+                {warnings.map((warning) => (
+                  <li key={`${warning.code}-${warning.message}`}>⚠ {warning.message}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="why-block">
+          {reasons.length > 0 && (
+            <>
+              <h5>Strengths</h5>
+              <ul className="why-list positives">
+                {reasons.map((reason) => (
+                  <li key={`${reason.code}-${reason.message}`}>✓ {reason.message}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {warnings.length > 0 && (
+            <>
+              <h5>Tradeoffs</h5>
+              <ul className="why-list warnings">
+                {warnings.map((warning) => (
+                  <li key={`${warning.code}-${warning.message}`}>⚠ {warning.message}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
       {option.brackets.map((bracket) => (
         <div key={bracket.label} className="bracket-range">
           <strong>{bracket.label}</strong> — {bracket.size} teams

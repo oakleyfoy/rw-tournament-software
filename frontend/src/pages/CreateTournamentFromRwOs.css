@@ -143,13 +143,21 @@
   border-color: var(--theme-primary-btn);
 }
 
-.score-line,
-.why-list {
-  font-size: 14px;
+.option-badge {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.why-block h5 {
+  margin: 0 0 6px;
+  font-size: 13px;
 }
 
 .why-list {
-  margin: 0;
+  font-size: 14px;
+  margin: 0 0 12px;
   padding-left: 18px;
 }
 

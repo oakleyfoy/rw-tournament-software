@@ -438,6 +438,12 @@ export interface RwOsBracketPreview {
   }>
 }
 
+export interface RwOsExplanation {
+  type?: 'positive' | 'warning'
+  code: string
+  message: string
+}
+
 export interface RwOsSplitOption {
   optionKey: string
   sizes: number[]
@@ -446,6 +452,8 @@ export interface RwOsSplitOption {
   recommended: boolean
   custom?: boolean
   fakeTeamCount?: number
+  reasons?: RwOsExplanation[]
+  warnings?: RwOsExplanation[]
   score: {
     cutQuality: number
     sizeQuality: number
@@ -453,8 +461,13 @@ export interface RwOsSplitOption {
     tinyBracketPenalty: number
     provisionalCutPenalty?: number
     unratedTeamPenalty: number
+    extraBracketPenalty?: number
     total: number
     reasons: string[]
+    explanations?: {
+      reasons: RwOsExplanation[]
+      warnings: RwOsExplanation[]
+    }
   }
 }
 
