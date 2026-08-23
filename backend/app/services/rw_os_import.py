@@ -106,9 +106,7 @@ def _draw_counts(teams: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def build_import_response(session: Session, import_row: TournamentImport) -> dict[str, Any]:
-    plans = session.exec(
-        select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == import_row.id)
-    ).all()
+    plans = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == import_row.id)).all()
     snapshot = json.loads(import_row.snapshot_json or "[]")
     waitlist = json.loads(import_row.waitlist_json or "[]")
     return {

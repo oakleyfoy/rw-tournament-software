@@ -122,7 +122,9 @@ class SnapshotTeam:
                 rating=parse_rating(p2.get("rating")),
                 rating_field=str(p2.get("rating_field") or p2.get("ratingField") or "ntrpRating"),
             ),
-            team_rating=parse_rating(payload.get("teamRating") if "teamRating" in payload else payload.get("team_rating")),
+            team_rating=parse_rating(
+                payload.get("teamRating") if "teamRating" in payload else payload.get("team_rating")
+            ),
             rating_status=str(payload.get("ratingStatus") or payload.get("rating_status") or ""),
             status=str(payload.get("status") or ""),
             bucket=str(payload.get("bucket") or "active"),
@@ -162,7 +164,9 @@ def validate_import_snapshot(
 
     for team in teams:
         if not team.team_key:
-            issues.append(ValidationIssue("missing_team_key", "Team is missing a stable teamKey.", draw_kind=team.draw_kind))
+            issues.append(
+                ValidationIssue("missing_team_key", "Team is missing a stable teamKey.", draw_kind=team.draw_kind)
+            )
             continue
         if not is_known_draw_label(team.draw_kind) and not is_known_draw_label(team.draw_label):
             issues.append(
@@ -171,14 +175,18 @@ def validate_import_snapshot(
         key = (team.draw_kind, team.team_key)
         if key in seen_keys:
             issues.append(
-                ValidationIssue("duplicate_team_key", "Duplicate teamKey in the same draw.", team.team_key, team.draw_kind)
+                ValidationIssue(
+                    "duplicate_team_key", "Duplicate teamKey in the same draw.", team.team_key, team.draw_kind
+                )
             )
         seen_keys[key] = team
 
         player_ids = [team.player1.rw_id, team.player2.rw_id]
         if not team.player1.rw_id or not team.player2.rw_id:
             issues.append(
-                ValidationIssue("incomplete_partners", "Canonical team requires two RW IDs.", team.team_key, team.draw_kind)
+                ValidationIssue(
+                    "incomplete_partners", "Canonical team requires two RW IDs.", team.team_key, team.draw_kind
+                )
             )
         if team.player1.rw_id and team.player2.rw_id:
             expected = canonicalize_team_key(player_ids)
@@ -210,7 +218,9 @@ def validate_import_snapshot(
         for player, label in ((team.player1, "player1"), (team.player2, "player2")):
             if player.rating is None and player.rating_field and str(player.__dict__.get("raw_rating", "")):
                 issues.append(
-                    ValidationIssue("invalid_rating", f"{label} rating could not be parsed.", team.team_key, team.draw_kind)
+                    ValidationIssue(
+                        "invalid_rating", f"{label} rating could not be parsed.", team.team_key, team.draw_kind
+                    )
                 )
 
     for team in waitlist_teams or []:

@@ -238,7 +238,9 @@ def _bracket_metrics(sorted_teams: list[SnapshotTeam], draw_kind: str, size: int
     )
 
 
-def analyze_option(sorted_teams: list[SnapshotTeam], sizes: tuple[int, ...], typical_gap: Optional[float]) -> dict[str, Any]:
+def analyze_option(
+    sorted_teams: list[SnapshotTeam], sizes: tuple[int, ...], typical_gap: Optional[float]
+) -> dict[str, Any]:
     family = bracket_family_label(sorted_teams[0].draw_kind if sorted_teams else "womens")
     brackets: list[BracketPreview] = []
     cuts: list[CutAnalysis] = []
@@ -333,7 +335,9 @@ def score_option(
     elif sizes:
         size_quality += max(0.0, 16.0 - pstdev(sizes))
         if max(sizes) - min(sizes) <= 8:
-            reasons.append("Both brackets have healthy size" if len(sizes) == 2 else "Reasonably balanced bracket sizes")
+            reasons.append(
+                "Both brackets have healthy size" if len(sizes) == 2 else "Reasonably balanced bracket sizes"
+            )
         else:
             reasons.append("Bracket sizes are usable but uneven")
         if all(MIN_BRACKET_SIZE <= size <= MAX_BRACKET_SIZE for size in sizes):

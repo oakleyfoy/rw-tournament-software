@@ -209,13 +209,16 @@ import requests
 BASE_URL = "http://localhost:8000/api"
 
 # Create tournament
-response = requests.post(f"{BASE_URL}/tournaments", json={
-    "name": "Test Tournament",
-    "location": "Test Location",
-    "timezone": "America/New_York",
-    "start_date": "2026-07-15",
-    "end_date": "2026-07-17"
-})
+response = requests.post(
+    f"{BASE_URL}/tournaments",
+    json={
+        "name": "Test Tournament",
+        "location": "Test Location",
+        "timezone": "America/New_York",
+        "start_date": "2026-07-15",
+        "end_date": "2026-07-17",
+    },
+)
 tournament = response.json()
 tournament_id = tournament["id"]
 
@@ -223,22 +226,26 @@ tournament_id = tournament["id"]
 days = requests.get(f"{BASE_URL}/tournaments/{tournament_id}/days").json()
 
 # Update days
-requests.put(f"{BASE_URL}/tournaments/{tournament_id}/days", json={
-    "days": [{
-        "date": days[0]["date"],
-        "is_active": True,
-        "start_time": "08:00:00",
-        "end_time": "18:00:00",
-        "courts_available": 4
-    }]
-})
+requests.put(
+    f"{BASE_URL}/tournaments/{tournament_id}/days",
+    json={
+        "days": [
+            {
+                "date": days[0]["date"],
+                "is_active": True,
+                "start_time": "08:00:00",
+                "end_time": "18:00:00",
+                "courts_available": 4,
+            }
+        ]
+    },
+)
 
 # Create event
-requests.post(f"{BASE_URL}/tournaments/{tournament_id}/events", json={
-    "category": "mixed",
-    "name": "Mixed Doubles",
-    "team_count": 16
-})
+requests.post(
+    f"{BASE_URL}/tournaments/{tournament_id}/events",
+    json={"category": "mixed", "name": "Mixed Doubles", "team_count": 16},
+)
 
 # Check status
 status = requests.get(f"{BASE_URL}/tournaments/{tournament_id}/phase1-status").json()

@@ -88,9 +88,7 @@ def get_rw_os_import(import_id: int, session: Session = Depends(get_session)):
 
 @router.get("/tournaments/{tournament_id}/import")
 def get_tournament_import(tournament_id: int, session: Session = Depends(get_session)):
-    row = session.exec(
-        select(TournamentImport).where(TournamentImport.tournament_id == tournament_id)
-    ).first()
+    row = session.exec(select(TournamentImport).where(TournamentImport.tournament_id == tournament_id)).first()
     if not row:
         raise HTTPException(status_code=404, detail="No RW-OS import exists for this tournament.")
     return build_import_response(session, row)

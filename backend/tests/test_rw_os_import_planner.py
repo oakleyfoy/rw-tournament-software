@@ -130,7 +130,7 @@ def test_h_team_rating_sorting_correct():
 
 
 def test_i_44_teams_generates_valid_split_options():
-    teams = [_team(f"{i}/{i+100}", 10 - (i * 0.05)) for i in range(1, 45)]
+    teams = [_team(f"{i}/{i + 100}", 10 - (i * 0.05)) for i in range(1, 45)]
     plan = plan_draw("womens", teams)
     size_sets = {tuple(option["sizes"]) for option in plan["options"]}
     assert (32, 12) in size_sets
@@ -245,7 +245,9 @@ def test_n_and_o_cut_line_and_gap_correct():
 def test_p_three_bracket_option_has_two_cut_analyses():
     option = next(
         item
-        for item in plan_draw("womens", [SnapshotTeam.from_dict(row) for row in get_fixture_event(280)["teams"]])["options"]
+        for item in plan_draw("womens", [SnapshotTeam.from_dict(row) for row in get_fixture_event(280)["teams"]])[
+            "options"
+        ]
         if item["optionKey"] == "32-32-16"
     )
     assert len(option["cuts"]) == 2
@@ -262,12 +264,12 @@ def test_q_recommendation_uses_rating_break_and_size_quality():
     assert recommended["optionKey"] in {"20-24", "24-20"}
     assert recommended["score"]["cutQuality"] > 0
     assert recommended["score"]["sizeQuality"] > 0
-    assert any("rating break" in reason.lower() or "healthy" in reason.lower() for reason in recommended["score"]["reasons"])
+    assert any(
+        "rating break" in reason.lower() or "healthy" in reason.lower() for reason in recommended["score"]["reasons"]
+    )
     sixty = generate_split_sizes(60)
     assert (32, 28) in sixty
-    scored_60 = plan_snapshot(
-        [_team(f"{i}/{i+200}", 9 - i * 0.02) for i in range(1, 61)]
-    )["draws"][0]
+    scored_60 = plan_snapshot([_team(f"{i}/{i + 200}", 9 - i * 0.02) for i in range(1, 61)])["draws"][0]
     rec_60 = next(item for item in scored_60["options"] if item["recommended"])
     assert rec_60["sizes"] != [32, 20, 8]
 
