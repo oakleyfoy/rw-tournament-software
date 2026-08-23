@@ -24,6 +24,7 @@ class TournamentImport(SQLModel, table=True):
     validation_issues_json: str = "[]"
     refresh_diff_json: Optional[str] = None
     plan_status: str = "imported"
+    forecast_json: Optional[str] = None
     approved_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -681,3 +681,25 @@ def ensure_schedule_slot_columns(engine: Engine) -> None:
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure schedule slot columns (this is OK if table doesn't exist yet): {e}")
+
+
+def ensure_tournament_import_columns(engine: Engine) -> None:
+    """Add forecast_json to tournament_import when the table already exists."""
+    try:
+        table = "tournament_import"
+        if _is_sqlite(engine):
+            existing = _get_existing_columns_sqlite(engine, table)
+            if not existing or "forecast_json" in existing:
+                return
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN forecast_json TEXT DEFAULT NULL;"))
+            return
+        existing = _get_existing_columns_postgres(engine, table)
+        if not existing or "forecast_json" in existing:
+            return
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS forecast_json TEXT DEFAULT NULL;"))
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure tournament_import columns: %s", exc)
