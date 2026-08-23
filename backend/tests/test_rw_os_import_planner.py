@@ -53,16 +53,19 @@ def test_a_only_current_upcoming_events_returned():
     assert all(event["eventDate"] >= "2026-08-23" for event in events)
 
 
-def test_b_already_imported_event_excluded(client: TestClient):
+def test_b_already_imported_event_still_listed(client: TestClient):
     first = client.post("/api/rw-os/imports", json={"tournament_id": 148, "organization_slug": "rw"})
     assert first.status_code == 201
     listed = client.get("/api/rw-os/events")
     assert listed.status_code == 200
     ids = {event["tournamentId"] for event in listed.json()["events"]}
-    assert 148 not in ids
+    assert 148 in ids
     assert 244 in ids
-    duplicate = client.post("/api/rw-os/imports", json={"tournament_id": 148, "organization_slug": "rw"})
-    assert duplicate.status_code == 409
+    second = client.post("/api/rw-os/imports", json={"tournament_id": 148, "organization_slug": "rw"})
+    assert second.status_code == 201
+    assert second.json()["import"]["id"] != first.json()["import"]["id"]
+    assert second.json()["import"]["tournamentId"] != first.json()["import"]["tournamentId"]
+    assert second.json()["import"]["sourceTournamentId"] == 148
 
 
 def test_c_canonical_team_count_matches_rw_os(client: TestClient):

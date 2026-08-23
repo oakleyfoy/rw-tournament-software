@@ -85,20 +85,15 @@ def serialize_draw_plan(row: TournamentDrawPlan) -> dict[str, Any]:
     }
 
 
-def imported_source_ids(session: Session) -> set[int]:
-    rows = session.exec(select(TournamentImport.source_tournament_id)).all()
-    return {int(value) for value in rows}
-
-
 def list_importable_events(session: Session, client: Optional[RwOsClient] = None) -> list[dict[str, Any]]:
+    """Return currently open/upcoming RW-OS events.
+
+    Availability comes from RW-OS (`status=upcoming` live, or eventDate >= today
+    in fixtures). Prior Tournament Software imports never hide a source event.
+    """
     client = client or RwOsClient()
-    imported = imported_source_ids(session)
-    events = []
-    for event in client.list_events(include_historical=False):
-        tournament_id = int(event["tournamentId"])
-        already = tournament_id in imported
-        events.append({**event, "alreadyImported": already, "available": not already})
-    return [event for event in events if event["available"]]
+    _ = session
+    return list(client.list_events(include_historical=False))
 
 
 def current_draw_counts(teams: list[dict[str, Any]]) -> dict[str, int]:
@@ -199,8 +194,6 @@ def create_import_from_event(
     organization_slug: str = "rw",
 ) -> TournamentImport:
     client = client or RwOsClient()
-    if source_tournament_id in imported_source_ids(session):
-        raise ValueError(f"RW-OS event {source_tournament_id} has already been imported.")
     payload = client.get_event(source_tournament_id)
     return persist_snapshot(session, payload, organization_slug=organization_slug)
 

@@ -373,8 +373,6 @@ export interface RwOsEventSummary {
   draws: string[]
   updatedAt?: string
   version?: string
-  alreadyImported?: boolean
-  available?: boolean
 }
 
 export interface RwOsSnapshotPlayer {
