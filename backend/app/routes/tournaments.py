@@ -1692,6 +1692,17 @@ def delete_tournament(tournament_id: int, session: Session = Depends(get_session
         # Using parameterized queries to prevent SQL injection
         # Order matters: delete child records before parent records
 
+        # 0. Delete RW-OS import/planning rows owned by this tournament.
+        # These have FKs to tournament.id but are not covered by the later deletes.
+        session.execute(
+            text("DELETE FROM tournament_draw_plan WHERE tournament_id = :tournament_id"),
+            {"tournament_id": tournament_id},
+        )
+        session.execute(
+            text("DELETE FROM tournament_import WHERE tournament_id = :tournament_id"),
+            {"tournament_id": tournament_id},
+        )
+
         # 1. Delete events (and their related data will be cascade deleted if configured)
         session.execute(
             text("DELETE FROM event WHERE tournament_id = :tournament_id"), {"tournament_id": tournament_id}
