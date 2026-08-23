@@ -406,6 +406,8 @@ export interface RwOsCutAnalysis {
   lowerRating: number | null
   ratingGap: number | null
   quality: string
+  provisional?: boolean
+  message?: string | null
   neighborhood: Array<{
     rank: number
     name: string
@@ -425,6 +427,8 @@ export interface RwOsBracketPreview {
   averageRating: number | null
   medianRating: number | null
   ratingSpread: number | null
+  knownTeamCount?: number
+  unknownTeamCount?: number
   teams: Array<{
     rank: number
     teamKey: string
@@ -434,31 +438,72 @@ export interface RwOsBracketPreview {
   }>
 }
 
+export interface RwOsExplanation {
+  type?: 'positive' | 'warning'
+  code: string
+  message: string
+}
+
 export interface RwOsSplitOption {
   optionKey: string
   sizes: number[]
   brackets: RwOsBracketPreview[]
   cuts: RwOsCutAnalysis[]
   recommended: boolean
+  custom?: boolean
+  fakeTeamCount?: number
+  reasons?: RwOsExplanation[]
+  warnings?: RwOsExplanation[]
   score: {
     cutQuality: number
     sizeQuality: number
+    awkwardSizePenalty?: number
     tinyBracketPenalty: number
+    provisionalCutPenalty?: number
     unratedTeamPenalty: number
+    extraBracketPenalty?: number
     total: number
     reasons: string[]
+    explanations?: {
+      reasons: RwOsExplanation[]
+      warnings: RwOsExplanation[]
+    }
   }
+}
+
+export interface RwOsRatingReviewPlayer {
+  name: string
+  rwId?: string
+  rw_id?: string
+  rating: number | null
+}
+
+export interface RwOsRatingReviewTeam {
+  teamKey: string
+  name: string
+  drawKind: string
+  ratingStatus: string
+  teamRating: number | null
+  player1: RwOsRatingReviewPlayer
+  player2: RwOsRatingReviewPlayer
 }
 
 export interface RwOsDrawPlan {
   drawKind: string
   drawLabel: string
   teamCount: number
+  currentCount?: number
+  forecastCount?: number
+  unknownCount?: number
+  shrinkCount?: number
   unratedCount: number
   partialCount: number
   ratingReviewNeeded: number
+  ratingReviewTeams?: RwOsRatingReviewTeam[]
   optionCount?: number
   topOptionCount?: number
+  generatedCount?: number
+  planningNote?: string | null
   options: RwOsSplitOption[]
   teams?: Array<{
     rank: number
@@ -466,6 +511,8 @@ export interface RwOsDrawPlan {
     name: string
     teamRating: number | null
     ratingStatus: string
+    player1?: RwOsRatingReviewPlayer
+    player2?: RwOsRatingReviewPlayer
   }>
 }
 
@@ -493,6 +540,8 @@ export interface RwOsImportResponse {
       changed: boolean
     } | null
     planStatus: string
+    forecasts?: Record<string, number>
+    currentCounts?: Record<string, number>
     approvedAt: string | null
     teams: RwOsSnapshotTeam[]
     waitlistTeams: RwOsSnapshotTeam[]
@@ -501,11 +550,19 @@ export interface RwOsImportResponse {
     draws: RwOsDrawPlan[]
     maxBracketSize: number
     minBracketSize: number
+    maxForecastTeams?: number
     preferredBracketSizes: number[]
+    awkwardBracketSizes?: number[]
+    maxDefaultScenarios?: number
     byeLogicApplicable: boolean
     teamRatingFormula: string
+    forecasts?: Record<string, number>
   }
   drawCounts: Record<string, number>
+  currentCounts?: Record<string, number>
+  forecasts?: Record<string, number>
+  customOption?: RwOsSplitOption
+  customDrawKind?: string
   waitlistCount: number
   approvedPlans: Array<{
     drawKind: string
@@ -549,6 +606,33 @@ export async function refreshRwOsImport(importId: number, apply = false): Promis
   return fetchJson(`${API_BASE_URL}/rw-os/imports/${importId}/refresh`, {
     method: 'POST',
     body: JSON.stringify({ apply }),
+  })
+}
+
+export async function updateRwOsForecasts(
+  importId: number,
+  forecasts: Record<string, number>,
+): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}/forecasts`, {
+    method: 'PUT',
+    body: JSON.stringify({ forecasts }),
+  })
+}
+
+export async function resetRwOsForecasts(importId: number): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}/forecasts/reset`, {
+    method: 'POST',
+  })
+}
+
+export async function submitRwOsCustomStructure(
+  importId: number,
+  drawKind: string,
+  sizes: number[],
+): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}/custom-structure`, {
+    method: 'POST',
+    body: JSON.stringify({ draw_kind: drawKind, sizes }),
   })
 }
 

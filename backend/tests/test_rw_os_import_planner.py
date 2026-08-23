@@ -8,7 +8,9 @@ from app.models.match import Match
 from app.models.tournament_import import TournamentDrawPlan, TournamentImport
 from app.services.bracket_split_planner import (
     MAX_BRACKET_SIZE,
+    MAX_DEFAULT_SCENARIOS,
     MIN_BRACKET_SIZE,
+    analyze_custom_structure,
     generate_split_sizes,
     plan_draw,
     plan_snapshot,
@@ -131,14 +133,16 @@ def test_h_team_rating_sorting_correct():
 
 def test_i_44_teams_generates_valid_split_options():
     teams = [_team(f"{i}/{i + 100}", 10 - (i * 0.05)) for i in range(1, 45)]
+    generated = set(generate_split_sizes(44))
+    assert (32, 12) in generated
+    assert (12, 32) in generated
+    assert (28, 16) in generated
+    assert (16, 28) in generated
+    assert (24, 20) in generated
+    assert (20, 24) in generated
     plan = plan_draw("womens", teams)
-    size_sets = {tuple(option["sizes"]) for option in plan["options"]}
-    assert (32, 12) in size_sets
-    assert (12, 32) in size_sets
-    assert (28, 16) in size_sets
-    assert (16, 28) in size_sets
-    assert (24, 20) in size_sets
-    assert (20, 24) in size_sets
+    assert plan["optionCount"] <= MAX_DEFAULT_SCENARIOS
+    assert all(sum(option["sizes"]) == 44 for option in plan["options"])
     assert all(max(option["sizes"]) <= MAX_BRACKET_SIZE for option in plan["options"])
 
 
@@ -189,11 +193,11 @@ def test_a_three_bracket_permutations_are_not_collapsed():
 
 def test_b_ordered_32_28_20_and_20_28_32_have_different_cut_ranks():
     teams = [_team(f"{i}/{i + 400}", 10 - i * 0.01) for i in range(1, 81)]
-    plan = plan_draw("womens", teams)
-    first = next(item for item in plan["options"] if item["optionKey"] == "32-28-20")
-    second = next(item for item in plan["options"] if item["optionKey"] == "20-28-32")
+    first = analyze_custom_structure(teams, (32, 28, 20))
+    second = analyze_custom_structure(teams, (20, 28, 32))
     assert [cut["upperRank"] for cut in first["cuts"]] == [32, 60]
     assert [cut["upperRank"] for cut in second["cuts"]] == [20, 48]
+    assert first["optionKey"] != second["optionKey"]
 
 
 def test_c_32_24_24_and_24_32_24_are_distinct():
@@ -202,9 +206,8 @@ def test_c_32_24_24_and_24_32_24_are_distinct():
     assert (24, 32, 24) in sizes
     assert (24, 24, 32) in sizes
     teams = [_team(f"{i}/{i + 500}", 10 - i * 0.01) for i in range(1, 81)]
-    plan = plan_draw("womens", teams)
-    left = next(item for item in plan["options"] if item["optionKey"] == "32-24-24")
-    right = next(item for item in plan["options"] if item["optionKey"] == "24-32-24")
+    left = analyze_custom_structure(teams, (32, 24, 24))
+    right = analyze_custom_structure(teams, (24, 32, 24))
     assert [cut["upperRank"] for cut in left["cuts"]] == [32, 56]
     assert [cut["upperRank"] for cut in right["cuts"]] == [24, 56]
 
@@ -215,7 +218,7 @@ def test_e_rating_gap_can_prefer_smaller_first_bracket():
     recommended = next(item for item in plan["options"] if item["recommended"])
     assert recommended["optionKey"] == "20-28-32"
     winner = recommended
-    loser = next(item for item in plan["options"] if item["optionKey"] == "32-28-20")
+    loser = analyze_custom_structure(fixture_teams, (32, 28, 20))
     assert winner["score"]["cutQuality"] > loser["score"]["cutQuality"]
     assert winner["score"]["total"] > loser["score"]["total"]
     assert [cut["upperRank"] for cut in winner["cuts"]] == [20, 48]
@@ -227,14 +230,14 @@ def test_f_top_alternatives_are_ordered_by_explainable_score():
     totals = [option["score"]["total"] for option in plan["options"]]
     assert totals == sorted(totals, reverse=True)
     assert plan["options"][0]["recommended"] is True
-    assert plan["topOptionCount"] == 8
-    assert plan["optionCount"] > plan["topOptionCount"]
+    assert plan["topOptionCount"] <= MAX_DEFAULT_SCENARIOS
+    assert plan["optionCount"] <= MAX_DEFAULT_SCENARIOS
+    assert plan["generatedCount"] > plan["optionCount"]
 
 
 def test_n_and_o_cut_line_and_gap_correct():
     fixture_teams = [SnapshotTeam.from_dict(row) for row in get_fixture_event(244)["teams"]]
-    plan = plan_draw("womens", fixture_teams)
-    option = next(item for item in plan["options"] if item["optionKey"] == "20-24")
+    option = analyze_custom_structure(fixture_teams, (20, 24))
     cut = option["cuts"][0]
     assert cut["upperRank"] == 20
     assert cut["lowerRank"] == 21
@@ -243,12 +246,9 @@ def test_n_and_o_cut_line_and_gap_correct():
 
 
 def test_p_three_bracket_option_has_two_cut_analyses():
-    option = next(
-        item
-        for item in plan_draw("womens", [SnapshotTeam.from_dict(row) for row in get_fixture_event(280)["teams"]])[
-            "options"
-        ]
-        if item["optionKey"] == "32-32-16"
+    option = analyze_custom_structure(
+        [SnapshotTeam.from_dict(row) for row in get_fixture_event(280)["teams"]],
+        (32, 32, 16),
     )
     assert len(option["cuts"]) == 2
     assert option["cuts"][0]["upperRank"] == 32
@@ -279,11 +279,10 @@ def test_g_staff_can_select_any_valid_non_recommended_plan(client: TestClient):
     import_id = created.json()["import"]["id"]
     draw = created.json()["planner"]["draws"][0]
     recommended = next(item for item in draw["options"] if item["recommended"])
-    other = next(item for item in draw["options"] if item["optionKey"] == "32-28-20")
-    assert recommended["optionKey"] != other["optionKey"]
+    assert recommended["optionKey"] != "32-28-20"
     selected = client.post(
         f"/api/rw-os/imports/{import_id}/select-structure",
-        json={"draw_kind": "womens", "option_key": other["optionKey"]},
+        json={"draw_kind": "womens", "option_key": "32-28-20"},
     )
     assert selected.status_code == 200
     plan = selected.json()["selectedPlans"][0]

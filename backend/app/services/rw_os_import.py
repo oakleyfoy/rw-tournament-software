@@ -13,7 +13,14 @@ from sqlmodel import Session, select
 from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentDrawPlan, TournamentImport
 from app.routes.tournaments import generate_tournament_days
-from app.services.bracket_split_planner import approved_brackets_from_option, plan_snapshot
+from app.services.bracket_split_planner import (
+    MAX_FORECAST_TEAMS,
+    analyze_custom_structure,
+    approved_brackets_from_option,
+    parse_option_key,
+    plan_snapshot,
+    validate_custom_sizes,
+)
 from app.services.canonical_teams import SnapshotTeam, validate_import_snapshot
 from app.services.rw_os_client import RwOsClient
 
@@ -54,6 +61,8 @@ def serialize_import(row: TournamentImport) -> dict[str, Any]:
         "validationIssues": json.loads(row.validation_issues_json or "[]"),
         "refreshDiff": json.loads(row.refresh_diff_json) if row.refresh_diff_json else None,
         "planStatus": row.plan_status,
+        "forecasts": load_forecasts(row),
+        "currentCounts": current_draw_counts(json.loads(row.snapshot_json or "[]")),
         "approvedAt": row.approved_at.isoformat() if row.approved_at else None,
         "teams": json.loads(row.snapshot_json or "[]"),
         "waitlistTeams": json.loads(row.waitlist_json or "[]"),
@@ -92,9 +101,68 @@ def list_importable_events(session: Session, client: Optional[RwOsClient] = None
     return [event for event in events if event["available"]]
 
 
+def current_draw_counts(teams: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for team in teams:
+        kind = str(team.get("drawKind") or "")
+        if kind:
+            counts[kind] += 1
+    return dict(counts)
+
+
+def default_forecasts(import_row: TournamentImport) -> dict[str, int]:
+    return current_draw_counts(json.loads(import_row.snapshot_json or "[]"))
+
+
+def load_forecasts(import_row: TournamentImport) -> dict[str, int]:
+    stored = json.loads(import_row.forecast_json) if import_row.forecast_json else {}
+    current = default_forecasts(import_row)
+    merged = dict(current)
+    if isinstance(stored, dict):
+        for key, value in stored.items():
+            try:
+                merged[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+    return merged
+
+
+def _parse_forecast_count(key: str, value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"Expected final count for {key} must be a whole number.")
+    if isinstance(value, int):
+        count = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"Expected final count for {key} must be a whole number.")
+        count = int(value)
+    elif isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        count = int(value.strip())
+    else:
+        raise ValueError(f"Expected final count for {key} must be a whole number.")
+    if count < 0:
+        raise ValueError(f"Expected final count for {key} cannot be negative.")
+    if count > MAX_FORECAST_TEAMS:
+        raise ValueError(f"Expected final count for {key} cannot exceed {MAX_FORECAST_TEAMS}.")
+    return count
+
+
+def validate_forecasts(forecasts: dict[str, Any]) -> dict[str, int]:
+    return {str(key): _parse_forecast_count(str(key), value) for key, value in forecasts.items()}
+
+
+def save_forecasts(session: Session, import_row: TournamentImport, forecasts: dict[str, int]) -> TournamentImport:
+    import_row.forecast_json = json.dumps(validate_forecasts(forecasts))
+    import_row.updated_at = datetime.utcnow()
+    session.add(import_row)
+    session.commit()
+    session.refresh(import_row)
+    return import_row
+
+
 def _planner_payload(import_row: TournamentImport) -> dict[str, Any]:
     teams = parse_teams(json.loads(import_row.snapshot_json or "[]"))
-    return plan_snapshot(teams)
+    return plan_snapshot(teams, load_forecasts(import_row))
 
 
 def _draw_counts(teams: list[dict[str, Any]]) -> dict[str, int]:
@@ -113,6 +181,8 @@ def build_import_response(session: Session, import_row: TournamentImport) -> dic
         "import": serialize_import(import_row),
         "planner": _planner_payload(import_row),
         "drawCounts": _draw_counts(snapshot),
+        "currentCounts": current_draw_counts(snapshot),
+        "forecasts": load_forecasts(import_row),
         "waitlistCount": len(waitlist),
         "approvedPlans": [serialize_draw_plan(plan) for plan in plans if plan.approved],
         "selectedPlans": [serialize_draw_plan(plan) for plan in plans],
@@ -182,6 +252,7 @@ def persist_snapshot(
             validation_status="needs_attention" if issues else "ok",
             validation_issues_json=json.dumps(issues),
             plan_status="imported",
+            forecast_json=json.dumps(current_draw_counts(team_payload)),
         )
         session.add(import_row)
         session.commit()
@@ -277,6 +348,44 @@ def refresh_import(
     }
 
 
+def teams_for_draw(import_row: TournamentImport, draw_kind: str) -> list[SnapshotTeam]:
+    return [team for team in parse_teams(json.loads(import_row.snapshot_json or "[]")) if team.draw_kind == draw_kind]
+
+
+def resolve_draw_option(
+    import_row: TournamentImport, draw_kind: str, option_key: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    planner = _planner_payload(import_row)
+    draw = next((item for item in planner["draws"] if item["drawKind"] == draw_kind), None)
+    if not draw:
+        raise ValueError(f"Draw {draw_kind} was not found on this import.")
+    option = next((item for item in draw["options"] if item["optionKey"] == option_key), None)
+    if option:
+        return draw, option
+    sizes = parse_option_key(option_key)
+    option = analyze_custom_structure(
+        teams_for_draw(import_row, draw_kind),
+        sizes,
+        forecast_count=int(draw["forecastCount"]),
+    )
+    return draw, option
+
+
+def preview_custom_structure(import_row: TournamentImport, draw_kind: str, sizes: list[int]) -> dict[str, Any]:
+    planner = _planner_payload(import_row)
+    draw = next((item for item in planner["draws"] if item["drawKind"] == draw_kind), None)
+    if not draw:
+        raise ValueError(f"Draw {draw_kind} was not found on this import.")
+    parsed = tuple(int(size) for size in sizes)
+    validate_custom_sizes(parsed, int(draw["forecastCount"]))
+    option = analyze_custom_structure(
+        teams_for_draw(import_row, draw_kind),
+        parsed,
+        forecast_count=int(draw["forecastCount"]),
+    )
+    return {"draw": draw, "option": option}
+
+
 def select_draw_structure(
     session: Session,
     import_row: TournamentImport,
@@ -285,13 +394,7 @@ def select_draw_structure(
     *,
     approve: bool = False,
 ) -> TournamentDrawPlan:
-    planner = _planner_payload(import_row)
-    draw = next((item for item in planner["draws"] if item["drawKind"] == draw_kind), None)
-    if not draw:
-        raise ValueError(f"Draw {draw_kind} was not found on this import.")
-    option = next((item for item in draw["options"] if item["optionKey"] == option_key), None)
-    if not option:
-        raise ValueError(f"Structure {option_key} is not a valid option for {draw_kind}.")
+    draw, option = resolve_draw_option(import_row, draw_kind, option_key)
 
     existing = session.exec(
         select(TournamentDrawPlan).where(
@@ -307,7 +410,7 @@ def select_draw_structure(
         existing.approved = approve
         existing.option_json = json.dumps(option)
         existing.brackets_json = json.dumps(brackets)
-        existing.team_count = draw["teamCount"]
+        existing.team_count = int(draw["forecastCount"])
         existing.updated_at = now
         plan = existing
     else:
@@ -316,7 +419,7 @@ def select_draw_structure(
             tournament_id=import_row.tournament_id,
             draw_kind=draw_kind,
             draw_label=draw["drawLabel"],
-            team_count=draw["teamCount"],
+            team_count=int(draw["forecastCount"]),
             option_key=option_key,
             is_recommended=bool(option.get("recommended")),
             approved=approve,

@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,8 +13,11 @@ from app.services.rw_os_import import (
     approve_structures,
     build_import_response,
     create_import_from_event,
+    default_forecasts,
     list_importable_events,
+    preview_custom_structure,
     refresh_import,
+    save_forecasts,
     select_draw_structure,
 )
 
@@ -37,6 +40,15 @@ class SelectStructureRequest(BaseModel):
 
 class ApprovePlanRequest(BaseModel):
     selections: Dict[str, str]
+
+
+class ForecastUpdateRequest(BaseModel):
+    forecasts: Dict[str, int]
+
+
+class CustomStructureRequest(BaseModel):
+    draw_kind: str
+    sizes: List[int]
 
 
 def _get_import(session: Session, import_id: int) -> TournamentImport:
@@ -108,6 +120,44 @@ def refresh_rw_os_import(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     result["importResponse"] = build_import_response(session, row)
     return result
+
+
+@router.put("/imports/{import_id}/forecasts")
+def update_rw_os_forecasts(
+    import_id: int,
+    payload: ForecastUpdateRequest,
+    session: Session = Depends(get_session),
+):
+    row = _get_import(session, import_id)
+    try:
+        save_forecasts(session, row, payload.forecasts)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return build_import_response(session, row)
+
+
+@router.post("/imports/{import_id}/forecasts/reset")
+def reset_rw_os_forecasts(import_id: int, session: Session = Depends(get_session)):
+    row = _get_import(session, import_id)
+    save_forecasts(session, row, default_forecasts(row))
+    return build_import_response(session, row)
+
+
+@router.post("/imports/{import_id}/custom-structure")
+def preview_rw_os_custom_structure(
+    import_id: int,
+    payload: CustomStructureRequest,
+    session: Session = Depends(get_session),
+):
+    row = _get_import(session, import_id)
+    try:
+        preview = preview_custom_structure(row, payload.draw_kind, payload.sizes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    response = build_import_response(session, row)
+    response["customOption"] = preview["option"]
+    response["customDrawKind"] = payload.draw_kind
+    return response
 
 
 @router.post("/imports/{import_id}/select-structure")

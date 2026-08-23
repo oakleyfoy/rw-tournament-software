@@ -1,4 +1,4 @@
-"""Phase 1 Waterfall bracket-split planner. Does not create brackets or matches."""
+"""Waterfall bracket-split planner. Planning only — does not create brackets or matches."""
 
 from __future__ import annotations
 
@@ -12,14 +12,45 @@ from app.services.team_rating import RATING_STATUS_MISSING, RATING_STATUS_PARTIA
 
 MAX_BRACKET_SIZE = 32
 MIN_BRACKET_SIZE = 8
-PREFERRED_BRACKET_SIZES = (32, 28, 24, 20, 16)
-SMALL_FINAL_RANGE = range(8, 16)
+MAX_FORECAST_TEAMS = 160
 MAX_BRACKETS = 5
-TOP_ALTERNATIVES_LIMIT = 8
+MAX_DEFAULT_SCENARIOS = 5
+MAX_PERMUTATION_FAMILY = 2
+
+# Operational Racquet War sizes. Awkward integers in 8–32 are allowed only when needed.
+OPERATIONAL_BRACKET_SIZES = (8, 10, 12, 14, 16, 20, 24, 28, 32)
+PREFERRED_BRACKET_SIZES = OPERATIONAL_BRACKET_SIZES
+AWKWARD_BRACKET_SIZES = tuple(
+    size for size in range(MIN_BRACKET_SIZE, MAX_BRACKET_SIZE + 1) if size not in OPERATIONAL_BRACKET_SIZES
+)
+SMALL_FINAL_RANGE = range(8, 12)
 
 # Existing Waterfall engine does not pad general brackets into a power-of-two shell.
-# Byes exist only for WF_14 top-2 seeds and odd RR pools, so Phase 1 does not estimate byes.
 BYE_LOGIC_APPLICABLE = False
+
+# Scoring weights. Awkward sizes can still win when a cut is materially stronger.
+CUT_QUALITY_MAX = 40.0
+SIZE_QUALITY_PER_OPERATIONAL = 6.0
+ALL_OPERATIONAL_BONUS = 8.0
+BALANCE_BONUS = 6.0
+SINGLE_BRACKET_BONUS = 10.0
+# Racquet War operationally prefers the fewest practical draws because every
+# additional draw increases trophies, administration, scheduling complexity,
+# and event expense. Additional draws require materially stronger competitive
+# separation to justify them.
+# 28 points ≈ a major share of max cut quality (40). A 3-bracket plan typically
+# gains ~6 size-quality from one extra operational size, so the net cost of an
+# unnecessary draw is about 22 — enough that a slight cut improvement cannot
+# pay for another trophy/admin draw, while a genuinely multi-cluster field can.
+EXTRA_BRACKET_PENALTY = 28.0
+AWKWARD_SIZE_PENALTY = 22.0
+TINY_UNDER_8_PENALTY = 40.0
+VERY_SMALL_PENALTY = 14.0
+PROVISIONAL_CUT_PENALTY = 8.0
+UNKNOWN_FUTURE_PENALTY = 4.0
+UNRATED_PENALTY = 3.0
+PARTIAL_PENALTY = 1.0
+MATERIAL_CUT_IMPROVEMENT = 16.0
 
 
 def _round_rating(value: Optional[float]) -> Optional[float]:
@@ -32,8 +63,57 @@ def option_key(sizes: tuple[int, ...]) -> str:
     return "-".join(str(size) for size in sizes)
 
 
+def parse_option_key(raw: str) -> tuple[int, ...]:
+    parts = []
+    for token in str(raw or "").replace("/", "-").replace(",", "-").split("-"):
+        token = token.strip()
+        if not token:
+            continue
+        if not token.isdigit():
+            raise ValueError(f"Structure '{raw}' contains a non-numeric size.")
+        parts.append(int(token))
+    if not parts:
+        raise ValueError("Structure must include at least one bracket size.")
+    return tuple(parts)
+
+
+def is_operational_size(size: int) -> bool:
+    return size in OPERATIONAL_BRACKET_SIZES
+
+
+def is_awkward_size(size: int) -> bool:
+    return size in AWKWARD_BRACKET_SIZES
+
+
+def minimum_bracket_count(forecast_count: int) -> int:
+    if forecast_count <= 0:
+        return 0
+    return max(1, (forecast_count + MAX_BRACKET_SIZE - 1) // MAX_BRACKET_SIZE)
+
+
+def extra_bracket_count(sizes: tuple[int, ...], forecast_count: int) -> int:
+    return max(0, len(sizes) - minimum_bracket_count(forecast_count))
+
+
+def validate_custom_sizes(sizes: tuple[int, ...], forecast_count: int) -> None:
+    if any(size <= 0 for size in sizes):
+        raise ValueError("Bracket sizes must be positive whole numbers.")
+    if any(size > MAX_BRACKET_SIZE for size in sizes):
+        raise ValueError(f"No bracket may be larger than {MAX_BRACKET_SIZE}.")
+    if len(sizes) > MAX_BRACKETS:
+        raise ValueError(f"A structure may have at most {MAX_BRACKETS} brackets.")
+    if sum(sizes) != forecast_count:
+        raise ValueError(f"Bracket sizes must sum to the expected final count of {forecast_count}.")
+    under_eight = [size for size in sizes if size < MIN_BRACKET_SIZE]
+    if forecast_count < MIN_BRACKET_SIZE:
+        if sizes != (forecast_count,):
+            raise ValueError("Each bracket must have at least 8 teams unless the entire draw has fewer than 8 teams.")
+    elif under_eight:
+        raise ValueError("Each bracket must have at least 8 teams unless the entire draw has fewer than 8 teams.")
+
+
 def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
-    """Generate ordered compositions. Size order is the cut-rank order (A, then B, …)."""
+    """Generate ordered compositions that sum to team_count. Size order is cut-rank order."""
     if team_count <= 0:
         return []
     if team_count < MIN_BRACKET_SIZE:
@@ -51,7 +131,6 @@ def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
             return
         if len(parts) > 1 and any(part < MIN_BRACKET_SIZE for part in parts):
             return
-        # True duplicates only: the exact ordered sequence, not a sorted partition.
         if parts in seen:
             return
         seen.add(parts)
@@ -60,23 +139,30 @@ def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
     if team_count <= MAX_BRACKET_SIZE:
         add((team_count,))
 
-    def recurse(remaining: int, acc: list[int], used_small: bool) -> None:
+    def recurse(remaining: int, acc: list[int], used_awkward: bool) -> None:
         if remaining <= 0 or len(acc) >= MAX_BRACKETS:
             return
         if acc and MIN_BRACKET_SIZE <= remaining <= MAX_BRACKET_SIZE:
             add(tuple(acc + [remaining]))
         if len(acc) + 1 >= MAX_BRACKETS:
             return
-        for size in PREFERRED_BRACKET_SIZES:
+        for size in OPERATIONAL_BRACKET_SIZES:
             leftover = remaining - size
+            if leftover < 0:
+                continue
+            if leftover == 0:
+                add(tuple(acc + [size]))
+                continue
             if leftover < MIN_BRACKET_SIZE:
                 continue
-            recurse(leftover, acc + [size], used_small)
-        # One 8–15 leftover may sit in any ordered position; do not explode into all-tiny trees.
-        if not used_small:
-            for size in range(15, 7, -1):
+            recurse(leftover, acc + [size], used_awkward)
+        if not used_awkward:
+            for size in AWKWARD_BRACKET_SIZES:
                 leftover = remaining - size
-                if leftover < MIN_BRACKET_SIZE:
+                if leftover < MIN_BRACKET_SIZE and leftover != 0:
+                    continue
+                if leftover == 0:
+                    add(tuple(acc + [size]))
                     continue
                 recurse(leftover, acc + [size], True)
 
@@ -105,10 +191,10 @@ def _adjacent_gaps(ratings: list[Optional[float]]) -> list[float]:
     return gaps
 
 
-def _cut_quality_label(gap: Optional[float], typical_gap: Optional[float]) -> str:
-    if gap is None:
-        return "No Natural Break"
-    if gap <= 0:
+def _cut_quality_label(gap: Optional[float], typical_gap: Optional[float], provisional: bool) -> str:
+    if provisional:
+        return "Provisional"
+    if gap is None or gap <= 0:
         return "No Natural Break"
     if typical_gap is None or typical_gap <= 0:
         return "Good" if gap > 0 else "No Natural Break"
@@ -133,6 +219,8 @@ class CutAnalysis:
     lower_rating: Optional[float]
     rating_gap: Optional[float]
     quality: str
+    provisional: bool = False
+    message: Optional[str] = None
     neighborhood: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,6 +237,8 @@ class CutAnalysis:
             "lowerRating": self.lower_rating,
             "ratingGap": self.rating_gap,
             "quality": self.quality,
+            "provisional": self.provisional,
+            "message": self.message,
             "neighborhood": self.neighborhood,
         }
 
@@ -166,6 +256,8 @@ class BracketPreview:
     median_rating: Optional[float]
     rating_spread: Optional[float]
     teams: list[dict[str, Any]]
+    known_team_count: int = 0
+    unknown_team_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,6 +272,8 @@ class BracketPreview:
             "medianRating": self.median_rating,
             "ratingSpread": self.rating_spread,
             "teams": self.teams,
+            "knownTeamCount": self.known_team_count,
+            "unknownTeamCount": self.unknown_team_count,
         }
 
 
@@ -200,7 +294,38 @@ def _preview_team(rank: int, team: SnapshotTeam) -> dict[str, Any]:
     }
 
 
+def _review_player(player) -> dict[str, Any]:
+    return {
+        "name": player.name,
+        "rwId": player.rw_id,
+        "rw_id": player.rw_id,
+        "rating": player.rating,
+    }
+
+
+def rating_review_teams(teams: list[SnapshotTeam]) -> list[dict[str, Any]]:
+    """Identify current snapshot teams with partial or missing ratings. Display only."""
+    rows = []
+    for team in teams:
+        if team.rating_status not in {RATING_STATUS_PARTIAL, RATING_STATUS_MISSING}:
+            continue
+        rows.append(
+            {
+                "teamKey": team.team_key,
+                "name": _team_display_name(team),
+                "drawKind": team.draw_kind,
+                "ratingStatus": team.rating_status,
+                "teamRating": team.team_rating,
+                "player1": _review_player(team.player1),
+                "player2": _review_player(team.player2),
+            }
+        )
+    return rows
+
+
 def _neighborhood(sorted_teams: list[SnapshotTeam], cut_after: int, window: int = 2) -> list[dict[str, Any]]:
+    if cut_after < 1 or cut_after > len(sorted_teams):
+        return []
     start = max(1, cut_after - window)
     end = min(len(sorted_teams), cut_after + window)
     rows = []
@@ -217,12 +342,17 @@ def _neighborhood(sorted_teams: list[SnapshotTeam], cut_after: int, window: int 
     return rows
 
 
-def _bracket_metrics(sorted_teams: list[SnapshotTeam], draw_kind: str, size: int, rank_start: int) -> BracketPreview:
+def _bracket_metrics(sorted_teams: list[SnapshotTeam], size: int, rank_start: int) -> BracketPreview:
     rank_end = rank_start + size - 1
-    slice_teams = sorted_teams[rank_start - 1 : rank_end]
-    ratings = [team.team_rating for team in slice_teams if team.team_rating is not None]
+    known = [
+        team
+        for index, team in enumerate(sorted_teams, start=1)
+        if rank_start <= index <= min(rank_end, len(sorted_teams))
+    ]
+    ratings = [team.team_rating for team in known if team.team_rating is not None]
     highest = max(ratings) if ratings else None
     lowest = min(ratings) if ratings else None
+    unknown = max(0, rank_end - len(sorted_teams))
     return BracketPreview(
         label="",
         letter="",
@@ -235,18 +365,25 @@ def _bracket_metrics(sorted_teams: list[SnapshotTeam], draw_kind: str, size: int
         median_rating=_median(ratings),
         rating_spread=_round_rating(highest - lowest) if highest is not None and lowest is not None else None,
         teams=[],
+        known_team_count=len(known),
+        unknown_team_count=unknown,
     )
 
 
 def analyze_option(
-    sorted_teams: list[SnapshotTeam], sizes: tuple[int, ...], typical_gap: Optional[float]
+    sorted_teams: list[SnapshotTeam],
+    sizes: tuple[int, ...],
+    typical_gap: Optional[float],
+    *,
+    current_count: Optional[int] = None,
 ) -> dict[str, Any]:
+    current_count = len(sorted_teams) if current_count is None else current_count
     family = bracket_family_label(sorted_teams[0].draw_kind if sorted_teams else "womens")
     brackets: list[BracketPreview] = []
     cuts: list[CutAnalysis] = []
     cursor = 1
     for index, size in enumerate(sizes):
-        preview = _bracket_metrics(sorted_teams, sorted_teams[0].draw_kind if sorted_teams else "", size, cursor)
+        preview = _bracket_metrics(sorted_teams, size, cursor)
         letter = _letter_for_index(index)
         preview.letter = letter
         preview.label = f"{family} {letter}"
@@ -256,6 +393,31 @@ def analyze_option(
     for index in range(len(brackets) - 1):
         upper = brackets[index]
         lower = brackets[index + 1]
+        provisional = upper.rank_end > current_count or lower.rank_start > current_count
+        if provisional:
+            cuts.append(
+                CutAnalysis(
+                    from_label=upper.label,
+                    to_label=lower.label,
+                    upper_rank=upper.rank_end,
+                    lower_rank=lower.rank_start,
+                    upper_team_key="",
+                    lower_team_key="",
+                    upper_team_name="",
+                    lower_team_name="",
+                    upper_rating=None,
+                    lower_rating=None,
+                    rating_gap=None,
+                    quality="Provisional",
+                    provisional=True,
+                    message=(
+                        "Rating cut cannot yet be fully evaluated because this boundary includes "
+                        "teams that have not registered."
+                    ),
+                    neighborhood=[],
+                )
+            )
+            continue
         upper_team = sorted_teams[upper.rank_end - 1]
         lower_team = sorted_teams[lower.rank_start - 1]
         gap = None
@@ -274,7 +436,7 @@ def analyze_option(
                 upper_rating=_round_rating(upper_team.team_rating),
                 lower_rating=_round_rating(lower_team.team_rating),
                 rating_gap=gap,
-                quality=_cut_quality_label(gap, typical_gap),
+                quality=_cut_quality_label(gap, typical_gap, False),
                 neighborhood=_neighborhood(sorted_teams, upper.rank_end),
             )
         )
@@ -284,160 +446,440 @@ def analyze_option(
         "sizes": list(sizes),
         "brackets": [bracket.to_dict() for bracket in brackets],
         "cuts": [cut.to_dict() for cut in cuts],
+        "custom": False,
+        "fakeTeamCount": 0,
     }
 
 
 def score_option(
     option: dict[str, Any],
     *,
-    team_count: int,
+    current_count: int,
+    forecast_count: int,
     unrated_count: int,
     partial_count: int,
     max_cut_gap: Optional[float],
     has_unavoidable_small: bool,
 ) -> dict[str, Any]:
     sizes = tuple(option["sizes"])
-    reasons: list[str] = []
+    positives: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    known_cuts = [cut for cut in option["cuts"] if not cut.get("provisional")]
+    provisional_cuts = [cut for cut in option["cuts"] if cut.get("provisional")]
+    cut_gaps = [cut["ratingGap"] for cut in known_cuts if cut.get("ratingGap") is not None]
 
-    cut_gaps = [cut["ratingGap"] for cut in option["cuts"] if cut.get("ratingGap") is not None]
-    raw_cut = sum(cut_gaps) if cut_gaps else 0.0
-    if max_cut_gap and max_cut_gap > 0 and option["cuts"]:
-        cut_quality = min(40.0, 40.0 * (raw_cut / (max_cut_gap * max(1, len(option["cuts"])))))
+    def _add(target: list[dict[str, str]], code: str, message: str) -> None:
+        target.append({"type": "positive" if target is positives else "warning", "code": code, "message": message})
+
+    if max_cut_gap and max_cut_gap > 0 and known_cuts:
+        raw_cut = sum(cut_gaps) if cut_gaps else 0.0
+        cut_quality = min(CUT_QUALITY_MAX, CUT_QUALITY_MAX * (raw_cut / (max_cut_gap * max(1, len(known_cuts)))))
     elif not option["cuts"]:
-        cut_quality = 18.0 if team_count <= MAX_BRACKET_SIZE else 8.0
+        cut_quality = 18.0 if forecast_count <= MAX_BRACKET_SIZE else 8.0
+    elif not known_cuts:
+        cut_quality = 6.0
     else:
-        cut_quality = 10.0 if raw_cut > 0 else 4.0
+        cut_quality = 10.0 if cut_gaps else 4.0
 
-    if cut_gaps:
-        for cut in option["cuts"]:
-            gap = cut.get("ratingGap")
-            upper = cut.get("upperRating")
-            lower = cut.get("lowerRating")
-            gap_text = f"{gap:.2f}" if gap is not None else "n/a"
-            upper_text = f"{upper:.2f}" if upper is not None else "unrated"
-            lower_text = f"{lower:.2f}" if lower is not None else "unrated"
-            reasons.append(
-                f"{cut['quality']} natural break: #{cut['upperRank']} {upper_text} / "
-                f"#{cut['lowerRank']} {lower_text} · Gap {gap_text}"
-            )
-    elif len(sizes) == 1:
-        reasons.append("Single bracket — no rating cut required")
-
-    preferred_count = sum(1 for size in sizes if size in PREFERRED_BRACKET_SIZES)
-    size_quality = 8.0 * preferred_count
-    min_brackets = max(1, (team_count + MAX_BRACKET_SIZE - 1) // MAX_BRACKET_SIZE)
-    if len(sizes) > min_brackets:
-        size_quality -= 3.0 * (len(sizes) - min_brackets)
-        reasons.append("Extra brackets beyond the minimum needed for the field")
-    if len(sizes) == 1 and MIN_BRACKET_SIZE <= sizes[0] <= MAX_BRACKET_SIZE:
-        size_quality += 16.0
-        reasons.append("One healthy-sized bracket")
-    elif sizes:
-        size_quality += max(0.0, 16.0 - pstdev(sizes))
-        if max(sizes) - min(sizes) <= 8:
-            reasons.append(
-                "Both brackets have healthy size" if len(sizes) == 2 else "Reasonably balanced bracket sizes"
-            )
+    for cut in known_cuts:
+        rank = cut["upperRank"]
+        quality = cut.get("quality")
+        if quality == "Strong":
+            _add(positives, "strong_cut", f"Strong natural rating break after team #{rank}.")
+        elif quality == "Good":
+            _add(positives, "reasonable_cut", f"Reasonable rating separation after team #{rank}.")
+        elif quality == "No Natural Break":
+            _add(warnings, "weak_cut", f"Little rating separation after team #{rank}.")
         else:
-            reasons.append("Bracket sizes are usable but uneven")
-        if all(MIN_BRACKET_SIZE <= size <= MAX_BRACKET_SIZE for size in sizes):
-            reasons.append("All brackets within supported size range")
+            _add(warnings, "weak_cut", f"The rating cut after team #{rank} is weak.")
+    if len(sizes) == 1:
+        _add(positives, "single_bracket", "Single bracket — no rating cut required.")
+
+    operational_count = sum(1 for size in sizes if is_operational_size(size))
+    awkward_count = sum(1 for size in sizes if is_awkward_size(size))
+    size_quality = SIZE_QUALITY_PER_OPERATIONAL * operational_count
+    if operational_count == len(sizes) and sizes:
+        size_quality += ALL_OPERATIONAL_BONUS
+        _add(positives, "preferred_sizes", "All brackets use preferred operating sizes.")
+    if len(sizes) == 1 and MIN_BRACKET_SIZE <= sizes[0] <= MAX_BRACKET_SIZE:
+        size_quality += SINGLE_BRACKET_BONUS
+        _add(positives, "healthy_single", "One healthy-sized bracket.")
+    elif len(sizes) > 1:
+        if max(sizes) - min(sizes) <= 8:
+            size_quality += BALANCE_BONUS
+            _add(positives, "balanced_sizes", "Bracket sizes are reasonably balanced.")
+        else:
+            _add(warnings, "uneven_sizes", "Bracket sizes are usable but uneven.")
+        size_quality += max(0.0, 8.0 - pstdev(sizes))
+
+    extra_count = extra_bracket_count(sizes, forecast_count)
+    extra_penalty = EXTRA_BRACKET_PENALTY * extra_count
+    if extra_count == 0 and sizes:
+        _add(positives, "minimum_draw_count", "Uses the fewest practical draws for this field.")
+    elif extra_count == 1:
+        if cut_quality >= MATERIAL_CUT_IMPROVEMENT:
+            _add(
+                positives,
+                "extra_draw_justified",
+                "Adds an extra draw, but provides a materially stronger competitive separation.",
+            )
+        _add(
+            warnings,
+            "extra_draw",
+            "Adds an additional draw, increasing trophies, administration, and event complexity.",
+        )
+    elif extra_count > 1:
+        _add(
+            warnings,
+            "extra_draw",
+            f"Adds {extra_count} additional draws, increasing trophies, administration, and event complexity.",
+        )
+
+    awkward_penalty = AWKWARD_SIZE_PENALTY * awkward_count
+    if awkward_count and cut_quality >= MATERIAL_CUT_IMPROVEMENT:
+        rebate = min(awkward_penalty, MATERIAL_CUT_IMPROVEMENT * (cut_quality / CUT_QUALITY_MAX))
+        awkward_penalty -= rebate
+        _add(positives, "material_cut_justifies_size", "The rating cut is strong enough to justify a less clean size.")
+    for size in sizes:
+        if is_awkward_size(size):
+            _add(warnings, "awkward_size", f"{size}-team bracket is less operationally clean.")
 
     tiny_penalty = 0.0
     tiny_parts = [size for size in sizes if size < MIN_BRACKET_SIZE]
-    small_parts = [size for size in sizes if size in SMALL_FINAL_RANGE]
+    very_small = [size for size in sizes if size in SMALL_FINAL_RANGE]
     if tiny_parts and not has_unavoidable_small:
-        tiny_penalty += 40.0 * len(tiny_parts)
-        reasons.append("Contains an undersized bracket below 8")
-    elif small_parts and team_count >= 16 and len(sizes) > 1:
-        # 8-11 is a true tiny-final smell; 12-15 is acceptable leftover.
-        very_small = [size for size in small_parts if size <= 11]
-        if very_small:
-            tiny_penalty += 18.0 * len(very_small)
-            reasons.append("Penalized for an unnecessarily tiny final bracket")
-        else:
-            tiny_penalty += 6.0 * len(small_parts)
-            reasons.append("Final bracket is smaller than the preferred 16–32 range")
-    elif not small_parts and not tiny_parts:
-        reasons.append("No very small bracket")
+        tiny_penalty += TINY_UNDER_8_PENALTY * len(tiny_parts)
+        for size in tiny_parts:
+            _add(warnings, "tiny_bracket", f"{size}-team bracket is below the minimum operating size.")
+    elif very_small and forecast_count >= 16 and len(sizes) > 1:
+        tiny_penalty += VERY_SMALL_PENALTY * len(very_small)
+        for size in very_small:
+            _add(warnings, "small_bracket", f"{size}-team bracket is smaller than preferred.")
+    elif forecast_count >= 16 and len(sizes) > 1:
+        for size in sizes:
+            if size == 12:
+                _add(warnings, "small_bracket", f"{size}-team bracket is smaller than preferred.")
+    if (
+        not tiny_parts
+        and not very_small
+        and not any(size == 12 and forecast_count >= 16 and len(sizes) > 1 for size in sizes)
+    ):
+        if sizes:
+            _add(positives, "no_small_brackets", "No undersized brackets.")
 
-    unrated_penalty = (3.0 * unrated_count) + (1.0 * partial_count)
-    if unrated_count or partial_count:
-        reasons.append(
-            f"{unrated_count + partial_count} team(s) need rating review — recommendation confidence is lower"
+    provisional_penalty = PROVISIONAL_CUT_PENALTY * len(provisional_cuts)
+    if forecast_count > current_count:
+        provisional_penalty += UNKNOWN_FUTURE_PENALTY
+        unknown = forecast_count - current_count
+        _add(
+            warnings,
+            "unknown_future",
+            f"{unknown} additional team{'s' if unknown != 1 else ''} {'are' if unknown != 1 else 'is'} not yet known. "
+            "Final rating cut positions may move as registration changes.",
+        )
+    if provisional_cuts:
+        _add(warnings, "provisional_cut", "This cut depends on teams that have not registered yet.")
+    elif option["cuts"]:
+        _add(positives, "known_cuts", "All rating cuts are based on currently registered teams.")
+    if forecast_count < current_count:
+        shrink = current_count - forecast_count
+        _add(
+            warnings,
+            "forecast_shrink",
+            f"Planning target is {shrink} team{'s' if shrink != 1 else ''} below the current registration count. "
+            f"Rating cut analysis is based on the current {current_count}-team field.",
         )
 
-    total = round(cut_quality + size_quality - tiny_penalty - unrated_penalty, 3)
+    unrated_penalty = (UNRATED_PENALTY * unrated_count) + (PARTIAL_PENALTY * partial_count)
+    review_count = unrated_count + partial_count
+    if review_count:
+        _add(
+            warnings,
+            "rating_review",
+            f"{review_count} team{'s' if review_count != 1 else ''} need{'s' if review_count == 1 else ''} rating review, so recommendation confidence is lower.",
+        )
+
+    total = round(
+        cut_quality
+        + size_quality
+        - extra_penalty
+        - awkward_penalty
+        - tiny_penalty
+        - provisional_penalty
+        - unrated_penalty,
+        3,
+    )
     return {
         "cutQuality": round(cut_quality, 3),
         "sizeQuality": round(size_quality, 3),
+        "awkwardSizePenalty": round(awkward_penalty, 3),
         "tinyBracketPenalty": round(tiny_penalty, 3),
+        "provisionalCutPenalty": round(provisional_penalty, 3),
         "unratedTeamPenalty": round(unrated_penalty, 3),
+        "extraBracketPenalty": round(extra_penalty, 3),
         "total": total,
-        "reasons": reasons,
+        "reasons": [item["message"] for item in positives + warnings],
+        "explanations": {"reasons": positives, "warnings": warnings},
     }
 
 
-def plan_draw(draw_kind: str, teams: list[SnapshotTeam]) -> dict[str, Any]:
+def _cut_signature(option: dict[str, Any]) -> tuple[int, ...]:
+    return tuple(int(cut["upperRank"]) for cut in option.get("cuts") or [])
+
+
+def _size_profile(option: dict[str, Any]) -> tuple[int, ...]:
+    return tuple(sorted(option.get("sizes") or []))
+
+
+def _is_diverse_candidate(candidate: dict[str, Any], selected: list[dict[str, Any]]) -> bool:
+    cand_cuts = _cut_signature(candidate)
+    cand_profile = _size_profile(candidate)
+    same_family = 0
+    for existing in selected:
+        if cand_cuts == _cut_signature(existing) and cand_profile == _size_profile(existing):
+            return False
+        if cand_profile == _size_profile(existing):
+            same_family += 1
+    return same_family < MAX_PERMUTATION_FAMILY
+
+
+def diversify_options(scored: list[dict[str, Any]], limit: int = MAX_DEFAULT_SCENARIOS) -> list[dict[str, Any]]:
+    """Keep the best option, then prefer minimum-draw alternatives."""
+    if not scored:
+        return []
+    forecast = sum(scored[0]["sizes"])
+    min_count = minimum_bracket_count(forecast)
+    selected = [scored[0]]
+    min_pool = [option for option in scored[1:] if len(option["sizes"]) == min_count]
+    extra_pool = [option for option in scored[1:] if len(option["sizes"]) > min_count]
+    for candidate in min_pool:
+        if len(selected) >= limit:
+            break
+        if _is_diverse_candidate(candidate, selected):
+            selected.append(candidate)
+
+    extra_already = 1 if len(selected[0]["sizes"]) > min_count else 0
+    min_selected = [option for option in selected if len(option["sizes"]) == min_count]
+    best_min_cut = max((option["score"]["cutQuality"] for option in min_selected), default=0.0)
+    material_extra = [
+        option for option in extra_pool if option["score"]["cutQuality"] >= best_min_cut + MATERIAL_CUT_IMPROVEMENT
+    ]
+    if extra_already == 0 and material_extra:
+        candidate = material_extra[0]
+        if len(selected) < limit and _is_diverse_candidate(candidate, selected):
+            selected.append(candidate)
+        elif len(selected) >= limit and _is_diverse_candidate(candidate, selected[:-1]):
+            selected[-1] = candidate
+        extra_already = 1
+    elif len(selected) < limit and extra_already == 0 and len(min_pool) < 2:
+        for candidate in extra_pool:
+            if len(selected) >= limit:
+                break
+            if _is_diverse_candidate(candidate, selected):
+                selected.append(candidate)
+    return selected
+
+
+def build_scored_option(
+    sorted_teams: list[SnapshotTeam],
+    sizes: tuple[int, ...],
+    *,
+    typical_gap: Optional[float],
+    current_count: int,
+    forecast_count: int,
+    unrated_count: int,
+    partial_count: int,
+    max_cut_gap: Optional[float],
+    has_unavoidable_small: bool,
+    custom: bool = False,
+) -> dict[str, Any]:
+    option = analyze_option(sorted_teams, sizes, typical_gap, current_count=current_count)
+    option["custom"] = custom
+    option["score"] = score_option(
+        option,
+        current_count=current_count,
+        forecast_count=forecast_count,
+        unrated_count=unrated_count,
+        partial_count=partial_count,
+        max_cut_gap=max_cut_gap,
+        has_unavoidable_small=has_unavoidable_small,
+    )
+    option["reasons"] = option["score"]["explanations"]["reasons"]
+    option["warnings"] = option["score"]["explanations"]["warnings"]
+    option["recommended"] = False
+    return option
+
+
+def analyze_custom_structure(
+    teams: list[SnapshotTeam],
+    sizes: tuple[int, ...],
+    *,
+    forecast_count: Optional[int] = None,
+) -> dict[str, Any]:
     sorted_teams = sort_teams_for_planning(teams)
-    team_count = len(sorted_teams)
+    current_count = len(sorted_teams)
+    target = current_count if forecast_count is None else forecast_count
+    validate_custom_sizes(sizes, target)
+    typical_gap = _median(_adjacent_gaps([team.team_rating for team in sorted_teams]))
+    generated = [
+        analyze_option(sorted_teams, parts, typical_gap, current_count=current_count)
+        for parts in generate_split_sizes(target)
+    ]
+    custom_raw = analyze_option(sorted_teams, sizes, typical_gap, current_count=current_count)
+    known_gaps = [
+        cut["ratingGap"]
+        for option in (*generated, custom_raw)
+        for cut in option["cuts"]
+        if cut.get("ratingGap") is not None
+    ]
+    option = build_scored_option(
+        sorted_teams,
+        sizes,
+        typical_gap=typical_gap,
+        current_count=current_count,
+        forecast_count=target,
+        unrated_count=sum(1 for team in sorted_teams if team.rating_status == RATING_STATUS_MISSING),
+        partial_count=sum(1 for team in sorted_teams if team.rating_status == RATING_STATUS_PARTIAL),
+        max_cut_gap=max(known_gaps) if known_gaps else None,
+        has_unavoidable_small=target < MIN_BRACKET_SIZE,
+        custom=True,
+    )
+    return option
+
+
+def plan_draw(
+    draw_kind: str,
+    teams: list[SnapshotTeam],
+    forecast_count: Optional[int] = None,
+) -> dict[str, Any]:
+    sorted_teams = sort_teams_for_planning(teams)
+    current_count = len(sorted_teams)
+    if forecast_count is None:
+        target = current_count
+    else:
+        target = int(forecast_count)
     unrated_count = sum(1 for team in sorted_teams if team.rating_status == RATING_STATUS_MISSING)
     partial_count = sum(1 for team in sorted_teams if team.rating_status == RATING_STATUS_PARTIAL)
-    sizes_list = generate_split_sizes(team_count)
+    unknown_count = max(0, target - current_count)
+    shrink_count = max(0, current_count - target)
+
+    if target <= 0:
+        return {
+            "drawKind": draw_kind,
+            "drawLabel": bracket_family_label(draw_kind),
+            "teamCount": current_count,
+            "currentCount": current_count,
+            "forecastCount": target,
+            "unknownCount": 0,
+            "shrinkCount": shrink_count,
+            "unratedCount": unrated_count,
+            "partialCount": partial_count,
+            "ratingReviewNeeded": unrated_count + partial_count,
+            "ratingReviewTeams": rating_review_teams(sorted_teams),
+            "byeLogicApplicable": BYE_LOGIC_APPLICABLE,
+            "generatedCount": 0,
+            "optionCount": 0,
+            "topOptionCount": 0,
+            "options": [],
+            "teams": [_preview_team(index + 1, team) for index, team in enumerate(sorted_teams)],
+            "planningNote": "Forecast is 0 — no bracket plan was generated for this draw.",
+        }
+
+    sizes_list = generate_split_sizes(target)
     typical_gap = _median(_adjacent_gaps([team.team_rating for team in sorted_teams]))
-    analyzed = [analyze_option(sorted_teams, sizes, typical_gap) for sizes in sizes_list]
-    max_cut_gap = None
-    all_gaps = [cut["ratingGap"] for option in analyzed for cut in option["cuts"] if cut.get("ratingGap") is not None]
-    if all_gaps:
-        max_cut_gap = max(all_gaps)
-    has_unavoidable_small = team_count < MIN_BRACKET_SIZE
+    analyzed = [analyze_option(sorted_teams, sizes, typical_gap, current_count=current_count) for sizes in sizes_list]
+    known_gaps = [cut["ratingGap"] for option in analyzed for cut in option["cuts"] if cut.get("ratingGap") is not None]
+    max_cut_gap = max(known_gaps) if known_gaps else None
+    has_unavoidable_small = target < MIN_BRACKET_SIZE
 
     scored = []
     for option in analyzed:
         score = score_option(
             option,
-            team_count=team_count,
+            current_count=current_count,
+            forecast_count=target,
             unrated_count=unrated_count,
             partial_count=partial_count,
             max_cut_gap=max_cut_gap,
             has_unavoidable_small=has_unavoidable_small,
         )
-        scored.append({**option, "score": score, "recommended": False})
+        scored.append(
+            {
+                **option,
+                "score": score,
+                "reasons": score["explanations"]["reasons"],
+                "warnings": score["explanations"]["warnings"],
+                "recommended": False,
+            }
+        )
 
     scored.sort(
         key=lambda option: (option["score"]["total"], option["score"]["cutQuality"], -len(option["sizes"])),
         reverse=True,
     )
-    if scored:
-        scored[0]["recommended"] = True
+    selected = diversify_options(scored, MAX_DEFAULT_SCENARIOS)
+    if selected:
+        selected[0]["recommended"] = True
+
+    note = None
+    if unknown_count:
+        note = (
+            f"Planning target: {target} teams. Currently registered: {current_count} teams. "
+            f"{unknown_count} additional team{'s' if unknown_count != 1 else ''} "
+            "are not yet known. Final rating cut positions may move as registration changes."
+        )
+    elif shrink_count:
+        note = (
+            f"Planning target is {shrink_count} team{'s' if shrink_count != 1 else ''} below the current "
+            f"registration count. Rating cut analysis is based on the current {current_count}-team field."
+        )
 
     return {
         "drawKind": draw_kind,
         "drawLabel": bracket_family_label(draw_kind),
-        "teamCount": team_count,
+        "teamCount": current_count,
+        "currentCount": current_count,
+        "forecastCount": target,
+        "unknownCount": unknown_count,
+        "shrinkCount": shrink_count,
         "unratedCount": unrated_count,
         "partialCount": partial_count,
         "ratingReviewNeeded": unrated_count + partial_count,
+        "ratingReviewTeams": rating_review_teams(sorted_teams),
         "byeLogicApplicable": BYE_LOGIC_APPLICABLE,
-        "optionCount": len(scored),
-        "topOptionCount": min(TOP_ALTERNATIVES_LIMIT, len(scored)),
-        "options": scored,
+        "generatedCount": len(scored),
+        "optionCount": len(selected),
+        "topOptionCount": len(selected),
+        "options": selected,
         "teams": [_preview_team(index + 1, team) for index, team in enumerate(sorted_teams)],
+        "planningNote": note,
     }
 
 
-def plan_snapshot(active_teams: list[SnapshotTeam]) -> dict[str, Any]:
+def plan_snapshot(
+    active_teams: list[SnapshotTeam],
+    forecasts: Optional[dict[str, int]] = None,
+) -> dict[str, Any]:
     by_draw: dict[str, list[SnapshotTeam]] = {}
     for team in active_teams:
         by_draw.setdefault(team.draw_kind, []).append(team)
-    draws = [plan_draw(draw_kind, teams) for draw_kind, teams in sorted(by_draw.items())]
+    draws = []
+    for draw_kind, teams in sorted(by_draw.items()):
+        forecast = None if not forecasts else forecasts.get(draw_kind)
+        draws.append(plan_draw(draw_kind, teams, forecast))
+    # Include forecast-only draws with no current teams only when staff set a positive forecast
+    # for an existing draw; empty draws stay omitted.
     return {
         "draws": draws,
         "maxBracketSize": MAX_BRACKET_SIZE,
         "minBracketSize": MIN_BRACKET_SIZE,
-        "preferredBracketSizes": list(PREFERRED_BRACKET_SIZES),
+        "maxForecastTeams": MAX_FORECAST_TEAMS,
+        "preferredBracketSizes": list(OPERATIONAL_BRACKET_SIZES),
+        "awkwardBracketSizes": list(AWKWARD_BRACKET_SIZES),
+        "maxDefaultScenarios": MAX_DEFAULT_SCENARIOS,
         "byeLogicApplicable": BYE_LOGIC_APPLICABLE,
         "teamRatingFormula": "sum_of_player_ntrp",
+        "forecasts": forecasts or {},
     }
 
 
