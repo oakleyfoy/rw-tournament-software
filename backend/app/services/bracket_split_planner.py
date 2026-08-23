@@ -34,7 +34,15 @@ SIZE_QUALITY_PER_OPERATIONAL = 6.0
 ALL_OPERATIONAL_BONUS = 8.0
 BALANCE_BONUS = 6.0
 SINGLE_BRACKET_BONUS = 10.0
-EXTRA_BRACKET_PENALTY = 12.0
+# Racquet War operationally prefers the fewest practical draws because every
+# additional draw increases trophies, administration, scheduling complexity,
+# and event expense. Additional draws require materially stronger competitive
+# separation to justify them.
+# 28 points ≈ a major share of max cut quality (40). A 3-bracket plan typically
+# gains ~6 size-quality from one extra operational size, so the net cost of an
+# unnecessary draw is about 22 — enough that a slight cut improvement cannot
+# pay for another trophy/admin draw, while a genuinely multi-cluster field can.
+EXTRA_BRACKET_PENALTY = 28.0
 AWKWARD_SIZE_PENALTY = 22.0
 TINY_UNDER_8_PENALTY = 40.0
 VERY_SMALL_PENALTY = 14.0
@@ -77,6 +85,16 @@ def is_awkward_size(size: int) -> bool:
     return size in AWKWARD_BRACKET_SIZES
 
 
+def minimum_bracket_count(forecast_count: int) -> int:
+    if forecast_count <= 0:
+        return 0
+    return max(1, (forecast_count + MAX_BRACKET_SIZE - 1) // MAX_BRACKET_SIZE)
+
+
+def extra_bracket_count(sizes: tuple[int, ...], forecast_count: int) -> int:
+    return max(0, len(sizes) - minimum_bracket_count(forecast_count))
+
+
 def validate_custom_sizes(sizes: tuple[int, ...], forecast_count: int) -> None:
     if any(size <= 0 for size in sizes):
         raise ValueError("Bracket sizes must be positive whole numbers.")
@@ -86,8 +104,12 @@ def validate_custom_sizes(sizes: tuple[int, ...], forecast_count: int) -> None:
         raise ValueError(f"A structure may have at most {MAX_BRACKETS} brackets.")
     if sum(sizes) != forecast_count:
         raise ValueError(f"Bracket sizes must sum to the expected final count of {forecast_count}.")
-    if forecast_count >= MIN_BRACKET_SIZE and any(size < MIN_BRACKET_SIZE for size in sizes) and len(sizes) > 1:
-        raise ValueError("Multi-bracket plans cannot include a bracket smaller than 8.")
+    under_eight = [size for size in sizes if size < MIN_BRACKET_SIZE]
+    if forecast_count < MIN_BRACKET_SIZE:
+        if sizes != (forecast_count,):
+            raise ValueError("Each bracket must have at least 8 teams unless the entire draw has fewer than 8 teams.")
+    elif under_eight:
+        raise ValueError("Each bracket must have at least 8 teams unless the entire draw has fewer than 8 teams.")
 
 
 def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
@@ -490,11 +512,29 @@ def score_option(
             _add(warnings, "uneven_sizes", "Bracket sizes are usable but uneven.")
         size_quality += max(0.0, 8.0 - pstdev(sizes))
 
-    min_brackets = max(1, (forecast_count + MAX_BRACKET_SIZE - 1) // MAX_BRACKET_SIZE)
-    extra_penalty = 0.0
-    if len(sizes) > min_brackets:
-        extra_penalty = EXTRA_BRACKET_PENALTY * (len(sizes) - min_brackets)
-        _add(warnings, "extra_brackets", "This plan uses more brackets than needed for the field.")
+    min_brackets = minimum_bracket_count(forecast_count)
+    extra_count = extra_bracket_count(sizes, forecast_count)
+    extra_penalty = EXTRA_BRACKET_PENALTY * extra_count
+    if extra_count == 0 and sizes:
+        _add(positives, "minimum_draw_count", "Uses the fewest practical draws for this field.")
+    elif extra_count == 1:
+        if cut_quality >= MATERIAL_CUT_IMPROVEMENT:
+            _add(
+                positives,
+                "extra_draw_justified",
+                "Adds an extra draw, but provides a materially stronger competitive separation.",
+            )
+        _add(
+            warnings,
+            "extra_draw",
+            "Adds an additional draw, increasing trophies, administration, and event complexity.",
+        )
+    elif extra_count > 1:
+        _add(
+            warnings,
+            "extra_draw",
+            f"Adds {extra_count} additional draws, increasing trophies, administration, and event complexity.",
+        )
 
     awkward_penalty = AWKWARD_SIZE_PENALTY * awkward_count
     if awkward_count and cut_quality >= MATERIAL_CUT_IMPROVEMENT:
@@ -592,27 +632,52 @@ def _size_profile(option: dict[str, Any]) -> tuple[int, ...]:
     return tuple(sorted(option.get("sizes") or []))
 
 
+def _is_diverse_candidate(candidate: dict[str, Any], selected: list[dict[str, Any]]) -> bool:
+    cand_cuts = _cut_signature(candidate)
+    cand_profile = _size_profile(candidate)
+    same_family = 0
+    for existing in selected:
+        if cand_cuts == _cut_signature(existing) and cand_profile == _size_profile(existing):
+            return False
+        if cand_profile == _size_profile(existing):
+            same_family += 1
+    return same_family < MAX_PERMUTATION_FAMILY
+
+
 def diversify_options(scored: list[dict[str, Any]], limit: int = MAX_DEFAULT_SCENARIOS) -> list[dict[str, Any]]:
-    """Keep the best option, then add meaningfully different structures."""
+    """Keep the best option, then prefer minimum-draw alternatives."""
     if not scored:
         return []
+    forecast = sum(scored[0]["sizes"])
+    min_count = minimum_bracket_count(forecast)
     selected = [scored[0]]
-    for candidate in scored[1:]:
+    min_pool = [option for option in scored[1:] if len(option["sizes"]) == min_count]
+    extra_pool = [option for option in scored[1:] if len(option["sizes"]) > min_count]
+    for candidate in min_pool:
         if len(selected) >= limit:
             break
-        cand_cuts = _cut_signature(candidate)
-        cand_profile = _size_profile(candidate)
-        same_family = 0
-        skip = False
-        for existing in selected:
-            if cand_cuts == _cut_signature(existing) and cand_profile == _size_profile(existing):
-                skip = True
+        if _is_diverse_candidate(candidate, selected):
+            selected.append(candidate)
+
+    extra_already = 1 if len(selected[0]["sizes"]) > min_count else 0
+    min_selected = [option for option in selected if len(option["sizes"]) == min_count]
+    best_min_cut = max((option["score"]["cutQuality"] for option in min_selected), default=0.0)
+    material_extra = [
+        option for option in extra_pool if option["score"]["cutQuality"] >= best_min_cut + MATERIAL_CUT_IMPROVEMENT
+    ]
+    if extra_already == 0 and material_extra:
+        candidate = material_extra[0]
+        if len(selected) < limit and _is_diverse_candidate(candidate, selected):
+            selected.append(candidate)
+        elif len(selected) >= limit and _is_diverse_candidate(candidate, selected[:-1]):
+            selected[-1] = candidate
+        extra_already = 1
+    elif len(selected) < limit and extra_already == 0 and len(min_pool) < 2:
+        for candidate in extra_pool:
+            if len(selected) >= limit:
                 break
-            if cand_profile == _size_profile(existing):
-                same_family += 1
-        if skip or same_family >= MAX_PERMUTATION_FAMILY:
-            continue
-        selected.append(candidate)
+            if _is_diverse_candidate(candidate, selected):
+                selected.append(candidate)
     return selected
 
 

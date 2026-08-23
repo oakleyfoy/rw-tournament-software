@@ -302,6 +302,14 @@ function CustomStructureForm({
       setError('No bracket may be larger than 32.')
       return
     }
+    if (forecast >= 8 && sizes.some((size) => size < 8)) {
+      setError('Each bracket must have at least 8 teams unless the entire draw has fewer than 8 teams.')
+      return
+    }
+    if (forecast < 8 && (sizes.length !== 1 || sizes[0] !== forecast)) {
+      setError('Each bracket must have at least 8 teams unless the entire draw has fewer than 8 teams.')
+      return
+    }
     if (sizes.reduce((sum, size) => sum + size, 0) !== forecast) {
       setError(`Sizes must sum to the expected final count of ${forecast}.`)
       return
