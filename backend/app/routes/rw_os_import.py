@@ -49,7 +49,11 @@ def _get_import(session: Session, import_id: int) -> TournamentImport:
 @router.get("/events")
 def list_rw_os_events(session: Session = Depends(get_session)):
     try:
-        return {"events": list_importable_events(session, RwOsClient())}
+        client = RwOsClient()
+        return {
+            "events": list_importable_events(session, client),
+            "source": "fixtures" if client.fixtures else "live",
+        }
     except RwOsClientError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

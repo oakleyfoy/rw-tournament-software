@@ -523,8 +523,11 @@ export interface RwOsImportResponse {
   bracketsCreated: boolean
 }
 
-export async function listRwOsEvents(): Promise<{ events: RwOsEventSummary[] }> {
-  return fetchJson<{ events: RwOsEventSummary[] }>(`${API_BASE_URL}/rw-os/events`)
+export async function listRwOsEvents(): Promise<{
+  events: RwOsEventSummary[]
+  source?: 'fixtures' | 'live'
+}> {
+  return fetchJson<{ events: RwOsEventSummary[]; source?: 'fixtures' | 'live' }>(`${API_BASE_URL}/rw-os/events`)
 }
 
 export async function createRwOsImport(tournamentId: number, organizationSlug = 'rw'): Promise<RwOsImportResponse> {

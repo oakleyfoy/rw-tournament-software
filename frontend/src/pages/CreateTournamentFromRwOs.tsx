@@ -216,6 +216,7 @@ function DrawPlanner({
 function CreateTournamentFromRwOs() {
   const navigate = useNavigate()
   const [events, setEvents] = useState<RwOsEventSummary[]>([])
+  const [source, setSource] = useState<'fixtures' | 'live' | null>(null)
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
   const [working, setWorking] = useState(false)
@@ -227,8 +228,15 @@ function CreateTournamentFromRwOs() {
 
   useEffect(() => {
     listRwOsEvents()
-      .then((payload) => setEvents(payload.events))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load RW-OS events'))
+      .then((payload) => {
+        setEvents(payload.events)
+        setSource(payload.source ?? null)
+      })
+      .catch((err) => {
+        setEvents([])
+        setSource(null)
+        setError(err instanceof Error ? err.message : 'Failed to load RW-OS events')
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -322,6 +330,7 @@ function CreateTournamentFromRwOs() {
         <div>
           <h1>Create Tournament from RW-OS</h1>
           <p className="subhead">Import the current eligible teams, then approve a draw split. Brackets are not created in this step.</p>
+          {source === 'fixtures' && <p className="rwos-source-indicator">RW-OS Source: Fixtures</p>}
         </div>
         <button className="btn btn-secondary" type="button" onClick={() => navigate('/tournaments')}>
           Back
@@ -334,6 +343,8 @@ function CreateTournamentFromRwOs() {
         <h2>Step 1 — Choose RW-OS Event</h2>
         {loading ? (
           <p>Loading current and upcoming RW-OS events…</p>
+        ) : error ? (
+          <p>Could not load RW-OS events. Fixture data is not used as a fallback.</p>
         ) : events.length === 0 ? (
           <p>No current or upcoming RW-OS events are available to import.</p>
         ) : (
