@@ -457,7 +457,16 @@ export interface RwOsDrawPlan {
   unratedCount: number
   partialCount: number
   ratingReviewNeeded: number
+  optionCount?: number
+  topOptionCount?: number
   options: RwOsSplitOption[]
+  teams?: Array<{
+    rank: number
+    teamKey: string
+    name: string
+    teamRating: number | null
+    ratingStatus: string
+  }>
 }
 
 export interface RwOsImportResponse {

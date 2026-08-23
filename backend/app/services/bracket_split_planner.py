@@ -15,6 +15,7 @@ MIN_BRACKET_SIZE = 8
 PREFERRED_BRACKET_SIZES = (32, 28, 24, 20, 16)
 SMALL_FINAL_RANGE = range(8, 16)
 MAX_BRACKETS = 5
+TOP_ALTERNATIVES_LIMIT = 8
 
 # Existing Waterfall engine does not pad general brackets into a power-of-two shell.
 # Byes exist only for WF_14 top-2 seeds and odd RR pools, so Phase 1 does not estimate byes.
@@ -32,7 +33,7 @@ def option_key(sizes: tuple[int, ...]) -> str:
 
 
 def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
-    """Generate canonical, ordered strongest-first bracket size compositions."""
+    """Generate ordered compositions. Size order is the cut-rank order (A, then B, …)."""
     if team_count <= 0:
         return []
     if team_count < MIN_BRACKET_SIZE:
@@ -50,8 +51,7 @@ def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
             return
         if len(parts) > 1 and any(part < MIN_BRACKET_SIZE for part in parts):
             return
-        if len(parts) >= 3:
-            parts = tuple(sorted(parts, reverse=True))
+        # True duplicates only: the exact ordered sequence, not a sorted partition.
         if parts in seen:
             return
         seen.add(parts)
@@ -60,7 +60,7 @@ def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
     if team_count <= MAX_BRACKET_SIZE:
         add((team_count,))
 
-    def recurse(remaining: int, acc: list[int]) -> None:
+    def recurse(remaining: int, acc: list[int], used_small: bool) -> None:
         if remaining <= 0 or len(acc) >= MAX_BRACKETS:
             return
         if acc and MIN_BRACKET_SIZE <= remaining <= MAX_BRACKET_SIZE:
@@ -71,17 +71,17 @@ def generate_split_sizes(team_count: int) -> list[tuple[int, ...]]:
             leftover = remaining - size
             if leftover < MIN_BRACKET_SIZE:
                 continue
-            recurse(leftover, acc + [size])
+            recurse(leftover, acc + [size], used_small)
+        # One 8–15 leftover may sit in any ordered position; do not explode into all-tiny trees.
+        if not used_small:
+            for size in range(15, 7, -1):
+                leftover = remaining - size
+                if leftover < MIN_BRACKET_SIZE:
+                    continue
+                recurse(leftover, acc + [size], True)
 
-    recurse(team_count, [])
-
-    def sort_key(parts: tuple[int, ...]) -> tuple:
-        tiny = sum(1 for part in parts if part < 12)
-        balance = pstdev(parts) if len(parts) > 1 else 0.0
-        preferred = sum(1 for part in parts if part in PREFERRED_BRACKET_SIZES)
-        return (len(parts), tiny, balance, -preferred, parts)
-
-    return sorted(options, key=sort_key)
+    recurse(team_count, [], False)
+    return options
 
 
 def _team_display_name(team: SnapshotTeam) -> str:
@@ -234,7 +234,7 @@ def _bracket_metrics(sorted_teams: list[SnapshotTeam], draw_kind: str, size: int
         average_rating=_round_rating(mean(ratings)) if ratings else None,
         median_rating=_median(ratings),
         rating_spread=_round_rating(highest - lowest) if highest is not None and lowest is not None else None,
-        teams=[_preview_team(rank_start + offset, team) for offset, team in enumerate(slice_teams)],
+        teams=[],
     )
 
 
@@ -307,17 +307,26 @@ def score_option(
         cut_quality = 10.0 if raw_cut > 0 else 4.0
 
     if cut_gaps:
-        strongest = max(cut_gaps)
-        strongest_cut = max(option["cuts"], key=lambda cut: cut.get("ratingGap") or -1)
-        reasons.append(
-            f"{strongest_cut['quality']} rating break at #{strongest_cut['upperRank']}/#{strongest_cut['lowerRank']}"
-            + (f" (gap {strongest:.2f})" if strongest is not None else "")
-        )
+        for cut in option["cuts"]:
+            gap = cut.get("ratingGap")
+            upper = cut.get("upperRating")
+            lower = cut.get("lowerRating")
+            gap_text = f"{gap:.2f}" if gap is not None else "n/a"
+            upper_text = f"{upper:.2f}" if upper is not None else "unrated"
+            lower_text = f"{lower:.2f}" if lower is not None else "unrated"
+            reasons.append(
+                f"{cut['quality']} natural break: #{cut['upperRank']} {upper_text} / "
+                f"#{cut['lowerRank']} {lower_text} · Gap {gap_text}"
+            )
     elif len(sizes) == 1:
         reasons.append("Single bracket — no rating cut required")
 
     preferred_count = sum(1 for size in sizes if size in PREFERRED_BRACKET_SIZES)
     size_quality = 8.0 * preferred_count
+    min_brackets = max(1, (team_count + MAX_BRACKET_SIZE - 1) // MAX_BRACKET_SIZE)
+    if len(sizes) > min_brackets:
+        size_quality -= 3.0 * (len(sizes) - min_brackets)
+        reasons.append("Extra brackets beyond the minimum needed for the field")
     if len(sizes) == 1 and MIN_BRACKET_SIZE <= sizes[0] <= MAX_BRACKET_SIZE:
         size_quality += 16.0
         reasons.append("One healthy-sized bracket")
@@ -327,6 +336,8 @@ def score_option(
             reasons.append("Both brackets have healthy size" if len(sizes) == 2 else "Reasonably balanced bracket sizes")
         else:
             reasons.append("Bracket sizes are usable but uneven")
+        if all(MIN_BRACKET_SIZE <= size <= MAX_BRACKET_SIZE for size in sizes):
+            reasons.append("All brackets within supported size range")
 
     tiny_penalty = 0.0
     tiny_parts = [size for size in sizes if size < MIN_BRACKET_SIZE]
@@ -389,9 +400,12 @@ def plan_draw(draw_kind: str, teams: list[SnapshotTeam]) -> dict[str, Any]:
         )
         scored.append({**option, "score": score, "recommended": False})
 
+    scored.sort(
+        key=lambda option: (option["score"]["total"], option["score"]["cutQuality"], -len(option["sizes"])),
+        reverse=True,
+    )
     if scored:
-        best = max(scored, key=lambda option: (option["score"]["total"], -len(option["sizes"]), option["sizes"]))
-        best["recommended"] = True
+        scored[0]["recommended"] = True
 
     return {
         "drawKind": draw_kind,
@@ -401,6 +415,8 @@ def plan_draw(draw_kind: str, teams: list[SnapshotTeam]) -> dict[str, Any]:
         "partialCount": partial_count,
         "ratingReviewNeeded": unrated_count + partial_count,
         "byeLogicApplicable": BYE_LOGIC_APPLICABLE,
+        "optionCount": len(scored),
+        "topOptionCount": min(TOP_ALTERNATIVES_LIMIT, len(scored)),
         "options": scored,
         "teams": [_preview_team(index + 1, team) for index, team in enumerate(sorted_teams)],
     }

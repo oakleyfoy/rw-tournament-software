@@ -67,6 +67,12 @@
   gap: 16px;
 }
 
+.option-section-title {
+  margin: 8px 0 0;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+
 .split-option {
   border: 1px solid var(--theme-border);
   border-radius: 8px;

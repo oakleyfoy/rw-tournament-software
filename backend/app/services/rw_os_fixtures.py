@@ -108,7 +108,8 @@ def _womens_44() -> list[SnapshotTeam]:
 
 
 def _womens_80() -> list[SnapshotTeam]:
-    pairs = _linear_pair_ratings(80, 10.20, 6.10, {32: 0.40, 64: 0.28})
+    # Strong natural breaks after ranks 20 and 48 so 20/28/32 can beat 32/28/20.
+    pairs = _linear_pair_ratings(80, 10.20, 6.10, {20: 0.55, 48: 0.45})
     teams = []
     for index, (p1, p2) in enumerate(pairs, start=1):
         teams.append(

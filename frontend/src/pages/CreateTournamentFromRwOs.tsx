@@ -26,8 +26,17 @@ function formatRating(value: number | null | undefined): string {
   return value.toFixed(2)
 }
 
-function TeamPreview({ bracket }: { bracket: RwOsBracketPreview }) {
+function TeamPreview({
+  bracket,
+  drawTeams,
+}: {
+  bracket: RwOsBracketPreview
+  drawTeams: NonNullable<RwOsDrawPlan['teams']>
+}) {
   const [open, setOpen] = useState(false)
+  const teams = (drawTeams.length ? drawTeams : bracket.teams).filter(
+    (team) => team.rank >= bracket.rankStart && team.rank <= bracket.rankEnd,
+  )
   return (
     <div className="team-preview">
       <button className="btn btn-secondary btn-small" type="button" onClick={() => setOpen((value) => !value)}>
@@ -35,7 +44,7 @@ function TeamPreview({ bracket }: { bracket: RwOsBracketPreview }) {
       </button>
       {open && (
         <ol className="team-preview-list">
-          {bracket.teams.map((team) => (
+          {teams.map((team) => (
             <li key={team.teamKey}>
               #{team.rank} {team.name} — {formatRating(team.teamRating)}
               {team.ratingStatus !== 'complete' ? ` (${team.ratingStatus})` : ''}
@@ -52,11 +61,13 @@ function OptionCard({
   selected,
   onSelect,
   disabled,
+  drawTeams,
 }: {
   option: RwOsSplitOption
   selected: boolean
   onSelect: () => void
   disabled: boolean
+  drawTeams: NonNullable<RwOsDrawPlan['teams']>
 }) {
   return (
     <article className={`split-option ${option.recommended ? 'recommended' : ''} ${selected ? 'selected' : ''}`}>
@@ -88,7 +99,7 @@ function OptionCard({
           ) : (
             ' · ratings incomplete'
           )}
-          <TeamPreview bracket={bracket} />
+          <TeamPreview bracket={bracket} drawTeams={drawTeams} />
         </div>
       ))}
       {option.cuts.map((cut) => (
@@ -120,6 +131,8 @@ function OptionCard({
   )
 }
 
+const TOP_OPTIONS_LIMIT = 8
+
 function DrawPlanner({
   draw,
   selectedKey,
@@ -131,28 +144,71 @@ function DrawPlanner({
   onSelect: (optionKey: string) => void
   disabled: boolean
 }) {
+  const [showAll, setShowAll] = useState(false)
+  const ranked = [...draw.options].sort((left, right) => {
+    if (right.score.total !== left.score.total) return right.score.total - left.score.total
+    return right.score.cutQuality - left.score.cutQuality
+  })
+  const recommended = ranked.find((option) => option.recommended) || ranked[0]
+  const visible = showAll
+    ? ranked
+    : ranked.filter((option, index) => {
+        if (index < (draw.topOptionCount || TOP_OPTIONS_LIMIT)) return true
+        return option.optionKey === selectedKey
+      })
+  const alternatives = visible.filter((option) => option.optionKey !== recommended?.optionKey)
+
   return (
     <section className="card draw-planner">
       <h3>
         {draw.drawLabel.toUpperCase()} — {draw.teamCount} TEAMS
       </h3>
+      <p className="meta">
+        {draw.optionCount || ranked.length} valid ordered structures scored.
+        Showing {showAll ? 'all' : `top ${visible.length}`} by recommendation score.
+      </p>
       {draw.ratingReviewNeeded > 0 && (
         <div className="warning-banner">
           {draw.ratingReviewNeeded} team{draw.ratingReviewNeeded === 1 ? '' : 's'} need rating review.
           Recommendation confidence is lower.
         </div>
       )}
-      <div className="option-grid">
-        {draw.options.map((option) => (
-          <OptionCard
-            key={option.optionKey}
-            option={option}
-            selected={selectedKey === option.optionKey}
-            disabled={disabled}
-            onSelect={() => onSelect(option.optionKey)}
-          />
-        ))}
-      </div>
+      {recommended && (
+        <>
+          <h4 className="option-section-title">Recommended</h4>
+          <div className="option-grid">
+            <OptionCard
+              option={recommended}
+              selected={selectedKey === recommended.optionKey}
+              disabled={disabled}
+              onSelect={() => onSelect(recommended.optionKey)}
+              drawTeams={draw.teams || []}
+            />
+          </div>
+        </>
+      )}
+      {alternatives.length > 0 && (
+        <>
+          <h4 className="option-section-title">Top Alternatives</h4>
+          <div className="option-grid">
+            {alternatives.map((option) => (
+              <OptionCard
+                key={option.optionKey}
+                option={option}
+                selected={selectedKey === option.optionKey}
+                disabled={disabled}
+                onSelect={() => onSelect(option.optionKey)}
+                drawTeams={draw.teams || []}
+              />
+            ))}
+          </div>
+        </>
+      )}
+      {(draw.optionCount || ranked.length) > (draw.topOptionCount || TOP_OPTIONS_LIMIT) && (
+        <button className="btn btn-secondary" type="button" onClick={() => setShowAll((value) => !value)}>
+          {showAll ? 'Show Top Options' : `Show All Options (${draw.optionCount || ranked.length})`}
+        </button>
+      )}
     </section>
   )
 }
