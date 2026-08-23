@@ -512,7 +512,6 @@ def score_option(
             _add(warnings, "uneven_sizes", "Bracket sizes are usable but uneven.")
         size_quality += max(0.0, 8.0 - pstdev(sizes))
 
-    min_brackets = minimum_bracket_count(forecast_count)
     extra_count = extra_bracket_count(sizes, forecast_count)
     extra_penalty = EXTRA_BRACKET_PENALTY * extra_count
     if extra_count == 0 and sizes:
