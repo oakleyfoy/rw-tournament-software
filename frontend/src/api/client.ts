@@ -1548,6 +1548,47 @@ export async function regenerateSlots(
   )
 }
 
+export interface SlotVerificationPeriod {
+  source_id: number
+  source_kind: string
+  day_date: string
+  start_time: string
+  end_time: string
+  courts: number
+  extra_courts: number
+  block_minutes: number
+  blocks_per_court: number
+  label?: string | null
+  expected_slots: number
+  generated_slots: number
+  status: 'verified' | 'mismatch'
+}
+
+export interface SlotVerificationDay {
+  day_date: string
+  expected_slots: number
+  generated_slots: number
+  status: 'verified' | 'mismatch'
+  periods: SlotVerificationPeriod[]
+}
+
+export interface SlotVerificationResponse {
+  source: 'time_windows' | 'days_courts'
+  expected_slots: number
+  generated_slots: number
+  status: 'verified' | 'mismatch'
+  days: SlotVerificationDay[]
+}
+
+export async function getSlotVerification(
+  tournamentId: number,
+  versionId: number
+): Promise<SlotVerificationResponse> {
+  return fetchJson<SlotVerificationResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/slots/verification`
+  )
+}
+
 export interface AssignScopeResponse {
   assigned_count: number
   unassigned_count_remaining_in_scope: number
