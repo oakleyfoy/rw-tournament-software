@@ -22,6 +22,7 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_time_window import TournamentTimeWindow
+from app.services.slot_verification import build_slot_verification
 from app.utils.conflict_report import (
     ConflictReportSummary,
     TeamConflictsSummary,
@@ -1145,6 +1146,54 @@ def generate_slots(
         "slots_created": slots_created,
         "duplicates_skipped": skipped_duplicates,
     }
+
+
+class SlotVerificationPeriod(BaseModel):
+    source_id: int
+    source_kind: str
+    day_date: date
+    start_time: time
+    end_time: time
+    courts: int
+    extra_courts: int = 0
+    block_minutes: int
+    blocks_per_court: int
+    label: Optional[str] = None
+    expected_slots: int
+    generated_slots: int
+    status: Literal["verified", "mismatch"]
+
+
+class SlotVerificationDay(BaseModel):
+    day_date: date
+    expected_slots: int
+    generated_slots: int
+    status: Literal["verified", "mismatch"]
+    periods: List[SlotVerificationPeriod]
+
+
+class SlotVerificationResponse(BaseModel):
+    source: Literal["time_windows", "days_courts"]
+    expected_slots: int
+    generated_slots: int
+    status: Literal["verified", "mismatch"]
+    days: List[SlotVerificationDay]
+
+
+@router.get(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/slots/verification",
+    response_model=SlotVerificationResponse,
+)
+def get_slot_verification(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Compare configured court/time periods to persisted generated slots. Read-only."""
+    try:
+        return build_slot_verification(session, tournament_id, version_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/tournaments/{tournament_id}/schedule/slots", response_model=List[SlotResponse])

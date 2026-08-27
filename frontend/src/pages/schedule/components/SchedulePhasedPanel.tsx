@@ -33,6 +33,7 @@ import {
 } from '../../../api/client'
 import { showToast } from '../../../utils/toast'
 import type { InventoryTab } from './ScheduleInventoryPanel'
+import { ScheduleSlotVerification } from './ScheduleSlotVerification'
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -993,6 +994,13 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
         <div style={{ textAlign: 'center', color: '#666' }}>
           <p>This schedule is finalized and read-only.</p>
         </div>
+        {tournamentId && activeVersion && slotsCount > 0 && (
+          <ScheduleSlotVerification
+            tournamentId={tournamentId}
+            versionId={activeVersion.id}
+            slotsCount={slotsCount}
+          />
+        )}
       </div>
     )
   }
@@ -1189,6 +1197,9 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
             {busy === 'Regenerating Slots' ? '...' : 'Regenerate Slots'}
           </button>
         </div>
+        {tournamentId && slotsCount > 0 && (
+          <ScheduleSlotVerification tournamentId={tournamentId} versionId={versionId} slotsCount={slotsCount} />
+        )}
       </div>
 
       {/* B) Placement — Per-round buttons */}
