@@ -576,6 +576,25 @@ export interface RwOsImportResponse {
     isRecommended: boolean
   }>
   bracketsCreated: boolean
+  eventsCreated?: number
+  eventsUpdated?: number
+  matchesCreated?: number
+  tournamentEvents?: Array<{
+    id: number
+    tournamentId: number
+    category: 'mixed' | 'womens'
+    name: string
+    teamCount: number
+    notes?: string | null
+  }>
+  structureEventConflicts?: Array<{
+    eventId: number
+    category: string
+    name: string
+    reason: string
+    currentTeamCount: number
+    requestedTeamCount: number
+  }>
 }
 
 export async function listRwOsEvents(): Promise<{

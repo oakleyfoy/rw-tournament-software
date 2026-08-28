@@ -597,7 +597,20 @@ function CreateTournamentFromRwOs() {
       setWorking(true)
       const result = await approveRwOsPlan(importData.import.id, selections)
       setImportData(result)
-      showToast('Bracket split plan approved. No brackets were created.', 'success')
+      const created = result.eventsCreated ?? 0
+      const conflicts = result.structureEventConflicts ?? []
+      if (conflicts.length) {
+        showToast(
+          `Structure approved, but ${conflicts.length} existing event(s) were left unchanged because they already have draws or matches.`,
+          'error',
+        )
+      } else if (created === 1) {
+        showToast('Structure approved. 1 event was added to this tournament.', 'success')
+      } else if (created > 1) {
+        showToast(`Structure approved. ${created} events were added to this tournament.`, 'success')
+      } else {
+        showToast('Structure approved. Tournament events are up to date.', 'success')
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not approve plan', 'error')
     } finally {
@@ -632,7 +645,7 @@ function CreateTournamentFromRwOs() {
           <h1>Create Tournament from RW-OS</h1>
           <p className="subhead">
             Import the current eligible teams, set the expected final field, then choose a draw split.
-            Brackets are not created in this step.
+            Approving the structure creates the matching tournament events. Waterfall brackets and matches are not created in this step.
           </p>
           {source === 'fixtures' && <p className="rwos-source-indicator">RW-OS Source: Fixtures</p>}
         </div>
@@ -785,7 +798,7 @@ function CreateTournamentFromRwOs() {
             {approved ? (
               <>
                 <h3>Plan approved</h3>
-                <p>The draw split is stored. No Waterfall brackets, matches, or seeds were created.</p>
+                <p>The draw split is stored and the Events section has been populated. No Waterfall brackets, matches, or seeds were created.</p>
                 <ul>
                   {importData.approvedPlans.map((plan) => (
                     <li key={plan.drawKind}>
@@ -793,13 +806,57 @@ function CreateTournamentFromRwOs() {
                     </li>
                   ))}
                 </ul>
+                {(importData.structureEventConflicts ?? []).length > 0 && (
+                  <div className="warning-banner">
+                    <p>
+                      These existing events already have draws or matches and were not changed. Resolve them in
+                      Tournament Setup before applying a different structure.
+                    </p>
+                    <ul>
+                      {importData.structureEventConflicts?.map((conflict) => (
+                        <li key={conflict.eventId}>
+                          {conflict.name}: {conflict.reason} (kept {conflict.currentTeamCount} teams, structure
+                          requested {conflict.requestedTeamCount})
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="approved-events">
+                  <h3>Events</h3>
+                  {(importData.tournamentEvents ?? []).length === 0 ? (
+                    <p>No tournament events were created from this structure.</p>
+                  ) : (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Name</th>
+                          <th>Team Count</th>
+                          <th>Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importData.tournamentEvents?.map((event) => (
+                          <tr key={event.id}>
+                            <td>{event.category === 'mixed' ? 'Mixed' : "Women's"}</td>
+                            <td>{event.name}</td>
+                            <td>{event.teamCount}</td>
+                            <td>{event.notes || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  <p className="meta">Use Tournament Setup to add more events or edit these rows.</p>
+                </div>
                 <button className="btn btn-primary" type="button" onClick={() => navigate(`/tournaments/${importData.import.tournamentId}/setup`)}>
                   Continue to Tournament Setup
                 </button>
               </>
             ) : (
               <>
-                <p>Software recommends. Staff chooses. Approving stores the plan only.</p>
+                <p>Software recommends. Staff chooses. Approving stores the plan and creates the matching tournament events.</p>
                 <button className="btn btn-primary" type="button" disabled={working} onClick={handleApprove}>
                   Approve Selected Structure
                 </button>

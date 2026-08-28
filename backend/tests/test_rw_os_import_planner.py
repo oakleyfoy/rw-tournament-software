@@ -352,9 +352,11 @@ def test_no_actual_brackets_or_events_created(client: TestClient, session: Sessi
         json={"selections": {"womens": option_key}},
     )
     assert approved.json()["bracketsCreated"] is False
-    assert approved.json()["eventsCreated"] == 0
     assert approved.json()["matchesCreated"] == 0
-    assert session.exec(select(Event).where(Event.tournament_id == tournament_id)).all() == []
+    expected_events = sum(len(plan["brackets"]) for plan in approved.json()["approvedPlans"])
+    assert approved.json()["eventsCreated"] == expected_events
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    assert len(events) == expected_events
     assert session.exec(select(Match).where(Match.tournament_id == tournament_id)).all() == []
 
 

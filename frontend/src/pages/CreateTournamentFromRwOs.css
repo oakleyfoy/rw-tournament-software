@@ -198,6 +198,19 @@
   gap: 12px;
 }
 
+.approved-events table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 12px;
+}
+
+.approved-events th,
+.approved-events td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--theme-border);
+}
+
 .registration-summary table {
   width: 100%;
   max-width: 360px;

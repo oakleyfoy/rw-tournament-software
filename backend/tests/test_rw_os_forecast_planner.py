@@ -215,11 +215,13 @@ def test_p_q_r_no_event_match_or_rw_os_writes(client: TestClient, session: Sessi
         f"/api/rw-os/imports/{import_id}/approve",
         json={"selections": {"womens": "20-24"}},
     )
-    assert approved.json()["eventsCreated"] == 0
     assert approved.json()["matchesCreated"] == 0
     assert approved.json()["bracketsCreated"] is False
     assert approved.json()["rwOsWrites"] == 0
-    assert session.exec(select(Event).where(Event.tournament_id == tournament_id)).all() == []
+    expected_events = sum(len(plan["brackets"]) for plan in approved.json()["approvedPlans"])
+    assert approved.json()["eventsCreated"] == expected_events
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    assert len(events) == expected_events
     assert session.exec(select(Match).where(Match.tournament_id == tournament_id)).all() == []
     try:
         RwOsClient(fixtures=True)._request("POST", "/api/integrations/tournament-software/events")

@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models.event import Event
 from app.models.match import Match
 from app.models.tournament_import import TournamentImport
 from app.services.rw_os_client import RwOsClient, RwOsClientError
@@ -20,6 +19,7 @@ from app.services.rw_os_import import (
     save_forecasts,
     select_draw_structure,
 )
+from app.services.structure_events import serialize_structure_event, sync_events_from_approved_plans
 
 router = APIRouter(prefix="/rw-os", tags=["rw-os-import"])
 
@@ -182,14 +182,17 @@ def approve_rw_os_plan(
 ):
     row = _get_import(session, import_id)
     try:
-        approve_structures(session, row, payload.selections)
+        plans = approve_structures(session, row, payload.selections)
+        sync = sync_events_from_approved_plans(session, row.tournament_id, plans)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.refresh(row)
-    events = session.exec(select(Event).where(Event.tournament_id == row.tournament_id)).all()
     matches = session.exec(select(Match).where(Match.tournament_id == row.tournament_id)).all()
     response = build_import_response(session, row)
-    response["eventsCreated"] = len(events)
+    response["eventsCreated"] = len(sync.created)
+    response["eventsUpdated"] = len(sync.updated)
     response["matchesCreated"] = len(matches)
     response["bracketsCreated"] = False
+    response["tournamentEvents"] = [serialize_structure_event(event) for event in sync.events]
+    response["structureEventConflicts"] = sync.conflicts
     return response
