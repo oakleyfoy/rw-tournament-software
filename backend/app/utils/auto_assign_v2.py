@@ -28,6 +28,7 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.services.assignment_ownership import try_create_owned_assignment
 
 # Import V1 utilities that we reuse
 from app.utils.auto_assign import (
@@ -473,15 +474,16 @@ def auto_assign_v2(
                     }
                     conflicts_for_match.append(conflict_record)
                     continue
-                # Create assignment
-                assignment = MatchAssignment(
+                assignment = try_create_owned_assignment(
+                    session,
                     schedule_version_id=schedule_version_id,
                     match_id=match.id,
                     slot_id=slot.id,
                     assigned_by="AUTO_ASSIGN_V2",
                     assigned_at=datetime.utcnow(),
                 )
-                session.add(assignment)
+                if assignment is None:
+                    continue
 
                 # Mark slot as occupied
                 occupied_slot_ids.add(slot.id)

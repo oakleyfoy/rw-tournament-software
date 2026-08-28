@@ -32,6 +32,7 @@ from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
+from app.services.assignment_ownership import create_owned_assignment, validate_assignment_ownership
 from app.utils.courts import parse_court_names
 from app.utils.event_schedule_orders import remap_event_schedule_day_orders_json
 
@@ -1488,15 +1489,15 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             mapped_slot_id = slot_id_map.get(assignment.slot_id)
             if mapped_version_id is None or mapped_match_id is None or mapped_slot_id is None:
                 continue
-            session.add(
-                MatchAssignment(
-                    schedule_version_id=mapped_version_id,
-                    match_id=mapped_match_id,
-                    slot_id=mapped_slot_id,
-                    assigned_at=assignment.assigned_at,
-                    assigned_by=assignment.assigned_by,
-                    locked=assignment.locked,
-                )
+            create_owned_assignment(
+                session,
+                tournament_id=new_tournament.id,
+                schedule_version_id=mapped_version_id,
+                match_id=mapped_match_id,
+                slot_id=mapped_slot_id,
+                assigned_at=assignment.assigned_at,
+                assigned_by=assignment.assigned_by,
+                locked=assignment.locked,
             )
 
         cloned_assignments = session.exec(
@@ -1913,6 +1914,13 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                             session.delete(current_row)
                             continue
                         desired_slot_id, desired_at, desired_locked = desired
+                        validate_assignment_ownership(
+                            session,
+                            tournament_id=tournament_id,
+                            schedule_version_id=current_row.schedule_version_id,
+                            match_id=current_row.match_id,
+                            slot_id=desired_slot_id,
+                        )
                         current_row.slot_id = desired_slot_id
                         current_row.assigned_at = desired_at
                         current_row.assigned_by = None
@@ -1923,15 +1931,15 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                             continue
                         draft_version_id, draft_match_id = key
                         desired_slot_id, desired_at, desired_locked = desired
-                        session.add(
-                            MatchAssignment(
-                                schedule_version_id=draft_version_id,
-                                match_id=draft_match_id,
-                                slot_id=desired_slot_id,
-                                assigned_at=desired_at,
-                                assigned_by=None,
-                                locked=desired_locked,
-                            )
+                        create_owned_assignment(
+                            session,
+                            tournament_id=tournament_id,
+                            schedule_version_id=draft_version_id,
+                            match_id=draft_match_id,
+                            slot_id=desired_slot_id,
+                            assigned_at=desired_at,
+                            assigned_by=None,
+                            locked=desired_locked,
                         )
                     restored_from_public = True
 
@@ -1957,6 +1965,13 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                         # No baseline for this row means it was introduced by runtime desk operations.
                         session.delete(current_row)
                         continue
+                    validate_assignment_ownership(
+                        session,
+                        tournament_id=tournament_id,
+                        schedule_version_id=current_row.schedule_version_id,
+                        match_id=current_row.match_id,
+                        slot_id=baseline.slot_id,
+                    )
                     current_row.slot_id = baseline.slot_id
                     current_row.assigned_at = baseline.assigned_at
                     current_row.assigned_by = None
@@ -1965,15 +1980,15 @@ def start_over_tournament(tournament_id: int, session: Session = Depends(get_ses
                 for key, baseline in baseline_by_version_match.items():
                     if key in current_by_version_match:
                         continue
-                    session.add(
-                        MatchAssignment(
-                            schedule_version_id=baseline.schedule_version_id,
-                            match_id=baseline.match_id,
-                            slot_id=baseline.slot_id,
-                            assigned_at=baseline.assigned_at,
-                            assigned_by=None,
-                            locked=baseline.locked,
-                        )
+                    create_owned_assignment(
+                        session,
+                        tournament_id=tournament_id,
+                        schedule_version_id=baseline.schedule_version_id,
+                        match_id=baseline.match_id,
+                        slot_id=baseline.slot_id,
+                        assigned_at=baseline.assigned_at,
+                        assigned_by=None,
+                        locked=baseline.locked,
                     )
 
     match_locks: List[MatchLock] = []

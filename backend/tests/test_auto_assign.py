@@ -10,6 +10,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
@@ -192,11 +193,21 @@ def test_auto_assign_determinism(session: Session):
     session.commit()
     session.refresh(version)
 
+    event = Event(
+        tournament_id=tournament.id,
+        name="Auto Assign Event",
+        category=EventCategory.womens,
+        team_count=8,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
     # Create matches (WF, MAIN, CONSOLATION)
     matches = [
         Match(
             tournament_id=tournament.id,
-            event_id=1,
+            event_id=event.id,
             schedule_version_id=version.id,
             match_code="WF1",
             match_type="WF",
@@ -209,7 +220,7 @@ def test_auto_assign_determinism(session: Session):
         ),
         Match(
             tournament_id=tournament.id,
-            event_id=1,
+            event_id=event.id,
             schedule_version_id=version.id,
             match_code="QF1",
             match_type="MAIN",
@@ -222,7 +233,7 @@ def test_auto_assign_determinism(session: Session):
         ),
         Match(
             tournament_id=tournament.id,
-            event_id=1,
+            event_id=event.id,
             schedule_version_id=version.id,
             match_code="CONS1",
             match_type="CONSOLATION",
@@ -335,10 +346,20 @@ def test_auto_assign_respects_stage_ordering(session: Session):
     session.commit()
     session.refresh(version)
 
+    event = Event(
+        tournament_id=tournament.id,
+        name="Auto Assign Event",
+        category=EventCategory.womens,
+        team_count=8,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
     # Create matches in reverse order (MAIN first, WF second)
     main_match = Match(
         tournament_id=tournament.id,
-        event_id=1,
+        event_id=event.id,
         schedule_version_id=version.id,
         match_code="MAIN1",
         match_type="MAIN",
@@ -352,7 +373,7 @@ def test_auto_assign_respects_stage_ordering(session: Session):
 
     wf_match = Match(
         tournament_id=tournament.id,
-        event_id=1,
+        event_id=event.id,
         schedule_version_id=version.id,
         match_code="WF1",
         match_type="WF",

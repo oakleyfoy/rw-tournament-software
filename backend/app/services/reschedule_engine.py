@@ -25,6 +25,7 @@ from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.tournament import Tournament
+from app.services.assignment_ownership import create_owned_assignment, validate_assignment_ownership
 from app.utils.courts import court_label_for_index
 
 DAILY_CAP = 2
@@ -644,6 +645,12 @@ def apply_reschedule(
             )
         ).first()
 
+        validate_assignment_ownership(
+            session,
+            schedule_version_id=version_id,
+            match_id=match_id,
+            slot_id=new_slot_id,
+        )
         if existing:
             existing.slot_id = new_slot_id
             existing.assigned_by = "RESCHEDULE"
@@ -651,7 +658,8 @@ def apply_reschedule(
             existing.locked = True
             session.add(existing)
         else:
-            new_assign = MatchAssignment(
+            create_owned_assignment(
+                session,
                 schedule_version_id=version_id,
                 match_id=match_id,
                 slot_id=new_slot_id,
@@ -659,7 +667,6 @@ def apply_reschedule(
                 assigned_at=datetime.utcnow(),
                 locked=True,
             )
-            session.add(new_assign)
         updated += 1
 
     # Persist duration changes from scoring format compression
@@ -1407,7 +1414,8 @@ def apply_rebuild(
                     session.add(m)
                     duration_update_count += 1
 
-            assignment = MatchAssignment(
+            create_owned_assignment(
+                session,
                 schedule_version_id=version_id,
                 match_id=m.id,
                 slot_id=slot.id,
@@ -1415,7 +1423,6 @@ def apply_rebuild(
                 assigned_at=datetime.utcnow(),
                 locked=False,
             )
-            session.add(assignment)
             assigned_count += 1
             placed = True
             break

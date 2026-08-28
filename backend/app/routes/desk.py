@@ -33,6 +33,11 @@ from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.services.advancement_service import apply_advancement_with_details, resolve_all_dependencies
+from app.services.assignment_ownership import (
+    AssignmentOwnershipError,
+    create_owned_assignment,
+    validate_assignment_ownership,
+)
 from app.services.reschedule_engine import (
     RebuildDayConfig as RebuildDayConfigDC,
 )
@@ -2591,6 +2596,16 @@ def assign_ready_match_to_slot(
         session.delete(target_assignment)
         session.flush()
 
+        try:
+            validate_assignment_ownership(
+                session,
+                tournament_id=tournament_id,
+                schedule_version_id=payload.version_id,
+                match_id=selected_assignment.match_id,
+                slot_id=assigned_slot_id,
+            )
+        except AssignmentOwnershipError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         selected_assignment.slot_id = assigned_slot_id
         selected_assignment.assigned_by = "CHECKIN_DESK"
         selected_assignment.assigned_at = datetime.utcnow()
@@ -2598,18 +2613,32 @@ def assign_ready_match_to_slot(
         session.add(selected_assignment)
         session.flush()
 
-        parked_assignment = MatchAssignment(
-            schedule_version_id=payload.version_id,
-            match_id=parked_match_id,
-            slot_id=park_slot_id,
-            assigned_by="CHECKIN_PARK",
-            assigned_at=datetime.utcnow(),
-            locked=False,
-        )
-        session.add(parked_assignment)
+        try:
+            create_owned_assignment(
+                session,
+                tournament_id=tournament_id,
+                schedule_version_id=payload.version_id,
+                match_id=parked_match_id,
+                slot_id=park_slot_id,
+                assigned_by="CHECKIN_PARK",
+                assigned_at=datetime.utcnow(),
+                locked=False,
+            )
+        except AssignmentOwnershipError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         session.flush()
 
     else:
+        try:
+            validate_assignment_ownership(
+                session,
+                tournament_id=tournament_id,
+                schedule_version_id=payload.version_id,
+                match_id=selected_assignment.match_id,
+                slot_id=assigned_slot_id,
+            )
+        except AssignmentOwnershipError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         selected_assignment.slot_id = assigned_slot_id
         selected_assignment.assigned_by = "CHECKIN_DESK"
         selected_assignment.assigned_at = datetime.utcnow()
@@ -5309,6 +5338,17 @@ def move_match(
 
     previous_slot_id = existing_assignment.slot_id if existing_assignment else None
 
+    try:
+        validate_assignment_ownership(
+            session,
+            tournament_id=tournament_id,
+            schedule_version_id=payload.version_id,
+            match_id=match_id,
+            slot_id=payload.target_slot_id,
+        )
+    except AssignmentOwnershipError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if existing_assignment:
         existing_assignment.slot_id = payload.target_slot_id
         existing_assignment.assigned_by = "DESK_MOVE"
@@ -5316,7 +5356,9 @@ def move_match(
         existing_assignment.locked = True
         session.add(existing_assignment)
     else:
-        new_assignment = MatchAssignment(
+        create_owned_assignment(
+            session,
+            tournament_id=tournament_id,
             schedule_version_id=payload.version_id,
             match_id=match_id,
             slot_id=payload.target_slot_id,
@@ -5324,7 +5366,6 @@ def move_match(
             assigned_at=datetime.utcnow(),
             locked=True,
         )
-        session.add(new_assignment)
 
     session.commit()
     session.refresh(match)
@@ -5531,6 +5572,12 @@ def _repair_wf14_placement_day(
             cleared_locks += 1
 
         if a is not None:
+            validate_assignment_ownership(
+                session,
+                schedule_version_id=version_id,
+                match_id=m.id,
+                slot_id=open_slot.id,
+            )
             occupied.discard(a.slot_id)
             a.slot_id = open_slot.id
             a.assigned_by = "WF14_PLACEMENT_FIX"
@@ -5538,7 +5585,8 @@ def _repair_wf14_placement_day(
             a.locked = False
             session.add(a)
         else:
-            a = MatchAssignment(
+            a = create_owned_assignment(
+                session,
                 schedule_version_id=version_id,
                 match_id=m.id,
                 slot_id=open_slot.id,
@@ -5546,7 +5594,6 @@ def _repair_wf14_placement_day(
                 assigned_at=datetime.utcnow(),
                 locked=False,
             )
-            session.add(a)
             assign_by_match[m.id] = a
         occupied.add(open_slot.id)
         moved += 1
@@ -5675,23 +5722,29 @@ def swap_matches(
     session.delete(assign_b)
     session.flush()
 
-    new_a = MatchAssignment(
-        schedule_version_id=payload.version_id,
-        match_id=payload.match_a_id,
-        slot_id=slot_b,
-        assigned_by="DESK_SWAP",
-        assigned_at=datetime.utcnow(),
-        locked=True,
-    )
-    new_b = MatchAssignment(
-        schedule_version_id=payload.version_id,
-        match_id=payload.match_b_id,
-        slot_id=slot_a,
-        assigned_by="DESK_SWAP",
-        assigned_at=datetime.utcnow(),
-        locked=True,
-    )
-    session.add_all([new_a, new_b])
+    try:
+        create_owned_assignment(
+            session,
+            tournament_id=tournament_id,
+            schedule_version_id=payload.version_id,
+            match_id=payload.match_a_id,
+            slot_id=slot_b,
+            assigned_by="DESK_SWAP",
+            assigned_at=datetime.utcnow(),
+            locked=True,
+        )
+        create_owned_assignment(
+            session,
+            tournament_id=tournament_id,
+            schedule_version_id=payload.version_id,
+            match_id=payload.match_b_id,
+            slot_id=slot_a,
+            assigned_by="DESK_SWAP",
+            assigned_at=datetime.utcnow(),
+            locked=True,
+        )
+    except AssignmentOwnershipError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.commit()
 
     session.refresh(match_a)
