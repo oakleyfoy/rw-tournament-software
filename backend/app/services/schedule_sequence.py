@@ -31,6 +31,9 @@ from typing import Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select
 
 from app.models import Event, Match
+from app.models.tournament import Tournament
+from app.services.schedule_policy_plan import _build_rotated_event_list
+from app.utils.event_schedule_orders import parse_event_schedule_day_orders_raw
 
 # ── Phase ordering ───────────────────────────────────────────────────────
 # Maps (match_type, round_index) to a phase number.
@@ -286,8 +289,13 @@ def build_master_sequence(
     # Load events for this tournament
     tournament_id = all_matches[0].tournament_id
     events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    tournament = session.get(Tournament, tournament_id)
+    day_orders = parse_event_schedule_day_orders_raw(
+        getattr(tournament, "event_schedule_day_orders_json", None) if tournament else None
+    )
+    has_day_orders = bool(day_orders and any(len(row) > 0 for row in day_orders))
 
-    # Event ordering: explicit schedule order first, otherwise largest draw first.
+    # Fallback when no Draw Builder day lists exist: schedule_order, else largest draw.
     events_sorted = _sort_events_for_sequence(events)
 
     # Group matches by event
@@ -297,7 +305,9 @@ def build_master_sequence(
 
     # Build event phase maps (phase_number -> round data)
     event_phases: Dict[int, Dict[int, Tuple[str, int, List[Match]]]] = {}
-    for e in events_sorted:
+    for e in events:
+        if e.id is None:
+            continue
         event_phases[e.id] = _build_event_phase_map(matches_by_event.get(e.id, []))
 
     # Collect all phase numbers across all events, sorted
@@ -315,13 +325,18 @@ def build_master_sequence(
         day_rotations = _compute_day_rotations(len(team_rounds))
 
     # Build sequence: one global round per team-round.
-    # Within each team-round, rotate events based on day_rotations.
+    # Saved per-day event lists take precedence inside the current team-round.
+    # Day mapping matches placement: 2 team-rounds per day → day_index = global_round // 2.
     sequence: List[RankedMatch] = []
     rank = 1
 
     for global_round, (tr_key, phase_nums) in enumerate(team_rounds):
-        rotation = day_rotations.get(global_round, 0)
-        rotated_events = _rotate_events(events_sorted, rotation)
+        if has_day_orders:
+            day_index = global_round // 2
+            rotated_events = _build_rotated_event_list(events, day_index, day_orders)
+        else:
+            rotation = day_rotations.get(global_round, 0)
+            rotated_events = _rotate_events(events_sorted, rotation)
 
         for phase_num in phase_nums:
             for e in rotated_events:
