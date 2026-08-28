@@ -23,6 +23,11 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.services.assignment_ownership import (
+    AssignmentOwnershipError,
+    create_owned_assignment,
+    validate_assignment_ownership,
+)
 
 # Import stage precedence from auto_assign
 from app.utils.auto_assign import STAGE_PRECEDENCE
@@ -517,6 +522,16 @@ def manually_assign_match(
     ).first()
 
     if existing:
+        try:
+            validate_assignment_ownership(
+                session,
+                tournament_id=version.tournament_id,
+                schedule_version_id=schedule_version_id,
+                match_id=match_id,
+                slot_id=new_slot_id,
+            )
+        except AssignmentOwnershipError as exc:
+            raise ManualAssignmentValidationError(str(exc)) from exc
         # Update existing assignment
         existing.slot_id = new_slot_id
         existing.assigned_by = assigned_by
@@ -524,15 +539,16 @@ def manually_assign_match(
         existing.locked = True  # Mark as manual override
         session.add(existing)
         return existing
-    else:
-        # Create new assignment
-        assignment = MatchAssignment(
+    try:
+        return create_owned_assignment(
+            session,
+            tournament_id=version.tournament_id,
             schedule_version_id=schedule_version_id,
             match_id=match_id,
             slot_id=new_slot_id,
             assigned_by=assigned_by,
             assigned_at=datetime.utcnow(),
-            locked=True,  # Mark as manual override
+            locked=True,
         )
-        session.add(assignment)
-        return assignment
+    except AssignmentOwnershipError as exc:
+        raise ManualAssignmentValidationError(str(exc)) from exc

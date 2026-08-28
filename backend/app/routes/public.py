@@ -19,6 +19,7 @@ from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
+from app.services.assignment_ownership import load_owned_matches_for_version
 from app.services.draw_plan_rules import pool_config
 
 logger = logging.getLogger(__name__)
@@ -1661,7 +1662,11 @@ def public_schedule(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
-    all_matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
+    all_matches = load_owned_matches_for_version(
+        session,
+        tournament_id=tournament_id,
+        schedule_version_id=version.id,
+    )
 
     if not all_matches:
         return PublicScheduleResponse(

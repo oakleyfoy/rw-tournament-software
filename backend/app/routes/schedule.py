@@ -22,6 +22,12 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_time_window import TournamentTimeWindow
+from app.services.assignment_ownership import (
+    AssignmentOwnershipError,
+    create_owned_assignment,
+    load_owned_matches_for_version,
+    partition_owned_assignments,
+)
 from app.services.slot_verification import build_slot_verification
 from app.utils.conflict_report import (
     ConflictReportSummary,
@@ -804,14 +810,16 @@ def _clone_final_to_draft(tournament_id: int, version_id: int, session: Session)
     ).all()
 
     for assignment in source_assignments:
-        new_assignment = MatchAssignment(
+        create_owned_assignment(
+            session,
+            tournament_id=new_version.tournament_id,
             schedule_version_id=new_version.id,
             slot_id=slot_id_map[assignment.slot_id],
             match_id=match_id_map[assignment.match_id],
-            locked=assignment.locked,  # Preserve locked flag for manual editor
-            assigned_by=assignment.assigned_by,  # Preserve assignment source
+            locked=assignment.locked,
+            assigned_by=assignment.assigned_by,
+            assigned_at=assignment.assigned_at,
         )
-        session.add(new_assignment)
 
     session.commit()
     session.refresh(new_version)
@@ -2044,10 +2052,16 @@ def create_assignment(tournament_id: int, data: AssignmentCreate, session: Sessi
                 )
 
     # Create assignment
-    assignment = MatchAssignment(
-        schedule_version_id=data.schedule_version_id, match_id=data.match_id, slot_id=data.slot_id
-    )
-    session.add(assignment)
+    try:
+        assignment = create_owned_assignment(
+            session,
+            tournament_id=tournament_id,
+            schedule_version_id=data.schedule_version_id,
+            match_id=data.match_id,
+            slot_id=data.slot_id,
+        )
+    except AssignmentOwnershipError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Update match status
     match.status = "scheduled"
@@ -2607,6 +2621,7 @@ class ScheduleGridV1(BaseModel):
     conflicts_summary: Optional[ConflictReportSummary] = None
     match_locks: List[GridMatchLock] = []
     slot_locks: List[GridSlotLock] = []
+    ownership_issues: List[str] = []
 
 
 @router.get("/tournaments/{tournament_id}/schedule/grid", response_model=ScheduleGridV1)
@@ -2662,10 +2677,11 @@ def get_schedule_grid(
         )
 
     # ========================================================================
-    # Fetch assignments
+    # Fetch assignments (version-scoped, then ownership-filtered)
     # ========================================================================
     assignment_query = select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
-    assignments = session.exec(assignment_query).all()
+    raw_assignments = session.exec(assignment_query).all()
+    assignments, ownership_issues = partition_owned_assignments(session, raw_assignments, tournament_id)
 
     # ========================================================================
     # Fetch locks
@@ -2690,12 +2706,13 @@ def get_schedule_grid(
     grid_slot_locks = [GridSlotLock(slot_id=sl.slot_id, status=sl.status) for sl in s_locks]
 
     # ========================================================================
-    # Fetch matches
+    # Fetch matches (version + tournament + event ownership)
     # ========================================================================
-    match_query = select(Match).where(
-        Match.tournament_id == tournament_id, Match.schedule_version_id == schedule_version_id
+    matches = load_owned_matches_for_version(
+        session,
+        tournament_id=tournament_id,
+        schedule_version_id=schedule_version_id,
     )
-    matches = session.exec(match_query).all()
 
     # Build grid matches
     grid_matches = []
@@ -2771,6 +2788,7 @@ def get_schedule_grid(
         conflicts_summary=conflicts_summary,
         match_locks=grid_match_locks,
         slot_locks=grid_slot_locks,
+        ownership_issues=ownership_issues,
     )
 
 
@@ -3937,15 +3955,19 @@ def run_full_policy(
                     status_code=409,
                     detail=f"Match lock conflict: match {ml.match_id} locked to slot {ml.slot_id} which is blocked",
                 )
-            assignment = MatchAssignment(
-                schedule_version_id=version_id,
-                match_id=ml.match_id,
-                slot_id=ml.slot_id,
-                assigned_at=datetime.utcnow(),
-                assigned_by="MATCH_LOCK",
-                locked=True,
-            )
-            session.add(assignment)
+            try:
+                create_owned_assignment(
+                    session,
+                    tournament_id=tournament_id,
+                    schedule_version_id=version_id,
+                    match_id=ml.match_id,
+                    slot_id=ml.slot_id,
+                    assigned_at=datetime.utcnow(),
+                    assigned_by="MATCH_LOCK",
+                    locked=True,
+                )
+            except AssignmentOwnershipError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         if match_locks:
             session.flush()
 

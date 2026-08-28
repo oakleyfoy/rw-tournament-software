@@ -25,6 +25,7 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
+from app.services.assignment_ownership import try_create_owned_assignment
 
 # Stage precedence mapping (hard-coded, authoritative)
 # WF=1, RR=2 (pools), MAIN=3 (brackets), CONSOLATION=4, PLACEMENT=5
@@ -544,15 +545,18 @@ def auto_assign_v1(session: Session, schedule_version_id: int, clear_existing: b
                     if failure_reason == "NO_COMPATIBLE_SLOT":
                         failure_reason = round_deps_reason or "ROUND_DEPENDENCY_VIOLATION"
                     continue
-                # Create assignment
-                assignment = MatchAssignment(
+                assignment = try_create_owned_assignment(
+                    session,
                     schedule_version_id=schedule_version_id,
                     match_id=match.id,
                     slot_id=slot.id,
                     assigned_by="AUTO_ASSIGN_V1",
                     assigned_at=datetime.utcnow(),
                 )
-                session.add(assignment)
+                if assignment is None:
+                    if failure_reason == "NO_COMPATIBLE_SLOT":
+                        failure_reason = "OWNERSHIP_MISMATCH"
+                    continue
 
                 # Mark slot as occupied
                 occupied_slot_ids.add(slot.id)
@@ -756,14 +760,18 @@ def assign_with_scope(
                     if failure_reason == "NO_COMPATIBLE_SLOT":
                         failure_reason = round_deps_reason or "ROUND_DEPENDENCY_VIOLATION"
                     continue
-                assignment = MatchAssignment(
+                assignment = try_create_owned_assignment(
+                    session,
                     schedule_version_id=schedule_version_id,
                     match_id=match.id,
                     slot_id=slot.id,
                     assigned_by="ASSIGN_SCOPE_V1",
                     assigned_at=datetime.utcnow(),
                 )
-                session.add(assignment)
+                if assignment is None:
+                    if failure_reason == "NO_COMPATIBLE_SLOT":
+                        failure_reason = "OWNERSHIP_MISMATCH"
+                    continue
                 occupied_slot_ids.add(slot.id)
                 assigned_match_ids.add(match.id)
                 result.assigned_count += 1
@@ -931,14 +939,18 @@ def assign_by_match_ids(
                     if failure_reason == "NO_COMPATIBLE_SLOT":
                         failure_reason = round_deps_reason or "ROUND_DEPENDENCY_VIOLATION"
                     continue
-                assignment = MatchAssignment(
+                assignment = try_create_owned_assignment(
+                    session,
                     schedule_version_id=schedule_version_id,
                     match_id=match.id,
                     slot_id=slot.id,
                     assigned_by="ASSIGN_SUBSET_V1",
                     assigned_at=datetime.utcnow(),
                 )
-                session.add(assignment)
+                if assignment is None:
+                    if failure_reason == "NO_COMPATIBLE_SLOT":
+                        failure_reason = "OWNERSHIP_MISMATCH"
+                    continue
                 occupied_slot_ids.add(slot.id)
                 local_assigned_ids.add(match.id)
                 result.assigned_count += 1

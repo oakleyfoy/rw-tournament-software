@@ -25,6 +25,7 @@ from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
+from app.services.assignment_ownership import try_create_owned_assignment
 
 # ============================================================================
 # Stage Precedence (matches must be processed in this order)
@@ -715,9 +716,15 @@ def auto_assign_with_rest(
                 else:
                     preferred_day_misses += 1
 
-            # Create assignment
-            assignment = MatchAssignment(schedule_version_id=schedule_version_id, match_id=match.id, slot_id=slot.id)
-            session.add(assignment)
+            assignment = try_create_owned_assignment(
+                session,
+                schedule_version_id=schedule_version_id,
+                match_id=match.id,
+                slot_id=slot.id,
+            )
+            if assignment is None:
+                assigned = False
+                continue
             occupied_slot_ids.add(slot.id)
             assigned = True
             assigned_count += 1

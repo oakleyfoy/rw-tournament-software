@@ -24,6 +24,7 @@ Day assignment:
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -31,9 +32,13 @@ from typing import Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select
 
 from app.models import Event, Match
+from app.models.schedule_version import ScheduleVersion
 from app.models.tournament import Tournament
+from app.services.assignment_ownership import load_owned_matches_for_version, try_create_owned_assignment
 from app.services.schedule_policy_plan import _build_rotated_event_list
 from app.utils.event_schedule_orders import parse_event_schedule_day_orders_raw
+
+logger = logging.getLogger(__name__)
 
 # ── Phase ordering ───────────────────────────────────────────────────────
 # Maps (match_type, round_index) to a phase number.
@@ -264,6 +269,8 @@ def build_master_sequence(
     session: Session,
     schedule_version_id: int,
     day_rotations: Optional[Dict[int, int]] = None,
+    *,
+    tournament_id: Optional[int] = None,
 ) -> List[RankedMatch]:
     """
     Build the master match sequence for a schedule version.
@@ -273,11 +280,35 @@ def build_master_sequence(
             to event rotation offset.  If None, auto-computed from
             the number of team-rounds found in the match data
             (2 team-rounds per day, rotation increments each day).
+        tournament_id: required owner for candidate matches. If omitted,
+            taken from the schedule version. Never inferred from an
+            arbitrary match row.
 
     Returns a list of RankedMatch objects, ranked 1..N.
     """
-    # Load matches
-    all_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
+    version = session.get(ScheduleVersion, schedule_version_id)
+    if version is None:
+        logger.error("build_master_sequence: schedule version %s not found", schedule_version_id)
+        return []
+
+    requested_tid = tournament_id if tournament_id is not None else version.tournament_id
+    if requested_tid is None:
+        logger.error("build_master_sequence: version %s has no tournament_id", schedule_version_id)
+        return []
+    if version.tournament_id != requested_tid:
+        logger.error(
+            "build_master_sequence: refusing version %s (tournament_id=%s) for requested tournament_id=%s",
+            schedule_version_id,
+            version.tournament_id,
+            requested_tid,
+        )
+        return []
+
+    all_matches = load_owned_matches_for_version(
+        session,
+        tournament_id=requested_tid,
+        schedule_version_id=schedule_version_id,
+    )
     if not all_matches:
         return []
 
@@ -286,8 +317,8 @@ def build_master_sequence(
     if not all_matches:
         return []
 
-    # Load events for this tournament
-    tournament_id = all_matches[0].tournament_id
+    # Load events for the requested tournament only.
+    tournament_id = requested_tid
     events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     tournament = session.get(Tournament, tournament_id)
     day_orders = parse_event_schedule_day_orders_raw(
@@ -402,12 +433,14 @@ def place_matches_into_slots(
     # ── Load slots grouped by day and time ───────────────────────────
     # Policy sequence uses every active court, including extra/manual-only slots
     # from Days & Courts (courts_available + extra_courts).
-    all_slots = session.exec(
-        select(ScheduleSlot).where(
-            ScheduleSlot.schedule_version_id == schedule_version_id,
-            ScheduleSlot.is_active,
-        )
-    ).all()
+    place_version = session.get(ScheduleVersion, schedule_version_id)
+    slot_filters = [
+        ScheduleSlot.schedule_version_id == schedule_version_id,
+        ScheduleSlot.is_active,
+    ]
+    if place_version is not None:
+        slot_filters.append(ScheduleSlot.tournament_id == place_version.tournament_id)
+    all_slots = session.exec(select(ScheduleSlot).where(*slot_filters)).all()
 
     # Group by day
     slots_by_day: Dict[object, List] = defaultdict(list)
@@ -435,7 +468,9 @@ def place_matches_into_slots(
         day_usable.append((day, usable, time_info))
 
     # ── Build master sequence (auto-computes rotations) ────────────
-    seq = build_master_sequence(session, schedule_version_id, None)
+    version = session.get(ScheduleVersion, schedule_version_id)
+    seq_tournament_id = version.tournament_id if version is not None else None
+    seq = build_master_sequence(session, schedule_version_id, None, tournament_id=seq_tournament_id)
 
     # ── Dynamic day-round boundaries ─────────────────────────────────
     # Discover team-rounds from the sequence, pair 2 per day.
@@ -595,12 +630,32 @@ def run_sequence_schedule(
     import time as _time
     from datetime import datetime
 
-    from app.models import MatchAssignment, ScheduleSlot
+    from app.models import ScheduleSlot
 
     t0 = _time.monotonic()
 
     _locked = locked_match_ids or set()
     _blocked = blocked_slot_ids or set()
+
+    version = session.get(ScheduleVersion, schedule_version_id)
+    if version is None or version.tournament_id != tournament_id:
+        logger.error(
+            "run_sequence_schedule: refusing version %s for tournament %s",
+            schedule_version_id,
+            tournament_id,
+        )
+
+        class _Refused:
+            pass
+
+        r = _Refused()
+        r.total_assigned = 0
+        r.total_failed = 0
+        r.total_reserved_spares = 0
+        r.duration_ms = 0
+        r.day_results = []
+        r.failed_matches = []
+        return r
 
     # ── Load all active slots (excluding blocked), including manual-only extras ──
     all_slots = [
@@ -608,6 +663,7 @@ def run_sequence_schedule(
         for s in session.exec(
             select(ScheduleSlot).where(
                 ScheduleSlot.schedule_version_id == schedule_version_id,
+                ScheduleSlot.tournament_id == tournament_id,
                 ScheduleSlot.is_active,
             )
         ).all()
@@ -644,7 +700,7 @@ def run_sequence_schedule(
     # ── Build master sequence (auto-computes rotations) ──────────────
     # Pass None so build_master_sequence discovers team-rounds from
     # the match data and auto-computes rotations.
-    seq = build_master_sequence(session, schedule_version_id, None)
+    seq = build_master_sequence(session, schedule_version_id, None, tournament_id=tournament_id)
 
     # Remove locked matches — they are already pre-assigned
     if _locked:
@@ -729,14 +785,23 @@ def run_sequence_schedule(
             slot = slot_queue[slot_cursor]
             rm = pool[pool_idx]
 
-            assignment = MatchAssignment(
+            assignment = try_create_owned_assignment(
+                session,
+                tournament_id=tournament_id,
                 schedule_version_id=schedule_version_id,
                 match_id=rm.match_id,
                 slot_id=slot.id,
                 assigned_at=datetime.utcnow(),
                 assigned_by="SEQUENCE_V1",
             )
-            session.add(assignment)
+            if assignment is None:
+                logger.error(
+                    "run_sequence_schedule: skipped match %s for slot %s (ownership rejected)",
+                    rm.match_id,
+                    slot.id,
+                )
+                pool_idx += 1
+                continue
             batch_summary[f"{rm.event_name} {rm.round_label}"] += 1
             placed += 1
             slot_cursor += 1
