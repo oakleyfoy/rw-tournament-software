@@ -51,6 +51,7 @@ REQUIRED_TEAM_COLUMNS: List[Tuple[str, str, str]] = [
     ("p1_email", "TEXT", "TEXT"),
     ("p2_cell", "TEXT", "TEXT"),
     ("p2_email", "TEXT", "TEXT"),
+    ("source_team_key", "TEXT", "TEXT"),
 ]
 
 # Columns we must ensure exist in the "sms_log" table.
@@ -92,6 +93,9 @@ REQUIRED_TEMPORARY_PLAYER_LOOKUP_COLUMNS: List[Tuple[str, str, str]] = [
     ("normalized_email", "TEXT", "TEXT"),
     ("towel_color", "TEXT", "TEXT"),
     ("report_url", "TEXT", "TEXT"),
+    ("source", "TEXT", "TEXT"),
+    ("source_team_key", "TEXT", "TEXT"),
+    ("lineup_slot", "INTEGER", "INTEGER"),
     ("created_at", "TIMESTAMP", "TIMESTAMP"),
     ("updated_at", "TIMESTAMP", "TIMESTAMP"),
 ]
@@ -313,11 +317,26 @@ def ensure_team_columns(engine: Engine) -> None:
                         continue
                     default = " DEFAULT FALSE" if name == "is_defaulted" else ""
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type}{default};"))
+        _ensure_team_source_key_unique(engine)
     except Exception as e:
         import logging
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure team columns (this is OK if table doesn't exist yet): {e}")
+
+
+def _ensure_team_source_key_unique(engine: Engine) -> None:
+    """UNIQUE (event_id, source_team_key) — multiple NULLs remain allowed."""
+    if _is_sqlite(engine):
+        with engine.begin() as conn:
+            conn.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS uq_event_source_team_key ON team (event_id, source_team_key)")
+            )
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_event_source_team_key ON team (event_id, source_team_key)")
+        )
 
 
 def ensure_sms_log_columns(engine: Engine) -> None:
@@ -501,11 +520,34 @@ def ensure_temporary_player_lookup_columns(engine: Engine) -> None:
                     if name in existing:
                         continue
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type};"))
+        _ensure_rwos_lookup_source_identity_unique(engine)
     except Exception as e:
         import logging
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure temporary_player_lookup columns (this is OK if table doesn't exist yet): {e}")
+
+
+def _ensure_rwos_lookup_source_identity_unique(engine: Engine) -> None:
+    """Partial unique identity for RW-OS towel rows; source=NULL rows stay unconstrained."""
+    if _is_sqlite(engine):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_rwos_lookup_source_identity "
+                    "ON temporary_player_lookup (tournament_id, source, source_team_key, lineup_slot) "
+                    "WHERE source IS NOT NULL"
+                )
+            )
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_rwos_lookup_source_identity "
+                "ON temporary_player_lookup (tournament_id, source, source_team_key, lineup_slot) "
+                "WHERE source IS NOT NULL"
+            )
+        )
 
 
 def ensure_sms_phone_list_columns(engine: Engine) -> None:
@@ -684,21 +726,31 @@ def ensure_schedule_slot_columns(engine: Engine) -> None:
 
 
 def ensure_tournament_import_columns(engine: Engine) -> None:
-    """Add forecast_json to tournament_import when the table already exists."""
+    """Add forecast_json / approved_source_hash to tournament_import when missing."""
     try:
         table = "tournament_import"
+        required = (
+            ("forecast_json", "TEXT"),
+            ("approved_source_hash", "TEXT"),
+        )
         if _is_sqlite(engine):
             existing = _get_existing_columns_sqlite(engine, table)
-            if not existing or "forecast_json" in existing:
+            if not existing:
                 return
             with engine.begin() as conn:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN forecast_json TEXT DEFAULT NULL;"))
+                for name, sqlite_type in required:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type} DEFAULT NULL;"))
             return
         existing = _get_existing_columns_postgres(engine, table)
-        if not existing or "forecast_json" in existing:
+        if not existing:
             return
         with engine.begin() as conn:
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS forecast_json TEXT DEFAULT NULL;"))
+            for name, pg_type in required:
+                if name in existing:
+                    continue
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type};"))
     except Exception as exc:
         import logging
 

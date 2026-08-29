@@ -27,14 +27,37 @@ from app.services.rw_os_client import RwOsClient
 from app.services.structure_events import serialize_structure_event
 
 
+def _structural_player(payload: dict[str, Any] | None) -> dict[str, Any]:
+    player = payload or {}
+    return {
+        "rwId": player.get("rwId") or player.get("rw_id") or "",
+        "rating": player.get("rating"),
+    }
+
+
+def _structural_team(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "teamKey": payload.get("teamKey") or payload.get("team_key") or "",
+        "drawKind": payload.get("drawKind") or payload.get("draw_kind") or "",
+        "status": payload.get("status") or "",
+        "bucket": payload.get("bucket") or "",
+        "teamRating": payload.get("teamRating") if "teamRating" in payload else payload.get("team_rating"),
+        "ratingStatus": payload.get("ratingStatus") or payload.get("rating_status") or "",
+        "player1": _structural_player(payload.get("player1") if isinstance(payload.get("player1"), dict) else {}),
+        "player2": _structural_player(payload.get("player2") if isinstance(payload.get("player2"), dict) else {}),
+    }
+
+
 def snapshot_hash(payload: dict[str, Any]) -> str:
     canonical = json.dumps(
         {
             "tournamentId": payload.get("tournamentId"),
             "updatedAt": payload.get("updatedAt"),
             "version": payload.get("version"),
-            "teams": payload.get("teams") or [],
-            "waitlistTeams": payload.get("waitlistTeams") or [],
+            "teams": [_structural_team(team) for team in payload.get("teams") or [] if isinstance(team, dict)],
+            "waitlistTeams": [
+                _structural_team(team) for team in payload.get("waitlistTeams") or [] if isinstance(team, dict)
+            ],
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -210,6 +233,32 @@ def create_import_from_event(
     return persist_snapshot(session, payload, organization_slug=organization_slug)
 
 
+def _approved_plans(session: Session, import_row: TournamentImport) -> list[TournamentDrawPlan]:
+    return list(
+        session.exec(
+            select(TournamentDrawPlan).where(
+                TournamentDrawPlan.import_id == import_row.id,
+                TournamentDrawPlan.approved == True,  # noqa: E712
+            )
+        ).all()
+    )
+
+
+def _project_operational_refresh(session: Session, import_row: TournamentImport) -> None:
+    from app.services.rw_os_roster_projection import project_approved_roster
+
+    plans = _approved_plans(session, import_row)
+    if not plans:
+        return
+    project_approved_roster(
+        session,
+        import_row,
+        plans,
+        operational_only=True,
+        allow_structural_rebuild=False,
+    )
+
+
 def persist_snapshot(
     session: Session,
     payload: dict[str, Any],
@@ -267,17 +316,21 @@ def persist_snapshot(
     existing.source_updated_at = payload.get("updatedAt")
     existing.source_version = payload.get("version")
     existing.source_team_count = len(team_payload)
+    previous_hash = existing.source_hash
     existing.source_hash = source_hash
     existing.snapshot_json = json.dumps(team_payload)
     existing.waitlist_json = json.dumps(waitlist_payload)
     existing.validation_status = "needs_attention" if issues else "ok"
     existing.validation_issues_json = json.dumps(issues)
     existing.updated_at = datetime.utcnow()
-    if existing.plan_status == "approved":
+    structural_changed = previous_hash != source_hash
+    if existing.plan_status == "approved" and structural_changed:
         existing.plan_status = "stale"
     session.add(existing)
     session.commit()
     session.refresh(existing)
+    if existing.plan_status == "approved" and not structural_changed:
+        _project_operational_refresh(session, existing)
     return existing
 
 
@@ -436,6 +489,7 @@ def select_draw_structure(
     if approve:
         import_row.plan_status = "approved"
         import_row.approved_at = now
+        import_row.approved_source_hash = import_row.source_hash
     else:
         import_row.plan_status = "planned"
     import_row.updated_at = now
@@ -455,6 +509,7 @@ def approve_structures(
         plans.append(select_draw_structure(session, import_row, draw_kind, option_key, approve=True))
     import_row.plan_status = "approved"
     import_row.approved_at = datetime.utcnow()
+    import_row.approved_source_hash = import_row.source_hash
     session.add(import_row)
     session.commit()
     session.refresh(import_row)

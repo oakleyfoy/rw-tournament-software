@@ -1758,7 +1758,7 @@ function DrawBuilder() {
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
             placeholder={
-              "Seed\tWho knows who\tFirst names team\tFull name, city, state team\tDraw\tLevel\ttowel color first player\tcellphone first player\temail first player\ttowel color second player\tcellphone second player\temail second player\n1\tB\tAlex / Torrie\tAlex Quiros, PA / Torrie Kline, PA\tWomens\t8.5\tBlue\t8123612060\talex@mail.com\tPink\t6109696386\ttorrie@mail.com\n2\tA\tJeni / Marina\tJeni Dao, TX / Marina Wang, TX\tMixed\t8.5\tGreen\t2819199929\tjeni@mail.com\tYellow\t7133068878\tmarina@mail.com"
+              "Seed\tWho knows who\tFirst names team\tFull name, city, state team\tDraw\tLevel\tRW_ID first player\tRW_ID second player\ttowel color first player\tcellphone first player\temail first player\ttowel color second player\tcellphone second player\temail second player\n1\tB\tAlex / Torrie\tAlex Quiros, PA / Torrie Kline, PA\tWomens\t8.5\t11\t22\tBlue\t8123612060\talex@mail.com\tPink\t6109696386\ttorrie@mail.com\n2\tA\tJeni / Marina\tJeni Dao, TX / Marina Wang, TX\tMixed\t8.5\t33\t44\tGreen\t2819199929\tjeni@mail.com\tYellow\t7133068878\tmarina@mail.com"
             }
             style={{
               width: '100%',
@@ -1783,7 +1783,7 @@ function DrawBuilder() {
             </button>
             <span style={{ fontSize: 11, color: '#888' }}>
               Uses `Seed`, `Who knows who`, `First names team`, `Full name, city, state team`, `Draw`, `Level`,
-              and both players&apos; towel/cell/email columns.
+              optional `RW_ID first player` / `RW_ID second player`, and both players&apos; towel/cell/email columns.
             </span>
           </div>
           <div style={{ marginTop: 12, fontSize: 12, color: '#666', lineHeight: 1.5 }}>
