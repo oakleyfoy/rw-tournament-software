@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 from app.models.event import Event
 from app.models.match import Match
 from app.models.schedule_version import ScheduleVersion
+from app.services.structure_events import event_protection_reason
 
 
 def _import_tournament(client: TestClient, source_id: int = 244) -> dict:
@@ -224,3 +225,127 @@ def test_g_incompatible_change_does_not_mutate_event_with_matches(client: TestCl
     assert approved["structureEventConflicts"][0]["requestedTeamCount"] == 20
     assert {event.name for event in events} == {"Women's A", "Women's B"}
     assert next(event for event in events if event.name == "Women's B").team_count == 24
+    assert approved["structureEventConflicts"][0]["reason"] == "event has generated draw"
+
+
+def _add_match(
+    session: Session,
+    tournament_id: int,
+    event_id: int,
+    *,
+    team_a_id: int | None = None,
+    status: str = "unscheduled",
+    match_code: str = "MAIN_01",
+) -> Match:
+    version = ScheduleVersion(tournament_id=tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    match = Match(
+        tournament_id=tournament_id,
+        event_id=event_id,
+        schedule_version_id=version.id,
+        match_code=match_code,
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        placeholder_side_a="TBD",
+        placeholder_side_b="TBD",
+        team_a_id=team_a_id,
+        status=status,
+    )
+    session.add(match)
+    session.commit()
+    session.refresh(match)
+    return match
+
+
+def test_clean_reapprove_updates_womens_ab_team_counts(client: TestClient, session: Session):
+    created = _import_tournament(client)
+    import_id = created["import"]["id"]
+    tournament_id = created["import"]["tournamentId"]
+    first = _approve_custom_womens(client, import_id, [20, 24])
+    assert first["projectionOk"] is True
+    assert session.exec(select(Match).where(Match.tournament_id == tournament_id)).all() == []
+    events = {event.name: event for event in session.exec(select(Event).where(Event.tournament_id == tournament_id))}
+    assert events["Women's A"].team_count == 20
+    assert events["Women's B"].team_count == 24
+
+    second = _approve_custom_womens(client, import_id, [24, 20])
+    session.expire_all()
+    events = {event.name: event for event in session.exec(select(Event).where(Event.tournament_id == tournament_id))}
+    assert second["structureEventConflicts"] == []
+    assert events["Women's A"].team_count == 24
+    assert events["Women's B"].team_count == 20
+    assert session.exec(select(Match).where(Match.tournament_id == tournament_id)).all() == []
+
+
+def test_protection_is_scoped_per_event_and_tournament(client: TestClient, session: Session):
+    created = _import_tournament(client)
+    tournament_id = created["import"]["tournamentId"]
+    first = _approve_custom_womens(client, created["import"]["id"], [20, 24])
+    assert first["matchesCreated"] == 0
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    event_b = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's B")).first()
+    _add_match(session, tournament_id, event_a.id, team_a_id=None, status="scheduled")
+
+    other = client.post(
+        "/api/tournaments",
+        json={
+            "name": "Other Tournament",
+            "location": "Elsewhere",
+            "timezone": "America/New_York",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-02",
+        },
+    )
+    other_id = other.json()["id"]
+    foreign_event = client.post(
+        f"/api/tournaments/{other_id}/events",
+        json={"category": "womens", "name": "Women's A", "team_count": 8},
+    )
+    _add_match(session, other_id, foreign_event.json()["id"], status="scheduled", match_code="FOREIGN_01")
+    leaked = Match(
+        tournament_id=other_id,
+        event_id=event_b.id,
+        schedule_version_id=session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == other_id))
+        .first()
+        .id,
+        match_code="LEAK_01",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=90,
+        placeholder_side_a="TBD",
+        placeholder_side_b="TBD",
+        status="scheduled",
+    )
+    session.add(leaked)
+    session.commit()
+    session.refresh(event_a)
+    session.refresh(event_b)
+
+    assert event_protection_reason(session, event_a) == "event already has matches"
+    assert event_protection_reason(session, event_b) is None
+
+
+def test_placeholder_only_match_does_not_protect_clean_event(client: TestClient, session: Session):
+    created = _import_tournament(client)
+    import_id = created["import"]["id"]
+    tournament_id = created["import"]["tournamentId"]
+    _approve_custom_womens(client, import_id, [20, 24])
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    _add_match(session, tournament_id, event_a.id)
+    session.refresh(event_a)
+    assert event_a.draw_status == "not_started"
+    assert not (event_a.draw_plan_json or "").strip()
+    assert event_protection_reason(session, event_a) is None
+
+    approved = _approve_custom_womens(client, import_id, [24, 20])
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert approved["structureEventConflicts"] == []
+    assert event_a.team_count == 24

@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from app.models.event import Event, EventCategory
 from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
 from app.models.tournament_import import TournamentDrawPlan
 
 STRUCTURE_NOTES_PREFIX = "Approved structure:"
@@ -102,15 +103,44 @@ def _notes_are_structure_generated(notes: Optional[str]) -> bool:
     return not text or text.startswith(STRUCTURE_NOTES_PREFIX)
 
 
+def _owned_event_matches(session: Session, event: Event) -> list[Match]:
+    """Match rows that belong to this Event and this Tournament only."""
+    if event.id is None or event.tournament_id is None:
+        return []
+    return list(
+        session.exec(
+            select(Match).where(
+                Match.event_id == event.id,
+                Match.tournament_id == event.tournament_id,
+            )
+        ).all()
+    )
+
+
+def _match_has_generated_draw_activity(session: Session, match: Match) -> bool:
+    """True for a real generated/live match, not an empty unscheduled scaffold row."""
+    if match.team_a_id or match.team_b_id or match.winner_team_id:
+        return True
+    if (match.status or "unscheduled").strip() != "unscheduled":
+        return True
+    if (match.runtime_status or "SCHEDULED").strip() != "SCHEDULED":
+        return True
+    if match.started_at or match.completed_at or match.score_json:
+        return True
+    if match.id is None:
+        return False
+    assignment = session.exec(select(MatchAssignment.id).where(MatchAssignment.match_id == match.id)).first()
+    return assignment is not None
+
+
 def event_protection_reason(session: Session, event: Event) -> Optional[str]:
-    match_id = session.exec(select(Match.id).where(Match.event_id == event.id).limit(1)).first()
-    if match_id is not None:
-        return "event already has matches"
     if (event.draw_plan_json or "").strip():
-        return "event already has a draw plan"
+        return "event has generated draw"
     status = (event.draw_status or "not_started").strip()
     if status != "not_started":
-        return "event draw is already in progress or finalized"
+        return "event has active draw state"
+    if any(_match_has_generated_draw_activity(session, match) for match in _owned_event_matches(session, event)):
+        return "event already has matches"
     return None
 
 
