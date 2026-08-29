@@ -1635,7 +1635,9 @@ function TournamentSetup() {
               placeholder="e.g., 1,2,3,4,5 or A,B,C,D,E"
             />
             <div style={{ fontSize: '12px', color: 'var(--theme-text)', marginTop: '4px', opacity: 0.7 }}>
-              Enter the names/numbers/letters for your courts. Leave empty to use default numbering (1, 2, 3...)
+              Master inventory of physical court labels for the whole tournament. Time windows decide how many of
+              these courts are used in each period. Extra labels are kept; they do not have to match the largest
+              window. Leave empty to use default numbering (1, 2, 3…).
             </div>
             
             {/* Validation Warnings */}
@@ -1663,8 +1665,8 @@ function TournamentSetup() {
                 seen.add(label)
               })
               
-              // Check count mismatch
-              const countMismatch = courtNames.length > 0 && maxCourts > 0 && courtNames.length !== maxCourts
+              // Master list may be larger than any single period. Warn only when it cannot cover the peak.
+              const notEnoughLabels = courtNames.length > 0 && maxCourts > 0 && courtNames.length < maxCourts
               
               return (
                 <>
@@ -1682,7 +1684,7 @@ function TournamentSetup() {
                     </div>
                   )}
                   
-                  {countMismatch && (
+                  {notEnoughLabels && (
                     <div style={{ 
                       marginTop: '8px', 
                       padding: '8px 12px', 
@@ -1692,7 +1694,7 @@ function TournamentSetup() {
                       fontSize: '13px',
                       color: '#856404'
                     }}>
-                      ⚠️ Court labels count ({courtNames.length}) does not match maximum court count ({maxCourts}). Missing labels will be auto-filled when generating slots.
+                      ⚠️ Court labels ({courtNames.length}) are fewer than the largest simultaneous court requirement ({maxCourts}). Add more labels so the busiest period can be filled.
                     </div>
                   )}
                   
