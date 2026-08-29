@@ -134,18 +134,24 @@ def _seed_available(session: Session, event_id: int, seed: int, team_id: Optiona
 
 
 def _release_projected_seeds(session: Session, tournament_id: int) -> None:
-    """Drop source-backed seeds before rematch so UNIQUE (event_id, seed) cannot collide."""
+    """Park source-backed seed/name keys before rematch so UNIQUE (event_id, seed|name) cannot collide."""
     rows = session.exec(
         select(Team).join(Event).where(Event.tournament_id == tournament_id, Team.source_team_key.is_not(None))
     ).all()
-    changed = False
+    touched = False
     for team in rows:
-        if team.seed is None:
-            continue
-        team.seed = None
-        session.add(team)
-        changed = True
-    if changed:
+        dirty = False
+        if team.seed is not None:
+            team.seed = None
+            dirty = True
+        parked_name = f"__rwos_move_{team.id}"
+        if team.id and team.name != parked_name:
+            team.name = parked_name
+            dirty = True
+        if dirty:
+            session.add(team)
+            touched = True
+    if touched:
         session.flush()
 
 
@@ -439,6 +445,8 @@ def project_approved_roster(
                     touched_teams.append(existing)
                     continue
                 existing.seed = None
+                if existing.id:
+                    existing.name = f"__rwos_move_{existing.id}"
                 existing.event_id = event.id
 
             if existing is None:

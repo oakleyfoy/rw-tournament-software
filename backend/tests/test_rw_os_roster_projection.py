@@ -22,6 +22,7 @@ from app.services.rw_os_roster_projection import (
     RWOS_LOOKUP_SOURCE,
     project_approved_roster,
 )
+from app.services.structure_events import event_protection_reason
 
 
 def _player(
@@ -812,3 +813,67 @@ def test_protected_event_allows_operational_contact_and_towel_updates(client: Te
         )
     ).first()
     assert towel.towel_color == "Orange"
+
+
+def test_approve_clean_import_creates_no_matches_and_projects_roster(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 926, teams)
+    body = _approve(client, imported.id, {"womens": "8"})
+    assert body["projectionOk"] is True
+    assert body["matchesCreated"] == 0
+    assert body["rosterProjection"]["created"]["teams"] == 8
+    assert body["rosterProjection"]["created"]["towelRows"] == 16
+    assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).first()
+    assert event_protection_reason(session, event) is None
+
+
+def test_placeholder_match_does_not_block_roster_projection(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 927, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).first()
+    version = ScheduleVersion(tournament_id=imported.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    session.add(
+        Match(
+            tournament_id=imported.tournament_id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="SCAFFOLD_01",
+            match_type="MAIN",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=90,
+            placeholder_side_a="TBD",
+            placeholder_side_b="TBD",
+        )
+    )
+    session.commit()
+    session.refresh(event)
+    assert event_protection_reason(session, event) is None
+    body = _approve(client, imported.id, {"womens": "8"})
+    assert body["projectionOk"] is True
+    assert body["structureEventConflicts"] == []
+    assert len(_teams_by_key(session, imported.tournament_id)) == 8
+
+
+def test_generated_draw_still_blocks_structural_projection(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 928, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).first()
+    event.draw_plan_json = '{"template_type":"WF_8"}'
+    event.draw_status = "generated"
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    assert event_protection_reason(session, event) == "event has generated draw"
+    body = _approve(client, imported.id, {"womens": "8"})
+    assert body["structureEventConflicts"] == []
+    # Re-approve same size is allowed (no team_count change), but structural rematch stays on this Event.
+    assert _teams_by_key(session, imported.tournament_id)
+    assert all(team.event_id == event.id for team in _teams_by_key(session, imported.tournament_id).values())
