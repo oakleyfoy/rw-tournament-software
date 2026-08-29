@@ -185,6 +185,16 @@ def approve_rw_os_plan(
     try:
         plans = approve_structures(session, row, payload.selections)
         sync = sync_events_from_approved_plans(session, row.tournament_id, plans)
+        from app.services.rw_os_roster_projection import project_approved_roster
+
+        projection = project_approved_roster(
+            session,
+            row,
+            plans,
+            events_created=len(sync.created),
+            operational_only=False,
+            allow_structural_rebuild=True,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.refresh(row)
@@ -196,4 +206,6 @@ def approve_rw_os_plan(
     response["bracketsCreated"] = False
     response["tournamentEvents"] = [serialize_structure_event(event) for event in sync.events]
     response["structureEventConflicts"] = sync.conflicts
+    response["rosterProjection"] = projection.to_dict()
+    response["projectionOk"] = projection.ok
     return response

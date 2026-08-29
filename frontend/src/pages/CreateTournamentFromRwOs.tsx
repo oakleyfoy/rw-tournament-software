@@ -644,15 +644,32 @@ function CreateTournamentFromRwOs() {
       setImportData(result)
       const created = result.eventsCreated ?? 0
       const conflicts = result.structureEventConflicts ?? []
-      if (conflicts.length) {
+      const projection = result.rosterProjection
+      const projectionConflicts = projection?.conflicts ?? []
+      const projectionWarnings = projection?.warnings ?? []
+      const teamsCreated = projection?.created.teams ?? 0
+      const teamsUpdated = projection?.updated.teams ?? 0
+      const rosterTouched = teamsCreated + teamsUpdated + (projection?.created.towelRows ?? 0)
+      if (conflicts.length || projectionConflicts.length || result.projectionOk === false) {
         showToast(
-          `Structure approved, but ${conflicts.length} existing event(s) were left unchanged because they already have draws or matches.`,
+          `Events may exist, but the live roster was not fully populated (${conflicts.length + projectionConflicts.length} conflict(s)). Review the conflicts below before using Draw Builder.`,
           'error',
         )
-      } else if (created === 1) {
-        showToast('Structure approved. 1 event was added to this tournament.', 'success')
-      } else if (created > 1) {
-        showToast(`Structure approved. ${created} events were added to this tournament.`, 'success')
+      } else if (projectionWarnings.length && rosterTouched > 0) {
+        showToast(
+          `Structure approved and ${teamsCreated || teamsUpdated} team(s) were projected, with ${projectionWarnings.length} warning(s). Draw Builder is ready — review warnings below.`,
+          'warning',
+        )
+      } else if (rosterTouched > 0) {
+        showToast(
+          `Structure approved. Events, ${teamsCreated || teamsUpdated} team(s), contacts, Who-knows-who, and towels are populated. Draw Builder is ready — no Combined paste needed.`,
+          'success',
+        )
+      } else if (created > 0) {
+        showToast(
+          `Structure approved and ${created} event(s) were added, but no live roster rows were projected.`,
+          'warning',
+        )
       } else {
         showToast('Structure approved. Tournament events are up to date.', 'success')
       }
@@ -868,7 +885,7 @@ function CreateTournamentFromRwOs() {
             {approved && (
               <>
                 <h3>Plan approved</h3>
-                <p>The draw split is stored and the Events section has been populated. You can review or select a different structure below, then approve again. Waterfall brackets, matches, and seeds are not created here.</p>
+                <p>The draw split is stored, Events are populated, and RW-OS teams, contacts, Who-knows-who, and towels are projected. You can review or select a different structure below, then approve again. Waterfall brackets, matches, and seeds are not created here. A second Combined Team + Towel paste is not required.</p>
                 <ul>
                   {importData.approvedPlans.map((plan) => (
                     <li key={plan.drawKind}>
@@ -920,6 +937,42 @@ function CreateTournamentFromRwOs() {
                   )}
                   <p className="meta">Use Tournament Setup to add more events or edit these rows.</p>
                 </div>
+                {importData.rosterProjection && (
+                  <div className="approved-events">
+                    <h3>Live roster projection</h3>
+                    <p className="meta">
+                      Created {importData.rosterProjection.created.teams} team(s),{' '}
+                      {importData.rosterProjection.created.towelRows} towel row(s),{' '}
+                      {importData.rosterProjection.created.wkwEdges} Who-knows-who edge(s). Updated{' '}
+                      {importData.rosterProjection.updated.teams} team(s) and{' '}
+                      {importData.rosterProjection.updated.contactFields} contact field(s).
+                    </p>
+                    {(importData.rosterProjection.warnings ?? []).length > 0 && (
+                      <div className="warning-banner">
+                        <p>Projection warnings</p>
+                        <ul>
+                          {importData.rosterProjection.warnings.slice(0, 8).map((warning, index) => (
+                            <li key={`${warning.code}-${index}`}>
+                              {warning.code}: {warning.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(importData.rosterProjection.conflicts ?? []).length > 0 && (
+                      <div className="warning-banner">
+                        <p>Projection conflicts blocked a complete live roster. Events may exist without a full team/contact/towel projection.</p>
+                        <ul>
+                          {importData.rosterProjection.conflicts.map((conflict, index) => (
+                            <li key={`${conflict.code}-${index}`}>
+                              {conflict.code}: {conflict.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
             <p>

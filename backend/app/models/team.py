@@ -14,6 +14,7 @@ class Team(SQLModel, table=True):
     __table_args__ = (
         SAUniqueConstraint("event_id", "seed", name="uq_event_seed"),
         SAUniqueConstraint("event_id", "name", name="uq_event_team_name"),
+        SAUniqueConstraint("event_id", "source_team_key", name="uq_event_source_team_key"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -36,6 +37,7 @@ class Team(SQLModel, table=True):
     p2_email: Optional[str] = Field(default=None)
     is_defaulted: bool = Field(default=False)
     notes: Optional[str] = Field(default=None)
+    source_team_key: Optional[str] = Field(default=None, index=True)
 
     # Relationships
     event: "Event" = Relationship(back_populates="teams")

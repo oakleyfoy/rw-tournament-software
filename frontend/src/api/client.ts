@@ -596,6 +596,14 @@ export interface RwOsImportResponse {
     currentTeamCount: number
     requestedTeamCount: number
   }>
+  projectionOk?: boolean
+  rosterProjection?: {
+    ok: boolean
+    created: { events: number; teams: number; towelRows: number; wkwEdges: number }
+    updated: { teams: number; contactFields: number; towelRows: number }
+    warnings: Array<{ code: string; message: string }>
+    conflicts: Array<{ code: string; message: string }>
+  }
 }
 
 export async function listRwOsEvents(): Promise<{

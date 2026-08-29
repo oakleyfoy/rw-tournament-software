@@ -23,6 +23,12 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.services.canonical_teams import normalize_avoid_group
+from app.services.combined_roster_writes import (
+    add_missing_group_avoid_edges,
+    apply_team_contact_row,
+    sync_players_from_team_slots_if_enabled,
+)
 from app.utils.team_injection import TeamInjectionError, inject_teams_v1
 
 router = APIRouter()
@@ -402,6 +408,8 @@ def _combined_header_aliases() -> dict[str, set[str]]:
         "full_name": {"fullnamecitystateteam", "fullnameteam", "fullname", "teamname"},
         "draw_name": {"draw", "event", "eventname", "division"},
         "rating": {"level", "rating"},
+        "p1_rw_id": {"rwidfirstplayer", "rwid1", "firstplayerrwid", "p1rwid", "playeridfirstplayer"},
+        "p2_rw_id": {"rwidsecondplayer", "rwid2", "secondplayerrwid", "p2rwid", "playeridsecondplayer"},
         "p1_towel_color": {"towelcolorfirstplayer", "firstplayertowelcolor", "p1towelcolor"},
         "p1_cell": {"cellphonefirstplayer", "phonefirstplayer", "p1cell", "p1phone"},
         "p1_email": {"emailfirstplayer", "p1email"},
@@ -466,11 +474,13 @@ def _parse_combined_import_rows(raw_text: str) -> tuple[List[dict], List[Rejecte
             {
                 "line_number": line_num,
                 "seed": seed,
-                "avoid_group": _field("avoid_group"),
+                "avoid_group": normalize_avoid_group(_field("avoid_group")),
                 "rating": _try_float(_field("rating") or ""),
                 "full_name": full_name,
                 "display_name": display_name,
                 "draw_name": draw_name,
+                "p1_rw_id": _field("p1_rw_id"),
+                "p2_rw_id": _field("p2_rw_id"),
                 "p1_towel_color": _field("p1_towel_color"),
                 "p1_cell": _field("p1_cell"),
                 "p1_email": _field("p1_email"),
@@ -978,22 +988,7 @@ def _upsert_seeded_rows_for_event(
             existing.display_name = row["display_name"]
             existing.notes = None
             existing.is_defaulted = False
-            if row.get("player1_cellphone"):
-                existing.player1_cellphone = row["player1_cellphone"]
-            if row.get("player1_email"):
-                existing.player1_email = row["player1_email"]
-            if row.get("player2_cellphone"):
-                existing.player2_cellphone = row["player2_cellphone"]
-            if row.get("player2_email"):
-                existing.player2_email = row["player2_email"]
-            if row.get("p1_cell"):
-                existing.p1_cell = row["p1_cell"]
-            if row.get("p1_email"):
-                existing.p1_email = row["p1_email"]
-            if row.get("p2_cell"):
-                existing.p2_cell = row["p2_cell"]
-            if row.get("p2_email"):
-                existing.p2_email = row["p2_email"]
+            apply_team_contact_row(existing, row, only_if_present=True)
             session.add(existing)
             session.flush()
             updated_count += 1
@@ -1015,6 +1010,7 @@ def _upsert_seeded_rows_for_event(
                 p2_cell=row.get("p2_cell"),
                 p2_email=row.get("p2_email"),
             )
+            apply_team_contact_row(team, row, only_if_present=True)
             session.add(team)
             session.flush()
             imported_count += 1
@@ -1032,29 +1028,7 @@ def _upsert_seeded_rows_for_event(
 
     avoid_edges_created = 0
     try:
-        for group_code, team_ids in group_map.items():
-            if len(team_ids) < 2:
-                continue
-            for i in range(len(team_ids)):
-                for j in range(i + 1, len(team_ids)):
-                    a_id = min(team_ids[i], team_ids[j])
-                    b_id = max(team_ids[i], team_ids[j])
-                    existing_edge = session.exec(
-                        select(TeamAvoidEdge).where(
-                            TeamAvoidEdge.event_id == event.id,
-                            TeamAvoidEdge.team_id_a == a_id,
-                            TeamAvoidEdge.team_id_b == b_id,
-                        )
-                    ).first()
-                    if not existing_edge:
-                        edge = TeamAvoidEdge(
-                            event_id=event.id,
-                            team_id_a=a_id,
-                            team_id_b=b_id,
-                            reason=f"group:{group_code}",
-                        )
-                        session.add(edge)
-                        avoid_edges_created += 1
+        avoid_edges_created = add_missing_group_avoid_edges(session, event.id, group_map)
     except Exception as e:
         warnings.append(f"Error creating avoid edges: {e}")
 
@@ -1315,17 +1289,7 @@ def import_combined_teams(
         accepted_lookup_rows.extend(valid_rows)
         events_touched += 1
 
-    settings = session.exec(
-        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
-    ).first()
-    if settings and bool(getattr(settings, "player_contacts_only", False)):
-        from app.routes.sms import _sync_players_and_team_links_from_team_slots
-
-        _sync_players_and_team_links_from_team_slots(
-            session=session,
-            tournament_id=tournament_id,
-            teams=touched_teams,
-        )
+    sync_players_from_team_slots_if_enabled(session, tournament_id, touched_teams)
 
     lookup_rows = _build_lookup_rows_from_combined_rows(accepted_lookup_rows)
     matched_count = 0
@@ -1337,7 +1301,10 @@ def import_combined_teams(
         resolved_lookup_rows = []
 
     existing_lookup_rows = session.exec(
-        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == tournament_id,
+            TemporaryPlayerLookup.source.is_(None),
+        )
     ).all()
     for row in existing_lookup_rows:
         session.delete(row)
