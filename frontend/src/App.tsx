@@ -55,6 +55,7 @@ function App() {
           <Route path="/" element={<TournamentList />} />
           <Route path="/tournaments" element={<TournamentList />} />
           <Route path="/tournaments/new" element={<CreateTournamentFromRwOs />} />
+          <Route path="/tournaments/:id/import" element={<CreateTournamentFromRwOs />} />
           <Route path="/tournaments/:id/setup" element={<TournamentSetup />} />
           <Route path="/tournaments/:id/draw-builder" element={<DrawBuilder />} />
           <Route path="/tournaments/:id/schedule-builder" element={<ScheduleBuilderPage />} />

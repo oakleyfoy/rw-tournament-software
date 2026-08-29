@@ -808,6 +808,15 @@ function TournamentSetup() {
             >
               Draw Builder
             </button>
+            {tournament.rw_os_import_id ? (
+              <button
+                className="btn btn-secondary"
+                onClick={() => navigate(`/tournaments/${tournament.id}/import`)}
+                style={{ fontSize: '14px' }}
+              >
+                Import / Draw Structure
+              </button>
+            ) : null}
           </div>
         </div>
       )}

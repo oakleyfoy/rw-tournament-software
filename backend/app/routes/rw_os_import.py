@@ -13,6 +13,7 @@ from app.services.rw_os_import import (
     build_import_response,
     create_import_from_event,
     default_forecasts,
+    get_latest_import_for_tournament,
     list_importable_events,
     preview_custom_structure,
     refresh_import,
@@ -100,7 +101,7 @@ def get_rw_os_import(import_id: int, session: Session = Depends(get_session)):
 
 @router.get("/tournaments/{tournament_id}/import")
 def get_tournament_import(tournament_id: int, session: Session = Depends(get_session)):
-    row = session.exec(select(TournamentImport).where(TournamentImport.tournament_id == tournament_id)).first()
+    row = get_latest_import_for_tournament(session, tournament_id)
     if not row:
         raise HTTPException(status_code=404, detail="No RW-OS import exists for this tournament.")
     return build_import_response(session, row)

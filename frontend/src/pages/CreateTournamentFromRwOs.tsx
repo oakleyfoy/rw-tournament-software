@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   approveRwOsPlan,
   createRwOsImport,
+  getTournamentRwOsImport,
   listRwOsEvents,
   refreshRwOsImport,
   resetRwOsForecasts,
@@ -422,8 +423,27 @@ function DrawPlanner({
   )
 }
 
+function hydrateSelectionsFromPlans(data: RwOsImportResponse): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const plan of data.selectedPlans || []) {
+    next[plan.drawKind] = plan.optionKey
+  }
+  return next
+}
+
+function forecastDraftFromImport(data: RwOsImportResponse): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const draw of data.planner.draws) {
+    const stored = data.import.forecasts?.[draw.drawKind] ?? data.forecasts?.[draw.drawKind]
+    next[draw.drawKind] = String(stored ?? draw.forecastCount ?? draw.currentCount ?? draw.teamCount)
+  }
+  return next
+}
+
 function CreateTournamentFromRwOs() {
   const navigate = useNavigate()
+  const { id: tournamentIdParam } = useParams<{ id?: string }>()
+  const resumeTournamentId = tournamentIdParam && tournamentIdParam !== 'new' ? Number(tournamentIdParam) : null
   const [events, setEvents] = useState<RwOsEventSummary[]>([])
   const [source, setSource] = useState<'fixtures' | 'live' | null>(null)
   const [loading, setLoading] = useState(true)
@@ -438,23 +458,53 @@ function CreateTournamentFromRwOs() {
   const [customByDraw, setCustomByDraw] = useState<Record<string, RwOsSplitOption>>({})
   const [refreshSummary, setRefreshSummary] = useState<string | null>(null)
 
+  const applyLoadedImport = (data: RwOsImportResponse) => {
+    setImportData(data)
+    setSelections(hydrateSelectionsFromPlans(data))
+    setForecastDraft(forecastDraftFromImport(data))
+    setForecastErrors({})
+  }
+
   useEffect(() => {
-    listRwOsEvents()
-      .then((payload) => {
+    let cancelled = false
+    const load = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        if (resumeTournamentId) {
+          const existing = await getTournamentRwOsImport(resumeTournamentId)
+          if (cancelled) return
+          if (!existing) {
+            setImportData(null)
+            setError('No RW-OS import exists for this tournament.')
+            return
+          }
+          applyLoadedImport(existing)
+          return
+        }
+        const payload = await listRwOsEvents()
+        if (cancelled) return
         setEvents(payload.events)
         setSource(payload.source ?? null)
-      })
-      .catch((err) => {
+      } catch (err) {
+        if (cancelled) return
         setEvents([])
         setSource(null)
-        setError(err instanceof Error ? err.message : 'Failed to load RW-OS events')
-      })
-      .finally(() => setLoading(false))
-  }, [])
+        setError(err instanceof Error ? err.message : 'Failed to load RW-OS import')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [resumeTournamentId])
 
   const selectedEvent = events.find((event) => event.tournamentId === selectedEventId)
   const approved = importData?.import.planStatus === 'approved'
   const maxForecast = importData?.planner.maxForecastTeams ?? MAX_FORECAST
+  const setupTournamentId = importData?.import.tournamentId ?? resumeTournamentId
 
   const currentByKind = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -473,12 +523,7 @@ function CreateTournamentFromRwOs() {
   }, 0)
 
   const hydrateForecasts = (data: RwOsImportResponse) => {
-    const next: Record<string, string> = {}
-    for (const draw of data.planner.draws) {
-      const stored = data.import.forecasts?.[draw.drawKind] ?? data.forecasts?.[draw.drawKind]
-      next[draw.drawKind] = String(stored ?? draw.forecastCount ?? draw.currentCount ?? draw.teamCount)
-    }
-    setForecastDraft(next)
+    setForecastDraft(forecastDraftFromImport(data))
     setForecastErrors({})
   }
 
@@ -642,24 +687,47 @@ function CreateTournamentFromRwOs() {
     <div className="container create-from-rwos">
       <div className="page-header">
         <div>
-          <h1>Create Tournament from RW-OS</h1>
+          <h1>{resumeTournamentId ? 'Import / Draw Structure' : 'Create Tournament from RW-OS'}</h1>
           <p className="subhead">
             Import the current eligible teams, set the expected final field, then choose a draw split.
             Approving the structure creates the matching tournament events. Waterfall brackets and matches are not created in this step.
           </p>
           {source === 'fixtures' && <p className="rwos-source-indicator">RW-OS Source: Fixtures</p>}
         </div>
-        <button className="btn btn-secondary" type="button" onClick={() => navigate('/tournaments')}>
-          Back
-        </button>
+        <div className="header-actions">
+          {setupTournamentId ? (
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => navigate(`/tournaments/${setupTournamentId}/setup`)}
+            >
+              Back to Tournament Setup
+            </button>
+          ) : (
+            <button className="btn btn-secondary" type="button" onClick={() => navigate('/tournaments')}>
+              Back
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <div className="error-message">{error}</div>}
 
       <section className="card">
-        <h2>Step 1 — Choose RW-OS Event</h2>
+        <h2>{resumeTournamentId ? 'Step 1 — Imported RW-OS Event' : 'Step 1 — Choose RW-OS Event'}</h2>
         {loading ? (
-          <p>Loading current and upcoming RW-OS events…</p>
+          <p>{resumeTournamentId ? 'Loading the existing RW-OS import…' : 'Loading current and upcoming RW-OS events…'}</p>
+        ) : resumeTournamentId ? (
+          importData ? (
+            <div className="event-summary">
+              <div><strong>{importData.import.eventName}</strong></div>
+              <div>{formatDate(importData.import.eventDate)}</div>
+              <div>Import ID {importData.import.id}</div>
+              <div>Source tournament {importData.import.sourceTournamentId}</div>
+            </div>
+          ) : (
+            <p>This tournament does not have an RW-OS import to reopen.</p>
+          )
         ) : error ? (
           <p>Could not load RW-OS events. Fixture data is not used as a fallback.</p>
         ) : events.length === 0 ? (
@@ -734,11 +802,13 @@ function CreateTournamentFromRwOs() {
             </div>
           </div>
         )}
-        <p className="manual-link">
-          <button className="link-button" type="button" onClick={() => navigate('/tournaments/new/setup')}>
-            Create manually instead
-          </button>
-        </p>
+        {!resumeTournamentId && (
+          <p className="manual-link">
+            <button className="link-button" type="button" onClick={() => navigate('/tournaments/new/setup')}>
+              Create manually instead
+            </button>
+          </p>
+        )}
       </section>
 
       {importData && (
@@ -787,7 +857,7 @@ function CreateTournamentFromRwOs() {
               key={draw.drawKind}
               draw={draw}
               selectedKey={selections[draw.drawKind]}
-              disabled={working || approved}
+              disabled={working}
               customOption={customByDraw[draw.drawKind]}
               onSelect={(optionKey) => handleSelect(draw.drawKind, optionKey)}
               onAnalyzeCustom={(sizes) => handleCustomAnalyze(draw.drawKind, sizes)}
@@ -795,10 +865,10 @@ function CreateTournamentFromRwOs() {
           ))}
 
           <section className="card approve-card">
-            {approved ? (
+            {approved && (
               <>
                 <h3>Plan approved</h3>
-                <p>The draw split is stored and the Events section has been populated. No Waterfall brackets, matches, or seeds were created.</p>
+                <p>The draw split is stored and the Events section has been populated. You can review or select a different structure below, then approve again. Waterfall brackets, matches, and seeds are not created here.</p>
                 <ul>
                   {importData.approvedPlans.map((plan) => (
                     <li key={plan.drawKind}>
@@ -850,18 +920,27 @@ function CreateTournamentFromRwOs() {
                   )}
                   <p className="meta">Use Tournament Setup to add more events or edit these rows.</p>
                 </div>
-                <button className="btn btn-primary" type="button" onClick={() => navigate(`/tournaments/${importData.import.tournamentId}/setup`)}>
-                  Continue to Tournament Setup
-                </button>
-              </>
-            ) : (
-              <>
-                <p>Software recommends. Staff chooses. Approving stores the plan and creates the matching tournament events.</p>
-                <button className="btn btn-primary" type="button" disabled={working} onClick={handleApprove}>
-                  Approve Selected Structure
-                </button>
               </>
             )}
+            <p>
+              {approved
+                ? 'Selecting another structure keeps existing events that are already in use. Conflicts are shown instead of deleting draws or matches.'
+                : 'Software recommends. Staff chooses. Approving stores the plan and creates the matching tournament events.'}
+            </p>
+            <div className="header-actions">
+              <button className="btn btn-primary" type="button" disabled={working} onClick={handleApprove}>
+                Approve Selected Structure
+              </button>
+              {setupTournamentId ? (
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => navigate(`/tournaments/${setupTournamentId}/setup`)}
+                >
+                  Back to Tournament Setup
+                </button>
+              ) : null}
+            </div>
           </section>
         </>
       )}

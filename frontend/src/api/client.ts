@@ -33,6 +33,7 @@ export interface Tournament {
   event_schedule_day_orders_json?: string | null;
   source_rw_os_tournament_id?: number | null;
   source_rw_os_organization_slug?: string | null;
+  rw_os_import_id?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -613,6 +614,16 @@ export async function createRwOsImport(tournamentId: number, organizationSlug = 
 
 export async function getRwOsImport(importId: number): Promise<RwOsImportResponse> {
   return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}`)
+}
+
+export async function getTournamentRwOsImport(tournamentId: number): Promise<RwOsImportResponse | null> {
+  try {
+    return await fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/tournaments/${tournamentId}/import`)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : ''
+    if (/404|not found|No RW-OS import/i.test(message)) return null
+    throw err
+  }
 }
 
 export async function refreshRwOsImport(importId: number, apply = false): Promise<{
