@@ -30,6 +30,7 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
+from app.models.tournament_import import TournamentImport
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.services.assignment_ownership import create_owned_assignment, validate_assignment_ownership
@@ -143,6 +144,7 @@ class TournamentResponse(BaseModel):
     event_schedule_day_orders_json: Optional[str] = None
     source_rw_os_tournament_id: Optional[int] = None
     source_rw_os_organization_slug: Optional[str] = None
+    rw_os_import_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -889,13 +891,22 @@ def create_tournament(tournament_data: TournamentCreate, session: Session = Depe
     return tournament
 
 
+def _latest_rw_os_import_id(session: Session, tournament_id: int) -> Optional[int]:
+    return session.exec(
+        select(TournamentImport.id)
+        .where(TournamentImport.tournament_id == tournament_id)
+        .order_by(TournamentImport.id.desc())
+    ).first()
+
+
 @router.get("/tournaments/{tournament_id}", response_model=TournamentResponse)
 def get_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """Get a tournament by ID"""
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    return tournament
+    response = TournamentResponse.model_validate(tournament)
+    return response.model_copy(update={"rw_os_import_id": _latest_rw_os_import_id(session, tournament_id)})
 
 
 @router.get("/tournaments/{tournament_id}/print-packet/{category}.pdf")

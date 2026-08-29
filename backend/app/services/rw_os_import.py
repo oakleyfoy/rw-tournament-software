@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
+from app.models.event import Event
 from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentDrawPlan, TournamentImport
 from app.routes.tournaments import generate_tournament_days
@@ -23,6 +24,7 @@ from app.services.bracket_split_planner import (
 )
 from app.services.canonical_teams import SnapshotTeam, validate_import_snapshot
 from app.services.rw_os_client import RwOsClient
+from app.services.structure_events import serialize_structure_event
 
 
 def snapshot_hash(payload: dict[str, Any]) -> str:
@@ -168,10 +170,19 @@ def _draw_counts(teams: list[dict[str, Any]]) -> dict[str, int]:
     return dict(counts)
 
 
+def get_latest_import_for_tournament(session: Session, tournament_id: int) -> Optional[TournamentImport]:
+    return session.exec(
+        select(TournamentImport)
+        .where(TournamentImport.tournament_id == tournament_id)
+        .order_by(TournamentImport.id.desc())
+    ).first()
+
+
 def build_import_response(session: Session, import_row: TournamentImport) -> dict[str, Any]:
     plans = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == import_row.id)).all()
     snapshot = json.loads(import_row.snapshot_json or "[]")
     waitlist = json.loads(import_row.waitlist_json or "[]")
+    events = session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all()
     return {
         "import": serialize_import(import_row),
         "planner": _planner_payload(import_row),
@@ -183,6 +194,7 @@ def build_import_response(session: Session, import_row: TournamentImport) -> dic
         "selectedPlans": [serialize_draw_plan(plan) for plan in plans],
         "bracketsCreated": False,
         "rwOsWrites": 0,
+        "tournamentEvents": [serialize_structure_event(event) for event in events],
     }
 
 
