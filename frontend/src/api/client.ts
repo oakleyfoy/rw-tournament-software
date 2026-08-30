@@ -587,6 +587,10 @@ export interface RwOsImportResponse {
     name: string
     teamCount: number
     notes?: string | null
+    protectionReason?: string | null
+    requestedTeamCount?: number | null
+    teamRowCount?: number
+    sourceTeamCount?: number
   }>
   structureEventConflicts?: Array<{
     eventId: number
@@ -597,6 +601,21 @@ export interface RwOsImportResponse {
     requestedTeamCount: number
   }>
   projectionOk?: boolean
+  liveRoster?: {
+    ok: boolean
+    teams: { total: number; sourceBacked: number; manual: number }
+    towels: { total: number; rwosImport: number; untagged: number }
+    wkwEdges: { total: number; groupReason: number }
+    contacts: {
+      sourceTeams: number
+      player1Cellphone: number
+      player1Email: number
+      player2Cellphone: number
+      player2Email: number
+    }
+    warnings: Array<{ code: string; message: string }>
+    conflicts: Array<{ code: string; message: string }>
+  }
   rosterProjection?: {
     ok: boolean
     created: { events: number; teams: number; towelRows: number; wkwEdges: number }

@@ -564,6 +564,145 @@ def _apply_operational_team_updates(
     return updated
 
 
+def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[str, Any]:
+    """Current operational roster for GET/refresh. Not the last POST created/updated deltas."""
+    from app.services.structure_events import (
+        event_protection_reason,
+        requested_event_sizes,
+        serialize_structure_event,
+    )
+
+    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    teams = list(session.exec(select(Team).join(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    towels = list(
+        session.exec(
+            select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == import_row.tournament_id)
+        ).all()
+    )
+    edges = list(
+        session.exec(select(TeamAvoidEdge).join(Event).where(Event.tournament_id == import_row.tournament_id)).all()
+    )
+    plans = list(
+        session.exec(
+            select(TournamentDrawPlan).where(
+                TournamentDrawPlan.import_id == import_row.id,
+                TournamentDrawPlan.approved == True,  # noqa: E712
+            )
+        ).all()
+    )
+    requested = requested_event_sizes(plans, import_row.tournament_id)
+
+    teams_by_event: dict[int, list[Team]] = {}
+    for team in teams:
+        teams_by_event.setdefault(team.event_id, []).append(team)
+
+    event_payloads: list[dict[str, Any]] = []
+    capacity_conflicts: list[dict[str, Any]] = []
+    protection_warnings: list[dict[str, Any]] = []
+    for event in events:
+        event_category = event.category.value if isinstance(event.category, EventCategory) else str(event.category)
+        event_teams = teams_by_event.get(event.id or 0, [])
+        source_count = sum(1 for team in event_teams if team.source_team_key)
+        protection = event_protection_reason(session, event)
+        wanted = requested.get((event_category, event.name))
+        event_payloads.append(
+            serialize_structure_event(
+                event,
+                protectionReason=protection,
+                requestedTeamCount=wanted,
+                teamRowCount=len(event_teams),
+                sourceTeamCount=source_count,
+            )
+        )
+        if protection:
+            protection_warnings.append(
+                _warning(
+                    CONFLICT_DRAW_PROTECTION,
+                    f"{event.name}: {protection}.",
+                    eventId=event.id,
+                    reason=protection,
+                )
+            )
+        if protection and wanted is not None and event.team_count != wanted:
+            capacity_conflicts.append(
+                {
+                    "eventId": event.id,
+                    "category": event_category,
+                    "name": event.name,
+                    "reason": protection,
+                    "currentTeamCount": event.team_count,
+                    "requestedTeamCount": wanted,
+                }
+            )
+
+    source_teams = [team for team in teams if team.source_team_key]
+    rwos_towels = [row for row in towels if row.source == RWOS_LOOKUP_SOURCE]
+    group_edges = [edge for edge in edges if (edge.reason or "").startswith("group:")]
+
+    def _filled(attr: str) -> int:
+        return sum(1 for team in source_teams if (getattr(team, attr) or "").strip())
+
+    return {
+        "ok": not capacity_conflicts,
+        "teams": {
+            "total": len(teams),
+            "sourceBacked": len(source_teams),
+            "manual": len(teams) - len(source_teams),
+        },
+        "towels": {
+            "total": len(towels),
+            "rwosImport": len(rwos_towels),
+            "untagged": len(towels) - len(rwos_towels),
+        },
+        "wkwEdges": {
+            "total": len(edges),
+            "groupReason": len(group_edges),
+        },
+        "contacts": {
+            "sourceTeams": len(source_teams),
+            "player1Cellphone": _filled("player1_cellphone"),
+            "player1Email": _filled("player1_email"),
+            "player2Cellphone": _filled("player2_cellphone"),
+            "player2Email": _filled("player2_email"),
+        },
+        "events": event_payloads,
+        "capacityConflicts": capacity_conflicts,
+        "warnings": protection_warnings,
+        "conflicts": [
+            _conflict(
+                CONFLICT_DRAW_PROTECTION,
+                f"{item['name']}: {item['reason']} (kept {item['currentTeamCount']}, requested {item['requestedTeamCount']}).",
+                **item,
+            )
+            for item in capacity_conflicts
+        ],
+    }
+
+
+def roster_projection_from_live(summary: dict[str, Any]) -> dict[str, Any]:
+    contacts = summary.get("contacts") or {}
+    contact_fields = sum(
+        int(contacts.get(name) or 0)
+        for name in ("player1Cellphone", "player1Email", "player2Cellphone", "player2Email")
+    )
+    return {
+        "ok": bool(summary.get("ok")),
+        "created": {
+            "events": 0,
+            "teams": int((summary.get("teams") or {}).get("sourceBacked") or 0),
+            "towelRows": int((summary.get("towels") or {}).get("rwosImport") or 0),
+            "wkwEdges": int((summary.get("wkwEdges") or {}).get("groupReason") or 0),
+        },
+        "updated": {
+            "teams": 0,
+            "contactFields": contact_fields,
+            "towelRows": 0,
+        },
+        "warnings": list(summary.get("warnings") or []),
+        "conflicts": list(summary.get("conflicts") or []),
+    }
+
+
 def _project_towels(
     session: Session,
     tournament_id: int,

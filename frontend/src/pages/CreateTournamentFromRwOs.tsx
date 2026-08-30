@@ -885,7 +885,11 @@ function CreateTournamentFromRwOs() {
             {approved && (
               <>
                 <h3>Plan approved</h3>
-                <p>The draw split is stored, Events are populated, and RW-OS teams, contacts, Who-knows-who, and towels are projected. You can review or select a different structure below, then approve again. Waterfall brackets, matches, and seeds are not created here. A second Combined Team + Towel paste is not required.</p>
+                <p>
+                  The draw split is stored and Events are populated. Live Team, contact, Who-knows-who, and
+                  towel counts are shown below from the current database, including after refresh. Waterfall
+                  brackets, matches, and seeds are not created here.
+                </p>
                 <ul>
                   {importData.approvedPlans.map((plan) => (
                     <li key={plan.drawKind}>
@@ -919,7 +923,8 @@ function CreateTournamentFromRwOs() {
                         <tr>
                           <th>Category</th>
                           <th>Name</th>
-                          <th>Team Count</th>
+                          <th>Capacity</th>
+                          <th>Live teams</th>
                           <th>Notes</th>
                         </tr>
                       </thead>
@@ -928,7 +933,17 @@ function CreateTournamentFromRwOs() {
                           <tr key={event.id}>
                             <td>{event.category === 'mixed' ? 'Mixed' : "Women's"}</td>
                             <td>{event.name}</td>
-                            <td>{event.teamCount}</td>
+                            <td>
+                              {event.teamCount}
+                              {event.requestedTeamCount != null && event.requestedTeamCount !== event.teamCount
+                                ? ` (requested ${event.requestedTeamCount})`
+                                : ''}
+                            </td>
+                            <td>
+                              {event.teamRowCount ?? '-'}
+                              {event.sourceTeamCount != null ? ` source ${event.sourceTeamCount}` : ''}
+                              {event.protectionReason ? ` — ${event.protectionReason}` : ''}
+                            </td>
                             <td>{event.notes || '-'}</td>
                           </tr>
                         ))}
@@ -937,21 +952,35 @@ function CreateTournamentFromRwOs() {
                   )}
                   <p className="meta">Use Tournament Setup to add more events or edit these rows.</p>
                 </div>
-                {importData.rosterProjection && (
+                {(importData.liveRoster || importData.rosterProjection) && (
                   <div className="approved-events">
                     <h3>Live roster projection</h3>
-                    <p className="meta">
-                      Created {importData.rosterProjection.created.teams} team(s),{' '}
-                      {importData.rosterProjection.created.towelRows} towel row(s),{' '}
-                      {importData.rosterProjection.created.wkwEdges} Who-knows-who edge(s). Updated{' '}
-                      {importData.rosterProjection.updated.teams} team(s) and{' '}
-                      {importData.rosterProjection.updated.contactFields} contact field(s).
-                    </p>
-                    {(importData.rosterProjection.warnings ?? []).length > 0 && (
+                    {importData.liveRoster ? (
+                      <p className="meta">
+                        Current source-backed roster: {importData.liveRoster.teams.sourceBacked} team(s),{' '}
+                        {importData.liveRoster.towels.rwosImport} towel row(s),{' '}
+                        {importData.liveRoster.wkwEdges.groupReason} Who-knows-who edge(s). Contacts on
+                        source teams: {importData.liveRoster.contacts.player1Cellphone} /{' '}
+                        {importData.liveRoster.contacts.player1Email} player 1 phone/email,{' '}
+                        {importData.liveRoster.contacts.player2Cellphone} /{' '}
+                        {importData.liveRoster.contacts.player2Email} player 2 phone/email.
+                      </p>
+                    ) : (
+                      <p className="meta">
+                        Created {importData.rosterProjection?.created.teams} team(s),{' '}
+                        {importData.rosterProjection?.created.towelRows} towel row(s),{' '}
+                        {importData.rosterProjection?.created.wkwEdges} Who-knows-who edge(s). Updated{' '}
+                        {importData.rosterProjection?.updated.teams} team(s) and{' '}
+                        {importData.rosterProjection?.updated.contactFields} contact field(s).
+                      </p>
+                    )}
+                    {((importData.liveRoster?.warnings ?? importData.rosterProjection?.warnings) ?? []).length > 0 && (
                       <div className="warning-banner">
                         <p>Projection warnings</p>
                         <ul>
-                          {importData.rosterProjection.warnings.slice(0, 8).map((warning, index) => (
+                          {((importData.liveRoster?.warnings ?? importData.rosterProjection?.warnings) ?? [])
+                            .slice(0, 8)
+                            .map((warning, index) => (
                             <li key={`${warning.code}-${index}`}>
                               {warning.code}: {warning.message}
                             </li>
@@ -959,11 +988,11 @@ function CreateTournamentFromRwOs() {
                         </ul>
                       </div>
                     )}
-                    {(importData.rosterProjection.conflicts ?? []).length > 0 && (
+                    {((importData.liveRoster?.conflicts ?? importData.rosterProjection?.conflicts) ?? []).length > 0 && (
                       <div className="warning-banner">
                         <p>Projection conflicts blocked a complete live roster. Events may exist without a full team/contact/towel projection.</p>
                         <ul>
-                          {importData.rosterProjection.conflicts.map((conflict, index) => (
+                          {((importData.liveRoster?.conflicts ?? importData.rosterProjection?.conflicts) ?? []).map((conflict, index) => (
                             <li key={`${conflict.code}-${index}`}>
                               {conflict.code}: {conflict.message}
                             </li>

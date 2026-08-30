@@ -53,9 +53,9 @@ def structure_event_notes(bracket: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def serialize_structure_event(event: Event) -> dict[str, Any]:
+def serialize_structure_event(event: Event, **extra: Any) -> dict[str, Any]:
     category = event.category.value if isinstance(event.category, EventCategory) else str(event.category)
-    return {
+    payload = {
         "id": event.id,
         "tournamentId": event.tournament_id,
         "category": category,
@@ -63,6 +63,8 @@ def serialize_structure_event(event: Event) -> dict[str, Any]:
         "teamCount": event.team_count,
         "notes": event.notes,
     }
+    payload.update(extra)
+    return payload
 
 
 def _canonical_name(bracket: dict[str, Any]) -> str:
@@ -87,6 +89,22 @@ def _brackets_from_plan(plan: TournamentDrawPlan) -> list[dict[str, Any]]:
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, dict)]
+
+
+def requested_event_sizes(plans: list[TournamentDrawPlan], tournament_id: int) -> dict[tuple[str, str], int]:
+    requested: dict[tuple[str, str], int] = {}
+    for plan in plans:
+        if plan.tournament_id != tournament_id:
+            continue
+        category = event_category_for_draw_kind(plan.draw_kind)
+        if category is None:
+            continue
+        for bracket in _brackets_from_plan(plan):
+            name = _canonical_name(bracket)
+            size = _bracket_team_count(bracket)
+            if name and size is not None:
+                requested[(category.value, name)] = size
+    return requested
 
 
 def _event_key(category: EventCategory, name: str) -> tuple[str, str]:

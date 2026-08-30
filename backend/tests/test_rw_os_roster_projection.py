@@ -877,3 +877,107 @@ def test_generated_draw_still_blocks_structural_projection(client: TestClient, s
     # Re-approve same size is allowed (no team_count change), but structural rematch stays on this Event.
     assert _teams_by_key(session, imported.tournament_id)
     assert all(team.event_id == event.id for team in _teams_by_key(session, imported.tournament_id).values())
+
+
+def _approve_amelia(client: TestClient, import_id: int, *, womens: list[int], mixed: list[int]) -> dict:
+    client.put(
+        f"/api/rw-os/imports/{import_id}/forecasts",
+        json={"forecasts": {"womens": sum(womens), "mixed": sum(mixed)}},
+    )
+    return _approve(
+        client,
+        import_id,
+        {"womens": "-".join(str(size) for size in womens), "mixed": "-".join(str(size) for size in mixed)},
+    )
+
+
+def _event_map(session: Session, tournament_id: int) -> dict[str, Event]:
+    return {event.name: event for event in session.exec(select(Event).where(Event.tournament_id == tournament_id))}
+
+
+def _source_counts(session: Session, tournament_id: int) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in session.exec(select(Event).where(Event.tournament_id == tournament_id)):
+        counts[event.name] = len(
+            session.exec(select(Team).where(Team.event_id == event.id, Team.source_team_key.is_not(None))).all()
+        )
+    return counts
+
+
+def test_amelia_clean_reapprove_updates_capacity_and_routes_67_womens(client: TestClient, session: Session):
+    teams = _womens_field(67) + _mixed_field(44)
+    imported = _import_payload(session, 1470, teams)
+    first = _approve_amelia(client, imported.id, womens=[24, 20, 24], mixed=[20, 24])
+    assert first["projectionOk"] is True
+    assert first["structureEventConflicts"] == []
+    session.expire_all()
+    events = _event_map(session, imported.tournament_id)
+    assert events["Women's A"].team_count == 24
+    assert events["Women's B"].team_count == 20
+    assert events["Women's C"].team_count == 24
+    assert _source_counts(session, imported.tournament_id) == {
+        "Mixed A": 20,
+        "Mixed B": 24,
+        "Women's A": 24,
+        "Women's B": 20,
+        "Women's C": 23,
+    }
+    assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []
+
+    second = _approve_amelia(client, imported.id, womens=[20, 24, 24], mixed=[20, 24])
+    session.expire_all()
+    events = _event_map(session, imported.tournament_id)
+    assert second["structureEventConflicts"] == []
+    assert events["Mixed A"].team_count == 20
+    assert events["Mixed B"].team_count == 24
+    assert events["Women's A"].team_count == 20
+    assert events["Women's B"].team_count == 24
+    assert events["Women's C"].team_count == 24
+    assert "ranks 1–20" in (events["Women's A"].notes or "")
+    assert "20 teams" in (events["Women's A"].notes or "")
+    assert "ranks 21–44" in (events["Women's B"].notes or "")
+    assert "24 teams" in (events["Women's B"].notes or "")
+    assert _source_counts(session, imported.tournament_id) == {
+        "Mixed A": 20,
+        "Mixed B": 24,
+        "Women's A": 20,
+        "Women's B": 24,
+        "Women's C": 23,
+    }
+    assert len(_teams_by_key(session, imported.tournament_id)) == 111
+    assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []
+
+    reopened = client.get(f"/api/rw-os/imports/{imported.id}")
+    assert reopened.status_code == 200
+    body = reopened.json()
+    assert body["liveRoster"]["teams"]["sourceBacked"] == 111
+    assert body["rosterProjection"]["created"]["teams"] == 111
+    names = {event["name"]: event for event in body["tournamentEvents"]}
+    assert names["Women's A"]["teamCount"] == 20
+    assert names["Women's A"]["teamRowCount"] == 20
+    assert names["Women's C"]["teamCount"] == 24
+    assert names["Women's C"]["teamRowCount"] == 23
+
+
+def test_amelia_notes_and_capacity_stay_aligned_when_teams_already_exist(client: TestClient, session: Session):
+    teams = _womens_field(67)
+    imported = _import_payload(session, 1471, teams)
+    client.put(f"/api/rw-os/imports/{imported.id}/forecasts", json={"forecasts": {"womens": 68}})
+    _approve(client, imported.id, {"womens": "24-20-24"})
+    session.expire_all()
+    event_a = _event_map(session, imported.tournament_id)["Women's A"]
+    event_a.notes = "Approved structure: Women's A · ranks 1–20 · 20 teams"
+    session.add(event_a)
+    session.commit()
+
+    body = _approve(client, imported.id, {"womens": "20-24-24"})
+    session.expire_all()
+    event_a = _event_map(session, imported.tournament_id)["Women's A"]
+    event_b = _event_map(session, imported.tournament_id)["Women's B"]
+    assert body["structureEventConflicts"] == []
+    assert event_a.team_count == 20
+    assert event_b.team_count == 24
+    assert "20 teams" in (event_a.notes or "")
+    assert "24 teams" in (event_b.notes or "")
+    assert _source_counts(session, imported.tournament_id)["Women's A"] == 20
+    assert _source_counts(session, imported.tournament_id)["Women's B"] == 24
