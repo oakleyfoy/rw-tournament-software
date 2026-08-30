@@ -959,6 +959,46 @@ def test_amelia_clean_reapprove_updates_capacity_and_routes_67_womens(client: Te
     assert names["Women's C"]["teamRowCount"] == 23
 
 
+def test_amelia_draft_draw_templates_do_not_block_capacity_or_roster(client: TestClient, session: Session):
+    """Production shape: every Event held a saved Draw Builder template and zero teams.
+
+    A draft template must not be read as a live draw, or approval silently keeps the old
+    capacity and projects no roster at all.
+    """
+    teams = _womens_field(67) + _mixed_field(44)
+    imported = _import_payload(session, 1472, teams)
+    _approve_amelia(client, imported.id, womens=[24, 20, 24], mixed=[20, 24])
+    session.expire_all()
+    for event in _event_map(session, imported.tournament_id).values():
+        saved = client.put(
+            f"/api/events/{event.id}/draw-plan",
+            json={"draw_plan_json": '{"version":"1.0","template_type":"WF_TO_POOLS_4","wf_rounds":2}'},
+        )
+        assert saved.status_code == 200, saved.text
+    session.expire_all()
+    for event in _event_map(session, imported.tournament_id).values():
+        assert event.draw_status == "draft"
+        assert event_protection_reason(session, event) is None
+
+    body = _approve_amelia(client, imported.id, womens=[20, 24, 24], mixed=[20, 24])
+    session.expire_all()
+    events = _event_map(session, imported.tournament_id)
+    assert body["structureEventConflicts"] == []
+    assert body["projectionOk"] is True
+    assert events["Women's A"].team_count == 20
+    assert events["Women's B"].team_count == 24
+    assert events["Women's C"].team_count == 24
+    assert _source_counts(session, imported.tournament_id) == {
+        "Mixed A": 20,
+        "Mixed B": 24,
+        "Women's A": 20,
+        "Women's B": 24,
+        "Women's C": 23,
+    }
+    assert all("WF_TO_POOLS_4" in (event.draw_plan_json or "") for event in events.values())
+    assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []
+
+
 def test_amelia_notes_and_capacity_stay_aligned_when_teams_already_exist(client: TestClient, session: Session):
     teams = _womens_field(67)
     imported = _import_payload(session, 1471, teams)
