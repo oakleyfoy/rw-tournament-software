@@ -573,9 +573,7 @@ def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[
     )
 
     events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
-    teams = list(
-        session.exec(select(Team).join(Event).where(Event.tournament_id == import_row.tournament_id)).all()
-    )
+    teams = list(session.exec(select(Team).join(Event).where(Event.tournament_id == import_row.tournament_id)).all())
     towels = list(
         session.exec(
             select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == import_row.tournament_id)
