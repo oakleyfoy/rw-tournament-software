@@ -20,7 +20,7 @@ from app.services.rw_os_import import (
     save_forecasts,
     select_draw_structure,
 )
-from app.services.structure_events import serialize_structure_event, sync_events_from_approved_plans
+from app.services.structure_events import sync_events_from_approved_plans
 
 router = APIRouter(prefix="/rw-os", tags=["rw-os-import"])
 
@@ -185,27 +185,31 @@ def approve_rw_os_plan(
     try:
         plans = approve_structures(session, row, payload.selections)
         sync = sync_events_from_approved_plans(session, row.tournament_id, plans)
+        events_created = len(sync.created)
+        events_updated = len(sync.updated)
         from app.services.rw_os_roster_projection import project_approved_roster
 
         projection = project_approved_roster(
             session,
             row,
             plans,
-            events_created=len(sync.created),
+            events_created=events_created,
             operational_only=False,
             allow_structural_rebuild=True,
         )
+        # Projection must not be allowed to leave Event.team_count stale relative to
+        # the approved plan. Re-apply capacities after roster writes when unprotected.
+        resync = sync_events_from_approved_plans(session, row.tournament_id, plans)
+        events_updated += len(resync.updated)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.refresh(row)
     matches = session.exec(select(Match).where(Match.tournament_id == row.tournament_id)).all()
     response = build_import_response(session, row)
-    response["eventsCreated"] = len(sync.created)
-    response["eventsUpdated"] = len(sync.updated)
+    response["eventsCreated"] = events_created
+    response["eventsUpdated"] = events_updated
     response["matchesCreated"] = len(matches)
     response["bracketsCreated"] = False
-    response["tournamentEvents"] = [serialize_structure_event(event) for event in sync.events]
-    response["structureEventConflicts"] = sync.conflicts
     response["rosterProjection"] = projection.to_dict()
     response["projectionOk"] = projection.ok
     return response
