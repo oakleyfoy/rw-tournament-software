@@ -349,3 +349,73 @@ def test_placeholder_only_match_does_not_protect_clean_event(client: TestClient,
     event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
     assert approved["structureEventConflicts"] == []
     assert event_a.team_count == 24
+
+
+def test_draft_draw_plan_template_does_not_protect_clean_event(client: TestClient, session: Session):
+    created = _import_tournament(client)
+    import_id = created["import"]["id"]
+    tournament_id = created["import"]["tournamentId"]
+    _approve_custom_womens(client, import_id, [20, 24])
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+
+    saved = client.put(
+        f"/api/events/{event_a.id}/draw-plan",
+        json={"draw_plan_json": '{"version":"1.0","template_type":"WF_TO_POOLS_4","wf_rounds":2}'},
+    )
+    assert saved.status_code == 200, saved.text
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert event_a.draw_status == "draft"
+    assert (event_a.draw_plan_json or "").strip()
+    assert event_protection_reason(session, event_a) is None
+
+    approved = _approve_custom_womens(client, import_id, [24, 20])
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert approved["structureEventConflicts"] == []
+    assert event_a.team_count == 24
+    # The draft template is preserved, only the approved capacity moves.
+    assert "WF_TO_POOLS_4" in (event_a.draw_plan_json or "")
+
+
+def test_draft_draw_plan_with_live_match_still_protects(client: TestClient, session: Session):
+    created = _import_tournament(client)
+    import_id = created["import"]["id"]
+    tournament_id = created["import"]["tournamentId"]
+    _approve_custom_womens(client, import_id, [20, 24])
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    client.put(
+        f"/api/events/{event_a.id}/draw-plan",
+        json={"draw_plan_json": '{"version":"1.0","template_type":"WF_TO_POOLS_4","wf_rounds":2}'},
+    )
+    _add_match(session, tournament_id, event_a.id, status="scheduled", match_code="LIVE_01")
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert event_protection_reason(session, event_a) == "event already has matches"
+
+    approved = _approve_custom_womens(client, import_id, [24, 20])
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert event_a.team_count == 20
+    assert [item["eventId"] for item in approved["structureEventConflicts"]] == [event_a.id]
+
+
+def test_finalized_draw_still_protects_event(client: TestClient, session: Session):
+    created = _import_tournament(client)
+    import_id = created["import"]["id"]
+    tournament_id = created["import"]["tournamentId"]
+    _approve_custom_womens(client, import_id, [20, 24])
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    client.put(
+        f"/api/events/{event_a.id}",
+        json={"draw_plan_json": '{"template_type":"WF_TO_POOLS_4"}', "draw_status": "final"},
+    )
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert event_protection_reason(session, event_a) == "event has generated draw"
+
+    approved = _approve_custom_womens(client, import_id, [24, 20])
+    session.expire_all()
+    event_a = session.exec(select(Event).where(Event.tournament_id == tournament_id, Event.name == "Women's A")).first()
+    assert event_a.team_count == 20
+    assert approved["structureEventConflicts"][0]["reason"] == "event has generated draw"

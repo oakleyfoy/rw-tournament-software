@@ -121,6 +121,12 @@ def _notes_are_structure_generated(notes: Optional[str]) -> bool:
     return not text or text.startswith(STRUCTURE_NOTES_PREFIX)
 
 
+# Saving a Draw Builder template writes draw_plan_json and sets "draft" without any
+# roster or matches. Only finalize produces a live draw, so a draft is still rebuildable
+# and must not block an approved structure change.
+REBUILDABLE_DRAW_STATUSES = {"not_started", "draft"}
+
+
 def _owned_event_matches(session: Session, event: Event) -> list[Match]:
     """Match rows that belong to this Event and this Tournament only."""
     if event.id is None or event.tournament_id is None:
@@ -152,11 +158,9 @@ def _match_has_generated_draw_activity(session: Session, match: Match) -> bool:
 
 
 def event_protection_reason(session: Session, event: Event) -> Optional[str]:
-    if (event.draw_plan_json or "").strip():
-        return "event has generated draw"
     status = (event.draw_status or "not_started").strip()
-    if status != "not_started":
-        return "event has active draw state"
+    if status not in REBUILDABLE_DRAW_STATUSES:
+        return "event has generated draw"
     if any(_match_has_generated_draw_activity(session, match) for match in _owned_event_matches(session, event)):
         return "event already has matches"
     return None
