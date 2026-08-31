@@ -374,7 +374,9 @@ def _clear_team_from_wf_r1_slot(match: Match, team_id: int) -> list[str]:
     return cleared
 
 
-def _assignment_view(session: Session, match: Match) -> tuple[Optional[int], Optional[str], Optional[str], Optional[str]]:
+def _assignment_view(
+    session: Session, match: Match
+) -> tuple[Optional[int], Optional[str], Optional[str], Optional[str]]:
     assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == match.id)).first()
     if not assignment:
         return None, None, None, None
@@ -542,9 +544,7 @@ def _assert_identity_fits_destination(
     dest_event_id: int,
     exclude_team_id: int,
 ) -> None:
-    others = session.exec(
-        select(Team).where(Team.event_id == dest_event_id, Team.id != exclude_team_id)
-    ).all()
+    others = session.exec(select(Team).where(Team.event_id == dest_event_id, Team.id != exclude_team_id)).all()
     for other in others:
         if other.name == team.name:
             raise PostDrawCorrectionError(
