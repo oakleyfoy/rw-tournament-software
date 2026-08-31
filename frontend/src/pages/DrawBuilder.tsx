@@ -42,7 +42,10 @@ import {
   getMatches,
   wfR1SwapSlots,
   Match,
+  MoveDivisionResponse,
 } from '../api/client'
+import MoveDivisionModal from './draw-builder/MoveDivisionModal'
+import EditWfMatchupModal from './draw-builder/EditWfMatchupModal'
 import { showToast } from '../utils/toast'
 import {
   TemplateType,
@@ -328,6 +331,9 @@ function DrawBuilder() {
   const [wfR1SwapPick, setWfR1SwapPick] = useState<{ eventId: number; matchId: number; slot: 'A' | 'B' } | null>(
     null,
   )
+  const [moveDivisionTarget, setMoveDivisionTarget] = useState<{ team: TeamListItem; sourceEvent: Event } | null>(null)
+  const [editMatchupMatchId, setEditMatchupMatchId] = useState<number | null>(null)
+  const [lastMoveResult, setLastMoveResult] = useState<MoveDivisionResponse | null>(null)
 
   // Scroll to top when component mounts
   useEffect(() => {
@@ -928,6 +934,21 @@ function DrawBuilder() {
     }
   }
 
+  const refreshAfterPostDrawEdit = async (...eventIds: number[]) => {
+    const unique = [...new Set(eventIds.filter((id) => Number.isFinite(id)))]
+    await Promise.all(unique.map((eventId) => handleLoadTeams(eventId)))
+    await Promise.all(unique.map((eventId) => fetchWfR1Matches(eventId)))
+    await loadData()
+  }
+
+  const handleTeamMoved = async (result: MoveDivisionResponse) => {
+    setMoveDivisionTarget(null)
+    setLastMoveResult(result)
+    showToast(result.message, 'success')
+    result.warnings.forEach((w) => showToast(w, 'warning'))
+    await refreshAfterPostDrawEdit(result.source_event_id, result.destination_event_id)
+  }
+
   const handleLegacyImportTeams = async (eventId: number) => {
     if (!tournamentId || !legacyImportText.trim()) return
     setLegacyImportLoading(true)
@@ -1326,6 +1347,7 @@ function DrawBuilder() {
                             <th style={{ padding: '6px 8px', width: 52 }} title="Avoid group (who-knows-who letters)">
                               Avoid
                             </th>
+                            <th style={{ padding: '6px 8px' }}>Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1392,6 +1414,16 @@ function DrawBuilder() {
                                 </td>
                                 <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(tb?.rating)}</td>
                                 <td style={metaCell}>{formatAvoidGroup(tb?.avoid_group)}</td>
+                                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 12, padding: '4px 8px' }}
+                                    onClick={() => setEditMatchupMatchId(m.id)}
+                                  >
+                                    Edit Matchup
+                                  </button>
+                                </td>
                               </tr>
                             )
                           })}
@@ -1403,6 +1435,63 @@ function DrawBuilder() {
               )}
           </div>
         )}
+
+        <div
+          className="form-group"
+          style={{
+            marginBottom: '16px',
+            padding: '12px',
+            borderRadius: '8px',
+            border: '1px solid var(--theme-input-border)',
+            backgroundColor: 'var(--theme-card-bg)',
+          }}
+        >
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Teams in this event</label>
+          <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
+            After draws exist, use Move Division to reassign a pair to another event without regenerating either draw.
+          </p>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={loadingTeamsFor === event.id}
+              onClick={() => void handleLoadTeams(event.id)}
+            >
+              {loadingTeamsFor === event.id ? 'Loading…' : eventTeams[event.id] ? 'Refresh teams' : 'Load teams'}
+            </button>
+          </div>
+          {(eventTeams[event.id]?.length ?? 0) > 0 && (
+            <div style={{ overflowX: 'auto', maxHeight: 280, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--theme-input-border)' }}>
+                    <th style={{ padding: '6px 8px' }}>Seed</th>
+                    <th style={{ padding: '6px 8px' }}>Team</th>
+                    <th style={{ padding: '6px 8px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eventTeams[event.id]!.map((t) => (
+                    <tr key={t.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+                      <td style={{ padding: '6px 8px' }}>{t.seed ?? '—'}</td>
+                      <td style={{ padding: '6px 8px' }}>{t.display_name || t.name}</td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: '4px 8px' }}
+                          onClick={() => setMoveDivisionTarget({ team: t, sourceEvent: event })}
+                        >
+                          Move Division
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label>Standard Match Length</label>
@@ -1566,6 +1655,57 @@ function DrawBuilder() {
           </button>
         </div>
       </div>
+
+      {lastMoveResult && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 24,
+            border: '1px solid rgba(255, 193, 7, 0.5)',
+            backgroundColor: 'rgba(255, 193, 7, 0.08)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+            <div>
+              <h2 className="section-title" style={{ marginTop: 0 }}>Team moved — staff follow-up</h2>
+              <p style={{ fontSize: 13, marginTop: 0 }}>{lastMoveResult.message}</p>
+              {lastMoveResult.warnings.length > 0 && (
+                <ul style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 13 }}>
+                  {lastMoveResult.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
+              {lastMoveResult.affected_source_matches.length > 0 && (
+                <div style={{ fontSize: 13 }}>
+                  <strong>Source WF Round 1 slots cleared (match IDs preserved):</strong>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                    {lastMoveResult.affected_source_matches.map((m) => (
+                      <li key={m.id} style={{ marginBottom: 6 }}>
+                        {m.match_code} (WF round {m.round_index}, match #{m.sequence_in_round})
+                        {' — '}
+                        {m.placeholder_side_a} vs {m.placeholder_side_b}
+                        {' '}
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: '2px 8px', marginLeft: 6 }}
+                          onClick={() => setEditMatchupMatchId(m.id)}
+                        >
+                          Edit Matchup
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <button type="button" className="btn btn-secondary" onClick={() => setLastMoveResult(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tournament Summary */}
       <div className="card" style={{ marginBottom: '24px' }}>
@@ -1874,6 +2014,7 @@ function DrawBuilder() {
                               <th style={{ padding: '4px 8px' }}>P1 Email</th>
                               <th style={{ padding: '4px 8px' }}>P2 Cell</th>
                               <th style={{ padding: '4px 8px' }}>P2 Email</th>
+                              <th style={{ padding: '4px 8px' }}>Action</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1888,6 +2029,19 @@ function DrawBuilder() {
                                 <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p1_email ?? '—'}</td>
                                 <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p2_cell ?? '—'}</td>
                                 <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p2_email ?? '—'}</td>
+                                <td style={{ padding: '4px 8px' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 11, padding: '3px 8px' }}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setMoveDivisionTarget({ team: t, sourceEvent: ev })
+                                    }}
+                                  >
+                                    Move Division
+                                  </button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -2007,6 +2161,32 @@ function DrawBuilder() {
           </div>
         )
       })()}
+      {moveDivisionTarget && tournamentId && (
+        <MoveDivisionModal
+          tournamentId={tournamentId}
+          team={moveDivisionTarget.team}
+          sourceEvent={moveDivisionTarget.sourceEvent}
+          events={events}
+          onClose={() => setMoveDivisionTarget(null)}
+          onMoved={(result) => void handleTeamMoved(result)}
+        />
+      )}
+      {editMatchupMatchId != null && tournamentId && (
+        <EditWfMatchupModal
+          tournamentId={tournamentId}
+          matchId={editMatchupMatchId}
+          onClose={() => setEditMatchupMatchId(null)}
+          onSaved={() => {
+            const matchId = editMatchupMatchId
+            setEditMatchupMatchId(null)
+            const eventId =
+              lastMoveResult?.affected_source_matches.find((m) => m.id === matchId)
+                ? lastMoveResult.source_event_id
+                : events.find((e) => (wfR1MatchesByEvent[e.id] || []).some((m) => m.id === matchId))?.id
+            if (eventId) void fetchWfR1Matches(eventId)
+          }}
+        />
+      )}
     </div>
   )
 }
