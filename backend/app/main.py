@@ -31,6 +31,7 @@ from app.routes import (
     avoid_edges,
     debug,
     desk,
+    display_board,
     draw_builder,
     events,
     phase1_status,
@@ -175,7 +176,9 @@ app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"], dep
 app.include_router(teams.router, prefix="/api", tags=["teams"], dependencies=_protected_deps)
 
 # Post-draw staff corrections (move division / edit WF R1 matchup)
-app.include_router(post_draw_corrections.router, prefix="/api", tags=["post-draw-corrections"], dependencies=_protected_deps)
+app.include_router(
+    post_draw_corrections.router, prefix="/api", tags=["post-draw-corrections"], dependencies=_protected_deps
+)
 
 # Include avoid edges router
 app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"], dependencies=_protected_deps)
@@ -191,6 +194,9 @@ app.include_router(public.router, prefix="/api", tags=["public"])
 
 # Desk runtime console (staff-only)
 app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_protected_deps)
+
+# Tournament TV display boards (staff-only, read-only)
+app.include_router(display_board.router, prefix="/api", tags=["display-board"], dependencies=_protected_deps)
 
 # Auth routes
 app.include_router(auth.router)

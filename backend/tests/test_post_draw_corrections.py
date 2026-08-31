@@ -321,9 +321,7 @@ def test_move_team_between_events(client: TestClient, session: Session, post_dra
 def test_existing_source_draw_remains_intact(client: TestClient, session: Session, post_draw_fixture):
     """Moving an unplayed team clears ONLY its WF R1 side; match id/assignment/court/time survive."""
     fx = post_draw_fixture
-    source_ids_before = {
-        m.id for m in session.exec(select(Match).where(Match.event_id == fx["womens_b_id"])).all()
-    }
+    source_ids_before = {m.id for m in session.exec(select(Match).where(Match.event_id == fx["womens_b_id"])).all()}
     m2_before = session.get(Match, fx["source_m2_id"])
     assert m2_before is not None
     m2_snap = (m2_before.team_a_id, m2_before.team_b_id, m2_before.match_code, m2_before.round_index)
@@ -343,9 +341,7 @@ def test_existing_source_draw_remains_intact(client: TestClient, session: Sessio
     assert body["affected_source_matches"][0]["cleared_slots"] == ["A"]
 
     session.expire_all()
-    source_ids_after = {
-        m.id for m in session.exec(select(Match).where(Match.event_id == fx["womens_b_id"])).all()
-    }
+    source_ids_after = {m.id for m in session.exec(select(Match).where(Match.event_id == fx["womens_b_id"])).all()}
     assert source_ids_before == source_ids_after
     m1 = session.get(Match, fx["source_m1_id"])
     assert m1 is not None
@@ -374,7 +370,15 @@ def test_destination_draw_remains_intact(client: TestClient, session: Session, p
     """TEST 3 — destination draw is not regenerated or auto-rewritten."""
     fx = post_draw_fixture
     dest_before = {
-        m.id: (m.team_a_id, m.team_b_id, m.match_code, m.round_index, m.sequence_in_round, m.placeholder_side_a, m.placeholder_side_b)
+        m.id: (
+            m.team_a_id,
+            m.team_b_id,
+            m.match_code,
+            m.round_index,
+            m.sequence_in_round,
+            m.placeholder_side_a,
+            m.placeholder_side_b,
+        )
         for m in session.exec(select(Match).where(Match.event_id == fx["womens_c_id"])).all()
     }
 
@@ -386,7 +390,15 @@ def test_destination_draw_remains_intact(client: TestClient, session: Session, p
 
     session.expire_all()
     dest_after = {
-        m.id: (m.team_a_id, m.team_b_id, m.match_code, m.round_index, m.sequence_in_round, m.placeholder_side_a, m.placeholder_side_b)
+        m.id: (
+            m.team_a_id,
+            m.team_b_id,
+            m.match_code,
+            m.round_index,
+            m.sequence_in_round,
+            m.placeholder_side_a,
+            m.placeholder_side_b,
+        )
         for m in session.exec(select(Match).where(Match.event_id == fx["womens_c_id"])).all()
     }
     assert dest_before == dest_after
@@ -396,9 +408,7 @@ def test_destination_draw_remains_intact(client: TestClient, session: Session, p
     assert dest_m1.team_b_id == fx["dest_2_id"]
 
 
-def test_edit_wf_r1_matchup_preserves_match_identity(
-    client: TestClient, session: Session, post_draw_fixture
-):
+def test_edit_wf_r1_matchup_preserves_match_identity(client: TestClient, session: Session, post_draw_fixture):
     """TEST 4 — replace Team 2, keep match id / stage / round / schedule."""
     fx = post_draw_fixture
     m2_before = session.get(Match, fx["source_m2_id"])
@@ -464,9 +474,7 @@ def test_edit_wf_r1_matchup_preserves_match_identity(
     assert (dest.id, dest.team_a_id, dest.team_b_id, dest.match_code) == dest_snapshot
 
 
-def test_edit_wf_r1_matchup_direct_replace_unused_side(
-    client: TestClient, session: Session, post_draw_fixture
-):
+def test_edit_wf_r1_matchup_direct_replace_unused_side(client: TestClient, session: Session, post_draw_fixture):
     """Replace Team B with a team that is not already in another R1 match after clearing."""
     fx = post_draw_fixture
     # Team B vs Team D would duplicate D. Clear D from m2, then replace B with D on m1.
@@ -572,9 +580,7 @@ def test_completed_match_protection(client: TestClient, session: Session, post_d
     assert (child.team_a_id, child.team_b_id, child.match_code) == downstream_snap
 
 
-def test_pair_integrity_move_does_not_split_partners(
-    client: TestClient, session: Session, post_draw_fixture
-):
+def test_pair_integrity_move_does_not_split_partners(client: TestClient, session: Session, post_draw_fixture):
     """TEST 8 — moving a doubles team moves both player links with the same team id."""
     fx = post_draw_fixture
     res = _move(client, fx, fx["team_a_id"], fx["womens_c_id"], confirm=True)
@@ -604,9 +610,7 @@ def test_same_team_both_sides_rejected(client: TestClient, post_draw_fixture):
 
 def test_wf_r1_matchup_context(client: TestClient, post_draw_fixture):
     fx = post_draw_fixture
-    res = client.get(
-        f"/api/tournaments/{fx['tournament_id']}/schedule/matches/{fx['source_m1_id']}/wf-r1-matchup"
-    )
+    res = client.get(f"/api/tournaments/{fx['tournament_id']}/schedule/matches/{fx['source_m1_id']}/wf-r1-matchup")
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["stage"] == "WF"
@@ -732,9 +736,7 @@ def test_move_rejected_if_source_match_has_downstream_advancement(
     assert child.source_match_a_id == fx["source_m1_id"]
 
 
-def test_defaulted_team_cannot_be_inserted_into_wf_r1_matchup(
-    client: TestClient, session: Session, post_draw_fixture
-):
+def test_defaulted_team_cannot_be_inserted_into_wf_r1_matchup(client: TestClient, session: Session, post_draw_fixture):
     fx = post_draw_fixture
     m1_before = session.get(Match, fx["source_m1_id"])
     assert m1_before is not None
@@ -773,9 +775,7 @@ def test_seed_collision_clears_seed_not_reassigned(client: TestClient, session: 
     assert dest_seeds_after == dest_seeds_before
 
 
-def test_source_avoid_edges_removed_destination_not_created(
-    client: TestClient, session: Session, post_draw_fixture
-):
+def test_source_avoid_edges_removed_destination_not_created(client: TestClient, session: Session, post_draw_fixture):
     fx = post_draw_fixture
     dest_pairs_before = sorted(
         (e.team_id_a, e.team_id_b)
@@ -791,11 +791,7 @@ def test_source_avoid_edges_removed_destination_not_created(
     dest_edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == fx["womens_c_id"])).all()
     dest_pairs_after = sorted((e.team_id_a, e.team_id_b) for e in dest_edges)
     assert dest_pairs_after == dest_pairs_before
-    involved = {
-        tid
-        for e in dest_edges
-        for tid in (e.team_id_a, e.team_id_b)
-    }
+    involved = {tid for e in dest_edges for tid in (e.team_id_a, e.team_id_b)}
     assert fx["team_a_id"] not in involved
 
 
@@ -839,10 +835,7 @@ def test_same_event_slot_swap(client: TestClient, session: Session, post_draw_fi
     m1_id, m2_id = m1.id, m2.id
     event_a = session.get(Team, fx["team_a_id"]).event_id
     event_b = session.get(Team, fx["team_b_id"]).event_id
-    avoid_before = [
-        (e.id, e.event_id, e.team_id_a, e.team_id_b)
-        for e in session.exec(select(TeamAvoidEdge)).all()
-    ]
+    avoid_before = [(e.id, e.event_id, e.team_id_a, e.team_id_b) for e in session.exec(select(TeamAvoidEdge)).all()]
 
     with (
         patch("app.services.draw_plan_engine.generate_matches_for_event") as gen_matches,
@@ -872,7 +865,12 @@ def test_same_event_slot_swap(client: TestClient, session: Session, post_draw_fi
     assert m2.team_b_id == fx["team_a_id"]
     assert m1.id == m1_id
     assert m2.id == m2_id
-    assert EMPTY_WF_PLACEHOLDER not in (m1.placeholder_side_a, m1.placeholder_side_b, m2.placeholder_side_a, m2.placeholder_side_b)
+    assert EMPTY_WF_PLACEHOLDER not in (
+        m1.placeholder_side_a,
+        m1.placeholder_side_b,
+        m2.placeholder_side_a,
+        m2.placeholder_side_b,
+    )
     assignment_after = session.get(MatchAssignment, fx["assignment_id"])
     slot_after = session.get(ScheduleSlot, fx["slot_id"])
     assert assignment_after.slot_id == fx["slot_id"]
@@ -882,10 +880,7 @@ def test_same_event_slot_swap(client: TestClient, session: Session, post_draw_fi
     assert m1.round_index == 1
     assert m1.sequence_in_round == 1
     assert m2.sequence_in_round == 5
-    avoid_after = [
-        (e.id, e.event_id, e.team_id_a, e.team_id_b)
-        for e in session.exec(select(TeamAvoidEdge)).all()
-    ]
+    avoid_after = [(e.id, e.event_id, e.team_id_a, e.team_id_b) for e in session.exec(select(TeamAvoidEdge)).all()]
     assert avoid_after == avoid_before
     links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == fx["team_a_id"])).all()
     assert {link.player_id for link in links} == {fx["player_1_id"], fx["player_2_id"]}
@@ -1129,9 +1124,7 @@ def test_cross_event_seed_collision_clears_seed(client: TestClient, session: Ses
     ]
 
 
-def test_cross_event_avoid_edges_removed_same_event_unchanged(
-    client: TestClient, session: Session, post_draw_fixture
-):
+def test_cross_event_avoid_edges_removed_same_event_unchanged(client: TestClient, session: Session, post_draw_fixture):
     fx = post_draw_fixture
     res = _swap(client, fx, fx["team_a_id"], fx["dest_1_id"])
     assert res.status_code == 200, res.text
@@ -1149,11 +1142,7 @@ def test_cross_event_avoid_edges_removed_same_event_unchanged(
     assert fx["team_a_id"] not in involved
     assert fx["dest_1_id"] not in involved
     # Destination edges involving dest_1 were removed; dest_2 remaining edge is not invented with A.
-    invented = [
-        e
-        for e in dest_edges
-        if fx["team_a_id"] in (e.team_id_a, e.team_id_b)
-    ]
+    invented = [e for e in dest_edges if fx["team_a_id"] in (e.team_id_a, e.team_id_b)]
     assert invented == []
 
 

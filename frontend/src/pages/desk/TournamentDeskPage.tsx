@@ -10691,6 +10691,42 @@ export default function TournamentDeskPage() {
             Check-In Display
           </button>
           <button
+            onClick={() => {
+              if (!tid) return
+              window.open(`/desk/t/${tid}/display/courts`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Open Court Board
+          </button>
+          <button
+            onClick={() => {
+              if (!tid) return
+              window.open(`/desk/t/${tid}/display/upcoming`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Open Upcoming Matches
+          </button>
+          <button
             onClick={handleRefresh}
             style={{
               padding: '6px 14px',

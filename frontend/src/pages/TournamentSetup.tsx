@@ -808,6 +808,20 @@ function TournamentSetup() {
             >
               Draw Builder
             </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => window.open(`/desk/t/${tournament.id}/display/courts`, '_blank', 'noopener,noreferrer')}
+              style={{ fontSize: '14px' }}
+            >
+              Open Court Board
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => window.open(`/desk/t/${tournament.id}/display/upcoming`, '_blank', 'noopener,noreferrer')}
+              style={{ fontSize: '14px' }}
+            >
+              Open Upcoming Matches
+            </button>
             {tournament.rw_os_import_id ? (
               <button
                 className="btn btn-secondary"
