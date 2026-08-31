@@ -26,7 +26,11 @@
     "node_modules",
     "src/**/*.old.ts",
     "src/**/*.old.tsx",
-    "src/pages/schedule/SchedulePage.old.tsx"
+    "src/pages/schedule/SchedulePage.old.tsx",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/test/**",
+    "src/pages/display/displayBoardFixture.ts"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

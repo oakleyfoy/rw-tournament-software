@@ -31,6 +31,7 @@ from app.routes import (
     avoid_edges,
     debug,
     desk,
+    display_board,
     draw_builder,
     events,
     phase1_status,
@@ -191,6 +192,9 @@ app.include_router(public.router, prefix="/api", tags=["public"])
 
 # Desk runtime console (staff-only)
 app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_protected_deps)
+
+# Tournament TV display boards (staff-only, read-only)
+app.include_router(display_board.router, prefix="/api", tags=["display-board"], dependencies=_protected_deps)
 
 # Auth routes
 app.include_router(auth.router)

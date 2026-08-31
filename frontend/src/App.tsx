@@ -20,6 +20,8 @@ import TournamentDeskBoardPage from './pages/desk/TournamentDeskBoardPage'
 import TournamentDeskCheckinBoardPage from './pages/desk/TournamentDeskCheckinBoardPage'
 import TournamentDeskDrawsDisplayPage from './pages/desk/TournamentDeskDrawsDisplayPage'
 import TournamentDeskSharedScreenPage from './pages/desk/TournamentDeskSharedScreenPage'
+import CourtBoardPage from './pages/display/CourtBoardPage'
+import UpcomingMatchesPage from './pages/display/UpcomingMatchesPage'
 import { getCurrentTheme, applyTheme } from './utils/settings'
 import { getAuthToken } from './api/client'
 import LoginPage from './pages/LoginPage'
@@ -71,6 +73,8 @@ function App() {
           <Route path="/desk/t/:tournamentId/checkin-board" element={<TournamentDeskCheckinBoardPage />} />
           <Route path="/desk/t/:tournamentId/draws-display" element={<TournamentDeskDrawsDisplayPage />} />
           <Route path="/desk/t/:tournamentId/shared-screen" element={<TournamentDeskSharedScreenPage />} />
+          <Route path="/desk/t/:tournamentId/display/courts" element={<CourtBoardPage />} />
+          <Route path="/desk/t/:tournamentId/display/upcoming" element={<UpcomingMatchesPage />} />
         </Route>
       </Routes>
     </div>

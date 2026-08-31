@@ -4705,3 +4705,54 @@ export async function resetSmsTemplates(
     { method: 'POST' }
   )
 }
+
+export interface DisplayMatch {
+  match_id: number
+  scheduled_at: string | null
+  scheduled_time: string | null
+  sort_time: string | null
+  day_date: string | null
+  event_name: string
+  division_name: string | null
+  event_label: string
+  round_label: string | null
+  stage: string
+  team_a_names: string
+  team_b_names: string
+  team_a_checked_in: boolean
+  team_b_checked_in: boolean
+  team_a_has_tbd: boolean
+  team_b_has_tbd: boolean
+  board_section: 'currently_playing' | 'waiting_for_court' | 'upcoming'
+  in_next_12_hours: boolean
+  court?: string | null
+}
+
+export interface DisplayTimeGroup {
+  scheduled_time: string
+  sort_time: string
+  matches: DisplayMatch[]
+}
+
+export interface DisplayBoardResponse {
+  tournament_id: number
+  tournament_name: string
+  tournament_timezone: string
+  now_local: string
+  currently_playing: DisplayMatch[]
+  waiting_for_court: DisplayMatch[]
+  upcoming: DisplayMatch[]
+  upcoming_12h: DisplayMatch[]
+  upcoming_12h_groups: DisplayTimeGroup[]
+}
+
+export async function getDisplayBoard(
+  tournamentId: number,
+  versionId?: number
+): Promise<DisplayBoardResponse> {
+  const qs = versionId != null ? `?version_id=${versionId}` : ''
+  return fetchJson<DisplayBoardResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/display-board${qs}`
+  )
+}
+

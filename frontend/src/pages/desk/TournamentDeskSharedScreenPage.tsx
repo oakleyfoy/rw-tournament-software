@@ -228,6 +228,18 @@ export default function TournamentDeskSharedScreenPage() {
         path: `/desk/t/${tid}/checkin-board?kiosk=1`,
         kind: 'board',
       },
+      {
+        key: 'court_board_display',
+        label: 'Court Board',
+        path: `/desk/t/${tid}/display/courts`,
+        kind: 'board',
+      },
+      {
+        key: 'upcoming_matches_display',
+        label: 'Upcoming Matches',
+        path: `/desk/t/${tid}/display/upcoming`,
+        kind: 'board',
+      },
     ]
 
     if (!draws) return options
