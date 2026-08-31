@@ -2304,6 +2304,7 @@ export interface TeamListItem {
   p1_email: string | null
   p2_cell: string | null
   p2_email: string | null
+  is_defaulted?: boolean
 }
 
 export async function getEventTeams(
@@ -2359,6 +2360,52 @@ export async function moveTeamToAnotherDivision(
         confirm_existing_draws: confirmExistingDraws,
       }),
     },
+  )
+}
+
+export interface SwapSlotInfo {
+  match_id: number
+  side: 'A' | 'B' | string
+  match_code: string
+  sequence_in_round: number
+  event_id: number
+}
+
+export interface SwapPostDrawTeamsResponse {
+  mode: 'SAME_EVENT_SLOT_SWAP' | 'CROSS_EVENT_TEAM_SWAP' | string
+  tournament_id: number
+  team_a_id: number
+  team_b_id: number
+  team_a_name: string
+  team_b_name: string
+  team_a_old_event_id: number
+  team_a_new_event_id: number
+  team_b_old_event_id: number
+  team_b_new_event_id: number
+  team_a_old_event_name: string
+  team_a_new_event_name: string
+  team_b_old_event_name: string
+  team_b_new_event_name: string
+  team_a_old_slot: SwapSlotInfo
+  team_a_new_slot: SwapSlotInfo
+  team_b_old_slot: SwapSlotInfo
+  team_b_new_slot: SwapSlotInfo
+  warnings: string[]
+  message: string
+  seed_cleared_team_ids: number[]
+  wf_group_index_cleared_team_ids: number[]
+  avoid_edges_removed: number
+  player_ids_a: number[]
+  player_ids_b: number[]
+}
+
+export async function swapPostDrawTeams(
+  tournamentId: number,
+  body: { team_a_id: number; team_b_id: number; schedule_version_id: number },
+): Promise<SwapPostDrawTeamsResponse> {
+  return fetchJson<SwapPostDrawTeamsResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/teams/swap-post-draw`,
+    { method: 'POST', body: JSON.stringify(body) },
   )
 }
 

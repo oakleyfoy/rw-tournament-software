@@ -1,4 +1,4 @@
-"""API routes for post-draw team moves and WF R1 matchup edits."""
+"""API routes for post-draw team swaps, division moves, and WF R1 matchup edits."""
 
 from typing import List, Optional
 
@@ -15,6 +15,7 @@ from app.services.post_draw_corrections import (
     edit_first_round_wf_matchup,
     get_wf_r1_matchup_context,
     move_team_between_events,
+    swap_post_draw_teams,
 )
 
 router = APIRouter()
@@ -123,6 +124,48 @@ class EditWfR1MatchupResponse(BaseModel):
     assignment_slot_id: Optional[int] = None
     court_label: Optional[str] = None
     scheduled_time: Optional[str] = None
+
+
+class SwapPostDrawTeamsRequest(BaseModel):
+    team_a_id: int
+    team_b_id: int
+    schedule_version_id: int
+
+
+class SwapSlotResponse(BaseModel):
+    match_id: int
+    side: str
+    match_code: str
+    sequence_in_round: int
+    event_id: int
+
+
+class SwapPostDrawTeamsResponse(BaseModel):
+    mode: str
+    tournament_id: int
+    team_a_id: int
+    team_b_id: int
+    team_a_name: str
+    team_b_name: str
+    team_a_old_event_id: int
+    team_a_new_event_id: int
+    team_b_old_event_id: int
+    team_b_new_event_id: int
+    team_a_old_event_name: str
+    team_a_new_event_name: str
+    team_b_old_event_name: str
+    team_b_new_event_name: str
+    team_a_old_slot: SwapSlotResponse
+    team_a_new_slot: SwapSlotResponse
+    team_b_old_slot: SwapSlotResponse
+    team_b_new_slot: SwapSlotResponse
+    warnings: List[str] = Field(default_factory=list)
+    message: str
+    seed_cleared_team_ids: List[int] = Field(default_factory=list)
+    wf_group_index_cleared_team_ids: List[int] = Field(default_factory=list)
+    avoid_edges_removed: int = 0
+    player_ids_a: List[int] = Field(default_factory=list)
+    player_ids_b: List[int] = Field(default_factory=list)
 
 
 @router.post(
@@ -283,4 +326,69 @@ def edit_wf_r1_matchup(
         assignment_slot_id=result.assignment_slot_id,
         court_label=result.court_label,
         scheduled_time=result.scheduled_time,
+    )
+
+
+@router.post(
+    "/tournaments/{tournament_id}/teams/swap-post-draw",
+    response_model=SwapPostDrawTeamsResponse,
+)
+def swap_post_draw_teams_route(
+    tournament_id: int,
+    body: SwapPostDrawTeamsRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    try:
+        result = swap_post_draw_teams(
+            session,
+            tournament_id=tournament_id,
+            team_a_id=body.team_a_id,
+            team_b_id=body.team_b_id,
+            schedule_version_id=body.schedule_version_id,
+            staff_user=_staff_user_from_request(request),
+        )
+        session.commit()
+    except PostDrawCorrectionError as exc:
+        session.rollback()
+        _raise_correction_error(exc)
+    except Exception:
+        session.rollback()
+        raise
+
+    def _slot(info) -> SwapSlotResponse:
+        return SwapSlotResponse(
+            match_id=info.match_id,
+            side=info.side,
+            match_code=info.match_code,
+            sequence_in_round=info.sequence_in_round,
+            event_id=info.event_id,
+        )
+
+    return SwapPostDrawTeamsResponse(
+        mode=result.mode,
+        tournament_id=result.tournament_id,
+        team_a_id=result.team_a_id,
+        team_b_id=result.team_b_id,
+        team_a_name=result.team_a_name,
+        team_b_name=result.team_b_name,
+        team_a_old_event_id=result.team_a_old_event_id,
+        team_a_new_event_id=result.team_a_new_event_id,
+        team_b_old_event_id=result.team_b_old_event_id,
+        team_b_new_event_id=result.team_b_new_event_id,
+        team_a_old_event_name=result.team_a_old_event_name,
+        team_a_new_event_name=result.team_a_new_event_name,
+        team_b_old_event_name=result.team_b_old_event_name,
+        team_b_new_event_name=result.team_b_new_event_name,
+        team_a_old_slot=_slot(result.team_a_old_slot),
+        team_a_new_slot=_slot(result.team_a_new_slot),
+        team_b_old_slot=_slot(result.team_b_old_slot),
+        team_b_new_slot=_slot(result.team_b_new_slot),
+        warnings=result.warnings,
+        message=result.message,
+        seed_cleared_team_ids=result.seed_cleared_team_ids,
+        wf_group_index_cleared_team_ids=result.wf_group_index_cleared_team_ids,
+        avoid_edges_removed=result.avoid_edges_removed,
+        player_ids_a=result.player_ids_a,
+        player_ids_b=result.player_ids_b,
     )

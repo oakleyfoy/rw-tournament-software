@@ -23,6 +23,7 @@ from app.services.post_draw_corrections import (
     EMPTY_WF_PLACEHOLDER,
     MOVE_BLOCKED_PLAYED_SOURCE,
     SEED_CLEARED_WARNING,
+    SWAP_BLOCKED_PLAYED,
     WHO_KNOWS_WHO_WARNING,
 )
 
@@ -796,3 +797,372 @@ def test_source_avoid_edges_removed_destination_not_created(
         for tid in (e.team_id_a, e.team_id_b)
     }
     assert fx["team_a_id"] not in involved
+
+
+def _swap(client: TestClient, fx, team_a_id: int, team_b_id: int):
+    return client.post(
+        f"/api/tournaments/{fx['tournament_id']}/teams/swap-post-draw",
+        json={
+            "team_a_id": team_a_id,
+            "team_b_id": team_b_id,
+            "schedule_version_id": fx["version_id"],
+        },
+    )
+
+
+def _place_same_event_ab_on_distinct_slots(session: Session, fx):
+    """A on Match 1 side A; B on Match 5 side B. Opponent X stays on Match 1 side B."""
+    team_b = session.get(Team, fx["team_b_id"])
+    team_c = session.get(Team, fx["team_c_id"])
+    m1 = session.get(Match, fx["source_m1_id"])
+    m2 = session.get(Match, fx["source_m2_id"])
+    assert team_b and team_c and m1 and m2
+    m1.team_b_id = team_c.id
+    m1.placeholder_side_b = team_c.name
+    m2.team_b_id = team_b.id
+    m2.placeholder_side_b = team_b.name
+    m2.sequence_in_round = 5
+    session.add(m1)
+    session.add(m2)
+    session.commit()
+    session.refresh(m1)
+    session.refresh(m2)
+    return m1, m2
+
+
+def test_same_event_slot_swap(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    m1, m2 = _place_same_event_ab_on_distinct_slots(session, fx)
+    assignment = session.get(MatchAssignment, fx["assignment_id"])
+    slot = session.get(ScheduleSlot, fx["slot_id"])
+    assert assignment and slot
+    m1_id, m2_id = m1.id, m2.id
+    event_a = session.get(Team, fx["team_a_id"]).event_id
+    event_b = session.get(Team, fx["team_b_id"]).event_id
+    avoid_before = [
+        (e.id, e.event_id, e.team_id_a, e.team_id_b)
+        for e in session.exec(select(TeamAvoidEdge)).all()
+    ]
+
+    with (
+        patch("app.services.draw_plan_engine.generate_matches_for_event") as gen_matches,
+        patch("app.utils.match_generation.generate_wf_matches") as gen_wf,
+    ):
+        res = _swap(client, fx, fx["team_a_id"], fx["team_b_id"])
+        assert res.status_code == 200, res.text
+        gen_matches.assert_not_called()
+        gen_wf.assert_not_called()
+
+    body = res.json()
+    assert body["mode"] == "SAME_EVENT_SLOT_SWAP"
+    assert "WF Round 1 positions were exchanged" in body["message"]
+    session.expire_all()
+
+    team_a = session.get(Team, fx["team_a_id"])
+    team_b = session.get(Team, fx["team_b_id"])
+    m1 = session.get(Match, m1_id)
+    m2 = session.get(Match, m2_id)
+    assert team_a.event_id == event_a
+    assert team_b.event_id == event_b
+    assert team_a.wf_group_index == 1
+    assert team_a.seed == 1
+    assert team_b.seed == 2
+    assert m1.team_a_id == fx["team_b_id"]
+    assert m1.team_b_id == fx["team_c_id"]
+    assert m2.team_b_id == fx["team_a_id"]
+    assert m1.id == m1_id
+    assert m2.id == m2_id
+    assert EMPTY_WF_PLACEHOLDER not in (m1.placeholder_side_a, m1.placeholder_side_b, m2.placeholder_side_a, m2.placeholder_side_b)
+    assignment_after = session.get(MatchAssignment, fx["assignment_id"])
+    slot_after = session.get(ScheduleSlot, fx["slot_id"])
+    assert assignment_after.slot_id == fx["slot_id"]
+    assert assignment_after.match_id == m1_id
+    assert slot_after.court_label == slot.court_label
+    assert slot_after.start_time == slot.start_time
+    assert m1.round_index == 1
+    assert m1.sequence_in_round == 1
+    assert m2.sequence_in_round == 5
+    avoid_after = [
+        (e.id, e.event_id, e.team_id_a, e.team_id_b)
+        for e in session.exec(select(TeamAvoidEdge)).all()
+    ]
+    assert avoid_after == avoid_before
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == fx["team_a_id"])).all()
+    assert {link.player_id for link in links} == {fx["player_1_id"], fx["player_2_id"]}
+
+
+def test_cross_event_team_swap(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    dest_m1 = session.get(Match, fx["dest_m1_id"])
+    dest_m1.sequence_in_round = 7
+    session.add(dest_m1)
+    dest_slot = ScheduleSlot(
+        tournament_id=fx["tournament_id"],
+        schedule_version_id=fx["version_id"],
+        day_date=date(2026, 3, 1),
+        start_time=time(11, 0),
+        end_time=time(12, 0),
+        block_minutes=60,
+        court_number=2,
+        court_label="Court 2",
+    )
+    session.add(dest_slot)
+    session.commit()
+    session.refresh(dest_slot)
+    dest_assignment = MatchAssignment(
+        schedule_version_id=fx["version_id"],
+        match_id=fx["dest_m1_id"],
+        slot_id=dest_slot.id,
+        assigned_by="TEST",
+    )
+    session.add(dest_assignment)
+    p3 = Player(tournament_id=fx["tournament_id"], full_name="Walsh", phone_e164="+15551110003")
+    p4 = Player(tournament_id=fx["tournament_id"], full_name="Ortiz", phone_e164="+15551110004")
+    session.add(p3)
+    session.add(p4)
+    session.commit()
+    session.refresh(p3)
+    session.refresh(p4)
+    session.add(TeamPlayer(team_id=fx["dest_2_id"], player_id=p3.id, lineup_slot=1))
+    session.add(TeamPlayer(team_id=fx["dest_2_id"], player_id=p4.id, lineup_slot=2))
+    session.commit()
+
+    source_m1 = session.get(Match, fx["source_m1_id"])
+    dest_m1 = session.get(Match, fx["dest_m1_id"])
+    source_m1.sequence_in_round = 4
+    session.add(source_m1)
+    session.commit()
+
+    assignment_id = fx["assignment_id"]
+    dest_assignment_id = dest_assignment.id
+    dest_slot_id = dest_slot.id
+    source_m1_id = fx["source_m1_id"]
+    dest_m1_id = fx["dest_m1_id"]
+    opponent_x = fx["team_b_id"]
+    opponent_y = fx["dest_1_id"]
+
+    with (
+        patch("app.services.draw_plan_engine.generate_matches_for_event") as gen_matches,
+        patch("app.utils.match_generation.generate_wf_matches") as gen_wf,
+    ):
+        res = _swap(client, fx, fx["team_a_id"], fx["dest_2_id"])
+        assert res.status_code == 200, res.text
+        gen_matches.assert_not_called()
+        gen_wf.assert_not_called()
+
+    body = res.json()
+    assert body["mode"] == "CROSS_EVENT_TEAM_SWAP"
+    assert "exchanged divisions and WF Round 1 positions" in body["message"]
+    session.expire_all()
+
+    team_a = session.get(Team, fx["team_a_id"])
+    team_dest = session.get(Team, fx["dest_2_id"])
+    source_m1 = session.get(Match, source_m1_id)
+    dest_m1 = session.get(Match, dest_m1_id)
+    assert team_a.event_id == fx["womens_c_id"]
+    assert team_dest.event_id == fx["womens_b_id"]
+    assert team_a.wf_group_index is None
+    assert source_m1.team_a_id == fx["dest_2_id"]
+    assert source_m1.team_b_id == opponent_x
+    assert dest_m1.team_a_id == opponent_y
+    assert dest_m1.team_b_id == fx["team_a_id"]
+    assert source_m1.id == source_m1_id
+    assert dest_m1.id == dest_m1_id
+    assert source_m1.round_index == 1
+    assert source_m1.sequence_in_round == 4
+    assert dest_m1.sequence_in_round == 7
+    assert EMPTY_WF_PLACEHOLDER not in (
+        source_m1.placeholder_side_a,
+        source_m1.placeholder_side_b,
+        dest_m1.placeholder_side_a,
+        dest_m1.placeholder_side_b,
+    )
+    src_asg = session.get(MatchAssignment, assignment_id)
+    dst_asg = session.get(MatchAssignment, dest_assignment_id)
+    src_slot = session.get(ScheduleSlot, fx["slot_id"])
+    dst_slot = session.get(ScheduleSlot, dest_slot_id)
+    assert src_asg.match_id == source_m1_id
+    assert src_asg.slot_id == fx["slot_id"]
+    assert dst_asg.match_id == dest_m1_id
+    assert dst_asg.slot_id == dest_slot_id
+    assert src_slot.court_label == "Court 1"
+    assert src_slot.start_time == time(9, 0)
+    assert dst_slot.court_label == "Court 2"
+    assert dst_slot.start_time == time(11, 0)
+
+    a_links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == fx["team_a_id"])).all()
+    d_links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == fx["dest_2_id"])).all()
+    assert {link.player_id for link in a_links} == {fx["player_1_id"], fx["player_2_id"]}
+    assert {link.player_id for link in d_links} == {p3.id, p4.id}
+
+
+def test_cross_event_swap_rolls_back_on_late_failure(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    team_a_before = session.get(Team, fx["team_a_id"])
+    dest_before = session.get(Team, fx["dest_2_id"])
+    m1_before = session.get(Match, fx["source_m1_id"])
+    dm_before = session.get(Match, fx["dest_m1_id"])
+    snapshot = {
+        "a_event": team_a_before.event_id,
+        "d_event": dest_before.event_id,
+        "a_seed": team_a_before.seed,
+        "d_seed": dest_before.seed,
+        "a_wf": team_a_before.wf_group_index,
+        "m1_a": m1_before.team_a_id,
+        "m1_b": m1_before.team_b_id,
+        "dm_a": dm_before.team_a_id,
+        "dm_b": dm_before.team_b_id,
+        "m1_ph_a": m1_before.placeholder_side_a,
+        "dm_ph_b": dm_before.placeholder_side_b,
+    }
+    edges_before = {(e.event_id, e.team_id_a, e.team_id_b) for e in session.exec(select(TeamAvoidEdge)).all()}
+    original = __import__(
+        "app.services.post_draw_corrections", fromlist=["_delete_source_avoid_edges"]
+    )._delete_source_avoid_edges
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("forced second-half failure")
+        return original(*args, **kwargs)
+
+    with patch("app.services.post_draw_corrections._delete_source_avoid_edges", side_effect=boom):
+        with pytest.raises(RuntimeError, match="forced second-half failure"):
+            _swap(client, fx, fx["team_a_id"], fx["dest_2_id"])
+    assert calls["n"] >= 2
+
+    session.expire_all()
+    team_a = session.get(Team, fx["team_a_id"])
+    dest = session.get(Team, fx["dest_2_id"])
+    m1 = session.get(Match, fx["source_m1_id"])
+    dm = session.get(Match, fx["dest_m1_id"])
+    assert team_a.event_id == snapshot["a_event"]
+    assert dest.event_id == snapshot["d_event"]
+    assert team_a.seed == snapshot["a_seed"]
+    assert dest.seed == snapshot["d_seed"]
+    assert team_a.wf_group_index == snapshot["a_wf"]
+    assert m1.team_a_id == snapshot["m1_a"]
+    assert m1.team_b_id == snapshot["m1_b"]
+    assert dm.team_a_id == snapshot["dm_a"]
+    assert dm.team_b_id == snapshot["dm_b"]
+    assert m1.placeholder_side_a == snapshot["m1_ph_a"]
+    assert dm.placeholder_side_b == snapshot["dm_ph_b"]
+    edges_after = {(e.event_id, e.team_id_a, e.team_id_b) for e in session.exec(select(TeamAvoidEdge)).all()}
+    assert edges_after == edges_before
+
+
+def test_swap_rejects_played_team(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    m1 = session.get(Match, fx["source_m1_id"])
+    m1.winner_team_id = fx["team_a_id"]
+    m1.runtime_status = "FINAL"
+    session.add(m1)
+    session.commit()
+    res = _swap(client, fx, fx["team_a_id"], fx["dest_2_id"])
+    assert res.status_code == 409
+    assert res.json()["detail"]["message"] == SWAP_BLOCKED_PLAYED
+    session.expire_all()
+    assert session.get(Team, fx["team_a_id"]).event_id == fx["womens_b_id"]
+    assert session.get(Team, fx["dest_2_id"]).event_id == fx["womens_c_id"]
+    assert session.get(Match, fx["source_m1_id"]).team_a_id == fx["team_a_id"]
+    assert session.get(Match, fx["dest_m1_id"]).team_b_id == fx["dest_2_id"]
+
+
+def test_swap_rejects_later_round(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    later = Match(
+        tournament_id=fx["tournament_id"],
+        schedule_version_id=fx["version_id"],
+        event_id=fx["womens_b_id"],
+        match_code="WB_WF_02_01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="Smith / Jones",
+        placeholder_side_b="TBD",
+        team_a_id=fx["team_a_id"],
+        team_b_id=None,
+        status="unscheduled",
+    )
+    session.add(later)
+    session.commit()
+    res = _swap(client, fx, fx["team_a_id"], fx["dest_2_id"])
+    assert res.status_code == 409
+    assert "already started play" in res.json()["detail"]["message"]
+    session.expire_all()
+    assert session.get(Team, fx["team_a_id"]).event_id == fx["womens_b_id"]
+    assert session.get(Match, fx["source_m1_id"]).team_a_id == fx["team_a_id"]
+
+
+def test_swap_rejects_defaulted_team(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    res = _swap(client, fx, fx["defaulted_team_id"], fx["dest_2_id"])
+    assert res.status_code == 400
+    assert res.json()["detail"]["code"] == "DEFAULTED_TEAM"
+    session.expire_all()
+    assert session.get(Team, fx["dest_2_id"]).event_id == fx["womens_c_id"]
+    assert session.get(Match, fx["dest_m1_id"]).team_b_id == fx["dest_2_id"]
+
+
+def test_cross_event_seed_collision_clears_seed(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    res = _swap(client, fx, fx["team_a_id"], fx["dest_2_id"])
+    assert res.status_code == 200, res.text
+    body = res.json()
+    session.expire_all()
+    team_a = session.get(Team, fx["team_a_id"])
+    dest_2 = session.get(Team, fx["dest_2_id"])
+    # dest remaining dest_1 still has seed 1 → A's seed 1 collides and is cleared.
+    # Women's B remaining team_b still has seed 2 → dest_2's seed 2 collides and is cleared.
+    assert team_a.seed is None
+    assert dest_2.seed is None
+    assert SEED_CLEARED_WARNING in body["warnings"]
+    dest_c_seeds = {
+        t.seed for t in session.exec(select(Team).where(Team.event_id == fx["womens_c_id"])).all() if t.seed is not None
+    }
+    assert 1 in dest_c_seeds
+    assert team_a.id not in [
+        t.id for t in session.exec(select(Team).where(Team.event_id == fx["womens_c_id"], Team.seed == 1)).all()
+    ]
+
+
+def test_cross_event_avoid_edges_removed_same_event_unchanged(
+    client: TestClient, session: Session, post_draw_fixture
+):
+    fx = post_draw_fixture
+    res = _swap(client, fx, fx["team_a_id"], fx["dest_1_id"])
+    assert res.status_code == 200, res.text
+    assert res.json()["avoid_edges_removed"] >= 1
+    assert WHO_KNOWS_WHO_WARNING in res.json()["warnings"]
+    session.expire_all()
+    source_involving_a = [
+        e
+        for e in session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == fx["womens_b_id"])).all()
+        if e.team_id_a == fx["team_a_id"] or e.team_id_b == fx["team_a_id"]
+    ]
+    assert source_involving_a == []
+    dest_edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == fx["womens_c_id"])).all()
+    involved = {tid for e in dest_edges for tid in (e.team_id_a, e.team_id_b)}
+    assert fx["team_a_id"] not in involved
+    assert fx["dest_1_id"] not in involved
+    # Destination edges involving dest_1 were removed; dest_2 remaining edge is not invented with A.
+    invented = [
+        e
+        for e in dest_edges
+        if fx["team_a_id"] in (e.team_id_a, e.team_id_b)
+    ]
+    assert invented == []
+
+
+def test_same_event_avoid_edges_unchanged(client: TestClient, session: Session, post_draw_fixture):
+    fx = post_draw_fixture
+    _place_same_event_ab_on_distinct_slots(session, fx)
+    before = {(e.id, e.event_id, e.team_id_a, e.team_id_b) for e in session.exec(select(TeamAvoidEdge)).all()}
+    res = _swap(client, fx, fx["team_a_id"], fx["team_b_id"])
+    assert res.status_code == 200, res.text
+    session.expire_all()
+    after = {(e.id, e.event_id, e.team_id_a, e.team_id_b) for e in session.exec(select(TeamAvoidEdge)).all()}
+    assert after == before
