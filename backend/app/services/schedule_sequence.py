@@ -8,10 +8,10 @@ of events, any size, any number of tournament days (2, 3, or 4).
 Algorithm:
   1. Events sorted largest-first (team_count DESC, event_id ASC tiebreak).
   2. Within each event, matches grouped into "team-rounds" — one round =
-     every team plays once.  The (match_type, round_index) combination
-     determines which team-round a match belongs to.
-  3. Interleave across events: each event plays one team-round, then the
-     next event, round-robin style.
+     every team plays once.  WF rounds are taken from match_code (WF_Rn)
+     or round_number/round_index so R1 and R2 never collapse into one dump.
+  3. Interleave across events: one WF round per event, in saved event
+     order, then repeat that order for the next WF round.
   4. Within an event-round, matches sorted by match_id for determinism.
 
 Day assignment:
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -109,6 +110,27 @@ def _round_label(match_type: str, round_index: int) -> str:
     if match_type == "PLACEMENT":
         return f"PLACE R{round_index}"
     return f"{match_type} R{round_index}"
+
+
+_WF_ROUND_IN_CODE = re.compile(r"WF_R(\d+)", re.IGNORECASE)
+
+
+def _wf_round_for_match(match: Match) -> int:
+    """Team-round for a waterfall match.
+
+    Sequence must cycle events once per WF round. Prefer the round stamped in
+    the match code (WF_R1 / WF_R2) so a stale round_index cannot dump every
+    WF match of Women's B before Women's C starts.
+    """
+    code = match.match_code or ""
+    coded = _WF_ROUND_IN_CODE.search(code)
+    if coded:
+        return int(coded.group(1))
+    if match.round_number and match.round_number > 0:
+        return int(match.round_number)
+    if match.round_index and match.round_index > 0:
+        return int(match.round_index)
+    return 1
 
 
 def _phase_key(k: Tuple[str, int]) -> int:
@@ -198,7 +220,10 @@ def _build_event_phase_map(
     """
     groups: Dict[Tuple[str, int], List[Match]] = defaultdict(list)
     for m in matches:
-        key = (m.match_type, m.round_index or 0)
+        if (m.match_type or "").upper() == "WF":
+            key = ("WF", _wf_round_for_match(m))
+        else:
+            key = (m.match_type, m.round_index or 0)
         groups[key].append(m)
 
     # Sort each group's matches by match_id for determinism
