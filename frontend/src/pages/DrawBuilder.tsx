@@ -40,9 +40,12 @@ import {
   Phase1Status,
   TeamListItem,
   getMatches,
-  wfR1SwapSlots,
+  swapPostDrawTeams,
   Match,
+  MoveDivisionResponse,
 } from '../api/client'
+import MoveDivisionModal from './draw-builder/MoveDivisionModal'
+import EditWfMatchupModal from './draw-builder/EditWfMatchupModal'
 import { showToast } from '../utils/toast'
 import {
   TemplateType,
@@ -165,6 +168,16 @@ function formatTeamRating(rating: number | null | undefined): string {
 function formatAvoidGroup(raw: string | null | undefined): string {
   if (raw == null || !String(raw).trim()) return '—'
   return String(raw).trim().toUpperCase()
+}
+
+type SwapPick = {
+  teamId: number
+  teamName: string
+  eventId: number
+  eventName: string
+  matchId: number
+  matchSequence: number
+  slot: 'A' | 'B'
 }
 
 function SortableDayEventRow({ id, label }: { id: string; label: string }) {
@@ -325,9 +338,11 @@ function DrawBuilder() {
   const [scheduleVersions, setScheduleVersions] = useState<ScheduleVersion[]>([])
   const [wfR1MatchesByEvent, setWfR1MatchesByEvent] = useState<Record<number, Match[]>>({})
   const [wfR1MatchesLoading, setWfR1MatchesLoading] = useState<Record<number, boolean>>({})
-  const [wfR1SwapPick, setWfR1SwapPick] = useState<{ eventId: number; matchId: number; slot: 'A' | 'B' } | null>(
-    null,
-  )
+  const [swapPicks, setSwapPicks] = useState<SwapPick[]>([])
+  const [swapBusy, setSwapBusy] = useState(false)
+  const [moveDivisionTarget, setMoveDivisionTarget] = useState<{ team: TeamListItem; sourceEvent: Event } | null>(null)
+  const [editMatchupMatchId, setEditMatchupMatchId] = useState<number | null>(null)
+  const [lastMoveResult, setLastMoveResult] = useState<MoveDivisionResponse | null>(null)
 
   // Scroll to top when component mounts
   useEffect(() => {
@@ -456,36 +471,73 @@ function DrawBuilder() {
     }
   }
 
-  const handleWfR1SlotClick = async (eventId: number, matchId: number, slot: 'A' | 'B') => {
+  const handleSelectTeamForSwap = (
+    event: Event,
+    match: Match,
+    slot: 'A' | 'B',
+  ) => {
     if (!tournamentId || calendarScheduleVersionId == null) return
     const versFinal =
       (scheduleVersions.find((v) => v.id === calendarScheduleVersionId)?.status || '').toLowerCase() === 'final'
     if (versFinal) return
 
-    const pick = wfR1SwapPick
-    if (!pick || pick.eventId !== eventId) {
-      setWfR1SwapPick({ eventId, matchId, slot })
+    const teamId = slot === 'A' ? match.team_a_id : match.team_b_id
+    if (teamId == null) {
+      showToast('Select a team, not an empty TBD slot.', 'error')
       return
     }
-    if (pick.matchId === matchId && pick.slot === slot) {
-      setWfR1SwapPick(null)
+    const team = wfR1LookupTeam(eventTeams[event.id], teamId)
+    if (team?.is_defaulted) {
+      showToast('Defaulted teams cannot be selected for Swap Teams.', 'error')
       return
     }
+    const teamName = team?.display_name || team?.name || (slot === 'A' ? match.placeholder_side_a : match.placeholder_side_b)
+    const nextPick: SwapPick = {
+      teamId,
+      teamName,
+      eventId: event.id,
+      eventName: event.name,
+      matchId: match.id,
+      matchSequence: match.sequence_in_round,
+      slot,
+    }
+
+    setSwapPicks((prev) => {
+      const sameSlot = prev.findIndex((p) => p.matchId === match.id && p.slot === slot)
+      if (sameSlot >= 0) return prev.filter((_, i) => i !== sameSlot)
+      const withoutSameTeam = prev.filter((p) => p.teamId !== teamId)
+      if (withoutSameTeam.length >= 2) return [withoutSameTeam[0], nextPick]
+      return [...withoutSameTeam, nextPick]
+    })
+  }
+
+  const handleSwapTeams = async () => {
+    if (!tournamentId || calendarScheduleVersionId == null || swapPicks.length !== 2 || swapBusy) return
+    const [pickA, pickB] = swapPicks
+    if (pickA.teamId === pickB.teamId) return
+    setSwapBusy(true)
     try {
-      await wfR1SwapSlots(tournamentId, {
+      const result = await swapPostDrawTeams(tournamentId, {
+        team_a_id: pickA.teamId,
+        team_b_id: pickB.teamId,
         schedule_version_id: calendarScheduleVersionId,
-        event_id: eventId,
-        match_id_a: pick.matchId,
-        slot_a: pick.slot,
-        match_id_b: matchId,
-        slot_b: slot,
       })
-      setWfR1SwapPick(null)
-      await fetchWfR1Matches(eventId)
-      await refetchInventory()
-      showToast('Sides swapped.', 'success')
+      setSwapPicks([])
+      showToast(result.message, 'success')
+      result.warnings.forEach((w) => showToast(w, 'warning'))
+      const eventIds = [
+        result.team_a_old_event_id,
+        result.team_a_new_event_id,
+        result.team_b_old_event_id,
+        result.team_b_new_event_id,
+        pickA.eventId,
+        pickB.eventId,
+      ]
+      await refreshAfterPostDrawEdit(...eventIds)
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Swap failed', 'error')
+    } finally {
+      setSwapBusy(false)
     }
   }
 
@@ -928,6 +980,21 @@ function DrawBuilder() {
     }
   }
 
+  const refreshAfterPostDrawEdit = async (...eventIds: number[]) => {
+    const unique = [...new Set(eventIds.filter((id) => Number.isFinite(id)))]
+    await Promise.all(unique.map((eventId) => handleLoadTeams(eventId)))
+    await Promise.all(unique.map((eventId) => fetchWfR1Matches(eventId)))
+    await loadData()
+  }
+
+  const handleTeamMoved = async (result: MoveDivisionResponse) => {
+    setMoveDivisionTarget(null)
+    setLastMoveResult(result)
+    showToast(result.message, 'success')
+    result.warnings.forEach((w) => showToast(w, 'warning'))
+    await refreshAfterPostDrawEdit(result.source_event_id, result.destination_event_id)
+  }
+
   const handleLegacyImportTeams = async (eventId: number) => {
     if (!tournamentId || !legacyImportText.trim()) return
     setLegacyImportLoading(true)
@@ -1276,7 +1343,7 @@ function DrawBuilder() {
           >
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>WF round 1 pairings (before play)</label>
             <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
-              Swap teams between sides on generated WF round 1 matches: click one side, then another. Columns Rt / Avoid show combined pair rating and avoid-group letters when roster data exists. Uses the schedule version the calendar prefers (draft when available).
+              Primary correction: select two teams (including across event cards), then click Swap Teams. Columns Rt / Avoid show combined pair rating and avoid-group letters when roster data exists. Uses the schedule version the calendar prefers (draft when available).
             </p>
             {calendarScheduleVersionId == null && (
               <div style={{ fontSize: '13px', color: '#856404' }}>No schedule version available yet — generate matches from Schedule first.</div>
@@ -1297,11 +1364,6 @@ function DrawBuilder() {
                     >
                       {wfR1MatchesLoading[event.id] ? 'Loading…' : 'Load WF R1 rows'}
                     </button>
-                    {wfR1SwapPick?.eventId === event.id && (
-                      <button type="button" className="btn btn-secondary" onClick={() => setWfR1SwapPick(null)}>
-                        Clear selection
-                      </button>
-                    )}
                   </div>
                   {(wfR1MatchesByEvent[event.id]?.length ?? 0) === 0 && !wfR1MatchesLoading[event.id] && (
                     <div style={{ fontSize: '13px', opacity: 0.8 }}>Load rows after matches exist for this event.</div>
@@ -1326,14 +1388,15 @@ function DrawBuilder() {
                             <th style={{ padding: '6px 8px', width: 52 }} title="Avoid group (who-knows-who letters)">
                               Avoid
                             </th>
+                            <th style={{ padding: '6px 8px' }}>Action</th>
                           </tr>
                         </thead>
                         <tbody>
                           {wfR1MatchesByEvent[event.id]!.map((m) => {
-                            const pickA =
-                              wfR1SwapPick?.eventId === event.id && wfR1SwapPick.matchId === m.id && wfR1SwapPick.slot === 'A'
-                            const pickB =
-                              wfR1SwapPick?.eventId === event.id && wfR1SwapPick.matchId === m.id && wfR1SwapPick.slot === 'B'
+                            const pickA = swapPicks.some((p) => p.matchId === m.id && p.slot === 'A')
+                            const pickB = swapPicks.some((p) => p.matchId === m.id && p.slot === 'B')
+                            const pickAIndex = swapPicks.findIndex((p) => p.matchId === m.id && p.slot === 'A')
+                            const pickBIndex = swapPicks.findIndex((p) => p.matchId === m.id && p.slot === 'B')
                             const teamsRow = eventTeams[event.id]
                             const ta = wfR1LookupTeam(teamsRow, m.team_a_id)
                             const tb = wfR1LookupTeam(teamsRow, m.team_b_id)
@@ -1345,26 +1408,40 @@ function DrawBuilder() {
                               verticalAlign: 'middle',
                               whiteSpace: 'nowrap',
                             }
+                            const sideButtonStyle = (picked: boolean, defaulted: boolean, empty: boolean): CSSProperties => ({
+                              display: 'block',
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              border: picked ? '2px solid var(--theme-primary-btn-bg, #1a237e)' : '1px solid var(--theme-input-border)',
+                              backgroundColor: picked
+                                ? 'rgba(26, 35, 126, 0.16)'
+                                : 'var(--theme-table-row-hover)',
+                              cursor: empty || defaulted ? 'not-allowed' : 'pointer',
+                              fontSize: '13px',
+                              fontWeight: picked ? 700 : 400,
+                              opacity: empty || defaulted ? 0.55 : 1,
+                              boxShadow: picked ? '0 0 0 2px rgba(26, 35, 126, 0.25)' : undefined,
+                            })
                             return (
                               <tr key={m.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
                                 <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{m.match_code}</td>
                                 <td style={{ padding: '6px 8px' }}>
                                   <button
                                     type="button"
-                                    onClick={() => void handleWfR1SlotClick(event.id, m.id, 'A')}
-                                    style={{
-                                      display: 'block',
-                                      width: '100%',
-                                      textAlign: 'left',
-                                      padding: '6px 8px',
-                                      borderRadius: '6px',
-                                      border: '1px solid var(--theme-input-border)',
-                                      backgroundColor: 'var(--theme-table-row-hover)',
-                                      cursor: 'pointer',
-                                      fontSize: '13px',
-                                      boxShadow: pickA ? '0 0 0 2px var(--theme-primary-btn-bg, #1a237e)' : undefined,
-                                    }}
+                                    disabled={m.team_a_id == null || !!ta?.is_defaulted}
+                                    title={
+                                      ta?.is_defaulted
+                                        ? 'Defaulted teams cannot be selected for Swap Teams'
+                                        : m.team_a_id == null
+                                          ? 'Empty TBD slots cannot be swapped'
+                                          : 'Select this team for Swap Teams'
+                                    }
+                                    onClick={() => handleSelectTeamForSwap(event, m, 'A')}
+                                    style={sideButtonStyle(pickA, !!ta?.is_defaulted, m.team_a_id == null)}
                                   >
+                                    {pickAIndex >= 0 ? `${pickAIndex + 1}. ` : ''}
                                     {m.placeholder_side_a}
                                   </button>
                                 </td>
@@ -1373,25 +1450,33 @@ function DrawBuilder() {
                                 <td style={{ padding: '6px 8px' }}>
                                   <button
                                     type="button"
-                                    onClick={() => void handleWfR1SlotClick(event.id, m.id, 'B')}
-                                    style={{
-                                      display: 'block',
-                                      width: '100%',
-                                      textAlign: 'left',
-                                      padding: '6px 8px',
-                                      borderRadius: '6px',
-                                      border: '1px solid var(--theme-input-border)',
-                                      backgroundColor: 'var(--theme-table-row-hover)',
-                                      cursor: 'pointer',
-                                      fontSize: '13px',
-                                      boxShadow: pickB ? '0 0 0 2px var(--theme-primary-btn-bg, #1a237e)' : undefined,
-                                    }}
+                                    disabled={m.team_b_id == null || !!tb?.is_defaulted}
+                                    title={
+                                      tb?.is_defaulted
+                                        ? 'Defaulted teams cannot be selected for Swap Teams'
+                                        : m.team_b_id == null
+                                          ? 'Empty TBD slots cannot be swapped'
+                                          : 'Select this team for Swap Teams'
+                                    }
+                                    onClick={() => handleSelectTeamForSwap(event, m, 'B')}
+                                    style={sideButtonStyle(pickB, !!tb?.is_defaulted, m.team_b_id == null)}
                                   >
+                                    {pickBIndex >= 0 ? `${pickBIndex + 1}. ` : ''}
                                     {m.placeholder_side_b}
                                   </button>
                                 </td>
                                 <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(tb?.rating)}</td>
                                 <td style={metaCell}>{formatAvoidGroup(tb?.avoid_group)}</td>
+                                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 12, padding: '4px 8px' }}
+                                    onClick={() => setEditMatchupMatchId(m.id)}
+                                  >
+                                    Edit Matchup
+                                  </button>
+                                </td>
                               </tr>
                             )
                           })}
@@ -1403,6 +1488,63 @@ function DrawBuilder() {
               )}
           </div>
         )}
+
+        <div
+          className="form-group"
+          style={{
+            marginBottom: '16px',
+            padding: '12px',
+            borderRadius: '8px',
+            border: '1px solid var(--theme-input-border)',
+            backgroundColor: 'var(--theme-card-bg)',
+          }}
+        >
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Teams in this event</label>
+          <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
+            After draws exist, use Swap Teams on the WF Round 1 rows to exchange two pairs. Move Division is an advanced one-team tool that leaves a TBD in the source slot.
+          </p>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={loadingTeamsFor === event.id}
+              onClick={() => void handleLoadTeams(event.id)}
+            >
+              {loadingTeamsFor === event.id ? 'Loading…' : eventTeams[event.id] ? 'Refresh teams' : 'Load teams'}
+            </button>
+          </div>
+          {(eventTeams[event.id]?.length ?? 0) > 0 && (
+            <div style={{ overflowX: 'auto', maxHeight: 280, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--theme-input-border)' }}>
+                    <th style={{ padding: '6px 8px' }}>Seed</th>
+                    <th style={{ padding: '6px 8px' }}>Team</th>
+                    <th style={{ padding: '6px 8px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eventTeams[event.id]!.map((t) => (
+                    <tr key={t.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+                      <td style={{ padding: '6px 8px' }}>{t.seed ?? '—'}</td>
+                      <td style={{ padding: '6px 8px' }}>{t.display_name || t.name}</td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: '4px 8px' }}
+                          onClick={() => setMoveDivisionTarget({ team: t, sourceEvent: event })}
+                        >
+                          Move Division (advanced)
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label>Standard Match Length</label>
@@ -1566,6 +1708,103 @@ function DrawBuilder() {
           </button>
         </div>
       </div>
+
+      {(swapPicks.length > 0 || Object.values(wfR1MatchesByEvent).some((rows) => (rows?.length ?? 0) > 0)) && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 16,
+            position: 'sticky',
+            top: 0,
+            zIndex: 20,
+            border: swapPicks.length === 2 ? '1px solid var(--theme-primary-btn-bg, #1a237e)' : '1px solid var(--theme-input-border)',
+            backgroundColor: 'var(--theme-card-bg)',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Selected for swap:</div>
+          <ol style={{ margin: '0 0 10px', paddingLeft: 20, fontSize: 13 }}>
+            <li style={{ marginBottom: 4 }}>
+              {swapPicks[0]
+                ? `${swapPicks[0].teamName} — ${swapPicks[0].eventName} — WF R1 Match ${swapPicks[0].matchSequence}, Side ${swapPicks[0].slot}`
+                : '—'}
+            </li>
+            <li>
+              {swapPicks[1]
+                ? `${swapPicks[1].teamName} — ${swapPicks[1].eventName} — WF R1 Match ${swapPicks[1].matchSequence}, Side ${swapPicks[1].slot}`
+                : '—'}
+            </li>
+          </ol>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={swapPicks.length === 0 || swapBusy}
+              onClick={() => setSwapPicks([])}
+            >
+              Clear Selection
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={swapPicks.length !== 2 || swapBusy || calendarScheduleVersionId == null}
+              onClick={() => void handleSwapTeams()}
+            >
+              {swapBusy ? 'Swapping…' : 'Swap Teams'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {lastMoveResult && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 24,
+            border: '1px solid rgba(255, 193, 7, 0.5)',
+            backgroundColor: 'rgba(255, 193, 7, 0.08)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+            <div>
+              <h2 className="section-title" style={{ marginTop: 0 }}>Team moved — staff follow-up</h2>
+              <p style={{ fontSize: 13, marginTop: 0 }}>{lastMoveResult.message}</p>
+              {lastMoveResult.warnings.length > 0 && (
+                <ul style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 13 }}>
+                  {lastMoveResult.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
+              {lastMoveResult.affected_source_matches.length > 0 && (
+                <div style={{ fontSize: 13 }}>
+                  <strong>Source WF Round 1 slots cleared (match IDs preserved):</strong>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                    {lastMoveResult.affected_source_matches.map((m) => (
+                      <li key={m.id} style={{ marginBottom: 6 }}>
+                        {m.match_code} (WF round {m.round_index}, match #{m.sequence_in_round})
+                        {' — '}
+                        {m.placeholder_side_a} vs {m.placeholder_side_b}
+                        {' '}
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: '2px 8px', marginLeft: 6 }}
+                          onClick={() => setEditMatchupMatchId(m.id)}
+                        >
+                          Edit Matchup
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <button type="button" className="btn btn-secondary" onClick={() => setLastMoveResult(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tournament Summary */}
       <div className="card" style={{ marginBottom: '24px' }}>
@@ -1874,6 +2113,7 @@ function DrawBuilder() {
                               <th style={{ padding: '4px 8px' }}>P1 Email</th>
                               <th style={{ padding: '4px 8px' }}>P2 Cell</th>
                               <th style={{ padding: '4px 8px' }}>P2 Email</th>
+                              <th style={{ padding: '4px 8px' }}>Action</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1888,6 +2128,19 @@ function DrawBuilder() {
                                 <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p1_email ?? '—'}</td>
                                 <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p2_cell ?? '—'}</td>
                                 <td style={{ padding: '4px 8px', fontSize: 11 }}>{t.p2_email ?? '—'}</td>
+                                <td style={{ padding: '4px 8px' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 11, padding: '3px 8px' }}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setMoveDivisionTarget({ team: t, sourceEvent: ev })
+                                    }}
+                                  >
+                                    Move Division (advanced)
+                                  </button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -2007,6 +2260,32 @@ function DrawBuilder() {
           </div>
         )
       })()}
+      {moveDivisionTarget && tournamentId && (
+        <MoveDivisionModal
+          tournamentId={tournamentId}
+          team={moveDivisionTarget.team}
+          sourceEvent={moveDivisionTarget.sourceEvent}
+          events={events}
+          onClose={() => setMoveDivisionTarget(null)}
+          onMoved={(result) => void handleTeamMoved(result)}
+        />
+      )}
+      {editMatchupMatchId != null && tournamentId && (
+        <EditWfMatchupModal
+          tournamentId={tournamentId}
+          matchId={editMatchupMatchId}
+          onClose={() => setEditMatchupMatchId(null)}
+          onSaved={() => {
+            const matchId = editMatchupMatchId
+            setEditMatchupMatchId(null)
+            const eventId =
+              lastMoveResult?.affected_source_matches.find((m) => m.id === matchId)
+                ? lastMoveResult.source_event_id
+                : events.find((e) => (wfR1MatchesByEvent[e.id] || []).some((m) => m.id === matchId))?.id
+            if (eventId) void fetchWfR1Matches(eventId)
+          }}
+        />
+      )}
     </div>
   )
 }

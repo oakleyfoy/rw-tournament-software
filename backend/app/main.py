@@ -35,6 +35,7 @@ from app.routes import (
     events,
     phase1_status,
     plan_report,
+    post_draw_corrections,
     public,
     runtime,
     rw_os_import,
@@ -172,6 +173,9 @@ app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"], dep
 
 # Include teams router
 app.include_router(teams.router, prefix="/api", tags=["teams"], dependencies=_protected_deps)
+
+# Post-draw staff corrections (move division / edit WF R1 matchup)
+app.include_router(post_draw_corrections.router, prefix="/api", tags=["post-draw-corrections"], dependencies=_protected_deps)
 
 # Include avoid edges router
 app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"], dependencies=_protected_deps)

@@ -28,6 +28,7 @@ from app.services.assignment_ownership import (
     load_owned_matches_for_version,
     partition_owned_assignments,
 )
+from app.services.post_draw_corrections import swap_wf_r1_slot_occupants
 from app.services.slot_verification import build_slot_verification
 from app.utils.conflict_report import (
     ConflictReportSummary,
@@ -1828,30 +1829,6 @@ def update_match(tournament_id: int, match_id: int, update_data: MatchUpdate, se
     )
 
 
-def _wf_r1_placeholder_for_team(session: Session, team_id: Optional[int]) -> str:
-    """WF R1 labels match generate_wf_matches (round 1): full roster name, not short display_name."""
-    if team_id is None:
-        return "TBD"
-    team = session.get(Team, team_id)
-    if not team:
-        return "TBD"
-    return team.name or getattr(team, "display_name", None) or f"Team {team.id}"
-
-
-def _wf_slot_read_team_id(match: Match, slot: Literal["A", "B"]) -> Optional[int]:
-    return match.team_a_id if slot == "A" else match.team_b_id
-
-
-def _wf_slot_write(session: Session, match: Match, slot: Literal["A", "B"], team_id: Optional[int]) -> None:
-    ph = _wf_r1_placeholder_for_team(session, team_id)
-    if slot == "A":
-        match.team_a_id = team_id
-        match.placeholder_side_a = ph
-    else:
-        match.team_b_id = team_id
-        match.placeholder_side_b = ph
-
-
 class WfR1SwapSlotsRequest(BaseModel):
     schedule_version_id: int
     event_id: int
@@ -1902,14 +1879,7 @@ def wf_r1_swap_slots(
     if body.match_id_a == body.match_id_b and body.slot_a == body.slot_b:
         raise HTTPException(status_code=400, detail="Select two different sides to swap")
 
-    ta = _wf_slot_read_team_id(ma, body.slot_a)
-    tb = _wf_slot_read_team_id(mb, body.slot_b)
-
-    _wf_slot_write(session, ma, body.slot_a, tb)
-    _wf_slot_write(session, mb, body.slot_b, ta)
-
-    session.add(ma)
-    session.add(mb)
+    swap_wf_r1_slot_occupants(session, ma, body.slot_a, mb, body.slot_b)
     session.commit()
 
     return {"ok": True, "match_ids": [ma.id, mb.id]}

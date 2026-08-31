@@ -2304,6 +2304,7 @@ export interface TeamListItem {
   p1_email: string | null
   p2_cell: string | null
   p2_email: string | null
+  is_defaulted?: boolean
 }
 
 export async function getEventTeams(
@@ -2311,6 +2312,176 @@ export async function getEventTeams(
 ): Promise<TeamListItem[]> {
   return fetchJson<TeamListItem[]>(
     `${API_BASE_URL}/events/${eventId}/teams`
+  )
+}
+
+export interface AffectedSourceMatch {
+  id: number
+  match_code: string
+  match_type: string
+  round_index: number
+  sequence_in_round: number
+  team_a_id: number | null
+  team_b_id: number | null
+  placeholder_side_a: string
+  placeholder_side_b: string
+  schedule_version_id: number
+  cleared_slots?: string[]
+}
+
+export interface MoveDivisionResponse {
+  team_id: number
+  source_event_id: number
+  destination_event_id: number
+  source_event_name: string
+  destination_event_name: string
+  source_has_matches: boolean
+  destination_has_matches: boolean
+  affected_source_matches: AffectedSourceMatch[]
+  warnings: string[]
+  message: string
+  player_ids: number[]
+  seed_cleared: boolean
+  avoid_edges_removed: number
+}
+
+export async function moveTeamToAnotherDivision(
+  tournamentId: number,
+  teamId: number,
+  destinationEventId: number,
+  confirmExistingDraws = false,
+): Promise<MoveDivisionResponse> {
+  return fetchJson<MoveDivisionResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/teams/${teamId}/move-division`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        destination_event_id: destinationEventId,
+        confirm_existing_draws: confirmExistingDraws,
+      }),
+    },
+  )
+}
+
+export interface SwapSlotInfo {
+  match_id: number
+  side: 'A' | 'B' | string
+  match_code: string
+  sequence_in_round: number
+  event_id: number
+}
+
+export interface SwapPostDrawTeamsResponse {
+  mode: 'SAME_EVENT_SLOT_SWAP' | 'CROSS_EVENT_TEAM_SWAP' | string
+  tournament_id: number
+  team_a_id: number
+  team_b_id: number
+  team_a_name: string
+  team_b_name: string
+  team_a_old_event_id: number
+  team_a_new_event_id: number
+  team_b_old_event_id: number
+  team_b_new_event_id: number
+  team_a_old_event_name: string
+  team_a_new_event_name: string
+  team_b_old_event_name: string
+  team_b_new_event_name: string
+  team_a_old_slot: SwapSlotInfo
+  team_a_new_slot: SwapSlotInfo
+  team_b_old_slot: SwapSlotInfo
+  team_b_new_slot: SwapSlotInfo
+  warnings: string[]
+  message: string
+  seed_cleared_team_ids: number[]
+  wf_group_index_cleared_team_ids: number[]
+  avoid_edges_removed: number
+  player_ids_a: number[]
+  player_ids_b: number[]
+}
+
+export async function swapPostDrawTeams(
+  tournamentId: number,
+  body: { team_a_id: number; team_b_id: number; schedule_version_id: number },
+): Promise<SwapPostDrawTeamsResponse> {
+  return fetchJson<SwapPostDrawTeamsResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/teams/swap-post-draw`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+export interface WfR1TeamSummary {
+  id: number
+  name: string
+  display_name: string | null
+  seed: number | null
+  event_id: number
+  is_defaulted: boolean
+  belongs_to_event: boolean
+}
+
+export interface WfR1MatchupContext {
+  tournament_id: number
+  event_id: number
+  event_name: string
+  stage: string
+  round_index: number
+  match_id: number
+  match_code: string
+  sequence_in_round: number
+  team_a: WfR1TeamSummary | null
+  team_b: WfR1TeamSummary | null
+  scheduled_time: string | null
+  court_label: string | null
+  day_date: string | null
+  status: string
+  runtime_status: string
+  winner_team_id: number | null
+  has_score: boolean
+  started_at: string | null
+  completed_at: string | null
+  edit_blocked: boolean
+  edit_block_reason: string | null
+  available_teams: WfR1TeamSummary[]
+}
+
+export interface EditWfR1MatchupResponse {
+  match_id: number
+  event_id: number
+  tournament_id: number
+  old_team_a_id: number | null
+  old_team_b_id: number | null
+  new_team_a_id: number | null
+  new_team_b_id: number | null
+  match_type: string
+  round_index: number
+  sequence_in_round: number
+  status: string
+  assignment_slot_id: number | null
+  court_label: string | null
+  scheduled_time: string | null
+}
+
+export async function getWfR1MatchupContext(
+  tournamentId: number,
+  matchId: number,
+): Promise<WfR1MatchupContext> {
+  return fetchJson<WfR1MatchupContext>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/matches/${matchId}/wf-r1-matchup`,
+  )
+}
+
+export async function editWfR1Matchup(
+  tournamentId: number,
+  matchId: number,
+  teamAId: number | null,
+  teamBId: number | null,
+): Promise<EditWfR1MatchupResponse> {
+  return fetchJson<EditWfR1MatchupResponse>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/matches/${matchId}/wf-r1-matchup`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ team_a_id: teamAId, team_b_id: teamBId }),
+    },
   )
 }
 
