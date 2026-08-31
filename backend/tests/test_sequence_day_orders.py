@@ -234,7 +234,16 @@ def test_e_missing_saved_event_is_appended_not_dropped(session: Session):
     assert friday_r1 == [womens_a.id, mixed_b.id]
 
 
-def _wf_round_block(session: Session, tournament_id: int, event_id: int, version_id: int, round_index: int, count: int, *, stamp_round_index: int | None = None) -> None:
+def _wf_round_block(
+    session: Session,
+    tournament_id: int,
+    event_id: int,
+    version_id: int,
+    round_index: int,
+    count: int,
+    *,
+    stamp_round_index: int | None = None,
+) -> None:
     stored_index = stamp_round_index if stamp_round_index is not None else round_index
     for seq in range(1, count + 1):
         match = Match(
