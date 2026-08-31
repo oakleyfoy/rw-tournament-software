@@ -234,6 +234,102 @@ def test_e_missing_saved_event_is_appended_not_dropped(session: Session):
     assert friday_r1 == [womens_a.id, mixed_b.id]
 
 
+def _wf_round_block(session: Session, tournament_id: int, event_id: int, version_id: int, round_index: int, count: int, *, stamp_round_index: int | None = None) -> None:
+    stored_index = stamp_round_index if stamp_round_index is not None else round_index
+    for seq in range(1, count + 1):
+        match = Match(
+            tournament_id=tournament_id,
+            event_id=event_id,
+            schedule_version_id=version_id,
+            match_code=f"E{event_id}_WF_R{round_index}_{seq:02d}",
+            match_type="WF",
+            round_number=round_index,
+            round_index=stored_index,
+            sequence_in_round=seq,
+            duration_minutes=60,
+            placeholder_side_a=f"A{event_id}-{round_index}-{seq}",
+            placeholder_side_b=f"B{event_id}-{round_index}-{seq}",
+            status="unscheduled",
+        )
+        session.add(match)
+    session.commit()
+
+
+def _event_run_lengths(sequence) -> list[tuple[int, str, int]]:
+    runs: list[tuple[int, str, int]] = []
+    for row in sequence:
+        key = (row.event_id, row.round_label)
+        if runs and runs[-1][0] == key[0] and runs[-1][1] == key[1]:
+            runs[-1] = (key[0], key[1], runs[-1][2] + 1)
+        else:
+            runs.append((key[0], key[1], 1))
+    return runs
+
+
+def test_g_wf_cycles_one_round_per_event_before_repeating(session: Session):
+    """Friday saved order: WB, WC, WA, MB, MA. One WF round each, then repeat."""
+    tournament = _tournament(session)
+    version = _version(session, tournament.id)
+    womens_b = _event(session, tournament.id, "Women's B", category=EventCategory.womens, team_count=24)
+    womens_c = _event(session, tournament.id, "Women's C", category=EventCategory.womens, team_count=24)
+    womens_a = _event(session, tournament.id, "Women's A", category=EventCategory.womens, team_count=20)
+    mixed_b = _event(session, tournament.id, "Mixed B", category=EventCategory.mixed, team_count=24)
+    mixed_a = _event(session, tournament.id, "Mixed A", category=EventCategory.mixed, team_count=20)
+    friday = [womens_b.id, womens_c.id, womens_a.id, mixed_b.id, mixed_a.id]
+    tournament.event_schedule_day_orders_json = json.dumps({"day_orders": [friday]})
+    session.add(tournament)
+    session.commit()
+
+    counts = {
+        womens_b.id: 12,
+        womens_c.id: 12,
+        womens_a.id: 10,
+        mixed_b.id: 12,
+        mixed_a.id: 10,
+    }
+    for event_id, count in counts.items():
+        _wf_round_block(session, tournament.id, event_id, version.id, 1, count)
+        _wf_round_block(session, tournament.id, event_id, version.id, 2, count)
+
+    sequence = build_master_sequence(session, version.id)
+    assert _event_run_lengths(sequence) == [
+        (womens_b.id, "WF R1", 12),
+        (womens_c.id, "WF R1", 12),
+        (womens_a.id, "WF R1", 10),
+        (mixed_b.id, "WF R1", 12),
+        (mixed_a.id, "WF R1", 10),
+        (womens_b.id, "WF R2", 12),
+        (womens_c.id, "WF R2", 12),
+        (womens_a.id, "WF R2", 10),
+        (mixed_b.id, "WF R2", 12),
+        (mixed_a.id, "WF R2", 10),
+    ]
+
+
+def test_h_wf_match_code_round_beats_collapsed_round_index(session: Session):
+    """All WF rows stamped round_index=1 must still cycle R1 then R2 by match code."""
+    tournament = _tournament(session)
+    version = _version(session, tournament.id)
+    womens_b = _event(session, tournament.id, "Women's B", category=EventCategory.womens, team_count=24)
+    womens_c = _event(session, tournament.id, "Women's C", category=EventCategory.womens, team_count=24)
+    tournament.event_schedule_day_orders_json = json.dumps({"day_orders": [[womens_b.id, womens_c.id]]})
+    session.add(tournament)
+    session.commit()
+
+    _wf_round_block(session, tournament.id, womens_b.id, version.id, 1, 12, stamp_round_index=1)
+    _wf_round_block(session, tournament.id, womens_b.id, version.id, 2, 12, stamp_round_index=1)
+    _wf_round_block(session, tournament.id, womens_c.id, version.id, 1, 12, stamp_round_index=1)
+    _wf_round_block(session, tournament.id, womens_c.id, version.id, 2, 12, stamp_round_index=1)
+
+    sequence = build_master_sequence(session, version.id)
+    assert _event_run_lengths(sequence) == [
+        (womens_b.id, "WF R1", 12),
+        (womens_c.id, "WF R1", 12),
+        (womens_b.id, "WF R2", 12),
+        (womens_c.id, "WF R2", 12),
+    ]
+
+
 def test_f_stripped_schedule_order_still_honors_day_orders(session: Session):
     tournament = _tournament(session)
     version = _version(session, tournament.id)
