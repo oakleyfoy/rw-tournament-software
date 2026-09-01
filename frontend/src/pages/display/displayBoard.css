@@ -1,9 +1,14 @@
 .display-root {
+  --display-upcoming-min: 220px;
+  --display-waiting-min: 260px;
+  --display-playing-min: 340px;
+  --display-grid-gap: 8px;
   min-height: 100vh;
   background: #0b1633;
   color: #f4f7fb;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
 }
 
 .display-header {
@@ -79,8 +84,10 @@
 
 .display-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 8px 18px 18px;
 }
 
@@ -89,7 +96,7 @@
 }
 
 .display-section {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .display-section-title {
@@ -98,7 +105,23 @@
   letter-spacing: 1.6px;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.78);
-  margin: 0 0 10px;
+  margin: 0 0 8px;
+}
+
+.display-section-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  margin-bottom: 6px;
+}
+
+.display-section-compact .display-section-title {
+  margin: 0;
+}
+
+.display-section-compact .display-section-title::after {
+  content: " —";
 }
 
 .display-empty {
@@ -106,54 +129,73 @@
   font-size: 16px;
   font-style: italic;
   padding: 8px 2px 12px;
+  margin: 0;
+}
+
+.display-section-compact .display-empty {
+  padding: 0;
+  font-size: 14px;
+}
+
+.display-match-grid,
+.display-waiting-grid,
+.display-playing-grid {
+  display: grid;
+  gap: var(--display-grid-gap);
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .display-match-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--display-upcoming-min), 1fr));
+}
+
+.display-waiting-grid {
+  grid-template-columns: repeat(auto-fill, minmax(var(--display-waiting-min), 1fr));
 }
 
 .display-playing-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--display-playing-min), 1fr));
 }
 
 .display-time-group {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .display-time-header {
   font-size: 28px;
   font-weight: 800;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   letter-spacing: 0.4px;
 }
 
 .display-card {
   background: #14244a;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 12px 14px;
-  min-height: 132px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .display-card-playing {
   background: linear-gradient(180deg, #1b2f63 0%, #14244a 100%);
   border-color: rgba(255, 204, 128, 0.35);
-  min-height: 180px;
+  padding: 12px 14px;
 }
 
 .display-card-waiting {
-  border-color: rgba(129, 199, 132, 0.45);
+  border-color: rgba(129, 199, 132, 0.55);
+  padding: 10px 12px;
 }
 
 .display-card-time {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 800;
   color: #ffe082;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  line-height: 1.1;
 }
 
 .display-card-playing .display-card-time {
@@ -165,14 +207,21 @@
   font-weight: 800;
   letter-spacing: 0.3px;
   text-transform: uppercase;
-  line-height: 1.15;
+  line-height: 1.1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
 }
 
 .display-card-playing .display-team {
   font-size: 26px;
+}
+
+.display-team-names {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .display-team-checked {
@@ -183,6 +232,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   min-width: 22px;
   height: 22px;
   border-radius: 999px;
@@ -198,18 +248,20 @@
   letter-spacing: 1.4px;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.45);
-  margin: 4px 0;
+  margin: 2px 0;
+  line-height: 1;
 }
 
 .display-meta {
-  margin-top: 8px;
-  font-size: 14px;
+  margin-top: 4px;
+  font-size: 13px;
   font-weight: 700;
+  line-height: 1.2;
   color: rgba(255, 255, 255, 0.72);
 }
 
 .display-court {
-  margin-top: 10px;
+  margin-top: 8px;
   font-size: 32px;
   font-weight: 900;
   letter-spacing: 0.8px;
@@ -236,13 +288,13 @@
 .display-skeleton {
   width: min(920px, 90vw);
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--display-upcoming-min), 1fr));
+  gap: var(--display-grid-gap);
 }
 
 .display-skeleton-card {
-  height: 120px;
-  border-radius: 10px;
+  height: 96px;
+  border-radius: 8px;
   background: linear-gradient(90deg, #14244a 0%, #1c3264 50%, #14244a 100%);
   background-size: 200% 100%;
   animation: display-shimmer 1.4s ease-in-out infinite;
@@ -253,23 +305,8 @@
   100% { background-position: -100% 0; }
 }
 
-@media (min-width: 1600px) {
-  .display-match-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
 @media (min-width: 2200px) {
-  .display-match-grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
   .display-title {
     font-size: 40px;
-  }
-}
-
-@media (min-width: 2800px) {
-  .display-match-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
