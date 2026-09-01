@@ -34,7 +34,7 @@ describe('UpcomingMatchesPage', () => {
     hookState.initialLoading = false
   })
 
-  it('groups matches by scheduled time and shows names plus event', () => {
+  it('groups matches by scheduled time and shows compact time/name cards', () => {
     renderPage()
     expect(screen.getByRole('heading', { name: 'Upcoming Matches' })).toBeInTheDocument()
     expect(screen.getByText('Next 12 Hours')).toBeInTheDocument()
@@ -43,7 +43,10 @@ describe('UpcomingMatchesPage', () => {
     expect(screen.getByTestId('upcoming-group-14:30')).toHaveTextContent('Jane / Lily')
     expect(screen.getByTestId('upcoming-group-15:30')).toHaveTextContent('John / TBD')
     expect(screen.getByTestId('upcoming-group-15:30')).toHaveTextContent('Mike / David')
-    expect(screen.getByTestId('upcoming-board')).toHaveTextContent("Women's B")
+    expect(screen.getByTestId('upcoming-board')).not.toHaveTextContent("Women's B")
+    expect(screen.getByTestId('upcoming-board')).not.toHaveTextContent('WF R1')
+    expect(screen.getByTestId('upcoming-board')).not.toHaveTextContent('WF R2')
+    expect(screen.queryByTestId(/display-court-/)).not.toBeInTheDocument()
   })
 
   it('never renders court, including assigned court leaked from the payload', () => {

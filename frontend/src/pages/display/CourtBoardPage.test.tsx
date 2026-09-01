@@ -99,6 +99,14 @@ describe('CourtBoardPage', () => {
     expect(screen.queryByTestId('display-court-13')).not.toBeInTheDocument()
   })
 
+  it('does not render event, division, or round on any court-board section', () => {
+    renderPage()
+    expect(screen.queryByText("Women's B")).not.toBeInTheDocument()
+    expect(screen.queryByText('WF R1')).not.toBeInTheDocument()
+    expect(screen.queryByText(/ · /)).not.toBeInTheDocument()
+    expect(document.querySelector('.display-meta')).toBeNull()
+  })
+
   it('has no edit controls', () => {
     renderPage()
     expect(screen.getByTestId('display-refresh')).toBeInTheDocument()
