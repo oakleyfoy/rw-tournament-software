@@ -54,4 +54,17 @@ describe('DisplayMatchCard', () => {
     expect(screen.getByText('John / TBD')).toBeInTheDocument()
     expect(screen.getByText('Mike / David')).toBeInTheDocument()
   })
+
+  it('wraps long first names instead of expanding the column', () => {
+    render(
+      <DisplayMatchCard
+        match={makeMatch({
+          team_a_names: 'Christopherson / Hilary',
+          team_b_names: 'Amber / Megan',
+        })}
+        variant="upcoming"
+      />
+    )
+    expect(screen.getByText('Christopherson / Hilary')).toHaveClass('display-team-names')
+  })
 })

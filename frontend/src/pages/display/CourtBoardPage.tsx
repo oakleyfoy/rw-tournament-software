@@ -1,4 +1,5 @@
 import { useParams } from 'react-router-dom'
+import { DisplayBoardSection } from './DisplayBoardSection'
 import { DisplayMatchCard } from './DisplayMatchCard'
 import { DisplayLoadingState, DisplayShell } from './DisplayShell'
 import { useDisplayBoard } from './useDisplayBoard'
@@ -30,44 +31,44 @@ export default function CourtBoardPage() {
       hasData
       onRefresh={refresh}
     >
-      <section className="display-section" data-testid="currently-playing">
-        <h2 className="display-section-title">Currently Playing</h2>
-        {data.currently_playing.length === 0 ? (
-          <div className="display-empty">No matches currently on court</div>
-        ) : (
-          <div className="display-playing-grid">
-            {data.currently_playing.map((match) => (
-              <DisplayMatchCard key={match.match_id} match={match} variant="playing" />
-            ))}
-          </div>
-        )}
-      </section>
+      <DisplayBoardSection
+        testId="currently-playing"
+        title="Currently Playing"
+        emptyLabel="No matches currently on court"
+        isEmpty={data.currently_playing.length === 0}
+        gridClass="display-playing-grid"
+        gridTestId="display-playing-grid"
+      >
+        {data.currently_playing.map((match) => (
+          <DisplayMatchCard key={match.match_id} match={match} variant="playing" />
+        ))}
+      </DisplayBoardSection>
 
-      <section className="display-section" data-testid="waiting-for-court">
-        <h2 className="display-section-title">Waiting for Court</h2>
-        {data.waiting_for_court.length === 0 ? (
-          <div className="display-empty">No matches waiting for court</div>
-        ) : (
-          <div className="display-match-grid">
-            {data.waiting_for_court.map((match) => (
-              <DisplayMatchCard key={match.match_id} match={match} variant="waiting" />
-            ))}
-          </div>
-        )}
-      </section>
+      <DisplayBoardSection
+        testId="waiting-for-court"
+        title="Waiting for Court"
+        emptyLabel="No matches waiting for court"
+        isEmpty={data.waiting_for_court.length === 0}
+        gridClass="display-waiting-grid"
+        gridTestId="display-waiting-grid"
+      >
+        {data.waiting_for_court.map((match) => (
+          <DisplayMatchCard key={match.match_id} match={match} variant="waiting" />
+        ))}
+      </DisplayBoardSection>
 
-      <section className="display-section" data-testid="court-board-upcoming">
-        <h2 className="display-section-title">Upcoming / Next Matches</h2>
-        {data.upcoming.length === 0 ? (
-          <div className="display-empty">No upcoming matches</div>
-        ) : (
-          <div className="display-match-grid">
-            {data.upcoming.map((match) => (
-              <DisplayMatchCard key={match.match_id} match={match} variant="upcoming" />
-            ))}
-          </div>
-        )}
-      </section>
+      <DisplayBoardSection
+        testId="court-board-upcoming"
+        title="Upcoming / Next Matches"
+        emptyLabel="No upcoming matches"
+        isEmpty={data.upcoming.length === 0}
+        gridClass="display-match-grid"
+        gridTestId="display-upcoming-grid"
+      >
+        {data.upcoming.map((match) => (
+          <DisplayMatchCard key={match.match_id} match={match} variant="upcoming" />
+        ))}
+      </DisplayBoardSection>
     </DisplayShell>
   )
 }

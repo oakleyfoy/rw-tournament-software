@@ -42,7 +42,7 @@ export default function UpcomingMatchesPage() {
               data-testid={`upcoming-group-${group.sort_time}`}
             >
               <h2 className="display-time-header">{group.scheduled_time}</h2>
-              <div className="display-match-grid">
+              <div className="display-match-grid" data-testid={`display-upcoming-grid-${group.sort_time}`}>
                 {group.matches.map((match) => (
                   <DisplayMatchCard key={match.match_id} match={match} variant="upcoming12" />
                 ))}

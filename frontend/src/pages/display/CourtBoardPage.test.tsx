@@ -58,7 +58,7 @@ describe('CourtBoardPage', () => {
     expect(upcoming).not.toHaveTextContent('Court 4')
   })
 
-  it('shows quiet empty states', () => {
+  it('collapses empty currently playing and waiting into a compact single line', () => {
     hookState.data = {
       ...sampleBoard,
       currently_playing: [],
@@ -66,8 +66,37 @@ describe('CourtBoardPage', () => {
       upcoming: [],
     }
     renderPage()
-    expect(screen.getByText('No matches currently on court')).toBeInTheDocument()
-    expect(screen.getByText('No matches waiting for court')).toBeInTheDocument()
+    const playing = screen.getByTestId('currently-playing')
+    const waiting = screen.getByTestId('waiting-for-court')
+    expect(playing).toHaveAttribute('data-empty', 'true')
+    expect(waiting).toHaveAttribute('data-empty', 'true')
+    expect(playing).toHaveClass('display-section-compact')
+    expect(waiting).toHaveClass('display-section-compact')
+    expect(playing).toHaveTextContent('Currently Playing')
+    expect(playing).toHaveTextContent('No matches currently on court')
+    expect(waiting).toHaveTextContent('Waiting for Court')
+    expect(waiting).toHaveTextContent('No matches waiting for court')
+    expect(screen.queryByTestId('display-playing-grid')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('display-waiting-grid')).not.toBeInTheDocument()
+  })
+
+  it('keeps full card grids when currently playing and waiting have matches', () => {
+    renderPage()
+    expect(screen.getByTestId('currently-playing')).toHaveAttribute('data-empty', 'false')
+    expect(screen.getByTestId('waiting-for-court')).toHaveAttribute('data-empty', 'false')
+    expect(screen.getByTestId('currently-playing')).not.toHaveClass('display-section-compact')
+    expect(screen.getByTestId('display-playing-grid')).toHaveClass('display-playing-grid')
+    expect(screen.getByTestId('display-waiting-grid')).toHaveClass('display-waiting-grid')
+    expect(screen.getByTestId('display-upcoming-grid')).toHaveClass('display-match-grid')
+    expect(screen.getByTestId('display-match-11')).toBeInTheDocument()
+    expect(screen.getByTestId('display-match-12')).toBeInTheDocument()
+  })
+
+  it('shows court only on currently playing cards', () => {
+    renderPage()
+    expect(screen.getByTestId('display-court-11')).toHaveTextContent('Court 7')
+    expect(screen.queryByTestId('display-court-12')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('display-court-13')).not.toBeInTheDocument()
   })
 
   it('has no edit controls', () => {

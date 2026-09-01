@@ -63,7 +63,7 @@ function TeamLine({
       data-checked={highlight ? 'true' : 'false'}
     >
       {highlight ? <span className="display-team-badge" aria-hidden>✓</span> : null}
-      <span>{names || 'TBD'}</span>
+      <span className="display-team-names">{names || 'TBD'}</span>
     </div>
   )
 }

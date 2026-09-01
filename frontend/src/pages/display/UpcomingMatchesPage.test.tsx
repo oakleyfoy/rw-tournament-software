@@ -51,6 +51,13 @@ describe('UpcomingMatchesPage', () => {
     expect(screen.queryByText('Court 7')).not.toBeInTheDocument()
     expect(screen.queryByText('Court 99')).not.toBeInTheDocument()
     expect(screen.queryByText(/Court TBD/i)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(/display-court-/)).not.toBeInTheDocument()
+  })
+
+  it('uses the high-density upcoming grid under each time group', () => {
+    renderPage()
+    expect(screen.getByTestId('display-upcoming-grid-14:30')).toHaveClass('display-match-grid')
+    expect(screen.getByTestId('display-upcoming-grid-15:30')).toHaveClass('display-match-grid')
   })
 
   it('shows the empty 12-hour state', () => {
