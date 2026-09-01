@@ -34,10 +34,6 @@ export function DisplayMatchCard({
         checkedIn={match.team_b_checked_in}
         showCheckin={showCheckin}
       />
-      <div className="display-meta">
-        {match.event_label}
-        {match.round_label ? ` · ${match.round_label}` : ''}
-      </div>
       {showCourt && match.court ? (
         <div className="display-court" data-testid={`display-court-${match.match_id}`}>
           {match.court}

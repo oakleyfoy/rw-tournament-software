@@ -1,10 +1,10 @@
-/** Upcoming / 12-hour board card floor. 220px yields ~8 columns at 1920. */
-export const UPCOMING_CARD_MIN_PX = 220
-/** Waiting cards stay a bit wider than upcoming, still compact. */
-export const WAITING_CARD_MIN_PX = 260
-/** Currently Playing stays readable; court number needs room. */
-export const PLAYING_CARD_MIN_PX = 340
-export const DISPLAY_GRID_GAP_PX = 8
+/** Upcoming / 12-hour card floor. 130px yields ~13 columns at 1920. */
+export const UPCOMING_CARD_MIN_PX = 130
+/** Waiting stays only slightly wider than upcoming. */
+export const WAITING_CARD_MIN_PX = 140
+/** Currently Playing stays a bit larger so court stays readable. */
+export const PLAYING_CARD_MIN_PX = 180
+export const DISPLAY_GRID_GAP_PX = 6
 export const DISPLAY_BODY_PAD_X_PX = 18
 
 export function columnsAtViewport(
