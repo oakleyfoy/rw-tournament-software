@@ -22,6 +22,7 @@ import TournamentDeskDrawsDisplayPage from './pages/desk/TournamentDeskDrawsDisp
 import TournamentDeskSharedScreenPage from './pages/desk/TournamentDeskSharedScreenPage'
 import CourtBoardPage from './pages/display/CourtBoardPage'
 import UpcomingMatchesPage from './pages/display/UpcomingMatchesPage'
+import DrawQrBoardPage from './pages/drawQr/DrawQrBoardPage'
 import { getCurrentTheme, applyTheme } from './utils/settings'
 import { getAuthToken } from './api/client'
 import LoginPage from './pages/LoginPage'
@@ -60,6 +61,7 @@ function App() {
           <Route path="/tournaments/:id/import" element={<CreateTournamentFromRwOs />} />
           <Route path="/tournaments/:id/setup" element={<TournamentSetup />} />
           <Route path="/tournaments/:id/draw-builder" element={<DrawBuilder />} />
+          <Route path="/tournaments/:id/draw-qr-board" element={<DrawQrBoardPage />} />
           <Route path="/tournaments/:id/schedule-builder" element={<ScheduleBuilderPage />} />
           <Route path="/tournaments/:id/schedule" element={<SchedulePageGridV1 />} />
           <Route path="/tournaments/:id/schedule/matches" element={<MatchCardsRedirectToActive />} />

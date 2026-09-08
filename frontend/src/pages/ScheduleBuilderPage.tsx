@@ -309,6 +309,12 @@ export default function ScheduleBuilderPage() {
             Back to Draw Builder
           </button>
           <button
+            className="btn btn-secondary"
+            onClick={() => navigate(`/tournaments/${tournamentId}/draw-qr-board`)}
+          >
+            Print Draw QR Board
+          </button>
+          <button
             className={canProceed ? 'btn btn-primary' : 'btn btn-secondary'}
             disabled={!canProceed}
             onClick={() => navigate(`/tournaments/${tournamentId}/schedule`)}

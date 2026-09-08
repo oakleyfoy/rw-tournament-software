@@ -1703,6 +1703,9 @@ function DrawBuilder() {
           <button className="btn btn-secondary" onClick={() => navigate(`/tournaments/${tournament.id}/setup`)}>
             Back to Setup
           </button>
+          <button className="btn btn-secondary" onClick={() => navigate(`/tournaments/${tournament.id}/draw-qr-board`)}>
+            Print Draw QR Board
+          </button>
           <button className="btn btn-primary" onClick={() => navigate(`/tournaments/${tournament.id}/schedule-builder`)}>
             Review Schedule Plan
           </button>

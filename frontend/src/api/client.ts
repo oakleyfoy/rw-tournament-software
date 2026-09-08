@@ -4756,3 +4756,27 @@ export async function getDisplayBoard(
   )
 }
 
+export type DrawQrDrawType = 'waterfall' | 'round_robin' | 'bracket'
+
+export interface DrawQrBoardItem {
+  event_id: number
+  event_name: string
+  label: string
+  draw_type: DrawQrDrawType
+  draw_type_label: string
+  division_code: string | null
+  public_path: string
+  public_url: string
+}
+
+export interface DrawQrBoardResponse {
+  tournament_id: number
+  tournament_name: string
+  filename_slug: string
+  items: DrawQrBoardItem[]
+}
+
+export async function getDrawQrBoard(tournamentId: number): Promise<DrawQrBoardResponse> {
+  return fetchJson<DrawQrBoardResponse>(`${API_BASE_URL}/tournaments/${tournamentId}/draw-qr-board`)
+}
+
