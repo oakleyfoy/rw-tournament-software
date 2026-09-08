@@ -91,6 +91,38 @@ describe('DrawQrBoardPage', () => {
     expect(screen.getByTestId('draw-qr-generate')).toHaveTextContent('Generate 32 × 24 PDF')
   })
 
+  it('renders the Amelia Island event-then-draw-type order without re-sorting labels', async () => {
+    apiState.data = {
+      ...apiState.data,
+      items: [
+        { event_id: 1, event_name: "Women's A", label: "Women's A", draw_type: 'waterfall', draw_type_label: 'Waterfall', division_code: null, public_path: '/t/9/draws/1/waterfall', public_url: 'https://players.example.com/t/9/draws/1/waterfall' },
+        { event_id: 1, event_name: "Women's A", label: "Women's A", draw_type: 'round_robin', draw_type_label: 'Round Robin', division_code: null, public_path: '/t/9/draws/1/roundrobin', public_url: 'https://players.example.com/t/9/draws/1/roundrobin' },
+        { event_id: 2, event_name: "Women's B", label: "Women's B", draw_type: 'waterfall', draw_type_label: 'Waterfall', division_code: null, public_path: '/t/9/draws/2/waterfall', public_url: 'https://players.example.com/t/9/draws/2/waterfall' },
+        { event_id: 2, event_name: "Women's B", label: "Women's B", draw_type: 'round_robin', draw_type_label: 'Round Robin', division_code: null, public_path: '/t/9/draws/2/roundrobin', public_url: 'https://players.example.com/t/9/draws/2/roundrobin' },
+        { event_id: 3, event_name: "Women's C", label: "Women's C", draw_type: 'waterfall', draw_type_label: 'Waterfall', division_code: null, public_path: '/t/9/draws/3/waterfall', public_url: 'https://players.example.com/t/9/draws/3/waterfall' },
+        { event_id: 3, event_name: "Women's C", label: "Women's C", draw_type: 'round_robin', draw_type_label: 'Round Robin', division_code: null, public_path: '/t/9/draws/3/roundrobin', public_url: 'https://players.example.com/t/9/draws/3/roundrobin' },
+        { event_id: 4, event_name: 'Mixed A', label: 'Mixed A', draw_type: 'waterfall', draw_type_label: 'Waterfall', division_code: null, public_path: '/t/9/draws/4/waterfall', public_url: 'https://players.example.com/t/9/draws/4/waterfall' },
+        { event_id: 4, event_name: 'Mixed A', label: 'Mixed A', draw_type: 'round_robin', draw_type_label: 'Round Robin', division_code: null, public_path: '/t/9/draws/4/roundrobin', public_url: 'https://players.example.com/t/9/draws/4/roundrobin' },
+        { event_id: 5, event_name: 'Mixed B', label: 'Mixed B', draw_type: 'waterfall', draw_type_label: 'Waterfall', division_code: null, public_path: '/t/9/draws/5/waterfall', public_url: 'https://players.example.com/t/9/draws/5/waterfall' },
+        { event_id: 5, event_name: 'Mixed B', label: 'Mixed B', draw_type: 'round_robin', draw_type_label: 'Round Robin', division_code: null, public_path: '/t/9/draws/5/roundrobin', public_url: 'https://players.example.com/t/9/draws/5/roundrobin' },
+      ],
+    }
+    renderPage()
+    const labels = (await screen.findAllByRole('listitem')).map((el) => el.textContent)
+    expect(labels).toEqual([
+      "Women's A — Waterfall",
+      "Women's A — Round Robin",
+      "Women's B — Waterfall",
+      "Women's B — Round Robin",
+      "Women's C — Waterfall",
+      "Women's C — Round Robin",
+      'Mixed A — Waterfall',
+      'Mixed A — Round Robin',
+      'Mixed B — Waterfall',
+      'Mixed B — Round Robin',
+    ])
+  })
+
   it('passes every returned item into PDF generation', async () => {
     renderPage()
     const button = await screen.findByTestId('draw-qr-generate')

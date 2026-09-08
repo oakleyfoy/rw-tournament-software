@@ -284,14 +284,18 @@ def test_pools_only_format_does_not_emit_stale_bracket_codes(client, session, mo
     assert [item["draw_type"] for item in items] == ["waterfall", "round_robin"]
 
 
-def test_event_day_order_is_used_instead_of_alphabetical(client, session, monkeypatch):
+def test_amelia_island_order_is_womens_abc_then_mixed_with_wf_before_rr(client, session, monkeypatch):
     monkeypatch.setenv("PUBLIC_APP_URL", "https://players.example.com")
-    tournament = _tournament(session)
+    tournament = _tournament(session, "Amelia Island")
     version = _version(session, tournament.id)
+    # Insert in scrambled order and give day_orders the wrong C→A sequence so
+    # the QR board cannot be relying on insert order or schedule policy.
     mixed_b = _event(session, tournament.id, "Mixed B", category="mixed")
     womens_c = _event(session, tournament.id, "Women's C")
+    mixed_a = _event(session, tournament.id, "Mixed A", category="mixed")
     womens_a = _event(session, tournament.id, "Women's A")
-    for event in (mixed_b, womens_c, womens_a):
+    womens_b = _event(session, tournament.id, "Women's B")
+    for event in (mixed_b, womens_c, mixed_a, womens_a, womens_b):
         _match(
             session,
             tournament_id=tournament.id,
@@ -300,14 +304,97 @@ def test_event_day_order_is_used_instead_of_alphabetical(client, session, monkey
             match_code=f"E{event.id}_WF_R1_01",
             match_type="WF",
         )
+        _match(
+            session,
+            tournament_id=tournament.id,
+            event_id=event.id,
+            version_id=version.id,
+            match_code=f"E{event.id}_POOLA_RR_01",
+            match_type="RR",
+        )
     tournament.public_schedule_version_id = version.id
     tournament.event_schedule_day_orders_json = serialize_event_schedule_day_orders(
-        [[womens_c.id, womens_a.id, mixed_b.id]]
+        [[womens_c.id, mixed_b.id, womens_a.id]]
     )
     session.commit()
 
-    labels = [item["label"] for item in client.get(f"/api/tournaments/{tournament.id}/draw-qr-board").json()["items"]]
-    assert labels == ["Women's C", "Women's A", "Mixed B"]
+    rows = [
+        (item["label"], item["draw_type_label"])
+        for item in client.get(f"/api/tournaments/{tournament.id}/draw-qr-board").json()["items"]
+    ]
+    assert rows == [
+        ("Women's A", "Waterfall"),
+        ("Women's A", "Round Robin"),
+        ("Women's B", "Waterfall"),
+        ("Women's B", "Round Robin"),
+        ("Women's C", "Waterfall"),
+        ("Women's C", "Round Robin"),
+        ("Mixed A", "Waterfall"),
+        ("Mixed A", "Round Robin"),
+        ("Mixed B", "Waterfall"),
+        ("Mixed B", "Round Robin"),
+    ]
+
+
+def test_brackets_stay_grouped_with_their_event_after_waterfall_and_rr(client, session, monkeypatch):
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://players.example.com")
+    tournament = _tournament(session)
+    version = _version(session, tournament.id)
+    mixed_a = _event(
+        session,
+        tournament.id,
+        "Mixed A",
+        category="mixed",
+        team_count=32,
+        draw_plan_json='{"template_type":"WF_TO_BRACKETS_8"}',
+    )
+    womens_b = _event(
+        session,
+        tournament.id,
+        "Women's B",
+        team_count=32,
+        draw_plan_json='{"template_type":"WF_TO_BRACKETS_8"}',
+    )
+    for event in (mixed_a, womens_b):
+        _match(
+            session,
+            tournament_id=tournament.id,
+            event_id=event.id,
+            version_id=version.id,
+            match_code=f"E{event.id}_WF_R1_01",
+            match_type="WF",
+        )
+        _match(
+            session,
+            tournament_id=tournament.id,
+            event_id=event.id,
+            version_id=version.id,
+            match_code=f"E{event.id}_POOLA_RR_01",
+            match_type="RR",
+        )
+        _match(
+            session,
+            tournament_id=tournament.id,
+            event_id=event.id,
+            version_id=version.id,
+            match_code=f"E{event.id}_BWW_QF1",
+            match_type="MAIN",
+        )
+    tournament.public_schedule_version_id = version.id
+    session.commit()
+
+    rows = [
+        (item["label"], item["draw_type_label"])
+        for item in client.get(f"/api/tournaments/{tournament.id}/draw-qr-board").json()["items"]
+    ]
+    assert rows == [
+        ("Women's B", "Waterfall"),
+        ("Women's B", "Round Robin"),
+        ("Women's B", "Bracket"),
+        ("Mixed A", "Waterfall"),
+        ("Mixed A", "Round Robin"),
+        ("Mixed A", "Bracket"),
+    ]
 
 
 def test_draw_type_order_within_an_event_is_waterfall_rr_bracket(client, session, monkeypatch):
