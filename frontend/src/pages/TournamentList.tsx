@@ -373,6 +373,18 @@ function TournamentList() {
                       >
                         {printing[`${tournament.id}-mixed`] ? '...' : 'PDF Mixed'}
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '12px', padding: '6px 12px', whiteSpace: 'nowrap' }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigate(`/tournaments/${tournament.id}/draw-qr-board`)
+                        }}
+                        title="Print 32x24 public-draw QR board"
+                      >
+                        Print Draw QR Board
+                      </button>
                     </div>
                   </div>
                 </td>

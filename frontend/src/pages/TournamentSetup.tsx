@@ -810,6 +810,13 @@ function TournamentSetup() {
             </button>
             <button
               className="btn btn-secondary"
+              onClick={() => navigate(`/tournaments/${tournament.id}/draw-qr-board`)}
+              style={{ fontSize: '14px' }}
+            >
+              Print Draw QR Board
+            </button>
+            <button
+              className="btn btn-secondary"
               onClick={() => window.open(`/desk/t/${tournament.id}/display/courts`, '_blank', 'noopener,noreferrer')}
               style={{ fontSize: '14px' }}
             >

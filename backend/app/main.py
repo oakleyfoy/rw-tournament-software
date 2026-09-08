@@ -33,6 +33,7 @@ from app.routes import (
     desk,
     display_board,
     draw_builder,
+    draw_qr_board,
     events,
     phase1_status,
     plan_report,
@@ -197,6 +198,9 @@ app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_prot
 
 # Tournament TV display boards (staff-only, read-only)
 app.include_router(display_board.router, prefix="/api", tags=["display-board"], dependencies=_protected_deps)
+
+# Staff Draw QR Board data (read-only; PDF is rendered separately)
+app.include_router(draw_qr_board.router, prefix="/api", tags=["draw-qr-board"], dependencies=_protected_deps)
 
 # Auth routes
 app.include_router(auth.router)
