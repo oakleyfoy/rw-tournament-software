@@ -21,7 +21,6 @@ from app.models.event import Event
 from app.models.match import Match
 from app.models.schedule_version import ScheduleVersion
 from app.models.tournament import Tournament
-from app.utils.event_schedule_orders import parse_event_schedule_day_orders_raw
 
 DRAW_TYPE_WATERFALL = "waterfall"
 DRAW_TYPE_ROUND_ROBIN = "round_robin"
@@ -120,6 +119,15 @@ def public_bracket_path(tournament_id: int, event_id: int, division_code: str) -
     return f"/t/{tournament_id}/draws/{event_id}/bracket/{division_code}"
 
 
+# QR board display order: Women's, then Mixed. Do not use string sort of
+# Event.category ("mixed" < "womens") and do not use schedule day_orders
+# (those are policy priority and can put C before A).
+_CATEGORY_ORDER = {
+    "womens": 0,
+    "mixed": 1,
+}
+
+
 def _event_category_key(event: Event) -> str:
     category = event.category
     if hasattr(category, "value"):
@@ -127,22 +135,14 @@ def _event_category_key(event: Event) -> str:
     return str(category)
 
 
-def _ordered_events(tournament: Tournament, events: Sequence[Event]) -> List[Event]:
-    by_id = {event.id: event for event in events if event.id is not None}
-    ordered: List[Event] = []
-    seen: set[int] = set()
-    matrix = parse_event_schedule_day_orders_raw(tournament.event_schedule_day_orders_json)
-    if matrix:
-        for row in matrix:
-            for event_id in row:
-                event = by_id.get(event_id)
-                if event is not None and event.id not in seen:
-                    seen.add(event.id)
-                    ordered.append(event)
-    remaining = [event for event in events if event.id not in seen]
-    remaining.sort(key=lambda event: (_event_category_key(event), event.name or ""))
-    ordered.extend(remaining)
-    return ordered
+def _event_sort_key(event: Event) -> tuple:
+    """Women's before Mixed; A → B → C via Event.name within a category."""
+    category = _event_category_key(event).strip().lower()
+    return (_CATEGORY_ORDER.get(category, 99), event.name or "", event.id or 0)
+
+
+def _ordered_events(events: Sequence[Event]) -> List[Event]:
+    return sorted(events, key=_event_sort_key)
 
 
 def _template_type(event: Event) -> Optional[str]:
@@ -235,7 +235,7 @@ def build_draw_qr_board(
         )
 
     events = list(session.exec(select(Event).where(Event.tournament_id == tournament_id)).all())
-    for event in _ordered_events(tournament, events):
+    for event in _ordered_events(events):
         matches = _event_match_rows(session, int(event.id), int(version.id))
         if _has_waterfall(matches):
             items.append(
