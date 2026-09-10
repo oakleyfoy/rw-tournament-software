@@ -8768,6 +8768,29 @@ function SmsAdminTab({
   )
 }
 
+function courtDisplayFromSnapshotSlot(slot: SnapshotSlot): string {
+  const label = String(slot.court_label || slot.court_number || '').trim()
+  if (!label) return 'Court'
+  return label.toLowerCase().startsWith('court') ? label : `Court ${label}`
+}
+
+function resolveCheckInBoardCourts(data: DeskSnapshotResponse): string[] {
+  if (data.checkin_board_courts && data.checkin_board_courts.length > 0) {
+    return data.checkin_board_courts
+  }
+  const key = data.active_checkin_slot_key
+  if (key) {
+    const courts = new Set<string>()
+    for (const slot of data.slots || []) {
+      if (!slot.is_active) continue
+      const slotKey = `${slot.day_date}|${(slot.start_time || '').slice(0, 5)}`
+      if (slotKey === key) courts.add(courtDisplayFromSnapshotSlot(slot))
+    }
+    return Array.from(courts)
+  }
+  return Array.from(new Set((data.available_slots || []).map((slot) => slot.court_name)))
+}
+
 type CheckInCourtBoardRowData = {
   court: string
   now?: DeskMatchItem
@@ -8780,6 +8803,7 @@ type CheckInCourtBoardRowData = {
   startAtLabel: string | null
   elapsedLabel: string | null
   availableSlotsForCourt: AvailableCourtSlot[]
+  availabilityWarning?: string | null
 }
 
 function CheckInCourtBoardCard({
@@ -8906,6 +8930,11 @@ function CheckInCourtBoardCard({
                   {row.startAtLabel && <span>▶ {row.startAtLabel}</span>}
                   {row.startAtLabel && row.elapsedLabel && <span style={{ margin: '0 3px' }}>·</span>}
                   {row.elapsedLabel && <span>{row.elapsedLabel}</span>}
+                </div>
+              )}
+              {row.availabilityWarning && (
+                <div style={{ marginTop: 4, fontSize: 9, color: '#b26a00', fontWeight: 700, fontStyle: 'normal' }}>
+                  Slot missing
                 </div>
               )}
             </div>
@@ -9130,6 +9159,9 @@ export default function TournamentDeskPage() {
         available_slots: resp.available_slots,
         checkin_slot_options: resp.checkin_slot_options,
         checkin_slot_rows: resp.checkin_slot_rows,
+        checkin_board_courts: resp.checkin_board_courts,
+        active_checkin_slot_key: resp.active_checkin_slot_key,
+        checkin_court_warnings: resp.checkin_court_warnings,
       }
     })
   }, [])
@@ -9953,18 +9985,19 @@ export default function TournamentDeskPage() {
       }
     })
 
+    const boardCourts = resolveCheckInBoardCourts(data)
     const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
-    data.courts.forEach((court) => {
-      rawNowPlayingByCourt.set(court, data.now_playing_by_court[court])
+    boardCourts.forEach((boardCourt) => {
+      rawNowPlayingByCourt.set(boardCourt, data.now_playing_by_court[boardCourt])
     })
-    const courtBoardRows = data.courts.map((court) => {
-      const now = data.now_playing_by_court[court]
-      const courtLabel = court.replace(/^Court\s+/i, '')
+    const courtBoardRows = boardCourts.map((boardCourt) => {
+      const now = data.now_playing_by_court[boardCourt]
+      const courtLabel = boardCourt.replace(/^Court\s+/i, '')
       const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
       const visibleReadyAssignSlots = data.available_slots
-      const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === court)
+      const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === boardCourt)
       return {
-        court,
+        court: boardCourt,
         now,
         isClosed,
         availableSlotsForCourt,
@@ -9984,19 +10017,26 @@ export default function TournamentDeskPage() {
     let slotId: number | null = null
     if (draggedSlot) {
       const matchingCourtSlot = (data.slots || []).find((slot) =>
+        slot.is_active &&
         slot.day_date === draggedSlot.day_date &&
         slot.start_time === draggedSlot.start_time &&
         String(slot.court_label || '').trim() === targetCourtLabel
       )
       if (matchingCourtSlot?.slot_id != null) {
         slotId = matchingCourtSlot.slot_id
+      } else {
+        setError(`${court} is not available for the ${formatTimeLabel(draggedSlot.start_time)} schedule slot.`)
+        return
       }
     }
     if (slotId == null) {
       slotId = targetRow?.availableSlotsForCourt[0]?.slot_id ?? null
     }
     if (!slotId) {
-      setError('No open assignment slot on that court.')
+      const activeTime = data.active_checkin_slot_key
+        ? formatTimeLabel(data.active_checkin_slot_key.split('|')[1] || '')
+        : 'current'
+      setError(`${court} is not available for the ${activeTime} schedule slot.`)
       return
     }
     await handleAssignReadyMatch(matchId, slotId)
@@ -10298,10 +10338,19 @@ export default function TournamentDeskPage() {
   const focusSlotKey = effectiveSelectedCheckInSlotKey === 'all' ? autoFocusSlotKey : effectiveSelectedCheckInSlotKey
   const focusSlotLabel = focusSlotKey ? (slotLabelByKey.get(focusSlotKey) || focusSlotKey) : null
   const visibleReadyAssignSlots = data.available_slots
-  const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
-  data.courts.forEach((court) => {
-    rawNowPlayingByCourt.set(court, data.now_playing_by_court[court])
+  const checkInBoardCourts = resolveCheckInBoardCourts(data)
+  const checkInWarningByCourt = new Map<string, string>()
+  ;(data.checkin_court_warnings || []).forEach((warning) => {
+    if (warning.court_name && warning.message && !checkInWarningByCourt.has(warning.court_name)) {
+      checkInWarningByCourt.set(warning.court_name, warning.message)
+    }
   })
+  const checkInCandidateCourts = Array.from(
+    new Set([
+      ...checkInBoardCourts,
+      ...Array.from(checkInWarningByCourt.keys()).filter((court) => Boolean(data.now_playing_by_court[court])),
+    ])
+  )
 
   const buildFallbackDeskMatch = (cm: CheckInMatchItem): DeskMatchItem => ({
     match_id: cm.match_id,
@@ -10418,7 +10467,7 @@ export default function TournamentDeskPage() {
   // appear "current" and then pop to "open" when dragged away).
   const readyMatchIds = new Set((data.ready_queue || []).map((rq) => rq.match_id))
 
-  const courtBoardRows = data.courts.map((court) => {
+  const courtBoardRows = checkInCandidateCourts.map((court) => {
     const now = data.now_playing_by_court[court]
     const upNextRaw = data.up_next_by_court[court]
     const onDeckRaw = data.on_deck_by_court[court]
@@ -10471,12 +10520,17 @@ export default function TournamentDeskPage() {
       startAtLabel: formatStartedAtLabel(displayMatch?.started_at),
       elapsedLabel: formatElapsedLabel(displayMatch?.started_at, displayMatch?.completed_at),
       availableSlotsForCourt,
+      availabilityWarning: checkInWarningByCourt.get(court) || null,
     }
   })
 
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
   const openCourtRows = courtBoardRows.filter(
-    (row) => row.lane === 'open' && !row.isClosed && row.availableSlotsForCourt.length > 0
+    (row) =>
+      row.lane === 'open' &&
+      !row.isClosed &&
+      row.availableSlotsForCourt.length > 0 &&
+      checkInBoardCourts.includes(row.court)
   )
 
   const getCompactDivisionLabel = (matchCode?: string | null): string => {
@@ -11026,6 +11080,18 @@ export default function TournamentDeskPage() {
             ) : (
               <>
                 <div style={{ display: 'grid', gap: 14 }}>
+                  {(data.checkin_court_warnings || []).length > 0 && (
+                    <div style={{ border: '1px solid #ffe0b2', borderRadius: 8, backgroundColor: '#fff8e1', padding: '10px 12px' }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#e65100', marginBottom: 6 }}>
+                        Schedule slot problem
+                      </div>
+                      {(data.checkin_court_warnings || []).map((warning, index) => (
+                        <div key={`${warning.court_name || 'court'}-${warning.match_id || index}`} style={{ fontSize: 12, color: '#6d4c41' }}>
+                          {warning.message}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
                       Currently Playing

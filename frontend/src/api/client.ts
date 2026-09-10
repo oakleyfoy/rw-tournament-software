@@ -2937,6 +2937,12 @@ export interface AvailableCourtSlot {
   currently_assigned_match_id: number | null
 }
 
+export interface CheckInCourtWarning {
+  court_name: string | null
+  match_id: number | null
+  message: string
+}
+
 export interface CheckInSlotOption {
   slot_key: string
   label: string
@@ -2965,6 +2971,9 @@ export interface DeskSnapshotResponse {
   available_slots: AvailableCourtSlot[]
   checkin_slot_options: CheckInSlotOption[]
   checkin_slot_rows: Record<string, CheckInMatchItem[]>
+  checkin_board_courts: string[]
+  active_checkin_slot_key: string | null
+  checkin_court_warnings: CheckInCourtWarning[]
 }
 
 export interface TemporaryPlayerLookupItem {
@@ -3017,6 +3026,9 @@ export interface ReadyQueueResponse {
   available_slots: AvailableCourtSlot[]
   checkin_slot_options: CheckInSlotOption[]
   checkin_slot_rows: Record<string, CheckInMatchItem[]>
+  checkin_board_courts: string[]
+  active_checkin_slot_key: string | null
+  checkin_court_warnings: CheckInCourtWarning[]
 }
 
 export interface WorkingDraftResponse {
