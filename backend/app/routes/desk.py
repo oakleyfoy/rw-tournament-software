@@ -49,6 +49,16 @@ from app.services.reschedule_engine import (
     compute_rebuild_preview,
     compute_reschedule,
 )
+from app.services.schedule_slot_availability import (
+    CourtSlotUnavailableError,
+    board_courts_for_slot_key,
+    court_display_for_slot,
+    format_slot_key_time_label,
+    format_slot_time_label,
+    iter_grid_slots,
+    slot_key_for_slot,
+    validate_checkin_court_assignment,
+)
 from app.services.sms_automation import SmsAutomationEngine
 
 logger = logging.getLogger(__name__)
@@ -558,6 +568,12 @@ class AvailableCourtSlot(BaseModel):
     currently_assigned_match_id: Optional[int] = None
 
 
+class CheckInCourtWarning(BaseModel):
+    court_name: Optional[str] = None
+    match_id: Optional[int] = None
+    message: str
+
+
 class CheckInSlotOption(BaseModel):
     slot_key: str
     label: str
@@ -586,6 +602,9 @@ class DeskSnapshotResponse(BaseModel):
     available_slots: List[AvailableCourtSlot] = []
     checkin_slot_options: List[CheckInSlotOption] = []
     checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
+    checkin_board_courts: List[str] = []
+    active_checkin_slot_key: Optional[str] = None
+    checkin_court_warnings: List[CheckInCourtWarning] = []
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -622,6 +641,9 @@ class ReadyQueueResponse(BaseModel):
     available_slots: List[AvailableCourtSlot]
     checkin_slot_options: List[CheckInSlotOption] = []
     checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
+    checkin_board_courts: List[str] = []
+    active_checkin_slot_key: Optional[str] = None
+    checkin_court_warnings: List[CheckInCourtWarning] = []
 
 
 class TemporaryPlayerLookupItem(BaseModel):
@@ -927,6 +949,9 @@ def _build_checkin_snapshot(
     List[AvailableCourtSlot],
     List[CheckInSlotOption],
     Dict[str, List[CheckInMatchItem]],
+    List[str],
+    Optional[str],
+    List[CheckInCourtWarning],
 ]:
     # region agent log
     _agent_debug_log(
@@ -953,12 +978,7 @@ def _build_checkin_snapshot(
     slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
     slot_map = {s.id: s for s in slots}
     sorted_slots = sorted(slots, key=lambda x: (x.day_date, x.start_time, x.court_number, x.id))
-
-    def _slot_key_for_slot(slot: ScheduleSlot) -> str:
-        slot_time = (
-            slot.start_time.strftime("%H:%M") if hasattr(slot.start_time, "strftime") else str(slot.start_time)[:5]
-        )
-        return f"{slot.day_date.isoformat()}|{slot_time}"
+    grid_slots = iter_grid_slots(sorted_slots)
 
     slot_sort_key_by_match_id: Dict[int, tuple] = {}
     for match_id, assignment in assignment_map.items():
@@ -1327,21 +1347,16 @@ def _build_checkin_snapshot(
         ).all()
     }
 
-    configured = list(tournament.court_names or [])
-    all_courts = [f"Court {c}" if not str(c).lower().startswith("court") else str(c) for c in configured]
-    if not all_courts:
-        all_courts = sorted({m.court_name for m in items if m.court_name})
-
     # Keep Open Courts aligned to the same active board block used operationally.
     slot_key_by_match_id: Dict[int, str] = {}
     for match_id, assignment in assignment_map.items():
         slot = slot_map.get(assignment.slot_id)
         if not slot:
             continue
-        slot_key_by_match_id[match_id] = _slot_key_for_slot(slot)
+        slot_key_by_match_id[match_id] = slot_key_for_slot(slot)
 
     waiting_slot_keys = {
-        _slot_key_for_slot(slot_map[cm.slot_id])
+        slot_key_for_slot(slot_map[cm.slot_id])
         for cm in checkin_matches
         if not cm.match_ready and cm.slot_id is not None and cm.slot_id in slot_map
     }
@@ -1353,8 +1368,8 @@ def _build_checkin_snapshot(
     }
     ordered_slot_keys: List[str] = []
     seen_slot_keys: set[str] = set()
-    for s in sorted_slots:
-        key = _slot_key_for_slot(s)
+    for s in grid_slots:
+        key = slot_key_for_slot(s)
         if key in seen_slot_keys:
             continue
         ordered_slot_keys.append(key)
@@ -1398,19 +1413,18 @@ def _build_checkin_snapshot(
         rows.sort(key=lambda x: (x.match_number, x.match_id))
         checkin_slot_rows[option.slot_key] = rows
 
+    checkin_board_courts = board_courts_for_slot_key(grid_slots, active_slot_key)
+    checkin_board_court_set = set(checkin_board_courts)
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
 
     def _append_available_slot(slot: ScheduleSlot) -> None:
-        court_label = slot.court_label or str(slot.court_number)
-        court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
+        court_name = court_display_for_slot(slot)
         if court_name in used_court:
             return
         if court_name in active_courts or court_name in closed_courts:
             return
         a = assignment_by_slot.get(slot.id)
-        # A court is considered unavailable only when it is actively in use
-        # (handled by active_courts above) or manually closed.
         # Pre-assigned future matches should not block immediate assignment.
         available_slots.append(
             AvailableCourtSlot(
@@ -1423,18 +1437,49 @@ def _build_checkin_snapshot(
         )
         used_court.add(court_name)
 
-    # Primary pass: use the active board block.
+    # Only courts with a Grid cell at the active day+time are assignable.
     if active_slot_key:
-        for s in sorted_slots:
-            if _slot_key_for_slot(s) == active_slot_key:
+        for s in grid_slots:
+            if slot_key_for_slot(s) == active_slot_key:
                 _append_available_slot(s)
 
-    # Fallback: if a non-active/non-closed court has no slot in the active block,
-    # keep it assignable by exposing the earliest slot for that court.
-    for s in sorted_slots:
-        _append_available_slot(s)
-
     available_courts = [s.court_name for s in available_slots]
+    checkin_court_warnings: List[CheckInCourtWarning] = []
+    seen_warning_keys: set[tuple] = set()
+
+    def _add_warning(court_name: Optional[str], match_id: Optional[int], message: str) -> None:
+        key = (court_name, match_id, message)
+        if key in seen_warning_keys:
+            return
+        seen_warning_keys.add(key)
+        checkin_court_warnings.append(CheckInCourtWarning(court_name=court_name, match_id=match_id, message=message))
+
+    for assignment in assignments:
+        slot = slot_map.get(assignment.slot_id)
+        assigned_match = match_map.get(assignment.match_id)
+        status = (assigned_match.runtime_status or "SCHEDULED").upper() if assigned_match else "SCHEDULED"
+        if slot is None:
+            _add_warning(
+                None,
+                assignment.match_id,
+                (
+                    f"Match {assignment.match_id} is still assigned to a court slot that was "
+                    "removed from the Schedule Grid."
+                ),
+            )
+            continue
+        court_name = court_display_for_slot(slot)
+        if status in ("IN_PROGRESS", "PAUSED") and court_name not in checkin_board_court_set:
+            time_label = (
+                format_slot_key_time_label(active_slot_key)
+                if active_slot_key
+                else format_slot_time_label(slot.start_time)
+            )
+            _add_warning(
+                court_name,
+                assignment.match_id,
+                (f"{court_name} has an in-progress match but is not available for the {time_label} schedule slot."),
+            )
     # region agent log
     _agent_debug_log(
         "H5",
@@ -1464,6 +1509,9 @@ def _build_checkin_snapshot(
         available_slots,
         checkin_slot_options,
         checkin_slot_rows,
+        checkin_board_courts,
+        active_slot_key,
+        checkin_court_warnings,
     )
 
 
@@ -1928,6 +1976,9 @@ def desk_snapshot(
     available_slots: List[AvailableCourtSlot] = []
     checkin_slot_options: List[CheckInSlotOption] = []
     checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
+    checkin_board_courts: List[str] = []
+    active_checkin_slot_key: Optional[str] = None
+    checkin_court_warnings: List[CheckInCourtWarning] = []
     if management_mode == MODE_CHECKIN_MANAGEMENT:
         (
             checkin_matches,
@@ -1936,6 +1987,9 @@ def desk_snapshot(
             available_slots,
             checkin_slot_options,
             checkin_slot_rows,
+            checkin_board_courts,
+            active_checkin_slot_key,
+            checkin_court_warnings,
         ) = _build_checkin_snapshot(session, tournament, version, items)
 
     # region agent log
@@ -1975,6 +2029,9 @@ def desk_snapshot(
         available_slots=available_slots,
         checkin_slot_options=checkin_slot_options,
         checkin_slot_rows=checkin_slot_rows,
+        checkin_board_courts=checkin_board_courts,
+        active_checkin_slot_key=active_checkin_slot_key,
+        checkin_court_warnings=checkin_court_warnings,
     )
 
 
@@ -2113,6 +2170,9 @@ def set_team_checkin(
         available_slots,
         checkin_slot_options,
         checkin_slot_rows,
+        checkin_board_courts,
+        active_checkin_slot_key,
+        checkin_court_warnings,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -2124,6 +2184,9 @@ def set_team_checkin(
         available_slots=available_slots,
         checkin_slot_options=checkin_slot_options,
         checkin_slot_rows=checkin_slot_rows,
+        checkin_board_courts=checkin_board_courts,
+        active_checkin_slot_key=active_checkin_slot_key,
+        checkin_court_warnings=checkin_court_warnings,
     )
 
 
@@ -2205,6 +2268,9 @@ def set_player_checkin(
         available_slots,
         checkin_slot_options,
         checkin_slot_rows,
+        checkin_board_courts,
+        active_checkin_slot_key,
+        checkin_court_warnings,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -2216,6 +2282,9 @@ def set_player_checkin(
         available_slots=available_slots,
         checkin_slot_options=checkin_slot_options,
         checkin_slot_rows=checkin_slot_rows,
+        checkin_board_courts=checkin_board_courts,
+        active_checkin_slot_key=active_checkin_slot_key,
+        checkin_court_warnings=checkin_court_warnings,
     )
 
 
@@ -2255,6 +2324,9 @@ def get_checkin_queue(
         available_slots,
         checkin_slot_options,
         checkin_slot_rows,
+        checkin_board_courts,
+        active_checkin_slot_key,
+        checkin_court_warnings,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     # region agent log
     _agent_debug_log(
@@ -2281,6 +2353,9 @@ def get_checkin_queue(
         available_slots=available_slots,
         checkin_slot_options=checkin_slot_options,
         checkin_slot_rows=checkin_slot_rows,
+        checkin_board_courts=checkin_board_courts,
+        active_checkin_slot_key=active_checkin_slot_key,
+        checkin_court_warnings=checkin_court_warnings,
     )
 
 
@@ -2519,24 +2594,20 @@ def assign_ready_match_to_slot(
         raise HTTPException(status_code=404, detail="Target slot not found")
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
-    checkin_matches, ready_queue, _available_courts, available_slots, _slot_options, _slot_rows = (
-        _build_checkin_snapshot(session, tournament, version, items)
-    )
+    (
+        _checkin_matches,
+        ready_queue,
+        _available_courts,
+        available_slots,
+        _slot_options,
+        _slot_rows,
+        _checkin_board_courts,
+        active_checkin_slot_key,
+        _checkin_court_warnings,
+    ) = _build_checkin_snapshot(session, tournament, version, items)
     ready_ids = {r.match_id for r in ready_queue}
     if payload.match_id not in ready_ids:
         raise HTTPException(status_code=400, detail="Match is not ready to play")
-    slot_ids = {s.slot_id for s in available_slots}
-    effective_slot_id = payload.slot_id
-    if payload.slot_id not in slot_ids:
-        # Availability is court-based; slot IDs can differ for the same court
-        # between snapshots. Accept any slot on a currently available court.
-        target_court_label = target_slot.court_label or str(target_slot.court_number)
-        target_court_name = (
-            f"Court {target_court_label}" if not target_court_label.lower().startswith("court") else target_court_label
-        )
-        available_court_names = {s.court_name for s in available_slots}
-        if target_court_name not in available_court_names:
-            raise HTTPException(status_code=400, detail="Slot is not currently available")
 
     selected_assignment = session.exec(
         select(MatchAssignment).where(
@@ -2546,6 +2617,38 @@ def assign_ready_match_to_slot(
     ).first()
     if not selected_assignment:
         raise HTTPException(status_code=400, detail="Ready match has no assignment to move")
+
+    version_slots = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == payload.version_id)
+    ).all()
+    match_slot = session.get(ScheduleSlot, selected_assignment.slot_id)
+    try:
+        validate_checkin_court_assignment(
+            slots=version_slots,
+            target_slot=target_slot,
+            match_slot=match_slot,
+            active_slot_key=active_checkin_slot_key,
+        )
+    except CourtSlotUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    slot_ids = {s.slot_id for s in available_slots}
+    effective_slot_id = payload.slot_id
+    if payload.slot_id not in slot_ids:
+        # Availability is court-based; slot IDs can differ for the same court
+        # between snapshots. Accept any slot on a currently available court.
+        target_court_name = court_display_for_slot(target_slot)
+        available_court_names = {s.court_name for s in available_slots}
+        if target_court_name not in available_court_names:
+            time_label = (
+                format_slot_key_time_label(active_checkin_slot_key)
+                if active_checkin_slot_key
+                else format_slot_time_label(target_slot.start_time)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"{target_court_name} is not available for the {time_label} schedule slot.",
+            )
 
     target_assignment = session.exec(
         select(MatchAssignment).where(
