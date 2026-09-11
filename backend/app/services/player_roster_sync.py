@@ -82,6 +82,78 @@ class PlayerSubstitution:
     new_phone: Optional[str]
 
 
+def _player_name_key(player: Player) -> str:
+    return normalize_player_name(player.display_name) or normalize_player_name(player.full_name)
+
+
+def player_names_match(slot_name: str, player_name: str) -> bool:
+    slot_key = normalize_player_name(slot_name)
+    player_key = normalize_player_name(player_name)
+    if not slot_key or not player_key:
+        return False
+    if slot_key == player_key:
+        return True
+    slot_tokens = slot_key.split()
+    player_tokens = player_key.split()
+    if slot_tokens[0] == player_tokens[0] and len(slot_tokens[0]) >= 4:
+        if len(slot_tokens) == 1 or slot_tokens[-1] == player_tokens[-1] or slot_tokens[-1] in player_tokens:
+            return True
+    if min(len(slot_key), len(player_key)) >= 6 and (slot_key in player_key or player_key in slot_key):
+        return True
+    return False
+
+
+def resolve_roster_player_for_slot(
+    *,
+    players: Iterable[Player],
+    links: Iterable[TeamPlayer],
+    team_id: int,
+    slot_name: str,
+    slot_phone: Optional[str],
+) -> Optional[Player]:
+    """
+    Pick the current person for a team slot.
+
+    Name-only substitutions keep the previous phone on the Team row. Prefer an
+    existing tournament Player with that name, especially one already linked
+    on another team, instead of texting the replaced partner.
+    """
+    wanted_phone = normalize_player_phone(slot_phone)
+    player_list = [player for player in players if player.id is not None]
+    link_list = list(links)
+    links_by_player: dict[int, list[TeamPlayer]] = {}
+    for link in link_list:
+        if link.player_id is None:
+            continue
+        links_by_player.setdefault(link.player_id, []).append(link)
+
+    name_matches = [
+        player
+        for player in player_list
+        if player_names_match(slot_name, player.display_name or "")
+        or player_names_match(slot_name, player.full_name or "")
+    ]
+    for player in name_matches:
+        other_links = [link for link in links_by_player.get(player.id, []) if link.team_id != team_id]
+        if other_links:
+            return player
+
+    if wanted_phone:
+        phone_matches = [player for player in player_list if player.phone_e164 == wanted_phone]
+        for player in phone_matches:
+            player_name = _player_name_key(player)
+            if (
+                not player_name
+                or player_names_match(slot_name, player.display_name or player.full_name or "")
+                or (player.full_name or "").startswith("Unknown (")
+            ):
+                return player
+
+    if name_matches:
+        return name_matches[0]
+    return None
+
+
 def snapshot_team_slots(team: Team) -> list[TeamSlotSnapshot]:
     p1_name, p2_name = _team_slot_names(team)
     return [

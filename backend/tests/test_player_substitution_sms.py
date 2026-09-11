@@ -505,6 +505,40 @@ def test_checkin_stays_on_replaced_player_and_is_not_transferred(client, session
     assert _slot_player_id(session, team_id, 1) == mary.id
 
 
+def test_name_only_sub_uses_existing_player_phone_not_replaced_partner(client, session):
+    tournament = _create_tournament(session)
+    womens = _create_event(session, tournament.id, "Women's A", "womens")
+    mixed = _create_event(session, tournament.id, "Mixed 8", "mixed")
+    client.post(
+        f"/api/events/{womens.id}/teams",
+        json={
+            "name": "Darlene Oldenberg / Womens Partner",
+            "player1_cellphone": MARY_PHONE,
+            "player2_cellphone": ANN_PHONE,
+        },
+    )
+    mixed_team = client.post(
+        f"/api/events/{mixed.id}/teams",
+        json={
+            "name": "Old Partner / Brannan",
+            "player1_cellphone": JANE_PHONE,
+            "player2_cellphone": MIXED_PARTNER_PHONE,
+        },
+    ).json()
+
+    updated = client.patch(
+        f"/api/events/{mixed.id}/teams/{mixed_team['id']}",
+        json={"name": "Darlene / Brannan"},
+    )
+    assert updated.status_code == 200
+
+    phones = _preview_phones(client, tournament.id, f"preview/event/{mixed.id}")
+    assert MARY_E164 in phones
+    assert MIXED_PARTNER_E164 in phones
+    assert JANE_E164 not in phones
+    assert _sms_log_count(session, tournament.id) == 0
+
+
 def test_detect_slot_substitutions_ignores_phone_formatting():
     team = Team(
         event_id=1,

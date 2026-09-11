@@ -51,11 +51,12 @@ from app.services.reschedule_engine import (
 )
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
-    board_courts_for_slot_key,
+    board_courts_for_slot_keys,
     court_display_for_slot,
     format_slot_key_time_label,
     format_slot_time_label,
     iter_grid_slots,
+    ordered_activity_slot_keys,
     slot_key_for_slot,
     validate_checkin_court_assignment,
 )
@@ -1374,13 +1375,14 @@ def _build_checkin_snapshot(
             continue
         ordered_slot_keys.append(key)
         seen_slot_keys.add(key)
-    active_slot_key = next(
-        (
-            key
-            for key in ordered_slot_keys
-            if key in waiting_slot_keys or key in ready_slot_keys or key in playing_slot_keys
-        ),
-        ordered_slot_keys[0] if ordered_slot_keys else None,
+    activity_slot_keys = ordered_activity_slot_keys(
+        ordered_slot_keys,
+        waiting_slot_keys,
+        ready_slot_keys,
+        playing_slot_keys,
+    )
+    active_slot_key = activity_slot_keys[0] if activity_slot_keys else (
+        ordered_slot_keys[0] if ordered_slot_keys else None
     )
 
     checkin_match_map = {cm.match_id: cm for cm in checkin_matches}
@@ -1413,7 +1415,8 @@ def _build_checkin_snapshot(
         rows.sort(key=lambda x: (x.match_number, x.match_id))
         checkin_slot_rows[option.slot_key] = rows
 
-    checkin_board_courts = board_courts_for_slot_key(grid_slots, active_slot_key)
+    assignable_slot_keys = activity_slot_keys or ([active_slot_key] if active_slot_key else [])
+    checkin_board_courts = board_courts_for_slot_keys(grid_slots, assignable_slot_keys)
     checkin_board_court_set = set(checkin_board_courts)
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
@@ -1437,10 +1440,11 @@ def _build_checkin_snapshot(
         )
         used_court.add(court_name)
 
-    # Only courts with a Grid cell at the active day+time are assignable.
-    if active_slot_key:
+    # Leftover earlier matches must not hide later Grid cells (9/10/19/20 at 12:30).
+    if assignable_slot_keys:
+        assignable_key_set = set(assignable_slot_keys)
         for s in grid_slots:
-            if slot_key_for_slot(s) == active_slot_key:
+            if slot_key_for_slot(s) in assignable_key_set:
                 _append_available_slot(s)
 
     available_courts = [s.court_name for s in available_slots]
@@ -2645,12 +2649,18 @@ def assign_ready_match_to_slot(
         target_slot = rewritten_slot
 
     match_slot = session.get(ScheduleSlot, selected_assignment.slot_id)
+    allowed_slot_keys = {active_checkin_slot_key} if active_checkin_slot_key else set()
+    for available in available_slots:
+        available_slot = session.get(ScheduleSlot, available.slot_id)
+        if available_slot is not None:
+            allowed_slot_keys.add(slot_key_for_slot(available_slot))
     try:
         validate_checkin_court_assignment(
             slots=version_slots,
             target_slot=target_slot,
             match_slot=match_slot,
             active_slot_key=active_checkin_slot_key,
+            allowed_slot_keys=allowed_slot_keys,
         )
     except CourtSlotUnavailableError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4930,10 +4940,10 @@ def get_desk_teams(
                 name=t.name,
                 display_name=t.display_name,
                 rating=t.rating,
-                player1_cellphone=t.player1_cellphone,
-                player1_email=t.player1_email,
-                player2_cellphone=t.player2_cellphone,
-                player2_email=t.player2_email,
+                player1_cellphone=t.player1_cellphone or t.p1_cell,
+                player1_email=t.player1_email or t.p1_email,
+                player2_cellphone=t.player2_cellphone or t.p2_cell,
+                player2_email=t.player2_email or t.p2_email,
                 is_defaulted=t.is_defaulted if t.is_defaulted else False,
                 notes=t.notes,
             )

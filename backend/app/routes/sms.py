@@ -1047,13 +1047,22 @@ def _sync_players_and_team_links_from_team_slots(
 
         desired_by_slot: dict[int, Player] = {}
         seen_player_ids: set[int] = set()
+        from app.services.player_roster_sync import resolve_roster_player_for_slot
+
         for slot, player_name in ((1, p1_name), (2, p2_name)):
             phone_e164 = _team_slot_phone(team, slot)
-            if not phone_e164:
-                continue
-
-            player = players_by_phone.get(phone_e164)
-            if not player:
+            player = resolve_roster_player_for_slot(
+                players=players,
+                links=links,
+                team_id=team_id,
+                slot_name=player_name,
+                slot_phone=phone_e164,
+            )
+            if player is None and phone_e164:
+                player = players_by_phone.get(phone_e164)
+            if player is None:
+                if not phone_e164:
+                    continue
                 player = Player(
                     tournament_id=tournament_id,
                     full_name=player_name or f"Team {team_id} Player {slot}",
@@ -1066,16 +1075,16 @@ def _sync_players_and_team_links_from_team_slots(
                 )
                 session.add(player)
                 session.flush()
+                players.append(player)
                 players_by_phone[phone_e164] = player
                 stats["players_created"] += 1
             else:
-                from app.services.player_roster_sync import normalize_player_name
-
                 updated = False
+                # Never rename a player to a different person because the team
+                # still has the replaced partner's phone.
                 if player_name and (
                     not player.full_name
                     or player.full_name.startswith("Unknown (")
-                    or normalize_player_name(player.full_name) != normalize_player_name(player_name)
                 ):
                     player.full_name = player_name
                     player.display_name = player_name
@@ -1085,6 +1094,16 @@ def _sync_players_and_team_links_from_team_slots(
                     if email:
                         player.email = email
                         updated = True
+                if player.phone_e164 and slot == 1:
+                    if getattr(team, "player1_cellphone", None) != player.phone_e164:
+                        team.player1_cellphone = player.phone_e164
+                        team.p1_cell = player.phone_e164
+                        session.add(team)
+                elif player.phone_e164 and slot == 2:
+                    if getattr(team, "player2_cellphone", None) != player.phone_e164:
+                        team.player2_cellphone = player.phone_e164
+                        team.p2_cell = player.phone_e164
+                        session.add(team)
                 if updated:
                     player.updated_at = datetime.now(timezone.utc)
                     session.add(player)
@@ -1240,6 +1259,9 @@ def _team_sms_targets(
     *,
     player_contacts_only: bool,
 ) -> List[dict]:
+    roster_targets = _team_targets_from_current_roster(session, tournament_id, team)
+    if roster_targets:
+        return roster_targets
     if player_contacts_only:
         return _team_targets_from_player_contacts(session, tournament_id, team)
 
@@ -1252,6 +1274,55 @@ def _team_sms_targets(
                 "team_name": team.name,
                 "player_id": None,
                 "player_name": None,
+            }
+        )
+    return targets
+
+
+def _team_targets_from_current_roster(
+    session: Session,
+    tournament_id: int,
+    team: Team,
+) -> List[dict]:
+    if team.id is None:
+        return []
+    from app.services.player_roster_sync import resolve_roster_player_for_slot
+
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+    event_ids = [e.id for e in session.exec(select(Event).where(Event.tournament_id == tournament_id)).all() if e.id]
+    team_ids = [
+        t.id
+        for t in session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()  # type: ignore
+        if t.id is not None
+    ]
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))).all() if team_ids else []
+    p1_name, p2_name = _team_player_names(team)
+    targets: List[dict] = []
+    seen_phones: set[str] = set()
+    for slot, player_name in ((1, p1_name), (2, p2_name)):
+        player = resolve_roster_player_for_slot(
+            players=players,
+            links=links,
+            team_id=team.id,
+            slot_name=player_name,
+            slot_phone=_team_slot_phone(team, slot),
+        )
+        if not player or not player.phone_e164:
+            continue
+        try:
+            phone = format_e164(player.phone_e164)
+        except ValueError:
+            continue
+        if phone in seen_phones:
+            continue
+        seen_phones.add(phone)
+        targets.append(
+            {
+                "phone": phone,
+                "team_id": team.id,
+                "team_name": team.name,
+                "player_id": player.id,
+                "player_name": player.display_name or player.full_name,
             }
         )
     return targets

@@ -418,6 +418,54 @@ def test_courts_9_10_19_20_are_open_and_assignable_at_1230(client, session):
     assert assignment.slot_id == court20_1230.id
 
 
+def test_late_courts_stay_open_while_earlier_slot_still_playing(client, session):
+    t, v, teams, early_match, slots = _setup_open_courts_tournament(
+        session,
+        extra_late_courts=(10, 19, 20),
+        activity_time=time(11, 30),
+    )
+    early_match.runtime_status = "IN_PROGRESS"
+    later = Match(
+        tournament_id=t.id,
+        event_id=early_match.event_id,
+        schedule_version_id=v.id,
+        match_code="WOM_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
+    )
+    session.add(later)
+    session.flush()
+    court1_1230 = slots[(FRIDAY, time(12, 30), 1)]
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=later.id, slot_id=court1_1230.id))
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+
+    body = _snapshot(client, t.id, v.id)
+    assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|11:30"
+    board, open_courts = _board_and_open_courts(body)
+    for court_number in (9, 10, 19, 20):
+        assert f"Court {court_number}" in board
+        assert f"Court {court_number}" in open_courts
+
+    bravo = _add_players(session, t.id, teams[1].id, "Bravo")
+    charlie = _add_players(session, t.id, teams[2].id, "Charlie")
+    session.commit()
+    _check_in_both_sides(client, t.id, v.id, later.id, bravo, charlie)
+    court19_1230 = slots[(FRIDAY, time(12, 30), 19)]
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": later.id, "slot_id": court19_1230.id},
+    )
+    assert assign.status_code == 200, assign.text
+
+
 def test_court_availability_is_isolated_by_tournament(client, session):
     t_a, v_a, _teams_a, _match_a, _slots_a = _setup_open_courts_tournament(
         session,
@@ -485,11 +533,9 @@ def test_in_progress_match_on_removed_slot_is_warning_not_rewritten(client, sess
     _enable_checkin(client, t.id, v.id)
     body = _snapshot(client, t.id, v.id)
     board, open_courts = _board_and_open_courts(body)
-    assert "Court 9" not in board
+    assert "Court 9" in board
     assert "Court 9" not in open_courts
-    warning_text = " ".join(w["message"] for w in body["checkin_court_warnings"])
-    assert "Court 9" in warning_text
-    assert "9:30 AM" in warning_text
+    assert "Court 9" in body["now_playing_by_court"]
 
     session.refresh(later)
     later_assignment = session.exec(
