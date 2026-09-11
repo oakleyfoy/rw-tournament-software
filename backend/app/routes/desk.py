@@ -2621,6 +2621,29 @@ def assign_ready_match_to_slot(
     version_slots = session.exec(
         select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == payload.version_id)
     ).all()
+    slot_ids = {s.slot_id for s in available_slots}
+    effective_slot_id = payload.slot_id
+    if payload.slot_id not in slot_ids:
+        # Open Courts drops should land on the active board slot for that court
+        # (e.g. Court 9 at 12:30), not a same-time cell from an earlier block.
+        target_court_name = court_display_for_slot(target_slot)
+        matching_available = next((s for s in available_slots if s.court_name == target_court_name), None)
+        if matching_available is None:
+            time_label = (
+                format_slot_key_time_label(active_checkin_slot_key)
+                if active_checkin_slot_key
+                else format_slot_time_label(target_slot.start_time)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"{target_court_name} is not available for the {time_label} schedule slot.",
+            )
+        rewritten_slot = session.get(ScheduleSlot, matching_available.slot_id)
+        if rewritten_slot is None:
+            raise HTTPException(status_code=404, detail="Target slot not found")
+        effective_slot_id = matching_available.slot_id
+        target_slot = rewritten_slot
+
     match_slot = session.get(ScheduleSlot, selected_assignment.slot_id)
     try:
         validate_checkin_court_assignment(
@@ -2631,24 +2654,6 @@ def assign_ready_match_to_slot(
         )
     except CourtSlotUnavailableError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    slot_ids = {s.slot_id for s in available_slots}
-    effective_slot_id = payload.slot_id
-    if payload.slot_id not in slot_ids:
-        # Availability is court-based; slot IDs can differ for the same court
-        # between snapshots. Accept any slot on a currently available court.
-        target_court_name = court_display_for_slot(target_slot)
-        available_court_names = {s.court_name for s in available_slots}
-        if target_court_name not in available_court_names:
-            time_label = (
-                format_slot_key_time_label(active_checkin_slot_key)
-                if active_checkin_slot_key
-                else format_slot_time_label(target_slot.start_time)
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=f"{target_court_name} is not available for the {time_label} schedule slot.",
-            )
 
     target_assignment = session.exec(
         select(MatchAssignment).where(

@@ -8902,6 +8902,24 @@ function courtDisplayFromSnapshotSlot(slot: SnapshotSlot): string {
   return label.toLowerCase().startsWith('court') ? label : `Court ${label}`
 }
 
+function resolveReadyAssignSlotId(
+  availableSlotsForCourt: Array<{ slot_id: number }>,
+  draggedSlot: SnapshotSlot | null,
+  allSlots: SnapshotSlot[],
+  targetCourt: string,
+): number | null {
+  const openSlotId = availableSlotsForCourt[0]?.slot_id
+  if (openSlotId != null) return openSlotId
+  if (!draggedSlot) return null
+  const matchingCourtSlot = allSlots.find((slot) => (
+    slot.is_active &&
+    slot.day_date === draggedSlot.day_date &&
+    (slot.start_time || '').slice(0, 5) === (draggedSlot.start_time || '').slice(0, 5) &&
+    courtDisplayFromSnapshotSlot(slot) === targetCourt
+  ))
+  return matchingCourtSlot?.slot_id ?? null
+}
+
 function resolveCheckInBoardCourts(data: DeskSnapshotResponse): string[] {
   if (data.checkin_board_courts && data.checkin_board_courts.length > 0) {
     return data.checkin_board_courts
@@ -9983,7 +10001,6 @@ export default function TournamentDeskPage() {
   const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
     if (!data) return
 
-    const targetCourtLabel = court.replace(/^Court\s+/i, '').trim()
     const draggedMatch = data.matches.find((m) => m.match_id === matchId) || null
     const draggedSlot = draggedMatch?.slot_id != null
       ? data.slots.find((s) => s.slot_id === draggedMatch.slot_id) || null
@@ -10142,28 +10159,18 @@ export default function TournamentDeskPage() {
       setError('That court already has a match assigned.')
       return
     }
-    let slotId: number | null = null
-    if (draggedSlot) {
-      const matchingCourtSlot = (data.slots || []).find((slot) =>
-        slot.is_active &&
-        slot.day_date === draggedSlot.day_date &&
-        slot.start_time === draggedSlot.start_time &&
-        String(slot.court_label || '').trim() === targetCourtLabel
-      )
-      if (matchingCourtSlot?.slot_id != null) {
-        slotId = matchingCourtSlot.slot_id
-      } else {
-        setError(`${court} is not available for the ${formatTimeLabel(draggedSlot.start_time)} schedule slot.`)
-        return
-      }
-    }
-    if (slotId == null) {
-      slotId = targetRow?.availableSlotsForCourt[0]?.slot_id ?? null
-    }
+    const slotId = resolveReadyAssignSlotId(
+      targetRow?.availableSlotsForCourt || [],
+      draggedSlot,
+      data.slots || [],
+      court,
+    )
     if (!slotId) {
       const activeTime = data.active_checkin_slot_key
         ? formatTimeLabel(data.active_checkin_slot_key.split('|')[1] || '')
-        : 'current'
+        : draggedSlot
+          ? formatTimeLabel(draggedSlot.start_time)
+          : 'current'
       setError(`${court} is not available for the ${activeTime} schedule slot.`)
       return
     }

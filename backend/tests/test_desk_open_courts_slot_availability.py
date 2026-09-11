@@ -84,18 +84,20 @@ def _setup_open_courts_tournament(
     *,
     court1_times: Iterable[time] = SLOT_TIMES,
     court9_times: Iterable[time] = (time(8, 30), time(12, 30)),
+    extra_late_courts: Iterable[int] = (),
     activity_time: time = time(8, 30),
     activity_day: date = FRIDAY,
     extra_saturday_court9: bool = False,
     name: str = "Open Courts Slot Test",
 ):
+    late_courts = (9, *tuple(extra_late_courts))
     tournament = Tournament(
         name=name,
         location="Amelia Island",
         timezone="America/New_York",
         start_date=FRIDAY,
         end_date=SATURDAY,
-        court_names=["1", "9"],
+        court_names=["1", *[str(n) for n in late_courts]],
         desk_management_mode="checkin_management",
     )
     session.add(tournament)
@@ -129,8 +131,11 @@ def _setup_open_courts_tournament(
     slots_by_key: dict[tuple, ScheduleSlot] = {}
     for start in court1_times:
         slots_by_key[(FRIDAY, start, 1)] = _add_slot(session, tournament, version, FRIDAY, start, 1)
-    for start in court9_times:
-        slots_by_key[(FRIDAY, start, 9)] = _add_slot(session, tournament, version, FRIDAY, start, 9)
+    for court_number in late_courts:
+        for start in court9_times:
+            slots_by_key[(FRIDAY, start, court_number)] = _add_slot(
+                session, tournament, version, FRIDAY, start, court_number
+            )
     if extra_saturday_court9:
         slots_by_key[(SATURDAY, time(10, 30), 9)] = _add_slot(session, tournament, version, SATURDAY, time(10, 30), 9)
 
@@ -275,20 +280,23 @@ def test_unavailable_court_appears_in_neither_section(client, session):
     assert "Court 9" not in body["now_playing_by_court"]
 
 
+def _check_in_both_sides(client, tournament_id: int, version_id: int, match_id: int, side_a, side_b) -> None:
+    for side, players in (("A", side_a), ("B", side_b)):
+        for player in players:
+            resp = client.patch(
+                f"/api/desk/tournaments/{tournament_id}/matches/{match_id}/checkin/player",
+                json={"version_id": version_id, "side": side, "player_id": player.id, "checked_in": True},
+            )
+            assert resp.status_code == 200
+
+
 def test_assign_rejects_drop_onto_unavailable_court(client, session):
     t, v, teams, match, slots = _setup_open_courts_tournament(session, activity_time=time(10, 30))
     alpha = _add_players(session, t.id, teams[0].id, "Alpha")
     delta = _add_players(session, t.id, teams[3].id, "Delta")
     session.commit()
     _enable_checkin(client, t.id, v.id)
-
-    for side, players in (("A", alpha), ("B", delta)):
-        for player in players:
-            resp = client.patch(
-                f"/api/desk/tournaments/{t.id}/matches/{match.id}/checkin/player",
-                json={"version_id": v.id, "side": side, "player_id": player.id, "checked_in": True},
-            )
-            assert resp.status_code == 200
+    _check_in_both_sides(client, t.id, v.id, match.id, alpha, delta)
 
     court9_1230 = slots[(FRIDAY, time(12, 30), 9)]
     assign = client.post(
@@ -308,6 +316,106 @@ def test_assign_rejects_drop_onto_unavailable_court(client, session):
     assert match.runtime_status != "IN_PROGRESS"
     assert assignment is not None
     assert assignment.slot_id != court9_1230.id
+
+
+def test_assign_ready_match_onto_court_that_appears_at_1230(client, session):
+    t, v, teams, match, slots = _setup_open_courts_tournament(session, activity_time=time(12, 30))
+    alpha = _add_players(session, t.id, teams[0].id, "Alpha")
+    delta = _add_players(session, t.id, teams[3].id, "Delta")
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+    _check_in_both_sides(client, t.id, v.id, match.id, alpha, delta)
+
+    body = _snapshot(client, t.id, v.id)
+    assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|12:30"
+    board, open_courts = _board_and_open_courts(body)
+    assert "Court 9" in board
+    assert "Court 9" in open_courts
+
+    court9_1230 = slots[(FRIDAY, time(12, 30), 9)]
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": match.id, "slot_id": court9_1230.id},
+    )
+    assert assign.status_code == 200, assign.text
+
+    session.refresh(match)
+    assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == v.id,
+            MatchAssignment.match_id == match.id,
+        )
+    ).first()
+    assert match.runtime_status == "IN_PROGRESS"
+    assert assignment is not None
+    assert assignment.slot_id == court9_1230.id
+
+
+def test_assign_rewrites_to_active_open_court_slot(client, session):
+    t, v, teams, match, slots = _setup_open_courts_tournament(session, activity_time=time(12, 30))
+    alpha = _add_players(session, t.id, teams[0].id, "Alpha")
+    delta = _add_players(session, t.id, teams[3].id, "Delta")
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+    _check_in_both_sides(client, t.id, v.id, match.id, alpha, delta)
+
+    court9_830 = slots[(FRIDAY, time(8, 30), 9)]
+    court9_1230 = slots[(FRIDAY, time(12, 30), 9)]
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": match.id, "slot_id": court9_830.id},
+    )
+    assert assign.status_code == 200, assign.text
+
+    session.refresh(match)
+    assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == v.id,
+            MatchAssignment.match_id == match.id,
+        )
+    ).first()
+    assert match.runtime_status == "IN_PROGRESS"
+    assert assignment is not None
+    assert assignment.slot_id == court9_1230.id
+
+
+def test_courts_9_10_19_20_are_open_and_assignable_at_1230(client, session):
+    late_courts = (9, 10, 19, 20)
+    t, v, teams, match, slots = _setup_open_courts_tournament(
+        session,
+        extra_late_courts=(10, 19, 20),
+        activity_time=time(12, 30),
+    )
+    alpha = _add_players(session, t.id, teams[0].id, "Alpha")
+    delta = _add_players(session, t.id, teams[3].id, "Delta")
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+    _check_in_both_sides(client, t.id, v.id, match.id, alpha, delta)
+
+    body = _snapshot(client, t.id, v.id)
+    assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|12:30"
+    board, open_courts = _board_and_open_courts(body)
+    for court_number in late_courts:
+        assert f"Court {court_number}" in board
+        assert f"Court {court_number}" in open_courts
+
+    court20_1230 = slots[(FRIDAY, time(12, 30), 20)]
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": match.id, "slot_id": court20_1230.id},
+    )
+    assert assign.status_code == 200, assign.text
+
+    session.refresh(match)
+    assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == v.id,
+            MatchAssignment.match_id == match.id,
+        )
+    ).first()
+    assert match.runtime_status == "IN_PROGRESS"
+    assert assignment is not None
+    assert assignment.slot_id == court20_1230.id
 
 
 def test_court_availability_is_isolated_by_tournament(client, session):

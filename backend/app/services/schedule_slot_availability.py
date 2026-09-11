@@ -111,17 +111,18 @@ def validate_checkin_court_assignment(
     active_slot_key: Optional[str],
 ) -> None:
     """
-    Reject a check-in drop when the target court has no Grid slot at the
-    match's scheduled time, or is not in the active Desk board block.
+    Reject a check-in drop when the target court is not in the active Desk
+    board block, or the target slot is neither that active block nor the
+    match's own scheduled time.
+
+    Ready matches may move onto a court that only exists at the active
+    block (e.g. Court 9 at 12:30) even if that court had no Grid cell at
+    the match's original time.
     """
     slot_list = list(slots)
     court_name = court_display_for_slot(target_slot)
     if not is_grid_active_slot(target_slot):
         raise CourtSlotUnavailableError(court_name, format_slot_time_label(target_slot.start_time))
-
-    if match_slot is not None:
-        if find_court_slot(slot_list, court_name, match_slot.day_date, match_slot.start_time) is None:
-            raise CourtSlotUnavailableError(court_name, format_slot_time_label(match_slot.start_time))
 
     if active_slot_key and not court_has_slot_at_key(slot_list, court_name, active_slot_key):
         raise CourtSlotUnavailableError(court_name, format_slot_key_time_label(active_slot_key))
