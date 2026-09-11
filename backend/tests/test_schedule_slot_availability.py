@@ -43,7 +43,7 @@ def test_validate_rejects_court_missing_from_active_board():
     ]
     match_slot = slots[0]
     target = slots[1]
-    with pytest.raises(CourtSlotUnavailableError, match="Court 9 is not available for the 10:30 AM schedule slot."):
+    with pytest.raises(CourtSlotUnavailableError, match="Court 9 is not available for the 12:30 PM schedule slot."):
         validate_checkin_court_assignment(
             slots=slots,
             target_slot=target,

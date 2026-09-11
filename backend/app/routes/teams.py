@@ -245,11 +245,15 @@ def update_team(event_id: int, team_id: int, request: TeamUpdateRequest, session
     if request.display_name is not None:
         team.display_name = request.display_name
     if request.player1_cellphone is not None:
-        team.player1_cellphone = request.player1_cellphone
+        p1_phone = (request.player1_cellphone or "").strip() or None
+        team.player1_cellphone = p1_phone
+        team.p1_cell = p1_phone
+    if request.player2_cellphone is not None:
+        p2_phone = (request.player2_cellphone or "").strip() or None
+        team.player2_cellphone = p2_phone
+        team.p2_cell = p2_phone
     if request.player1_email is not None:
         team.player1_email = request.player1_email
-    if request.player2_cellphone is not None:
-        team.player2_cellphone = request.player2_cellphone
     if request.player2_email is not None:
         team.player2_email = request.player2_email
     if request.is_defaulted is not None:

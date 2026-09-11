@@ -98,6 +98,23 @@ def board_courts_for_slot_key(slots: Iterable[ScheduleSlot], key: Optional[str])
     )
 
 
+def board_courts_for_slot_keys(slots: Iterable[ScheduleSlot], keys: Iterable[str]) -> list[str]:
+    courts: set[str] = set()
+    for key in keys:
+        courts.update(board_courts_for_slot_key(slots, key))
+    return sorted(
+        courts,
+        key=lambda name: (int("".join(ch for ch in name if ch.isdigit()) or "0"), name),
+    )
+
+
+def ordered_activity_slot_keys(ordered_keys: Iterable[str], *key_sets: Iterable[str]) -> list[str]:
+    activity: set[str] = set()
+    for key_set in key_sets:
+        activity.update(key for key in key_set if key)
+    return [key for key in ordered_keys if key in activity]
+
+
 def court_has_slot_at_key(slots: Iterable[ScheduleSlot], court_name: str, key: Optional[str]) -> bool:
     expected = court_display_name(court_name)
     return any(court_display_for_slot(slot) == expected for slot in slots_for_key(slots, key))
@@ -109,25 +126,29 @@ def validate_checkin_court_assignment(
     target_slot: ScheduleSlot,
     match_slot: Optional[ScheduleSlot],
     active_slot_key: Optional[str],
+    allowed_slot_keys: Optional[Iterable[str]] = None,
 ) -> None:
     """
-    Reject a check-in drop when the target court is not in the active Desk
-    board block, or the target slot is neither that active block nor the
-    match's own scheduled time.
+    Reject a check-in drop when the target court/time is not an active
+    Desk board block (or the match's own scheduled time).
 
-    Ready matches may move onto a court that only exists at the active
-    block (e.g. Court 9 at 12:30) even if that court had no Grid cell at
-    the match's original time.
+    Leftover earlier matches may still be playing; later Grid cells such as
+    Courts 9/10/19/20 at 12:30 stay assignable when those keys are allowed.
     """
     slot_list = list(slots)
     court_name = court_display_for_slot(target_slot)
     if not is_grid_active_slot(target_slot):
         raise CourtSlotUnavailableError(court_name, format_slot_time_label(target_slot.start_time))
 
-    if active_slot_key and not court_has_slot_at_key(slot_list, court_name, active_slot_key):
-        raise CourtSlotUnavailableError(court_name, format_slot_key_time_label(active_slot_key))
+    allowed = {key for key in (allowed_slot_keys or []) if key}
+    if active_slot_key:
+        allowed.add(active_slot_key)
+    match_key = slot_key_for_slot(match_slot) if match_slot is not None else None
+    if match_key:
+        allowed.add(match_key)
 
     target_key = slot_key_for_slot(target_slot)
-    match_key = slot_key_for_slot(match_slot) if match_slot is not None else None
-    if target_key not in {active_slot_key, match_key}:
+    if allowed and target_key not in allowed:
+        raise CourtSlotUnavailableError(court_name, format_slot_time_label(target_slot.start_time))
+    if not court_has_slot_at_key(slot_list, court_name, target_key):
         raise CourtSlotUnavailableError(court_name, format_slot_time_label(target_slot.start_time))
