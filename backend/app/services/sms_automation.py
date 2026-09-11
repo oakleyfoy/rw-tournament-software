@@ -584,25 +584,55 @@ class SmsAutomationEngine:
                 f"rs{effective_resend_key}" if effective_resend_key else None,
             )
             if dry_run:
-                projection = self._project_team_send_outcomes(
-                    team=team,
-                    message_type=message_type,
-                    dedupe_key=dedupe_key,
-                )
+                try:
+                    projection = self._project_team_send_outcomes(
+                        team=team,
+                        message_type=message_type,
+                        dedupe_key=dedupe_key,
+                    )
+                except Exception:
+                    logger.exception(
+                        "RR first-match dry-run failed tournament=%s event=%s team=%s",
+                        self.tournament.id,
+                        event_id,
+                        team_id,
+                    )
+                    stats["failed"] += 1
+                    continue
                 stats["sent"] += int(projection["sent"])
                 stats["deduped"] += int(projection["deduped"])
                 stats["blocked_test_mode"] += int(projection["blocked_test_mode"])
                 stats["blocked_consent"] += int(projection["blocked_consent"])
                 continue
 
-            resp = self._send_template_to_team(
-                team=team,
-                message_type=message_type,
-                dedupe_key=dedupe_key,
-                match=match,
-                slot=slot,
-                opponent=self._opponent_display(match, team.id),
-            )
+            try:
+                resp = self._send_template_to_team(
+                    team=team,
+                    message_type=message_type,
+                    dedupe_key=dedupe_key,
+                    match=match,
+                    slot=slot,
+                    opponent=self._opponent_display(match, team.id),
+                )
+            except Exception:
+                logger.exception(
+                    "RR first-match send failed tournament=%s event=%s team=%s",
+                    self.tournament.id,
+                    event_id,
+                    team_id,
+                )
+                try:
+                    self.session.rollback()
+                except Exception:
+                    logger.exception("RR first-match rollback failed team=%s", team_id)
+                from app.routes.sms import _clear_sms_roster_cache
+
+                _clear_sms_roster_cache(self.session)
+                self._team_cache.clear()
+                self._assignment_cache.clear()
+                self._slot_cache.clear()
+                stats["failed"] += 1
+                continue
             if resp is None:
                 continue
             stats["sent"] += int(resp.sent)
@@ -1138,7 +1168,7 @@ class SmsAutomationEngine:
             slot = self._slot_for_match(m.id)
             if slot is None:
                 # Keep track of team candidate with no slot so caller can report missing_slot.
-                sort_key = (date.max, time.max, m.id or 0)
+                sort_key = (date.max, time.max, 10**9, m.id or 0)
             else:
                 sort_key = self._slot_sort_key(slot)
             for team_id in (m.team_a_id, m.team_b_id):
@@ -1162,43 +1192,77 @@ class SmsAutomationEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _coerce_time(value: object) -> time:
-        if isinstance(value, time):
+    def _coerce_date(value: object) -> date:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
             return value
         if isinstance(value, str):
-            parts = value.split(":")
-            hour = int(parts[0]) if parts else 0
-            minute = int(parts[1]) if len(parts) > 1 else 0
-            return time(hour=hour, minute=minute)
+            raw = value.strip()
+            if raw:
+                try:
+                    return date.fromisoformat(raw[:10])
+                except ValueError:
+                    return date.max
+        return date.max
+
+    @staticmethod
+    def _coerce_time(value: object) -> time:
+        try:
+            if isinstance(value, datetime):
+                return value.timetz().replace(tzinfo=None) if value.tzinfo else value.time()
+            if isinstance(value, time):
+                return value
+            if isinstance(value, str):
+                raw = value.strip()
+                upper = raw.upper()
+                has_pm = upper.endswith("PM")
+                has_am = upper.endswith("AM")
+                if has_pm or has_am:
+                    raw = raw[:-2].strip()
+                parts = raw.split(":")
+                hour = int(parts[0]) if parts and parts[0].lstrip("-").isdigit() else 0
+                minute_token = parts[1][:2] if len(parts) > 1 else "0"
+                minute = int(minute_token) if minute_token.isdigit() else 0
+                if has_pm and hour < 12:
+                    hour += 12
+                if has_am and hour == 12:
+                    hour = 0
+                return time(hour=min(max(hour, 0), 23), minute=min(max(minute, 0), 59))
+        except Exception:
+            return time(23, 59)
         return time(23, 59)
 
     def _slot_sort_key(self, slot: ScheduleSlot) -> tuple[date, time, int, int]:
         """Order slots by day, start time, court, then id (stable tie-break)."""
+        try:
+            court = int(slot.court_number or 0)
+        except (TypeError, ValueError):
+            court = 0
         return (
-            slot.day_date,
+            self._coerce_date(slot.day_date),
             self._coerce_time(slot.start_time),
-            int(slot.court_number or 0),
+            court,
             slot.id or 0,
         )
 
     @staticmethod
-    def _format_date(day_date: date) -> str:
-        weekday = day_date.strftime("%A")
-        month_day = day_date.strftime("%B %d").replace(" 0", " ")
+    def _format_date(day_date: object) -> str:
+        coerced = SmsAutomationEngine._coerce_date(day_date)
+        if coerced == date.max and not isinstance(day_date, date):
+            return ""
+        weekday = coerced.strftime("%A")
+        month_day = coerced.strftime("%B %d").replace(" 0", " ")
         return f"{weekday}, {month_day}"
 
     @staticmethod
     def _format_time(start_time: object) -> str:
-        if isinstance(start_time, str):
-            parts = start_time.split(":")
-            hour = int(parts[0]) if parts else 0
-            minute = int(parts[1]) if len(parts) > 1 else 0
-            ampm = "AM" if hour < 12 else "PM"
-            hour12 = hour % 12 or 12
-            return f"{hour12}:{minute:02d} {ampm}"
         if isinstance(start_time, time):
             return start_time.strftime("%I:%M %p").lstrip("0")
-        return ""
+        coerced = SmsAutomationEngine._coerce_time(start_time)
+        if coerced == time(23, 59) and not isinstance(start_time, (str, datetime, time)):
+            return ""
+        return coerced.strftime("%I:%M %p").lstrip("0")
 
     @staticmethod
     def _format_court(slot: ScheduleSlot) -> str:
@@ -1207,11 +1271,14 @@ class SmsAutomationEngine:
             return label
         return f"Court {label}"
 
-    def _day_number(self, day_date: date) -> Optional[int]:
+    def _day_number(self, day_date: object) -> Optional[int]:
         start = getattr(self.tournament, "start_date", None)
         if not start:
             return None
-        return (day_date - start).days + 1
+        try:
+            return (self._coerce_date(day_date) - self._coerce_date(start)).days + 1
+        except Exception:
+            return None
 
     @staticmethod
     def _team_label(team: Team) -> str:

@@ -1270,6 +1270,33 @@ def _team_sms_targets(
     return targets
 
 
+def _clear_sms_roster_cache(session: Session) -> None:
+    session.info.pop("sms_roster_bundle", None)
+
+
+def _tournament_roster_bundle(session: Session, tournament_id: int) -> tuple[list, list]:
+    cache = session.info.setdefault("sms_roster_bundle", {})
+    cached = cache.get(tournament_id)
+    if cached is not None:
+        return cached
+    players = list(session.exec(select(Player).where(Player.tournament_id == tournament_id)).all())
+    event_ids = [e.id for e in session.exec(select(Event).where(Event.tournament_id == tournament_id)).all() if e.id]
+    teams = (
+        list(session.exec(select(Team).where(Team.event_id.in_(event_ids))).all())  # type: ignore
+        if event_ids
+        else []
+    )
+    team_ids = [t.id for t in teams if t.id is not None]
+    links = (
+        list(session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))).all())  # type: ignore
+        if team_ids
+        else []
+    )
+    bundle = (players, links)
+    cache[tournament_id] = bundle
+    return bundle
+
+
 def _team_targets_from_current_roster(
     session: Session,
     tournament_id: int,
@@ -1279,14 +1306,7 @@ def _team_targets_from_current_roster(
         return []
     from app.services.player_roster_sync import resolve_roster_player_for_slot
 
-    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
-    event_ids = [e.id for e in session.exec(select(Event).where(Event.tournament_id == tournament_id)).all() if e.id]
-    team_ids = [
-        t.id
-        for t in session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()  # type: ignore
-        if t.id is not None
-    ]
-    links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))).all() if team_ids else []
+    players, links = _tournament_roster_bundle(session, tournament_id)
     p1_name, p2_name = _team_player_names(team)
     targets: List[dict] = []
     seen_phones: set[str] = set()
@@ -1302,8 +1322,8 @@ def _team_targets_from_current_roster(
         if not player or not player.phone_e164:
             continue
         try:
-            phone = format_e164(player.phone_e164)
-        except ValueError:
+            phone = format_e164(str(player.phone_e164))
+        except (TypeError, ValueError):
             continue
         if phone in seen_phones:
             continue
@@ -1333,19 +1353,19 @@ def _is_phone_send_allowed(
     - If Player exists with opted_out status, block send.
     - Otherwise allow send.
     """
-    player = session.exec(
+    players = session.exec(
         select(Player).where(
             Player.tournament_id == tournament_id,
             Player.phone_e164 == phone_e164,
         )
-    ).first()
-    if not player:
+    ).all()
+    if not players:
         return True, "unknown"
 
-    consent = (player.sms_consent_status or "unknown").lower()
-    if consent == "opted_out":
-        return False, consent
-    return True, consent
+    consents = [(player.sms_consent_status or "unknown").lower() for player in players]
+    if "opted_out" in consents:
+        return False, "opted_out"
+    return True, consents[0]
 
 
 def _validate_twilio_signature(
@@ -1597,7 +1617,16 @@ def _send_to_phone_targets(
             )
         )
 
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        logger.exception("SMS send commit failed for tournament=%s type=%s", tournament_id, message_type)
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("SMS send rollback failed for tournament=%s", tournament_id)
+        _clear_sms_roster_cache(session)
+        raise
     return SmsSendResponse(
         total=len(results),
         sent=sent_count,
@@ -1889,7 +1918,7 @@ def _render_template(
     """
     try:
         return template_body.format_map({k: v for k, v in kwargs.items() if v is not None})
-    except KeyError:
+    except (KeyError, ValueError, IndexError):
         # If template has placeholders we don't have values for,
         # do a safe partial render
         result = template_body
@@ -3598,12 +3627,22 @@ def run_rr_first_match_reminders(
     if not event or event.tournament_id != tournament_id:
         raise HTTPException(404, f"Event {event_id} not found in tournament {tournament_id}")
 
-    result = run_rr_first_match_for_event(
-        session=session,
-        tournament_id=tournament_id,
-        event_id=event_id,
-        dry_run=dry_run,
-        force_resend=force_resend,
-        template_mode=template_mode,
-    )
-    return SmsRrAutomationRunResponse(**result)
+    try:
+        result = run_rr_first_match_for_event(
+            session=session,
+            tournament_id=tournament_id,
+            event_id=event_id,
+            dry_run=dry_run,
+            force_resend=force_resend,
+            template_mode=template_mode,
+        )
+        return SmsRrAutomationRunResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "RR first-match reminder failed tournament=%s event=%s",
+            tournament_id,
+            event_id,
+        )
+        raise HTTPException(500, f"RR first-match reminder failed: {exc}") from exc

@@ -1807,6 +1807,160 @@ def test_rr_first_match_force_resend_endpoint_bypasses_dedupe(client, session, s
     assert len(rr_logs) == 9
 
 
+def _create_rr_match_for_teams(session: Session, tournament, event, team_a, team_b):
+    from app.models.match import Match
+    from app.models.match_assignment import MatchAssignment
+    from app.models.schedule_slot import ScheduleSlot
+    from app.models.schedule_version import ScheduleVersion
+    from app.models.tournament import Tournament
+
+    version = ScheduleVersion(
+        tournament_id=tournament.id,
+        version_number=1,
+        status="final",
+    )
+    session.add(version)
+    session.flush()
+    rr_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_E1_RR_01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="P1",
+        placeholder_side_b="P2",
+        runtime_status="SCHEDULED",
+    )
+    session.add(rr_match)
+    session.flush()
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 3, 15),
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+        is_active=True,
+    )
+    session.add(slot)
+    session.flush()
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=rr_match.id,
+            slot_id=slot.id,
+            assigned_by="TEST",
+        )
+    )
+    pointed = session.get(Tournament, tournament.id)
+    pointed.public_schedule_version_id = version.id
+    session.add(pointed)
+    session.commit()
+    return version, rr_match, slot
+
+
+def test_rr_first_match_checkin_mode_uses_email_roster_phones(
+    client, session, setup_tournament_with_teams
+):
+    """Check-in RR send must 200 and text Player phones matched by slot email."""
+    from app.models.player import Player
+    from app.models.team_player import TeamPlayer
+
+    tournament, event, teams = setup_tournament_with_teams
+    _create_rr_match_for_teams(session, tournament, event, teams[0], teams[1])
+
+    dee = Player(
+        tournament_id=tournament.id,
+        full_name="Dee Dee",
+        display_name="Dee Dee",
+        email="p1@test.com",
+        phone_e164="+19013593035",
+        sms_consent_status="unknown",
+    )
+    mike = Player(
+        tournament_id=tournament.id,
+        full_name="Mike",
+        display_name="Mike",
+        email="p2@test.com",
+        phone_e164="+15551112222",
+        sms_consent_status="unknown",
+    )
+    session.add(dee)
+    session.add(mike)
+    session.flush()
+    session.add(TeamPlayer(team_id=teams[0].id, player_id=dee.id, lineup_slot=1, role="player"))
+    session.add(TeamPlayer(team_id=teams[0].id, player_id=mike.id, lineup_slot=2, role="player"))
+    teams[0].player1_cellphone = "+15553334444"
+    teams[0].p1_cell = "+15553334444"
+    teams[0].player2_cellphone = "+15553334444"
+    teams[0].p2_cell = "+15553334444"
+    session.add(teams[0])
+    session.commit()
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-rr-first-match-reminders",
+        params={
+            "event_id": event.id,
+            "dry_run": "false",
+            "template_mode": "checkin_management",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["failed"] == 0
+    assert data["sent"] >= 2
+
+    logs = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == tournament.id,
+            SmsLog.message_type == "checkin_rr_first_match",
+        )
+    ).all()
+    phones = {row.phone_number for row in logs if row.team_id == teams[0].id}
+    assert "+19013593035" in phones
+    assert "+15551112222" in phones
+    assert "+15553334444" not in phones
+
+
+def test_rr_first_match_survives_one_team_send_crash(
+    client, session, setup_tournament_with_teams, monkeypatch
+):
+    """A single team send exception must not 500 the whole RR run."""
+    tournament, event, teams = setup_tournament_with_teams
+    _create_rr_match_for_teams(session, tournament, event, teams[0], teams[1])
+
+    import app.routes.sms as sms_mod
+
+    calls = {"n": 0}
+    real_send = sms_mod._send_to_teams
+
+    def _boom(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated team send crash")
+        return real_send(*args, **kwargs)
+
+    monkeypatch.setattr(sms_mod, "_send_to_teams", _boom)
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/automation/run-rr-first-match-reminders",
+        params={"event_id": event.id, "dry_run": "false", "template_mode": "checkin_management"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["failed"] >= 1
+    assert data["sent"] >= 1
+    assert calls["n"] == 2
+
+
 def test_first_match_runner_endpoint_disabled_or_unconstrained_scan(client, session, setup_tournament_with_teams):
     """Runner scans all first matches regardless of auto_first_match toggle."""
     tournament, event, teams = setup_tournament_with_teams
