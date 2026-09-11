@@ -96,6 +96,7 @@ const WATERFALL_BASE_WIDTH =
   (SIDE_BOX_WIDTH * 2) +
   CENTER_BOX_WIDTH +
   (CONNECTOR_WIDTH * 4)
+export const PHONE_WATERFALL_MAX_WIDTH = 768
 
 type WaterfallLayout = {
   scale: number
@@ -149,46 +150,73 @@ function shortenTvTeamLine(text: string | null | undefined): string {
     .join(' / ')
 }
 
-function buildWaterfallLayout(scale: number, canvasWidth: number): WaterfallLayout {
-  const isPhone = canvasWidth <= 520
+export function buildWaterfallLayout(scale: number, canvasWidth: number): WaterfallLayout {
   const isCompact = canvasWidth <= 900
-  const minScale = isPhone ? 0.19 : isCompact ? 0.34 : 0.58
+  const minScale = isCompact ? 0.34 : 0.58
   const s = Math.min(Math.max(scale, minScale), 1)
   const px = (value: number, min: number) => Math.max(min, Math.round(value * s))
   const fp = (value: number, min: number) => Math.max(min, Number((value * s).toFixed(1)))
   return {
     scale: s,
-    centerBoxWidth: px(CENTER_BOX_WIDTH, isPhone ? 88 : isCompact ? 140 : 250),
-    sideBoxWidth: px(SIDE_BOX_WIDTH, isPhone ? 62 : isCompact ? 98 : 180),
-    destBoxWidth: px(DEST_BOX_WIDTH, isPhone ? 36 : isCompact ? 58 : 110),
-    connectorWidth: px(CONNECTOR_WIDTH, isPhone ? 6 : isCompact ? 10 : 16),
-    matchFontSize: fp(12, isPhone ? 5.6 : isCompact ? 7.2 : 9),
-    teamFontSize: fp(11, isPhone ? 5.2 : isCompact ? 6.8 : 8.5),
-    topLineFontSize: fp(11, isPhone ? 5.2 : isCompact ? 6.8 : 8.5),
-    badgeFontSize: fp(9, isPhone ? 4.8 : isCompact ? 5.8 : 7),
-    vsFontSize: fp(10, isPhone ? 4.8 : isCompact ? 6 : 7.5),
-    notesFontSize: fp(9, isPhone ? 4.8 : isCompact ? 5.8 : 7),
-    cardPaddingY: px(6, isPhone ? 2 : 3),
-    cardPaddingX: px(10, isPhone ? 3 : 5),
+    centerBoxWidth: px(CENTER_BOX_WIDTH, isCompact ? 140 : 250),
+    sideBoxWidth: px(SIDE_BOX_WIDTH, isCompact ? 98 : 180),
+    destBoxWidth: px(DEST_BOX_WIDTH, isCompact ? 58 : 110),
+    connectorWidth: px(CONNECTOR_WIDTH, isCompact ? 10 : 16),
+    matchFontSize: fp(12, isCompact ? 7.2 : 9),
+    teamFontSize: fp(11, isCompact ? 6.8 : 8.5),
+    topLineFontSize: fp(11, isCompact ? 6.8 : 8.5),
+    badgeFontSize: fp(9, isCompact ? 5.8 : 7),
+    vsFontSize: fp(10, isCompact ? 6 : 7.5),
+    notesFontSize: fp(9, isCompact ? 5.8 : 7),
+    cardPaddingY: px(6, 3),
+    cardPaddingX: px(10, 5),
     rowGap: px(2, 1),
-    rowMarginBottom: px(18, isPhone ? 5 : 8),
-    rowMinHeight: px(90, isPhone ? 30 : isCompact ? 40 : 52),
-    destPaddingY: px(8, isPhone ? 2 : 4),
-    destPaddingX: px(10, isPhone ? 3 : 5),
-    destFontSize: fp(10, isPhone ? 5 : isCompact ? 6.2 : 7.5),
-    destTeamFontSize: fp(11, isPhone ? 5.2 : isCompact ? 6.5 : 8.5),
-    headerFontSize: fp(11, isPhone ? 5.8 : isCompact ? 7.2 : 8.5),
-    headerGap: px(6, isPhone ? 2 : 4),
+    rowMarginBottom: px(18, 8),
+    rowMinHeight: px(90, isCompact ? 40 : 52),
+    destPaddingY: px(8, 4),
+    destPaddingX: px(10, 5),
+    destFontSize: fp(10, isCompact ? 6.2 : 7.5),
+    destTeamFontSize: fp(11, isCompact ? 6.5 : 8.5),
+    headerFontSize: fp(11, isCompact ? 7.2 : 8.5),
+    headerGap: px(6, 4),
   }
 }
 
-function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvMode = false }: {
+export function buildPhoneWaterfallLayout(): WaterfallLayout {
+  return {
+    scale: 1,
+    centerBoxWidth: 360,
+    sideBoxWidth: 360,
+    destBoxWidth: 360,
+    connectorWidth: 16,
+    matchFontSize: 13,
+    teamFontSize: 15,
+    topLineFontSize: 13,
+    badgeFontSize: 11,
+    vsFontSize: 12,
+    notesFontSize: 12,
+    cardPaddingY: 10,
+    cardPaddingX: 12,
+    rowGap: 10,
+    rowMarginBottom: 16,
+    rowMinHeight: 0,
+    destPaddingY: 10,
+    destPaddingX: 12,
+    destFontSize: 13,
+    destTeamFontSize: 14,
+    headerFontSize: 13,
+    headerGap: 8,
+  }
+}
+
+function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvMode = false, phoneMode = false }: {
   box: PublicMatchBox
   variant: 'center' | 'winner' | 'loser'
   layout: WaterfallLayout
   widthOverride?: number | string
   heightOverride?: number | string
   tvMode?: boolean
+  phoneMode?: boolean
 }) {
   const palette = COLORS[variant]
   const isFinal = box.status === 'FINAL'
@@ -225,7 +253,7 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
       height: heightOverride,
       boxSizing: 'border-box',
       fontSize: layout.matchFontSize,
-      lineHeight: tvMode ? 1.25 : 1.4,
+      lineHeight: phoneMode ? 1.35 : tvMode ? 1.25 : 1.4,
       position: 'relative',
       textAlign: 'center',
       display: 'flex',
@@ -268,23 +296,25 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         color: line1IsWinner ? '#1b5e20' : '#222',
         fontSize: teamFontSize,
         fontWeight: line1IsWinner ? 800 : 600,
-        whiteSpace: tvMode ? 'nowrap' : undefined,
+        whiteSpace: tvMode ? 'nowrap' : 'normal',
         overflow: tvMode ? 'hidden' : undefined,
         textOverflow: tvMode ? 'ellipsis' : undefined,
+        overflowWrap: phoneMode ? 'anywhere' : undefined,
       }}>
         {line1IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {line1}
       </div>
-      <div data-vs style={{ fontSize: vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: tvMode ? '3px 0' : '1px 0' }}>
+      <div data-vs style={{ fontSize: vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: tvMode ? '3px 0' : phoneMode ? '4px 0' : '1px 0' }}>
         vs
       </div>
       <div style={{
         color: line2IsWinner ? '#1b5e20' : '#222',
         fontSize: teamFontSize,
         fontWeight: line2IsWinner ? 800 : 600,
-        whiteSpace: tvMode ? 'nowrap' : undefined,
+        whiteSpace: tvMode ? 'nowrap' : 'normal',
         overflow: tvMode ? 'hidden' : undefined,
         textOverflow: tvMode ? 'ellipsis' : undefined,
+        overflowWrap: phoneMode ? 'anywhere' : undefined,
       }}>
         {line2IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
         {line2}
@@ -397,6 +427,7 @@ function DestinationBox({
   divisionType,
   layout,
   widthOverride,
+  phoneMode = false,
 }: {
   label: string
   /** Round-robin pool dest, or legacy single name when path names omitted */
@@ -411,6 +442,7 @@ function DestinationBox({
   divisionType: 'bracket' | 'roundrobin'
   layout: WaterfallLayout
   widthOverride?: number | string
+  phoneMode?: boolean
 }) {
   const navigate = useNavigate()
   const lines = label.split('\n')
@@ -471,6 +503,11 @@ function DestinationBox({
               textDecoration: 'underline',
               textDecorationColor: '#ccc',
               lineHeight: 1.4,
+              minHeight: phoneMode ? 40 : undefined,
+              display: phoneMode ? 'flex' : undefined,
+              alignItems: phoneMode ? 'center' : undefined,
+              justifyContent: phoneMode ? 'center' : undefined,
+              padding: phoneMode ? '6px 4px' : undefined,
             }}
           >
             {line}
@@ -664,6 +701,7 @@ function WaterfallRowPairCompact({
   layout,
   availableWidth,
   tvMode = false,
+  phoneMode = false,
 }: {
   pair: RowPair
   tournamentId: number | null
@@ -672,17 +710,21 @@ function WaterfallRowPairCompact({
   layout: WaterfallLayout
   availableWidth: number
   tvMode?: boolean
+  phoneMode?: boolean
 }) {
   const laneWidth = tvMode
     ? Math.max(Math.min(availableWidth - 16, 360), 220)
-    : Math.max(Math.min(availableWidth - 20, 420), 260)
+    : phoneMode
+      ? Math.max(availableWidth - 8, 0)
+      : Math.max(Math.min(availableWidth - 20, 420), 260)
   const sectionLabelStyle = {
-    fontSize: Math.max(layout.destFontSize, tvMode ? 10 : 9),
+    fontSize: Math.max(layout.destFontSize, phoneMode ? 12 : tvMode ? 10 : 9),
     fontWeight: 700,
     color: '#666',
     textTransform: 'uppercase' as const,
     letterSpacing: 0.6,
     marginBottom: tvMode ? 2 : 4,
+    textAlign: 'center' as const,
   }
 
   return (
@@ -690,21 +732,27 @@ function WaterfallRowPairCompact({
       data-row-pair
       style={{
         display: 'grid',
-        gap: tvMode ? Math.max(layout.headerGap, 4) : Math.max(layout.rowMarginBottom, 10),
+        gap: tvMode ? Math.max(layout.headerGap, 4) : Math.max(layout.rowMarginBottom, phoneMode ? 14 : 10),
         justifyItems: 'center',
         marginBottom: tvMode ? Math.max(layout.headerGap + 4, 8) : Math.max(layout.rowMarginBottom + 6, 14),
+        width: phoneMode ? '100%' : undefined,
+        boxSizing: 'border-box',
+        padding: phoneMode ? '12px 8px' : undefined,
+        backgroundColor: phoneMode ? '#fff' : undefined,
+        border: phoneMode ? '1px solid #e0e0e0' : undefined,
+        borderRadius: phoneMode ? 8 : undefined,
       }}
     >
       <div style={{ display: 'grid', gap: layout.rowGap, justifyItems: 'center', width: '100%' }}>
         <div style={sectionLabelStyle}>WF Round 1</div>
-        <MatchBoxCard box={pair.r1_a} variant="center" layout={layout} widthOverride={laneWidth} />
-        {pair.r1_b && <MatchBoxCard box={pair.r1_b} variant="center" layout={layout} widthOverride={laneWidth} />}
+        <MatchBoxCard box={pair.r1_a} variant="center" layout={layout} widthOverride={laneWidth} phoneMode={phoneMode} />
+        {pair.r1_b && <MatchBoxCard box={pair.r1_b} variant="center" layout={layout} widthOverride={laneWidth} phoneMode={phoneMode} />}
       </div>
 
       {pair.loser && (
         <div style={{ display: 'grid', gap: Math.max(layout.headerGap, 6), justifyItems: 'center', width: '100%' }}>
-          <div style={sectionLabelStyle}>Loser Path</div>
-          <MatchBoxCard box={pair.loser} variant="loser" layout={layout} widthOverride={laneWidth} />
+          <div style={sectionLabelStyle}>{phoneMode ? '↓ Loser Path' : 'Loser Path'}</div>
+          <MatchBoxCard box={pair.loser} variant="loser" layout={layout} widthOverride={laneWidth} phoneMode={phoneMode} />
           {pair.loser_dest && (
             <DestinationBox
               label={pair.loser_dest}
@@ -716,6 +764,7 @@ function WaterfallRowPairCompact({
               divisionType={divisionType}
               layout={layout}
               widthOverride={laneWidth}
+              phoneMode={phoneMode}
             />
           )}
         </div>
@@ -723,8 +772,8 @@ function WaterfallRowPairCompact({
 
       {pair.winner && (
         <div style={{ display: 'grid', gap: Math.max(layout.headerGap, 6), justifyItems: 'center', width: '100%' }}>
-          <div style={sectionLabelStyle}>Winner Path</div>
-          <MatchBoxCard box={pair.winner} variant="winner" layout={layout} widthOverride={laneWidth} />
+          <div style={sectionLabelStyle}>{phoneMode ? '↓ Winner Path' : 'Winner Path'}</div>
+          <MatchBoxCard box={pair.winner} variant="winner" layout={layout} widthOverride={laneWidth} phoneMode={phoneMode} />
           {pair.winner_dest && (
             <DestinationBox
               label={pair.winner_dest}
@@ -736,6 +785,7 @@ function WaterfallRowPairCompact({
               divisionType={divisionType}
               layout={layout}
               widthOverride={laneWidth}
+              phoneMode={phoneMode}
             />
           )}
         </div>
@@ -847,7 +897,9 @@ export default function PublicWaterfallPage() {
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
   const canvasRef = useRef<HTMLDivElement | null>(null)
-  const [canvasWidth, setCanvasWidth] = useState<number>(WATERFALL_BASE_WIDTH)
+  const [canvasWidth, setCanvasWidth] = useState<number>(() =>
+    typeof window !== 'undefined' ? Math.max(window.innerWidth - 16, 320) : PHONE_WATERFALL_MAX_WIDTH
+  )
 
   useEffect(() => {
     if (!tid || !eid) return
@@ -974,14 +1026,18 @@ export default function PublicWaterfallPage() {
     }
   }, [displayFitMode])
 
-  const useCompactWaterfallLayout = displayFitMode || (!captureMode && canvasWidth <= 520)
+  const isPhoneViewport = !captureMode && !tvMode && canvasWidth <= PHONE_WATERFALL_MAX_WIDTH
+  const useCompactWaterfallLayout = displayFitMode || isPhoneViewport
+  const useReadablePhoneLayout = isPhoneViewport && (!displayFitMode || canvasWidth < 900)
   const layout = captureMode
     ? buildWaterfallLayout(1, WATERFALL_BASE_WIDTH)
     : tvMode
       ? buildWaterfallLayout(tvUseFourColumns ? 0.58 : 0.68, Math.max(canvasWidth / (tvUseFourColumns ? 4 : 2), 260))
+    : useReadablePhoneLayout
+      ? buildPhoneWaterfallLayout()
     : buildWaterfallLayout((canvasWidth - 8) / WATERFALL_BASE_WIDTH, canvasWidth)
   const compactColumnCount = useMemo(() => {
-    if (!displayFitMode) return 1
+    if (!displayFitMode || canvasWidth <= PHONE_WATERFALL_MAX_WIDTH) return 1
     if (rowPairs.length >= 10 && canvasWidth >= 1080) return 3
     if (rowPairs.length >= 5) return 2
     return 1
@@ -1078,7 +1134,7 @@ export default function PublicWaterfallPage() {
       )}
       {/* Nav bar */}
       <div className="no-print" style={{
-        padding: '8px 20px',
+        padding: useReadablePhoneLayout ? '10px 12px' : '8px 20px',
         backgroundColor: '#fff',
         borderBottom: '1px solid #e0e0e0',
         fontSize: 13,
@@ -1086,6 +1142,8 @@ export default function PublicWaterfallPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
         ...((captureMode || displayFitMode || tvMode) ? { display: 'none' } : {}),
       }}>
         <div style={{ display: 'flex', gap: 16 }}>
@@ -1123,8 +1181,8 @@ export default function PublicWaterfallPage() {
       <div data-header style={{
         backgroundColor: COLORS.header.bg,
         color: COLORS.header.text,
-        padding: tvMode ? '10px 18px' : '14px 24px',
-        fontSize: tvMode ? 14 : 16,
+        padding: tvMode ? '10px 18px' : useReadablePhoneLayout ? '12px 14px' : '14px 24px',
+        fontSize: tvMode ? 14 : useReadablePhoneLayout ? 15 : 16,
         fontWeight: 700,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
@@ -1134,19 +1192,19 @@ export default function PublicWaterfallPage() {
         {headerText}
       </div>
 
-      {/* Bracket canvas: fixed width, horizontal scroll on mobile */}
+      {/* Bracket canvas: stacked readable cards on phones; scaled diagram on desktop */}
       <div
         ref={canvasRef}
         data-bracket-canvas
         style={{
-          overflowX: captureMode ? 'visible' : 'hidden',
+          overflowX: captureMode || useReadablePhoneLayout ? 'visible' : 'hidden',
           overflowY: tvMode ? 'hidden' : 'visible',
           padding: captureMode
             ? '10px 8px'
             : tvMode
               ? '10px 12px'
-            : canvasWidth <= 520
-              ? '12px 6px'
+            : useReadablePhoneLayout
+              ? '12px 10px 24px'
               : canvasWidth <= 900
                 ? '16px 10px'
                 : '20px 16px',
@@ -1164,6 +1222,27 @@ export default function PublicWaterfallPage() {
           flexDirection: tvMode ? 'column' : undefined,
         }}>
           {!tvMode && (
+            useReadablePhoneLayout ? (
+              <details style={{
+                marginBottom: 12,
+                padding: '8px 12px',
+                border: '1px solid #dce775',
+                borderRadius: 6,
+                backgroundColor: '#f9fbe7',
+                color: '#455a64',
+                fontSize: 13,
+              }}>
+                <summary style={{ fontWeight: 700, color: '#33691e', cursor: 'pointer' }}>
+                  WF Pool Tiebreaker Rules
+                </summary>
+                <ol style={{ margin: '8px 0 0 18px', padding: 0, lineHeight: 1.5 }}>
+                  <li>WF wins</li>
+                  <li>WF Match #2 game difference</li>
+                  <li>WF Match #1 &amp; #2 combined game difference</li>
+                  <li>Combined Ratings</li>
+                </ol>
+              </details>
+            ) : (
             <div style={{
             marginBottom: 12,
             padding: '10px 12px',
@@ -1183,6 +1262,7 @@ export default function PublicWaterfallPage() {
               <li>Combined Ratings</li>
             </ol>
             </div>
+            )
           )}
 
           {!tvMode && !useCompactWaterfallLayout && (
@@ -1270,6 +1350,7 @@ export default function PublicWaterfallPage() {
                         divisionType={data.division_type || 'bracket'}
                         layout={layout}
                         availableWidth={compactColumnWidth}
+                        phoneMode={useReadablePhoneLayout}
                       />
                     ))}
                   </div>
@@ -1285,6 +1366,7 @@ export default function PublicWaterfallPage() {
                   divisionType={data.division_type || 'bracket'}
                   layout={layout}
                   availableWidth={canvasWidth}
+                  phoneMode={useReadablePhoneLayout}
                 />
               ))
             )

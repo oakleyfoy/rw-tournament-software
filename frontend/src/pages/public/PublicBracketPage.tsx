@@ -70,6 +70,7 @@ const MATCH_W = 280
 const MATCH_H = 82
 const GAP_V = 8
 const CONNECTOR_W = 28
+const PHONE_BRACKET_MAX_WIDTH = 768
 
 const COLORS = {
   header: { bg: '#1a237e', text: '#fff' },
@@ -131,10 +132,11 @@ function partitionConsolationMatches(matches: BracketMatchBox[]) {
   return { bracketMatches, standaloneMatches }
 }
 
-function MatchCard({ match, variant, showCourtInfo }: {
+function MatchCard({ match, variant, showCourtInfo, phoneMode = false }: {
   match: BracketMatchBox
   variant: 'main' | 'consolation'
   showCourtInfo: boolean
+  phoneMode?: boolean
 }) {
   const palette = COLORS[variant]
   const isFinal = match.status === 'FINAL'
@@ -147,15 +149,16 @@ function MatchCard({ match, variant, showCourtInfo }: {
 
   return (
     <div style={{
-      width: MATCH_W,
-      height: MATCH_H,
+      width: phoneMode ? '100%' : MATCH_W,
+      height: phoneMode ? 'auto' : MATCH_H,
+      minHeight: phoneMode ? 72 : undefined,
       backgroundColor: isFinal ? palette.bgFinal : palette.bg,
       border: `1px solid ${palette.border}`,
-      borderRadius: 3,
-      padding: '4px 8px',
+      borderRadius: phoneMode ? 8 : 3,
+      padding: phoneMode ? '10px 12px' : '4px 8px',
       boxSizing: 'border-box',
-      fontSize: 11,
-      lineHeight: 1.3,
+      fontSize: phoneMode ? 14 : 11,
+      lineHeight: phoneMode ? 1.35 : 1.3,
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'center',
@@ -164,7 +167,7 @@ function MatchCard({ match, variant, showCourtInfo }: {
       {/* Match number + score/final badge */}
       <div style={{
         fontWeight: 700,
-        fontSize: 10,
+        fontSize: phoneMode ? 12 : 10,
         color: '#555',
         marginBottom: 1,
         display: 'flex',
@@ -174,7 +177,7 @@ function MatchCard({ match, variant, showCourtInfo }: {
         <span>{`Match #${match.match_id}`}</span>
         {isFinal && match.score_display && (
           <span data-score-badge style={{
-            fontSize: 9,
+            fontSize: phoneMode ? 11 : 9,
             fontWeight: 700,
             color: '#2e7d32',
             backgroundColor: '#c8e6c9',
@@ -188,12 +191,12 @@ function MatchCard({ match, variant, showCourtInfo }: {
 
       {/* Court / Date / Time */}
       {schedLine && (
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>
+        <div style={{ fontSize: phoneMode ? 12 : 9, color: '#888', marginBottom: 2 }}>
           {schedLine}
         </div>
       )}
       {!schedLine && match.status === 'UNSCHEDULED' && (
-        <div style={{ fontSize: 9, color: '#aaa', fontStyle: 'italic', marginBottom: 2 }}>
+        <div style={{ fontSize: phoneMode ? 12 : 9, color: '#aaa', fontStyle: 'italic', marginBottom: 2 }}>
           Not yet scheduled
         </div>
       )}
@@ -201,10 +204,12 @@ function MatchCard({ match, variant, showCourtInfo }: {
       {/* Team lines */}
       <div style={{
         color: '#222',
-        fontSize: 11,
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        fontSize: phoneMode ? 15 : 11,
+        fontWeight: phoneMode ? 600 : undefined,
+        whiteSpace: phoneMode ? 'normal' : 'nowrap',
+        overflow: phoneMode ? undefined : 'hidden',
+        textOverflow: phoneMode ? undefined : 'ellipsis',
+        overflowWrap: phoneMode ? 'anywhere' : undefined,
         borderBottom: '1px solid rgba(0,0,0,0.08)',
         paddingBottom: 1,
         marginBottom: 1,
@@ -213,10 +218,12 @@ function MatchCard({ match, variant, showCourtInfo }: {
       </div>
       <div style={{
         color: '#222',
-        fontSize: 11,
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        fontSize: phoneMode ? 15 : 11,
+        fontWeight: phoneMode ? 600 : undefined,
+        whiteSpace: phoneMode ? 'normal' : 'nowrap',
+        overflow: phoneMode ? undefined : 'hidden',
+        textOverflow: phoneMode ? undefined : 'ellipsis',
+        overflowWrap: phoneMode ? 'anywhere' : undefined,
       }}>
         {match.line2}
       </div>
@@ -270,11 +277,75 @@ interface RoundColumn {
   matches: BracketMatchBox[]
 }
 
-function BracketTree({ matches, variant, roundLabels, showCourtInfo }: {
+function BracketRoundsStacked({
+  matches,
+  variant,
+  roundLabels,
+  showCourtInfo,
+}: {
   matches: BracketMatchBox[]
   variant: 'main' | 'consolation'
   roundLabels?: Record<number, string>
   showCourtInfo: boolean
+}) {
+  const rounds = useMemo(() => {
+    const roundMap = new Map<number, BracketMatchBox[]>()
+    for (const match of matches) {
+      const existing = roundMap.get(match.round_index) || []
+      existing.push(match)
+      roundMap.set(match.round_index, existing)
+    }
+    const defaultLabels: Record<number, string> = { 1: 'Quarterfinals', 2: 'Semifinals', 3: 'Final' }
+    const labels = roundLabels || defaultLabels
+    return Array.from(roundMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([roundIndex, list]) => ({
+        roundIndex,
+        label: labels[roundIndex] || `Round ${roundIndex}`,
+        matches: list.slice().sort((a, b) => a.sequence_in_round - b.sequence_in_round),
+      }))
+  }, [matches, roundLabels])
+
+  if (rounds.length === 0) return null
+
+  return (
+    <div style={{ display: 'grid', gap: 18, width: '100%' }}>
+      {rounds.map((round) => (
+        <section key={round.roundIndex}>
+          <div style={{
+            textAlign: 'center',
+            fontSize: 13,
+            fontWeight: 700,
+            color: '#666',
+            textTransform: 'uppercase',
+            letterSpacing: 0.8,
+            marginBottom: 8,
+          }}>
+            {round.label}
+          </div>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {round.matches.map((match) => (
+              <MatchCard
+                key={match.match_id}
+                match={match}
+                variant={variant}
+                showCourtInfo={showCourtInfo}
+                phoneMode
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function BracketTree({ matches, variant, roundLabels, showCourtInfo, phoneMode = false }: {
+  matches: BracketMatchBox[]
+  variant: 'main' | 'consolation'
+  roundLabels?: Record<number, string>
+  showCourtInfo: boolean
+  phoneMode?: boolean
 }) {
   const rounds: RoundColumn[] = useMemo(() => {
     const roundMap = new Map<number, BracketMatchBox[]>()
@@ -295,6 +366,16 @@ function BracketTree({ matches, variant, roundLabels, showCourtInfo }: {
   }, [matches, roundLabels])
 
   if (rounds.length === 0) return null
+  if (phoneMode) {
+    return (
+      <BracketRoundsStacked
+        matches={matches}
+        variant={variant}
+        roundLabels={roundLabels}
+        showCourtInfo={showCourtInfo}
+      />
+    )
+  }
 
   const maxMatches = Math.max(...rounds.map(r => r.matches.length))
   const bracketHeight = maxMatches * (MATCH_H + GAP_V) - GAP_V
@@ -374,7 +455,7 @@ function BracketTree({ matches, variant, roundLabels, showCourtInfo }: {
   )
 }
 
-function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchBox[]; showCourtInfo: boolean }) {
+function ConsolationSection({ matches, showCourtInfo, phoneMode = false }: { matches: BracketMatchBox[]; showCourtInfo: boolean; phoneMode?: boolean }) {
   if (matches.length === 0) return null
 
   const { bracketMatches, standaloneMatches } = useMemo(() => partitionConsolationMatches(matches), [matches])
@@ -398,6 +479,7 @@ function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchB
           variant="consolation"
           roundLabels={{ 1: 'Consolation Semis', 2: 'Consolation Final' }}
           showCourtInfo={showCourtInfo}
+          phoneMode={phoneMode}
         />
       )}
 
@@ -413,9 +495,9 @@ function ConsolationSection({ matches, showCourtInfo }: { matches: BracketMatchB
           }}>
             Drop-In Matches
           </div>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+          <div style={{ display: phoneMode ? 'grid' : 'flex', gap: phoneMode ? 10 : 16, alignItems: 'flex-start' }}>
             {standaloneMatches.map(m => (
-              <MatchCard key={m.match_id} match={m} variant="consolation" showCourtInfo={showCourtInfo} />
+              <MatchCard key={m.match_id} match={m} variant="consolation" showCourtInfo={showCourtInfo} phoneMode={phoneMode} />
             ))}
           </div>
         </div>
@@ -443,6 +525,9 @@ export default function PublicBracketPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
+  const [isPhoneViewport, setIsPhoneViewport] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth <= PHONE_BRACKET_MAX_WIDTH
+  )
 
   useEffect(() => {
     if (!tid || !eid) return
@@ -484,6 +569,15 @@ export default function PublicBracketPage() {
     injectBracketPrintStyles()
     setTimeout(() => window.print(), 100)
   }, [])
+
+  useEffect(() => {
+    const update = () => setIsPhoneViewport(window.innerWidth <= PHONE_BRACKET_MAX_WIDTH)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+
+  const phoneMode = isPhoneViewport && !captureMode && !tvMode
 
   const showCourtInfo = data?.show_court_info !== false
   const tvMainRounds = useMemo(() => {
@@ -616,8 +710,8 @@ export default function PublicBracketPage() {
       <div data-bracket-header style={{
         backgroundColor: COLORS.header.bg,
         color: COLORS.header.text,
-        padding: tvMode ? '10px 18px' : '14px 24px',
-        fontSize: tvMode ? 14 : 16,
+        padding: tvMode ? '10px 18px' : phoneMode ? '12px 14px' : '14px 24px',
+        fontSize: tvMode ? 14 : phoneMode ? 15 : 16,
         fontWeight: 700,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
@@ -629,13 +723,18 @@ export default function PublicBracketPage() {
 
       {/* Bracket canvas */}
       <div data-bracket-canvas style={{
-        overflowX: tvMode ? 'hidden' : 'auto',
+        overflowX: tvMode || phoneMode ? 'hidden' : 'auto',
         overflowY: tvMode ? 'hidden' : 'visible',
-        padding: captureMode ? '10px 14px' : tvMode ? '10px 12px' : '20px 24px',
+        padding: captureMode ? '10px 14px' : tvMode ? '10px 12px' : phoneMode ? '12px 10px 24px' : '20px 24px',
         flex: tvMode ? 1 : undefined,
         minHeight: tvMode ? 0 : undefined,
       }}>
-        <div data-bracket-inner style={{ display: tvMode ? 'block' : 'inline-block', minWidth: captureMode ? 640 : tvMode ? 0 : 800, height: tvMode ? '100%' : undefined }}>
+        <div data-bracket-inner style={{
+          display: tvMode || phoneMode ? 'block' : 'inline-block',
+          minWidth: captureMode ? 640 : tvMode || phoneMode ? 0 : 800,
+          width: phoneMode ? '100%' : undefined,
+          height: tvMode ? '100%' : undefined,
+        }}>
           {tvMode ? (
             <div style={{
               display: 'grid',
@@ -715,8 +814,8 @@ export default function PublicBracketPage() {
             </div>
           ) : (
             <>
-              <BracketTree matches={data.main_matches} variant="main" showCourtInfo={showCourtInfo} />
-              <ConsolationSection matches={data.consolation_matches} showCourtInfo={showCourtInfo} />
+              <BracketTree matches={data.main_matches} variant="main" showCourtInfo={showCourtInfo} phoneMode={phoneMode} />
+              <ConsolationSection matches={data.consolation_matches} showCourtInfo={showCourtInfo} phoneMode={phoneMode} />
             </>
           )}
         </div>
