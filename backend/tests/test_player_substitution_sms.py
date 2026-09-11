@@ -514,6 +514,7 @@ def test_name_only_sub_uses_existing_player_phone_not_replaced_partner(client, s
         json={
             "name": "Darlene Oldenberg / Womens Partner",
             "player1_cellphone": MARY_PHONE,
+            "player1_email": "darlene@example.com",
             "player2_cellphone": ANN_PHONE,
         },
     )
@@ -528,7 +529,7 @@ def test_name_only_sub_uses_existing_player_phone_not_replaced_partner(client, s
 
     updated = client.patch(
         f"/api/events/{mixed.id}/teams/{mixed_team['id']}",
-        json={"name": "Darlene / Brannan"},
+        json={"name": "Darlene / Brannan", "player1_email": "darlene@example.com"},
     )
     assert updated.status_code == 200
 
@@ -537,6 +538,66 @@ def test_name_only_sub_uses_existing_player_phone_not_replaced_partner(client, s
     assert MIXED_PARTNER_E164 in phones
     assert JANE_E164 not in phones
     assert _sms_log_count(session, tournament.id) == 0
+
+
+def test_first_name_only_does_not_copy_another_heathers_phone(client, session):
+    tournament = _create_tournament(session)
+    mixed = _create_event(session, tournament.id, "Mixed A", "mixed")
+    womens = _create_event(session, tournament.id, "Women's A", "womens")
+    client.post(
+        f"/api/events/{mixed.id}/teams",
+        json={
+            "name": "Heather Herman / Barry Herman",
+            "player1_cellphone": JANE_PHONE,
+            "player1_email": "bjherman22@yahoo.com",
+            "player2_cellphone": ANN_PHONE,
+            "player2_email": "bjherman22@gmail.com",
+        },
+    )
+    heather_b = client.post(
+        f"/api/events/{womens.id}/teams",
+        json={
+            "name": "Heather Huling / Patty Shepard",
+            "player1_cellphone": MARY_PHONE,
+            "player1_email": "heather@hulinghomes.com",
+            "player2_cellphone": MIXED_PARTNER_PHONE,
+        },
+    ).json()
+
+    client.post(f"/api/tournaments/{tournament.id}/sms/sync-player-contacts")
+    session.expire_all()
+    team = session.get(Team, heather_b["id"])
+    assert team is not None
+    assert (team.player1_cellphone or team.p1_cell) in {MARY_PHONE, MARY_E164}
+    phones = _preview_phones(client, tournament.id, f"preview/event/{womens.id}")
+    assert MARY_E164 in phones
+    assert JANE_E164 not in phones
+
+
+def test_restore_duplicated_phone_from_slot_email(client, session):
+    tournament = _create_tournament(session)
+    mixed = _create_event(session, tournament.id, "Mixed A", "mixed")
+    created = client.post(
+        f"/api/events/{mixed.id}/teams",
+        json={
+            "name": "Heather Herman / Barry Herman",
+            "player1_cellphone": JANE_PHONE,
+            "player1_email": "bjherman22@yahoo.com",
+            "player2_cellphone": ANN_PHONE,
+        },
+    ).json()
+    session.expire_all()
+    team = session.get(Team, created["id"])
+    assert team is not None
+    team.player1_cellphone = MARY_E164
+    team.p1_cell = MARY_E164
+    session.add(team)
+    session.commit()
+
+    resp = client.get(f"/api/desk/tournaments/{tournament.id}/teams")
+    assert resp.status_code == 200
+    row = next(item for item in resp.json() if item["team_id"] == created["id"])
+    assert row["player1_cellphone"] == JANE_E164
 
 
 def test_detect_slot_substitutions_ignores_phone_formatting():

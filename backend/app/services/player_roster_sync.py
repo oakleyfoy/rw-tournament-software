@@ -82,11 +82,27 @@ class PlayerSubstitution:
     new_phone: Optional[str]
 
 
+def normalize_email(value: Optional[str]) -> Optional[str]:
+    raw = str(value or "").strip().lower()
+    return raw or None
+
+
+def _team_slot_email(team: Team, slot: int) -> Optional[str]:
+    if slot == 1:
+        return normalize_email(getattr(team, "player1_email", None)) or normalize_email(
+            getattr(team, "p1_email", None)
+        )
+    return normalize_email(getattr(team, "player2_email", None)) or normalize_email(
+        getattr(team, "p2_email", None)
+    )
+
+
 def _player_name_key(player: Player) -> str:
     return normalize_player_name(player.display_name) or normalize_player_name(player.full_name)
 
 
 def player_names_match(slot_name: str, player_name: str) -> bool:
+    """Exact name or first+last. Never first-name-only (Heather != every Heather)."""
     slot_key = normalize_player_name(slot_name)
     player_key = normalize_player_name(player_name)
     if not slot_key or not player_key:
@@ -95,11 +111,8 @@ def player_names_match(slot_name: str, player_name: str) -> bool:
         return True
     slot_tokens = slot_key.split()
     player_tokens = player_key.split()
-    if slot_tokens[0] == player_tokens[0] and len(slot_tokens[0]) >= 4:
-        if len(slot_tokens) == 1 or slot_tokens[-1] == player_tokens[-1] or slot_tokens[-1] in player_tokens:
-            return True
-    if min(len(slot_key), len(player_key)) >= 6 and (slot_key in player_key or player_key in slot_key):
-        return True
+    if len(slot_tokens) >= 2 and len(player_tokens) >= 2:
+        return slot_tokens[0] == player_tokens[0] and slot_tokens[-1] == player_tokens[-1]
     return False
 
 
@@ -110,33 +123,30 @@ def resolve_roster_player_for_slot(
     team_id: int,
     slot_name: str,
     slot_phone: Optional[str],
+    slot_email: Optional[str] = None,
 ) -> Optional[Player]:
     """
     Pick the current person for a team slot.
 
-    Name-only substitutions keep the previous phone on the Team row. Prefer an
-    existing tournament Player with that name, especially one already linked
-    on another team, instead of texting the replaced partner.
+    Email is the identity key. First-name-only matching is rejected because it
+    copied one Heather/Lisa/John phone onto every team with that first name.
     """
+    del links, team_id
     wanted_phone = normalize_player_phone(slot_phone)
+    wanted_email = normalize_email(slot_email)
     player_list = [player for player in players if player.id is not None]
-    link_list = list(links)
-    links_by_player: dict[int, list[TeamPlayer]] = {}
-    for link in link_list:
-        if link.player_id is None:
-            continue
-        links_by_player.setdefault(link.player_id, []).append(link)
 
-    name_matches = [
-        player
-        for player in player_list
-        if player_names_match(slot_name, player.display_name or "")
-        or player_names_match(slot_name, player.full_name or "")
-    ]
-    for player in name_matches:
-        other_links = [link for link in links_by_player.get(player.id, []) if link.team_id != team_id]
-        if other_links:
-            return player
+    if wanted_email:
+        email_matches = [player for player in player_list if normalize_email(player.email) == wanted_email]
+        if len(email_matches) == 1:
+            return email_matches[0]
+        for player in email_matches:
+            if player_names_match(slot_name, player.display_name or "") or player_names_match(
+                slot_name, player.full_name or ""
+            ):
+                return player
+        if email_matches:
+            return email_matches[0]
 
     if wanted_phone:
         phone_matches = [player for player in player_list if player.phone_e164 == wanted_phone]
@@ -149,9 +159,52 @@ def resolve_roster_player_for_slot(
             ):
                 return player
 
-    if name_matches:
+    name_matches = [
+        player
+        for player in player_list
+        if player_names_match(slot_name, player.display_name or "")
+        or player_names_match(slot_name, player.full_name or "")
+    ]
+    if len(name_matches) == 1:
         return name_matches[0]
     return None
+
+
+def restore_team_phones_from_slot_emails(session: Session, tournament_id: int) -> int:
+    """Rewrite team phones from Player rows matched by the (uncorrupted) slot email."""
+    from app.models.event import Event
+
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    event_ids = [event.id for event in events if event.id is not None]
+    if not event_ids:
+        return 0
+    teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()  # type: ignore
+    players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+    players_by_email: dict[str, Player] = {}
+    for player in players:
+        email = normalize_email(player.email)
+        if email and player.phone_e164 and email not in players_by_email:
+            players_by_email[email] = player
+
+    restored = 0
+    for team in teams:
+        for slot in (1, 2):
+            email = _team_slot_email(team, slot)
+            player = players_by_email.get(email or "")
+            if player is None or not player.phone_e164:
+                continue
+            current = _team_slot_phone(team, slot)
+            if current == player.phone_e164:
+                continue
+            if slot == 1:
+                team.player1_cellphone = player.phone_e164
+                team.p1_cell = player.phone_e164
+            else:
+                team.player2_cellphone = player.phone_e164
+                team.p2_cell = player.phone_e164
+            session.add(team)
+            restored += 1
+    return restored
 
 
 def snapshot_team_slots(team: Team) -> list[TeamSlotSnapshot]:
@@ -233,6 +286,7 @@ def sync_player_links_for_tournament(
     """Always refresh TeamPlayer → Player from current Team slots."""
     from app.routes.sms import _sync_players_and_team_links_from_team_slots
 
+    restore_team_phones_from_slot_emails(session, tournament_id)
     return _sync_players_and_team_links_from_team_slots(
         session=session,
         tournament_id=tournament_id,
