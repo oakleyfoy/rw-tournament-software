@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
-from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.services.player_roster_sync import sync_player_links_for_tournament
 
 
 def apply_team_contact_fields(
@@ -101,15 +101,5 @@ def group_map_from_avoid_groups(assignments: Iterable[tuple[int, Optional[str]]]
 
 
 def sync_players_from_team_slots_if_enabled(session: Session, tournament_id: int, teams: list[Team]) -> None:
-    settings = session.exec(
-        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
-    ).first()
-    if not settings or not bool(getattr(settings, "player_contacts_only", False)):
-        return
-    from app.routes.sms import _sync_players_and_team_links_from_team_slots
-
-    _sync_players_and_team_links_from_team_slots(
-        session=session,
-        tournament_id=tournament_id,
-        teams=teams,
-    )
+    """Always keep Player/TeamPlayer aligned after Team roster writes."""
+    sync_player_links_for_tournament(session, tournament_id, teams=teams)

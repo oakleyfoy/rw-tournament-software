@@ -4032,6 +4032,24 @@ export async function defaultTeamWeekend(
   )
 }
 
+export interface PlayerSubstitutionNotice {
+  slot: number
+  event_name: string
+  old_name: string
+  new_name: string
+  old_phone: string | null
+  new_phone: string | null
+}
+
+export interface TeamUpdateResponse {
+  id: number
+  event_id: number
+  name: string
+  player_substitutions?: PlayerSubstitutionNotice[]
+  staff_message?: string | null
+  text_list_sync_required?: boolean
+}
+
 export async function updateTeam(
   eventId: number,
   teamId: number,
@@ -4045,8 +4063,8 @@ export async function updateTeam(
     is_defaulted?: boolean
     notes?: string
   }
-): Promise<unknown> {
-  return fetchJson(
+): Promise<TeamUpdateResponse> {
+  return fetchJson<TeamUpdateResponse>(
     `${API_BASE_URL}/events/${eventId}/teams/${teamId}`,
     { method: 'PATCH', body: JSON.stringify(payload) }
   )
@@ -4167,6 +4185,9 @@ export interface SmsPlayerSyncResponse {
   links_created: number
   links_updated: number
   links_removed: number
+  slots_checked?: number
+  already_correct?: number
+  staff_message?: string | null
 }
 
 export interface SmsPlayerWipeResponse {
@@ -4250,6 +4271,23 @@ export interface SmsPhoneListImportResponse {
   phone_list: SmsPhoneList
   imported_count: number
   rejected_rows: SmsPhoneListImportRejectedRow[]
+}
+
+export interface SmsPhoneListRosterSyncContact {
+  name: string
+  phone: string
+  event_name?: string | null
+  member_id?: number | null
+}
+
+export interface SmsPhoneListRosterSyncPreview {
+  phone_list_id: number
+  phone_list_name: string
+  add: SmsPhoneListRosterSyncContact[]
+  remove: SmsPhoneListRosterSyncContact[]
+  unchanged_count: number
+  applied: boolean
+  phone_list?: SmsPhoneList | null
 }
 
 export interface SmsRrAutomationRunResponse {
@@ -4563,6 +4601,25 @@ export async function importSmsPhoneList(
   return fetchJson<SmsPhoneListImportResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}/import`,
     { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewSmsPhoneListRosterSync(
+  tournamentId: number,
+  phoneListId: number
+): Promise<SmsPhoneListRosterSyncPreview> {
+  return fetchJson<SmsPhoneListRosterSyncPreview>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}/roster-sync`
+  )
+}
+
+export async function applySmsPhoneListRosterSync(
+  tournamentId: number,
+  phoneListId: number
+): Promise<SmsPhoneListRosterSyncPreview> {
+  return fetchJson<SmsPhoneListRosterSyncPreview>(
+    `${API_BASE_URL}/tournaments/${tournamentId}/sms/phone-lists/${phoneListId}/roster-sync`,
+    { method: 'POST' }
   )
 }
 

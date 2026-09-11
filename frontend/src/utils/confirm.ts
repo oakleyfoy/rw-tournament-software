@@ -1,4 +1,7 @@
-export function confirmDialog(message: string): Promise<boolean> {
+export function confirmDialog(
+  message: string,
+  options?: { title?: string; confirmLabel?: string }
+): Promise<boolean> {
   return new Promise((resolve) => {
     // Create overlay
     const overlay = document.createElement('div')
@@ -22,10 +25,22 @@ export function confirmDialog(message: string): Promise<boolean> {
       padding: 24px;
       border-radius: 8px;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 400px;
+      max-width: 440px;
       width: 90%;
       z-index: 10001;
     `
+
+    if (options?.title) {
+      const titleEl = document.createElement('div')
+      titleEl.textContent = options.title
+      titleEl.style.cssText = `
+        margin-bottom: 12px;
+        font-size: 18px;
+        font-weight: 700;
+        color: #222;
+      `
+      dialog.appendChild(titleEl)
+    }
 
     // Create message
     const messageEl = document.createElement('div')
@@ -34,6 +49,7 @@ export function confirmDialog(message: string): Promise<boolean> {
       margin-bottom: 20px;
       font-size: 16px;
       color: #333;
+      white-space: pre-wrap;
     `
 
     // Create buttons container
@@ -60,9 +76,9 @@ export function confirmDialog(message: string): Promise<boolean> {
       resolve(false)
     }
 
-    // Create OK button
+    // Create confirm button
     const okButton = document.createElement('button')
-    okButton.textContent = 'OK'
+    okButton.textContent = options?.confirmLabel || 'OK'
     okButton.style.cssText = `
       padding: 8px 16px;
       border: none;
@@ -94,4 +110,3 @@ export function confirmDialog(message: string): Promise<boolean> {
     }
   })
 }
-
