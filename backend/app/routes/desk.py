@@ -4880,6 +4880,9 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
                 session.delete(duplicate)
                 teams_removed += 1
 
+    from app.services.player_roster_sync import sync_player_links_for_tournament
+
+    sync_player_links_for_tournament(session, tournament_id)
     session.commit()
     return MergeDuplicateTeamsResponse(
         groups_merged=groups_merged,

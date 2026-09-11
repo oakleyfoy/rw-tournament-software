@@ -101,6 +101,9 @@ import {
   renameSmsPhoneList,
   deleteSmsPhoneList,
   importSmsPhoneList,
+  previewSmsPhoneListRosterSync,
+  applySmsPhoneListRosterSync,
+  SmsPhoneListRosterSyncPreview,
   SmsAutomationRunResponse,
   SmsRrAutomationRunResponse,
   SmsLogEntry,
@@ -111,7 +114,6 @@ import {
   SmsMatchLookupItem,
   SmsDivisionLookupItem,
   SmsPlayerLookupItem,
-  SmsPlayerSyncResponse,
   SmsPlayerWipeResponse,
   SmsPhoneList,
   TemporaryPlayerLookupItem,
@@ -6472,7 +6474,7 @@ function TeamsTab({
   const saveEdit = async (t: DeskTeamItem) => {
     setSaving(true)
     try {
-      await updateTeam(t.event_id, t.team_id, {
+      const updated = await updateTeam(t.event_id, t.team_id, {
         name: editFields.name || undefined,
         display_name: editFields.display_name || undefined,
         player1_cellphone: editFields.player1_cellphone || undefined,
@@ -6485,8 +6487,8 @@ function TeamsTab({
       await loadTeams()
       // Keep all desk tabs in sync (courts/schedule/grid use snapshot data).
       onRefresh()
-      setToast('Team updated')
-      setTimeout(() => setToast(null), 3000)
+      setToast(updated.staff_message || 'Team updated')
+      setTimeout(() => setToast(null), updated.staff_message ? 8000 : 3000)
     } catch (e: any) {
       console.error('Failed to save team:', e)
       setToast('Failed to save team')
@@ -6720,6 +6722,7 @@ function TeamsTab({
           padding: '10px 24px', backgroundColor: '#2e7d32', color: '#fff',
           borderRadius: 6, fontSize: 13, fontWeight: 600, zIndex: 1001,
           boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          whiteSpace: 'pre-wrap', maxWidth: 480, textAlign: 'left',
         }}>
           {toast}
         </div>
@@ -6763,6 +6766,9 @@ function TextListTab({ tournamentId }: { tournamentId: number }) {
   const [importingPhoneList, setImportingPhoneList] = useState(false)
   const [renamingPhoneListId, setRenamingPhoneListId] = useState<number | null>(null)
   const [deletingPhoneListId, setDeletingPhoneListId] = useState<number | null>(null)
+  const [rosterSyncPreview, setRosterSyncPreview] = useState<SmsPhoneListRosterSyncPreview | null>(null)
+  const [loadingRosterSync, setLoadingRosterSync] = useState(false)
+  const [applyingRosterSync, setApplyingRosterSync] = useState(false)
 
   const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
   const textsEnabled = Boolean(settingsDraft?.texts_enabled)
@@ -6862,6 +6868,42 @@ function TextListTab({ tournamentId }: { tournamentId: number }) {
       setError(e?.message || 'Failed to rename phone list')
     } finally {
       setRenamingPhoneListId(null)
+    }
+  }
+
+  const handlePreviewRosterSync = async () => {
+    const phoneListId = parseInt(selectedPhoneListId, 10)
+    if (!Number.isFinite(phoneListId) || phoneListId <= 0) {
+      setError('Choose a phone list first')
+      return
+    }
+    setLoadingRosterSync(true)
+    setError(null)
+    try {
+      const preview = await previewSmsPhoneListRosterSync(tournamentId, phoneListId)
+      setRosterSyncPreview(preview)
+    } catch (e: any) {
+      setError(e?.message || 'Failed to preview roster sync')
+    } finally {
+      setLoadingRosterSync(false)
+    }
+  }
+
+  const handleApplyRosterSync = async () => {
+    const phoneListId = rosterSyncPreview?.phone_list_id
+    if (!phoneListId) return
+    setApplyingRosterSync(true)
+    setError(null)
+    try {
+      const applied = await applySmsPhoneListRosterSync(tournamentId, phoneListId)
+      if (applied.phone_list) {
+        setPhoneLists(prev => prev.map(list => (list.id === phoneListId ? applied.phone_list! : list)))
+      }
+      setRosterSyncPreview(null)
+    } catch (e: any) {
+      setError(e?.message || 'Failed to apply roster sync')
+    } finally {
+      setApplyingRosterSync(false)
     }
   }
 
@@ -7012,8 +7054,16 @@ function TextListTab({ tournamentId }: { tournamentId: number }) {
             >
               {importingPhoneList ? 'Importing…' : 'Replace List Members'}
             </button>
+            <button
+              onClick={() => void handlePreviewRosterSync()}
+              disabled={loadingRosterSync || applyingRosterSync || !selectedPhoneListId}
+              style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
+            >
+              {loadingRosterSync ? 'Building preview…' : 'Sync With Current Tournament Roster'}
+            </button>
             <div style={{ fontSize: 11, color: '#777' }}>
               Paste one phone per line, or `Name` + `Phone` tab-separated. Numbers are normalized to E.164 automatically.
+              Roster sync adds current Team phones and removes only former tournament players. Manually pasted numbers stay.
             </div>
           </div>
 
@@ -7174,6 +7224,66 @@ function TextListTab({ tournamentId }: { tournamentId: number }) {
           </div>
         )}
       </div>
+
+      {rosterSyncPreview && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200,
+        }}>
+          <div style={{
+            width: 'min(560px, 92vw)', maxHeight: '80vh', overflowY: 'auto',
+            backgroundColor: '#fff', borderRadius: 8, padding: 18, boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+          }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: 16 }}>Tournament Text List Sync</h3>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 12 }}>
+              {rosterSyncPreview.phone_list_name} — former tournament players can be removed. Manually pasted numbers stay.
+            </div>
+            <div style={{ fontSize: 13, marginBottom: 10 }}>
+              <strong>ADD</strong>
+              {rosterSyncPreview.add.length === 0 ? (
+                <div style={{ color: '#777', marginTop: 4 }}>None</div>
+              ) : rosterSyncPreview.add.map(row => (
+                <div key={`add-${row.phone}`} style={{ marginTop: 4 }}>
+                  {row.name} — {row.phone}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 13, marginBottom: 10 }}>
+              <strong>REMOVE</strong>
+              {rosterSyncPreview.remove.length === 0 ? (
+                <div style={{ color: '#777', marginTop: 4 }}>None</div>
+              ) : rosterSyncPreview.remove.map(row => (
+                <div key={`remove-${row.phone}`} style={{ marginTop: 4 }}>
+                  {row.name} — {row.phone}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 13, marginBottom: 16 }}>
+              <strong>UNCHANGED</strong>
+              <div style={{ marginTop: 4 }}>{rosterSyncPreview.unchanged_count} players</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => setRosterSyncPreview(null)}
+                disabled={applyingRosterSync}
+                style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleApplyRosterSync()}
+                disabled={applyingRosterSync || (rosterSyncPreview.add.length === 0 && rosterSyncPreview.remove.length === 0)}
+                style={{
+                  padding: '7px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  backgroundColor: '#1a237e', color: '#fff', border: 'none', borderRadius: 4,
+                }}
+              >
+                {applyingRosterSync ? 'Applying…' : 'Apply Roster Sync'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -7215,7 +7325,6 @@ function SmsAdminTab({
   const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
   const [syncingPlayerContacts, setSyncingPlayerContacts] = useState(false)
-  const [playerSyncSummary, setPlayerSyncSummary] = useState<SmsPlayerSyncResponse | null>(null)
   const [playerAdminNotice, setPlayerAdminNotice] = useState<string | null>(null)
 
   const [templates, setTemplates] = useState<SmsTemplateResponse[]>([])
@@ -7776,13 +7885,22 @@ function SmsAdminTab({
   }
 
   const handleSyncPlayerContacts = async () => {
+    const confirmed = await confirmDialog(
+      'This will synchronize tournament player contacts with the\ncurrent players and cellphone numbers on Teams.\n\nNo text messages will be sent.',
+      {
+        title: 'Rebuild / Sync Player Contacts?',
+        confirmLabel: 'Rebuild / Sync',
+      }
+    )
+    if (!confirmed) return
+
     setSyncingPlayerContacts(true)
     setError(null)
     try {
       const summary = await syncSmsPlayerContacts(tournamentId)
-      setPlayerSyncSummary(summary)
       setPlayerAdminNotice(
-        `Rebuilt player links: +${summary.players_created} players, +${summary.links_created} links, ${summary.links_removed} removed.`
+        summary.staff_message
+        || `Player contacts synchronized\n\n${summary.slots_checked ?? 0} team player slots checked\n${(summary.links_created + summary.links_updated + summary.links_removed)} player links updated\n${summary.players_created} new player created\n${summary.already_correct ?? 0} already correct\n\nNo text messages were sent.`
       )
       await Promise.all([
         loadLookups(),
@@ -7805,7 +7923,6 @@ function SmsAdminTab({
     setError(null)
     try {
       const summary: SmsPlayerWipeResponse = await wipeSmsPlayers(tournamentId)
-      setPlayerSyncSummary(null)
       setPlayerAdminNotice(
         `Cleared ${summary.teams_deleted} teams, ${summary.players_deleted} players, ${summary.links_deleted} links, ${summary.team_checkins_deleted} team check-ins, ${summary.player_checkins_deleted} player check-ins, ${summary.matches_cleared} match assignments, ${summary.lookup_rows_deleted} lookup rows, and ${summary.consent_events_deleted} consent rows.`
       )
@@ -8171,6 +8288,34 @@ function SmsAdminTab({
                 Use comma or newline-separated numbers. They are normalized to E.164 on save.
               </div>
             </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, backgroundColor: '#fff', flex: '1 1 420px', minWidth: 360 }}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15 }}>Player Contacts</h3>
+        <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>
+          Team player edits sync automatically. Use this only after a large import or if a player still looks wrong in the SMS picker.
+        </div>
+        <button
+          onClick={() => void handleSyncPlayerContacts()}
+          disabled={syncingPlayerContacts || wipingPlayers}
+          style={{ padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+        >
+          {syncingPlayerContacts ? 'Rebuilding…' : 'Rebuild / Sync Player Contacts'}
+        </button>
+        {playerAdminNotice && (
+          <div style={{
+            marginTop: 12,
+            padding: 10,
+            border: '1px solid #c8e6c9',
+            borderRadius: 6,
+            backgroundColor: '#f1f8e9',
+            fontSize: 13,
+            color: '#1b5e20',
+            whiteSpace: 'pre-wrap',
+          }}>
+            {playerAdminNotice}
           </div>
         )}
       </div>
@@ -8608,13 +8753,6 @@ function SmsAdminTab({
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                     <button
-                      onClick={handleSyncPlayerContacts}
-                      disabled={syncingPlayerContacts || wipingPlayers}
-                      style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer' }}
-                    >
-                      {syncingPlayerContacts ? 'Rebuilding…' : 'Rebuild Player Links'}
-                    </button>
-                    <button
                       onClick={handleWipePlayers}
                       disabled={wipingPlayers || syncingPlayerContacts}
                       style={{ padding: '5px 10px', fontSize: 12, cursor: 'pointer', backgroundColor: '#fff5f5', border: '1px solid #f1b5b5', color: '#a12626' }}
@@ -8622,19 +8760,9 @@ function SmsAdminTab({
                       {wipingPlayers ? 'Clearing…' : 'Temporary: Clear Players + Teams'}
                     </button>
                     <span style={{ fontSize: 11, color: '#666' }}>
-                      Team changes sync automatically. Use Rebuild only after a big import or if something looks wrong.
+                      Team changes sync automatically. Rebuild / Sync Player Contacts is at the top of this tab.
                     </span>
                   </div>
-                  {playerSyncSummary && (
-                    <div style={{ fontSize: 11, color: '#444', marginTop: 6 }}>
-                      Last sync — players +{playerSyncSummary.players_created} created / {playerSyncSummary.players_updated} updated, links +{playerSyncSummary.links_created} created / {playerSyncSummary.links_updated} updated / {playerSyncSummary.links_removed} removed.
-                    </div>
-                  )}
-                  {playerAdminNotice && (
-                    <div style={{ fontSize: 11, color: '#444', marginTop: 6 }}>
-                      {playerAdminNotice}
-                    </div>
-                  )}
                 </div>
                 <button onClick={saveSettings} disabled={savingSettings} style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
                   {savingSettings ? 'Saving…' : 'Save Settings'}

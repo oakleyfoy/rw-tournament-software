@@ -10,6 +10,7 @@ from app.models.event import Event
 from app.models.player import Player
 from app.models.sms_log import SmsLog
 from app.models.team import Team
+from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 
 
@@ -84,6 +85,16 @@ def setup_targeting_data(session: Session):
     session.add(player)
     session.commit()
     session.refresh(player)
+    session.add(
+        TeamPlayer(
+            team_id=mixed_team.id,
+            player_id=player.id,
+            lineup_slot=1,
+            role="player",
+            is_primary_contact=True,
+        )
+    )
+    session.commit()
 
     return tournament, mixed_event, womens_event, mixed_team, womens_team, player
 

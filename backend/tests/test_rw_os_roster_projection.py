@@ -767,18 +767,11 @@ def test_draw_builder_shape_after_projection(client: TestClient, session: Sessio
     assert all((edge.reason or "").startswith("group:") for edge in edges)
 
 
-def test_player_sync_only_when_player_contacts_only_enabled(client: TestClient, session: Session):
+def test_player_sync_always_runs_on_roster_projection(client: TestClient, session: Session):
     from app.models.player import Player
-    from app.models.tournament_sms_settings import TournamentSmsSettings
 
     teams = _womens_field(8)
     imported = _import_payload(session, 924, teams)
-    _approve(client, imported.id, {"womens": "8"})
-    assert session.exec(select(Player).where(Player.tournament_id == imported.tournament_id)).all() == []
-
-    settings = TournamentSmsSettings(tournament_id=imported.tournament_id, player_contacts_only=True)
-    session.add(settings)
-    session.commit()
     _approve(client, imported.id, {"womens": "8"})
     players = session.exec(select(Player).where(Player.tournament_id == imported.tournament_id)).all()
     assert players

@@ -22,12 +22,18 @@ from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
-from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.services.canonical_teams import normalize_avoid_group
 from app.services.combined_roster_writes import (
     add_missing_group_avoid_edges,
     apply_team_contact_row,
     sync_players_from_team_slots_if_enabled,
+)
+from app.services.player_roster_sync import (
+    build_substitution_staff_message,
+    detect_slot_substitutions,
+    player_sync_has_changes,
+    snapshot_team_slots,
+    sync_player_links_for_tournament,
 )
 from app.utils.team_injection import TeamInjectionError, inject_teams_v1
 
@@ -50,6 +56,15 @@ class TeamCreateRequest(BaseModel):
     player2_cellphone: Optional[str] = None
     player2_email: Optional[str] = None
     registration_timestamp: Optional[datetime] = None
+
+
+class PlayerSubstitutionNotice(BaseModel):
+    slot: int
+    event_name: str
+    old_name: str
+    new_name: str
+    old_phone: Optional[str] = None
+    new_phone: Optional[str] = None
 
 
 class TeamUpdateRequest(BaseModel):
@@ -94,6 +109,9 @@ class TeamResponse(BaseModel):
     registration_timestamp: Optional[datetime] = None
     created_at: datetime
     wf_group_index: Optional[int] = None
+    player_substitutions: List[PlayerSubstitutionNotice] = []
+    staff_message: Optional[str] = None
+    text_list_sync_required: bool = False
 
 
 # ============================================================================
@@ -103,18 +121,8 @@ class TeamResponse(BaseModel):
 
 def _sync_player_contacts_if_enabled(session: Session, tournament_id: int) -> None:
     """Keep Player/TeamPlayer contacts in sync after team edits."""
-    settings = session.exec(
-        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
-    ).first()
-    if not settings or not bool(getattr(settings, "player_contacts_only", False)):
-        return
-    from app.routes.sms import _sync_players_and_team_links_from_team_slots
-
-    stats = _sync_players_and_team_links_from_team_slots(
-        session=session,
-        tournament_id=tournament_id,
-    )
-    if any(stats.values()):
+    stats = sync_player_links_for_tournament(session, tournament_id)
+    if player_sync_has_changes(stats):
         session.commit()
 
 
@@ -225,6 +233,7 @@ def update_team(event_id: int, team_id: int, request: TeamUpdateRequest, session
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    before_slots = snapshot_team_slots(team)
     if request.name is not None:
         team.name = request.name
     if request.seed is not None:
@@ -248,12 +257,31 @@ def update_team(event_id: int, team_id: int, request: TeamUpdateRequest, session
     if request.notes is not None:
         team.notes = request.notes
 
+    substitutions = detect_slot_substitutions(
+        before_slots,
+        snapshot_team_slots(team),
+        event_name=event.name,
+    )
     try:
         session.add(team)
         session.commit()
         session.refresh(team)
         _sync_player_contacts_if_enabled(session, event.tournament_id)
-        return team
+        response = TeamResponse.model_validate(team)
+        response.player_substitutions = [
+            PlayerSubstitutionNotice(
+                slot=item.slot,
+                event_name=item.event_name,
+                old_name=item.old_name,
+                new_name=item.new_name,
+                old_phone=item.old_phone,
+                new_phone=item.new_phone,
+            )
+            for item in substitutions
+        ]
+        response.staff_message = build_substitution_staff_message(substitutions)
+        response.text_list_sync_required = bool(substitutions)
+        return response
     except Exception as e:
         session.rollback()
         if "UNIQUE constraint failed" in str(e) or "IntegrityError" in str(type(e).__name__):

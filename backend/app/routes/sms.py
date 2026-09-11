@@ -146,6 +146,23 @@ class SmsPhoneListImportResponse(BaseModel):
     rejected_rows: List[SmsPhoneListRejectedRow]
 
 
+class SmsPhoneListRosterSyncContact(BaseModel):
+    name: str
+    phone: str
+    event_name: Optional[str] = None
+    member_id: Optional[int] = None
+
+
+class SmsPhoneListRosterSyncResponse(BaseModel):
+    phone_list_id: int
+    phone_list_name: str
+    add: List[SmsPhoneListRosterSyncContact]
+    remove: List[SmsPhoneListRosterSyncContact]
+    unchanged_count: int
+    applied: bool = False
+    phone_list: Optional[SmsPhoneListResponse] = None
+
+
 class SmsLogResponse(BaseModel):
     """Single SMS log entry."""
 
@@ -399,6 +416,9 @@ class SmsPlayerSyncResponse(BaseModel):
     links_created: int
     links_updated: int
     links_removed: int
+    slots_checked: int = 0
+    already_correct: int = 0
+    staff_message: Optional[str] = None
 
 
 class SmsPlayerWipeResponse(BaseModel):
@@ -992,6 +1012,8 @@ def _sync_players_and_team_links_from_team_slots(
             "links_created": 0,
             "links_updated": 0,
             "links_removed": 0,
+            "slots_checked": 0,
+            "already_correct": 0,
         }
 
     players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
@@ -1012,6 +1034,8 @@ def _sync_players_and_team_links_from_team_slots(
         "links_created": 0,
         "links_updated": 0,
         "links_removed": 0,
+        "slots_checked": 0,
+        "already_correct": 0,
     }
 
     for team in team_rows:
@@ -1019,6 +1043,7 @@ def _sync_players_and_team_links_from_team_slots(
             continue
         team_id = team.id
         p1_name, p2_name = _team_player_names(team)
+        stats["slots_checked"] += 2
 
         desired_by_slot: dict[int, Player] = {}
         seen_player_ids: set[int] = set()
@@ -1044,11 +1069,16 @@ def _sync_players_and_team_links_from_team_slots(
                 players_by_phone[phone_e164] = player
                 stats["players_created"] += 1
             else:
+                from app.services.player_roster_sync import normalize_player_name
+
                 updated = False
-                if player_name and (not player.full_name or player.full_name.startswith("Unknown (")):
+                if player_name and (
+                    not player.full_name
+                    or player.full_name.startswith("Unknown (")
+                    or normalize_player_name(player.full_name) != normalize_player_name(player_name)
+                ):
                     player.full_name = player_name
-                    if not player.display_name:
-                        player.display_name = player_name
+                    player.display_name = player_name
                     updated = True
                 if not player.email:
                     email = _team_slot_email(team, slot)
@@ -1072,6 +1102,7 @@ def _sync_players_and_team_links_from_team_slots(
                 continue
             stale = links_by_team_slot.get((team_id, slot))
             if stale is None:
+                stats["already_correct"] += 1
                 continue
             session.delete(stale)
             stats["links_removed"] += 1
@@ -1099,6 +1130,8 @@ def _sync_players_and_team_links_from_team_slots(
                 if changed:
                     session.add(existing_pair_link)
                     stats["links_updated"] += 1
+                else:
+                    stats["already_correct"] += 1
 
                 if existing_slot_link is not None and existing_slot_link.id != existing_pair_link.id:
                     session.delete(existing_slot_link)
@@ -1850,7 +1883,11 @@ def get_sms_players(
 ):
     """List existing Player rows for player-target lookup in SMS UI."""
     _get_tournament_or_404(session, tournament_id)
+    from app.services.player_roster_sync import active_tournament_player_ids
+
+    active_ids = active_tournament_player_ids(session, tournament_id)
     players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+    players = [p for p in players if p.id is not None and p.id in active_ids]
     players.sort(
         key=lambda p: (
             (p.display_name or p.full_name or "").lower(),
@@ -1866,7 +1903,6 @@ def get_sms_players(
             consent_status=(p.sms_consent_status or "unknown").lower(),
         )
         for p in players
-        if p.id is not None
     ]
 
 
@@ -2007,6 +2043,69 @@ def import_sms_phone_list_members(
     )
 
 
+def _serialize_phone_list_roster_sync(
+    session: Session,
+    tournament_id: int,
+    phone_list_id: int,
+    *,
+    applied: bool,
+) -> SmsPhoneListRosterSyncResponse:
+    from app.services.player_roster_sync import preview_text_list_roster_sync
+
+    try:
+        preview = preview_text_list_roster_sync(session, tournament_id, phone_list_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    members = _get_phone_list_members(session, phone_list_id)
+    return SmsPhoneListRosterSyncResponse(
+        phone_list_id=preview["phone_list_id"],
+        phone_list_name=preview["phone_list_name"],
+        add=[SmsPhoneListRosterSyncContact(**row) for row in preview["add"]],
+        remove=[SmsPhoneListRosterSyncContact(**row) for row in preview["remove"]],
+        unchanged_count=preview["unchanged_count"],
+        applied=applied,
+        phone_list=_serialize_phone_list(phone_list, members) if applied else None,
+    )
+
+
+@router.get("/phone-lists/{phone_list_id}/roster-sync", response_model=SmsPhoneListRosterSyncResponse)
+def preview_sms_phone_list_roster_sync(
+    tournament_id: int,
+    phone_list_id: int,
+    session: Session = Depends(get_session),
+):
+    """Preview ADD/REMOVE for a Text List without changing members or sending SMS."""
+    _get_tournament_or_404(session, tournament_id)
+    _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    return _serialize_phone_list_roster_sync(session, tournament_id, phone_list_id, applied=False)
+
+
+@router.post("/phone-lists/{phone_list_id}/roster-sync", response_model=SmsPhoneListRosterSyncResponse)
+def apply_sms_phone_list_roster_sync(
+    tournament_id: int,
+    phone_list_id: int,
+    session: Session = Depends(get_session),
+):
+    """Apply ADD/REMOVE from current Team roster without deleting unrelated manual numbers."""
+    _get_tournament_or_404(session, tournament_id)
+    _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    from app.services.player_roster_sync import apply_text_list_roster_sync
+
+    preview = apply_text_list_roster_sync(session, tournament_id, phone_list_id)
+    phone_list = _get_phone_list_or_404(session, tournament_id, phone_list_id)
+    members = _get_phone_list_members(session, phone_list_id)
+    return SmsPhoneListRosterSyncResponse(
+        phone_list_id=preview["phone_list_id"],
+        phone_list_name=preview["phone_list_name"],
+        add=[SmsPhoneListRosterSyncContact(**row) for row in preview["add"]],
+        remove=[SmsPhoneListRosterSyncContact(**row) for row in preview["remove"]],
+        unchanged_count=preview["unchanged_count"],
+        applied=True,
+        phone_list=_serialize_phone_list(phone_list, members),
+    )
+
+
 @router.post("/players/wipe", response_model=SmsPlayerWipeResponse)
 def wipe_sms_players(
     tournament_id: int,
@@ -2137,16 +2236,19 @@ def sync_player_contacts(
     session: Session = Depends(get_session),
 ):
     """
-    Force-sync Player + TeamPlayer links from legacy team contact slots.
+    Manual safety rebuild of Player + TeamPlayer links from current Team slots.
 
-    Useful after bulk team edits/imports when player-contacts-only mode is on.
+    Does not send SMS, delete historical Player rows, or modify Text Lists.
     """
-    _get_tournament_or_404(session, tournament_id)
-    stats = _sync_players_and_team_links_from_team_slots(
-        session=session,
-        tournament_id=tournament_id,
+    from app.services.player_roster_sync import (
+        build_player_sync_staff_message,
+        player_sync_has_changes,
+        sync_player_links_for_tournament,
     )
-    if any(stats.values()):
+
+    _get_tournament_or_404(session, tournament_id)
+    stats = sync_player_links_for_tournament(session, tournament_id)
+    if player_sync_has_changes(stats):
         session.commit()
     return SmsPlayerSyncResponse(
         tournament_id=tournament_id,
@@ -2155,6 +2257,9 @@ def sync_player_contacts(
         links_created=int(stats["links_created"]),
         links_updated=int(stats["links_updated"]),
         links_removed=int(stats["links_removed"]),
+        slots_checked=int(stats.get("slots_checked", 0) or 0),
+        already_correct=int(stats.get("already_correct", 0) or 0),
+        staff_message=build_player_sync_staff_message(stats),
     )
 
 
