@@ -36,7 +36,7 @@ def test_board_courts_ignore_inactive_and_other_times():
     assert courts == ["Court 1"]
 
 
-def test_validate_rejects_court_without_match_time_slot():
+def test_validate_rejects_court_missing_from_active_board():
     slots = [
         _slot(start=time(10, 30), court_number=1),
         _slot(start=time(12, 30), court_number=9),
@@ -50,6 +50,20 @@ def test_validate_rejects_court_without_match_time_slot():
             match_slot=match_slot,
             active_slot_key=slot_key(date(2026, 7, 10), time(10, 30)),
         )
+
+
+def test_validate_allows_earlier_match_onto_court_at_active_block():
+    slots = [
+        _slot(start=time(10, 30), court_number=1),
+        _slot(start=time(12, 30), court_number=1),
+        _slot(start=time(12, 30), court_number=9),
+    ]
+    validate_checkin_court_assignment(
+        slots=slots,
+        target_slot=slots[2],
+        match_slot=slots[0],
+        active_slot_key=slot_key(date(2026, 7, 10), time(12, 30)),
+    )
 
 
 def test_format_slot_time_label_matches_desk_copy():
