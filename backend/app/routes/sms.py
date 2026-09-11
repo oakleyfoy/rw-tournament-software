@@ -1057,6 +1057,7 @@ def _sync_players_and_team_links_from_team_slots(
                 team_id=team_id,
                 slot_name=player_name,
                 slot_phone=phone_e164,
+                slot_email=_team_slot_email(team, slot),
             )
             if player is None and phone_e164:
                 player = players_by_phone.get(phone_e164)
@@ -1094,16 +1095,6 @@ def _sync_players_and_team_links_from_team_slots(
                     if email:
                         player.email = email
                         updated = True
-                if player.phone_e164 and slot == 1:
-                    if getattr(team, "player1_cellphone", None) != player.phone_e164:
-                        team.player1_cellphone = player.phone_e164
-                        team.p1_cell = player.phone_e164
-                        session.add(team)
-                elif player.phone_e164 and slot == 2:
-                    if getattr(team, "player2_cellphone", None) != player.phone_e164:
-                        team.player2_cellphone = player.phone_e164
-                        team.p2_cell = player.phone_e164
-                        session.add(team)
                 if updated:
                     player.updated_at = datetime.now(timezone.utc)
                     session.add(player)
@@ -1306,6 +1297,7 @@ def _team_targets_from_current_roster(
             team_id=team.id,
             slot_name=player_name,
             slot_phone=_team_slot_phone(team, slot),
+            slot_email=_team_slot_email(team, slot),
         )
         if not player or not player.phone_e164:
             continue

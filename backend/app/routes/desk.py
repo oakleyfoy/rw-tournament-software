@@ -4927,6 +4927,10 @@ def get_desk_teams(
     if not event_ids:
         return []
 
+    from app.services.player_roster_sync import restore_team_phones_from_slot_emails
+
+    if restore_team_phones_from_slot_emails(session, tournament_id):
+        session.commit()
     teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()
 
     items = []
