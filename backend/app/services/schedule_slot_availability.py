@@ -153,6 +153,47 @@ def desk_operational_slot_keys(
     return operational
 
 
+def desk_board_courts(
+    grid_slots: Iterable[ScheduleSlot],
+    *,
+    operational_keys: Iterable[str],
+    playing_courts: Iterable[str],
+    ready_keys: Iterable[str],
+) -> list[str]:
+    """
+    Courts on the Check-In board.
+
+    Use the earliest playing/ready block, plus leftover in-progress
+    courts. Empty later-block courts (11/12/19-22 at 12:30) stay hidden
+    unless a ready match actually needs that later time.
+    """
+    slot_list = list(grid_slots)
+    keys = [key for key in operational_keys if key]
+    if not keys:
+        return []
+
+    courts = set(board_courts_for_slot_key(slot_list, keys[0]))
+    courts.update(court_display_name(name) for name in playing_courts if name)
+
+    ready = {key for key in ready_keys if key}
+    if ready:
+        ready_key_set = ready
+        for key in keys[1:]:
+            if key in ready_key_set:
+                courts.update(board_courts_for_slot_key(slot_list, key))
+        ready_courts = set(board_courts_for_slot_keys(slot_list, ready))
+        for later in keys[1:]:
+            later_only = set(board_courts_for_slot_key(slot_list, later)) - courts
+            if later_only and later_only - ready_courts:
+                courts.update(later_only)
+                break
+
+    return sorted(
+        courts,
+        key=lambda name: (int("".join(ch for ch in name if ch.isdigit()) or "0"), name),
+    )
+
+
 def court_has_slot_at_key(slots: Iterable[ScheduleSlot], court_name: str, key: Optional[str]) -> bool:
     expected = court_display_name(court_name)
     return any(court_display_for_slot(slot) == expected for slot in slots_for_key(slots, key))

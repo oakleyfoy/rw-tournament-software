@@ -545,6 +545,45 @@ def test_assign_keeps_match_on_its_own_time_not_next_hour(client, session):
     assert assignment.slot_id == court1_830.id
 
 
+def test_leftover_playing_does_not_open_empty_later_courts(client, session):
+    t, v, teams, early_match, _slots = _setup_open_courts_tournament(session, activity_time=time(8, 30))
+    early_match.runtime_status = "IN_PROGRESS"
+    leftover = Match(
+        tournament_id=t.id,
+        event_id=early_match.event_id,
+        schedule_version_id=v.id,
+        match_code="WOM_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
+        runtime_status="IN_PROGRESS",
+    )
+    session.add(leftover)
+    session.flush()
+    court10_1230 = _add_slot(session, t, v, FRIDAY, time(12, 30), 10)
+    _add_slot(session, t, v, FRIDAY, time(12, 30), 19)
+    _add_slot(session, t, v, FRIDAY, time(12, 30), 20)
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=leftover.id, slot_id=court10_1230.id))
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+
+    body = _snapshot(client, t.id, v.id)
+    board, open_courts = _board_and_open_courts(body)
+    assert "Court 10" in board
+    assert "Court 10" in body["now_playing_by_court"]
+    assert "Court 10" not in open_courts
+    assert "Court 19" not in board
+    assert "Court 19" not in open_courts
+    assert "Court 20" not in board
+    assert "Court 20" not in open_courts
+
+
 def test_court_availability_is_isolated_by_tournament(client, session):
     t_a, v_a, _teams_a, _match_a, _slots_a = _setup_open_courts_tournament(
         session,

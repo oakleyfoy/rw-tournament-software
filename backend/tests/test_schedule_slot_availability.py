@@ -6,6 +6,7 @@ from app.models.schedule_slot import ScheduleSlot
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
     board_courts_for_slot_key,
+    desk_board_courts,
     desk_operational_slot_keys,
     format_slot_time_label,
     slot_key,
@@ -113,3 +114,26 @@ def test_operational_keys_open_later_only_courts_for_leftover_ready():
         grid_slots=slots,
     )
     assert operational == keys
+
+
+def test_board_courts_hide_empty_later_block_when_leftover_is_playing():
+    friday = date(2026, 7, 10)
+    slots = [
+        _slot(start=time(8, 0), court_number=1),
+        _slot(start=time(8, 0), court_number=8),
+        _slot(start=time(12, 30), court_number=10),
+        _slot(start=time(12, 30), court_number=11),
+        _slot(start=time(12, 30), court_number=19),
+    ]
+    keys = [slot_key(friday, time(8, 0)), slot_key(friday, time(12, 30))]
+    courts = desk_board_courts(
+        slots,
+        operational_keys=keys,
+        playing_courts={"Court 1", "Court 10"},
+        ready_keys=set(),
+    )
+    assert "Court 1" in courts
+    assert "Court 8" in courts
+    assert "Court 10" in courts
+    assert "Court 11" not in courts
+    assert "Court 19" not in courts
