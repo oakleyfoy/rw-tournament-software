@@ -51,8 +51,8 @@ from app.services.reschedule_engine import (
 )
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
-    board_courts_for_slot_keys,
     court_display_for_slot,
+    desk_board_courts,
     desk_operational_slot_keys,
     find_court_slot,
     format_slot_key_time_label,
@@ -1418,7 +1418,12 @@ def _build_checkin_snapshot(
         checkin_slot_rows[option.slot_key] = rows
 
     assignable_slot_keys = activity_slot_keys or ([active_slot_key] if active_slot_key else [])
-    checkin_board_courts = board_courts_for_slot_keys(grid_slots, assignable_slot_keys)
+    checkin_board_courts = desk_board_courts(
+        grid_slots,
+        operational_keys=assignable_slot_keys,
+        playing_courts=active_courts,
+        ready_keys=ready_slot_keys,
+    )
     checkin_board_court_set = set(checkin_board_courts)
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
@@ -1426,6 +1431,8 @@ def _build_checkin_snapshot(
     def _append_available_slot(slot: ScheduleSlot) -> None:
         court_name = court_display_for_slot(slot)
         if court_name in used_court:
+            return
+        if court_name not in checkin_board_court_set:
             return
         if court_name in active_courts or court_name in closed_courts:
             return
