@@ -9,7 +9,7 @@ hard-deleted rows; inactive rows are hidden from the Grid and from Desk.
 from __future__ import annotations
 
 from datetime import date
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from app.models.schedule_slot import ScheduleSlot
 
@@ -153,36 +153,71 @@ def desk_operational_slot_keys(
     return operational
 
 
+def current_desk_slot_key(
+    operational_keys: Iterable[str],
+    *,
+    playing_key_counts: Optional[Mapping[str, int]] = None,
+    ready_keys: Iterable[str] = (),
+) -> Optional[str]:
+    """
+    The working Check-In block: the playing time with the most matches.
+    Ties keep the earlier key so one leftover 12:30 does not take over
+    an 8:00/9:00 board.
+    """
+    keys = [key for key in operational_keys if key]
+    if not keys:
+        return None
+    counts = playing_key_counts or {}
+    best = max((counts.get(key, 0) for key in keys), default=0)
+    if best > 0:
+        for key in keys:
+            if counts.get(key, 0) == best:
+                return key
+    ready = {key for key in ready_keys if key}
+    for key in keys:
+        if key in ready:
+            return key
+    return keys[0]
+
+
 def desk_board_courts(
     grid_slots: Iterable[ScheduleSlot],
     *,
     operational_keys: Iterable[str],
     playing_courts: Iterable[str],
     ready_keys: Iterable[str],
+    playing_key_counts: Optional[Mapping[str, int]] = None,
 ) -> list[str]:
     """
     Courts on the Check-In board.
 
-    Use the earliest playing/ready block, plus leftover in-progress
-    courts. Empty later-block courts (11/12/19-22 at 12:30) stay hidden
-    unless a ready match actually needs that later time.
+    Show every Grid court at the current playing block, including empty
+    9:00 courts 19-22. Leftover in-progress courts stay visible. Empty
+    courts at a leftover later time (12:30) stay hidden unless a ready
+    match needs that time.
     """
     slot_list = list(grid_slots)
     keys = [key for key in operational_keys if key]
     if not keys:
         return []
 
-    courts = set(board_courts_for_slot_key(slot_list, keys[0]))
+    current_key = current_desk_slot_key(
+        keys,
+        playing_key_counts=playing_key_counts,
+        ready_keys=ready_keys,
+    )
+    courts = set(board_courts_for_slot_key(slot_list, current_key))
     courts.update(court_display_name(name) for name in playing_courts if name)
 
     ready = {key for key in ready_keys if key}
     if ready:
-        ready_key_set = ready
-        for key in keys[1:]:
-            if key in ready_key_set:
+        for key in keys:
+            if key in ready:
                 courts.update(board_courts_for_slot_key(slot_list, key))
         ready_courts = set(board_courts_for_slot_keys(slot_list, ready))
-        for later in keys[1:]:
+        for later in keys:
+            if later == current_key:
+                continue
             later_only = set(board_courts_for_slot_key(slot_list, later)) - courts
             if later_only and later_only - ready_courts:
                 courts.update(later_only)

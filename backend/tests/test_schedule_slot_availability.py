@@ -6,6 +6,7 @@ from app.models.schedule_slot import ScheduleSlot
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
     board_courts_for_slot_key,
+    current_desk_slot_key,
     desk_board_courts,
     desk_operational_slot_keys,
     format_slot_time_label,
@@ -131,9 +132,39 @@ def test_board_courts_hide_empty_later_block_when_leftover_is_playing():
         operational_keys=keys,
         playing_courts={"Court 1", "Court 10"},
         ready_keys=set(),
+        playing_key_counts={keys[0]: 1, keys[1]: 1},
     )
+    assert current_desk_slot_key(keys, playing_key_counts={keys[0]: 1, keys[1]: 1}) == keys[0]
     assert "Court 1" in courts
     assert "Court 8" in courts
     assert "Court 10" in courts
     assert "Court 11" not in courts
     assert "Court 19" not in courts
+
+
+def test_board_courts_keep_all_open_at_current_playing_block():
+    friday = date(2026, 7, 10)
+    slots = [
+        _slot(start=time(8, 0), court_number=1),
+        _slot(start=time(9, 0), court_number=1),
+        _slot(start=time(9, 0), court_number=12),
+        _slot(start=time(9, 0), court_number=19),
+        _slot(start=time(9, 0), court_number=22),
+        _slot(start=time(12, 30), court_number=20),
+    ]
+    keys = [
+        slot_key(friday, time(8, 0)),
+        slot_key(friday, time(9, 0)),
+        slot_key(friday, time(12, 30)),
+    ]
+    courts = desk_board_courts(
+        slots,
+        operational_keys=keys,
+        playing_courts={"Court 1"},
+        ready_keys=set(),
+        playing_key_counts={keys[0]: 1, keys[1]: 8},
+    )
+    assert "Court 12" in courts
+    assert "Court 19" in courts
+    assert "Court 22" in courts
+    assert "Court 20" not in courts

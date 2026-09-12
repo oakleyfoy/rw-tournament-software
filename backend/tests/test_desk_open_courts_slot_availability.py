@@ -584,6 +584,22 @@ def test_leftover_playing_does_not_open_empty_later_courts(client, session):
     assert "Court 20" not in open_courts
 
 
+def test_current_block_keeps_all_open_courts_including_late_numbers(client, session):
+    t, v, _teams, match, _slots = _setup_open_courts_tournament(session, activity_time=time(9, 30))
+    match.runtime_status = "IN_PROGRESS"
+    for court_number in (12, 19, 20, 21, 22):
+        _add_slot(session, t, v, FRIDAY, time(9, 30), court_number)
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+
+    body = _snapshot(client, t.id, v.id)
+    board, open_courts = _board_and_open_courts(body)
+    assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|09:30"
+    for court_number in (12, 19, 20, 21, 22):
+        assert f"Court {court_number}" in board
+        assert f"Court {court_number}" in open_courts
+
+
 def test_court_availability_is_isolated_by_tournament(client, session):
     t_a, v_a, _teams_a, _match_a, _slots_a = _setup_open_courts_tournament(
         session,
