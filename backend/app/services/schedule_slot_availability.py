@@ -115,6 +115,44 @@ def ordered_activity_slot_keys(ordered_keys: Iterable[str], *key_sets: Iterable[
     return [key for key in ordered_keys if key in activity]
 
 
+def desk_operational_slot_keys(
+    ordered_keys: Iterable[str],
+    *,
+    playing_keys: Iterable[str],
+    ready_keys: Iterable[str],
+    waiting_keys: Iterable[str],
+    grid_slots: Iterable[ScheduleSlot],
+) -> list[str]:
+    """
+    Desk board keys for Open Courts / assign remaps.
+
+    Playing and ready blocks stay visible, including leftover earlier
+    matches. Later waiting-only blocks (8:00 playing + 9:00 waiting) do
+    not open next-hour courts. Later-only courts such as 9/10 at 12:30
+    still appear when a ready match has no cell at its own time.
+    """
+    ordered = list(ordered_keys)
+    playing = {key for key in playing_keys if key}
+    ready = {key for key in ready_keys if key}
+    waiting = {key for key in waiting_keys if key}
+    operational = ordered_activity_slot_keys(ordered, playing, ready)
+    if not operational:
+        return [key for key in ordered if key in waiting][:1]
+
+    slot_list = list(grid_slots)
+    operational_courts = set(board_courts_for_slot_keys(slot_list, operational))
+    later_keys = [key for key in ordered if key not in operational and key in waiting]
+    if not ready or not later_keys:
+        return operational
+
+    ready_courts = set(board_courts_for_slot_keys(slot_list, ready))
+    for later in later_keys:
+        later_only = set(board_courts_for_slot_key(slot_list, later)) - operational_courts
+        if later_only and later_only - ready_courts:
+            return ordered_activity_slot_keys(ordered, operational, [later])
+    return operational
+
+
 def court_has_slot_at_key(slots: Iterable[ScheduleSlot], court_name: str, key: Optional[str]) -> bool:
     expected = court_display_name(court_name)
     return any(court_display_for_slot(slot) == expected for slot in slots_for_key(slots, key))

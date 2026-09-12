@@ -6,6 +6,7 @@ from app.models.schedule_slot import ScheduleSlot
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
     board_courts_for_slot_key,
+    desk_operational_slot_keys,
     format_slot_time_label,
     slot_key,
     validate_checkin_court_assignment,
@@ -70,3 +71,45 @@ def test_format_slot_time_label_matches_desk_copy():
     assert format_slot_time_label(time(10, 30)) == "10:30 AM"
     assert format_slot_time_label(time(8, 30)) == "8:30 AM"
     assert format_slot_time_label(time(12, 30)) == "12:30 PM"
+
+
+def test_operational_keys_ignore_next_hour_waiting_only():
+    friday = date(2026, 7, 10)
+    slots = [
+        _slot(start=time(8, 0), court_number=1),
+        _slot(start=time(8, 0), court_number=8),
+        _slot(start=time(9, 0), court_number=1),
+        _slot(start=time(9, 0), court_number=11),
+        _slot(start=time(12, 30), court_number=9),
+    ]
+    keys = [
+        slot_key(friday, time(8, 0)),
+        slot_key(friday, time(9, 0)),
+        slot_key(friday, time(12, 30)),
+    ]
+    operational = desk_operational_slot_keys(
+        keys,
+        playing_keys={keys[0], keys[2]},
+        ready_keys=set(),
+        waiting_keys={keys[1]},
+        grid_slots=slots,
+    )
+    assert operational == [keys[0], keys[2]]
+
+
+def test_operational_keys_open_later_only_courts_for_leftover_ready():
+    friday = date(2026, 7, 10)
+    slots = [
+        _slot(start=time(11, 30), court_number=1),
+        _slot(start=time(12, 30), court_number=1),
+        _slot(start=time(12, 30), court_number=9),
+    ]
+    keys = [slot_key(friday, time(11, 30)), slot_key(friday, time(12, 30))]
+    operational = desk_operational_slot_keys(
+        keys,
+        playing_keys={keys[0]},
+        ready_keys={keys[0]},
+        waiting_keys={keys[1]},
+        grid_slots=slots,
+    )
+    assert operational == keys
