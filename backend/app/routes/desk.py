@@ -53,10 +53,11 @@ from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
     board_courts_for_slot_keys,
     court_display_for_slot,
+    desk_operational_slot_keys,
+    find_court_slot,
     format_slot_key_time_label,
     format_slot_time_label,
     iter_grid_slots,
-    ordered_activity_slot_keys,
     slot_key_for_slot,
     validate_checkin_court_assignment,
 )
@@ -1375,11 +1376,12 @@ def _build_checkin_snapshot(
             continue
         ordered_slot_keys.append(key)
         seen_slot_keys.add(key)
-    activity_slot_keys = ordered_activity_slot_keys(
+    activity_slot_keys = desk_operational_slot_keys(
         ordered_slot_keys,
-        waiting_slot_keys,
-        ready_slot_keys,
-        playing_slot_keys,
+        playing_keys=playing_slot_keys,
+        ready_keys=ready_slot_keys,
+        waiting_keys=waiting_slot_keys,
+        grid_slots=grid_slots,
     )
     active_slot_key = activity_slot_keys[0] if activity_slot_keys else (
         ordered_slot_keys[0] if ordered_slot_keys else None
@@ -1664,8 +1666,7 @@ def _build_match_items(
                 scheduled_time = st.strftime("%I:%M %p").lstrip("0") if st else None
                 sort_time = st.strftime("%H:%M") if st else None
 
-            court_label = slot.court_label or str(slot.court_number)
-            court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
+            court_name = court_display_for_slot(slot)
             # In check-in mode, hide pre-assigned scheduled matches unless explicitly
             # assigned at runtime through check-in queue flow.
             status = (m.runtime_status or "SCHEDULED").upper()
@@ -1742,6 +1743,15 @@ def _build_match_items(
     return items, courts_set
 
 
+def _select_in_progress_matches(matches: List[DeskMatchItem]) -> List[DeskMatchItem]:
+    in_progress = [m for m in matches if m.status in ("IN_PROGRESS", "PAUSED")]
+    in_progress.sort(
+        key=lambda m: (m.started_at or "", m.day_date or "", m.sort_time or ""),
+        reverse=True,
+    )
+    return in_progress
+
+
 def _match_to_desk_item(
     match: Match,
     session: Session,
@@ -1783,8 +1793,7 @@ def _match_to_desk_item(
         else:
             scheduled_time = st.strftime("%I:%M %p").lstrip("0") if st else None
             sort_time = st.strftime("%H:%M") if st else None
-        court_label = slot.court_label or str(slot.court_number)
-        court_name = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
+        court_name = court_display_for_slot(slot)
     else:
         day_offset = 0
         day_label = "Unscheduled"
@@ -1926,7 +1935,7 @@ def desk_snapshot(
             court_matches.setdefault(m.court_name, []).append(m)
 
     for court, matches in court_matches.items():
-        in_progress = [m for m in matches if m.status in ("IN_PROGRESS", "PAUSED")]
+        in_progress = _select_in_progress_matches(matches)
         if in_progress:
             now_playing[court] = in_progress[0]
 
@@ -1950,7 +1959,7 @@ def desk_snapshot(
         board_up = None
         board_on = None
 
-        in_prog = [m for m in non_final_cms if m.status in ("IN_PROGRESS", "PAUSED")]
+        in_prog = _select_in_progress_matches(non_final_cms)
         if in_prog:
             board_now = in_prog[0]
 
@@ -2625,30 +2634,49 @@ def assign_ready_match_to_slot(
     version_slots = session.exec(
         select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == payload.version_id)
     ).all()
+    match_slot = session.get(ScheduleSlot, selected_assignment.slot_id)
     slot_ids = {s.slot_id for s in available_slots}
     effective_slot_id = payload.slot_id
-    if payload.slot_id not in slot_ids:
-        # Open Courts drops should land on the active board slot for that court
-        # (e.g. Court 9 at 12:30), not a same-time cell from an earlier block.
-        target_court_name = court_display_for_slot(target_slot)
-        matching_available = next((s for s in available_slots if s.court_name == target_court_name), None)
-        if matching_available is None:
-            time_label = (
-                format_slot_key_time_label(active_checkin_slot_key)
-                if active_checkin_slot_key
-                else format_slot_time_label(target_slot.start_time)
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=f"{target_court_name} is not available for the {time_label} schedule slot.",
-            )
-        rewritten_slot = session.get(ScheduleSlot, matching_available.slot_id)
-        if rewritten_slot is None:
-            raise HTTPException(status_code=404, detail="Target slot not found")
-        effective_slot_id = matching_available.slot_id
-        target_slot = rewritten_slot
-
-    match_slot = session.get(ScheduleSlot, selected_assignment.slot_id)
+    target_court_name = court_display_for_slot(target_slot)
+    same_time_slot = (
+        find_court_slot(
+            version_slots,
+            target_court_name,
+            match_slot.day_date,
+            match_slot.start_time,
+        )
+        if match_slot is not None
+        else None
+    )
+    keep_requested = payload.slot_id in slot_ids or (
+        match_slot is not None
+        and court_display_for_slot(target_slot) == target_court_name
+        and slot_key_for_slot(target_slot) == slot_key_for_slot(match_slot)
+    )
+    if not keep_requested:
+        # Prefer the court's cell at the match's own time. Only remap onto a
+        # later Open Court (12:30 leftover courts) when this court has no
+        # same-time Grid cell.
+        if same_time_slot is not None and same_time_slot.id in slot_ids:
+            effective_slot_id = same_time_slot.id
+            target_slot = same_time_slot
+        else:
+            matching_available = next((s for s in available_slots if s.court_name == target_court_name), None)
+            if matching_available is None:
+                time_label = (
+                    format_slot_key_time_label(active_checkin_slot_key)
+                    if active_checkin_slot_key
+                    else format_slot_time_label(target_slot.start_time)
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{target_court_name} is not available for the {time_label} schedule slot.",
+                )
+            rewritten_slot = session.get(ScheduleSlot, matching_available.slot_id)
+            if rewritten_slot is None:
+                raise HTTPException(status_code=404, detail="Target slot not found")
+            effective_slot_id = matching_available.slot_id
+            target_slot = rewritten_slot
     allowed_slot_keys = {active_checkin_slot_key} if active_checkin_slot_key else set()
     for available in available_slots:
         available_slot = session.get(ScheduleSlot, available.slot_id)

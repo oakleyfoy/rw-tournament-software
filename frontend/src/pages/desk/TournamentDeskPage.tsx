@@ -8908,16 +8908,16 @@ function resolveReadyAssignSlotId(
   allSlots: SnapshotSlot[],
   targetCourt: string,
 ): number | null {
-  const openSlotId = availableSlotsForCourt[0]?.slot_id
-  if (openSlotId != null) return openSlotId
-  if (!draggedSlot) return null
-  const matchingCourtSlot = allSlots.find((slot) => (
-    slot.is_active &&
-    slot.day_date === draggedSlot.day_date &&
-    (slot.start_time || '').slice(0, 5) === (draggedSlot.start_time || '').slice(0, 5) &&
-    courtDisplayFromSnapshotSlot(slot) === targetCourt
-  ))
-  return matchingCourtSlot?.slot_id ?? null
+  if (draggedSlot) {
+    const sameTimeSlot = allSlots.find((slot) => (
+      slot.is_active &&
+      slot.day_date === draggedSlot.day_date &&
+      (slot.start_time || '').slice(0, 5) === (draggedSlot.start_time || '').slice(0, 5) &&
+      courtDisplayFromSnapshotSlot(slot) === targetCourt
+    ))
+    if (sameTimeSlot) return sameTimeSlot.slot_id
+  }
+  return availableSlotsForCourt[0]?.slot_id ?? null
 }
 
 function resolveCheckInBoardCourts(data: DeskSnapshotResponse): string[] {

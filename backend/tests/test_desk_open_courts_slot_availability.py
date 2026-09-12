@@ -444,8 +444,11 @@ def test_late_courts_stay_open_while_earlier_slot_still_playing(client, session)
     session.flush()
     court1_1230 = slots[(FRIDAY, time(12, 30), 1)]
     session.add(MatchAssignment(schedule_version_id=v.id, match_id=later.id, slot_id=court1_1230.id))
+    bravo = _add_players(session, t.id, teams[1].id, "Bravo")
+    charlie = _add_players(session, t.id, teams[2].id, "Charlie")
     session.commit()
     _enable_checkin(client, t.id, v.id)
+    _check_in_both_sides(client, t.id, v.id, later.id, bravo, charlie)
 
     body = _snapshot(client, t.id, v.id)
     assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|11:30"
@@ -454,16 +457,92 @@ def test_late_courts_stay_open_while_earlier_slot_still_playing(client, session)
         assert f"Court {court_number}" in board
         assert f"Court {court_number}" in open_courts
 
-    bravo = _add_players(session, t.id, teams[1].id, "Bravo")
-    charlie = _add_players(session, t.id, teams[2].id, "Charlie")
-    session.commit()
-    _check_in_both_sides(client, t.id, v.id, later.id, bravo, charlie)
     court19_1230 = slots[(FRIDAY, time(12, 30), 19)]
     assign = client.post(
         f"/api/desk/tournaments/{t.id}/checkin/assign",
         json={"version_id": v.id, "match_id": later.id, "slot_id": court19_1230.id},
     )
     assert assign.status_code == 200, assign.text
+
+
+def test_next_hour_waiting_does_not_open_later_only_courts(client, session):
+    t, v, teams, early_match, slots = _setup_open_courts_tournament(session, activity_time=time(8, 30))
+    early_match.runtime_status = "IN_PROGRESS"
+    later = Match(
+        tournament_id=t.id,
+        event_id=early_match.event_id,
+        schedule_version_id=v.id,
+        match_code="WOM_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
+    )
+    session.add(later)
+    session.flush()
+    court1_930 = slots[(FRIDAY, time(9, 30), 1)]
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=later.id, slot_id=court1_930.id))
+    _add_slot(session, t, v, FRIDAY, time(9, 30), 11)
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+
+    body = _snapshot(client, t.id, v.id)
+    board, open_courts = _board_and_open_courts(body)
+    assert "Court 1" in board
+    assert "Court 1" not in open_courts
+    assert "Court 11" not in board
+    assert "Court 11" not in open_courts
+
+
+def test_assign_keeps_match_on_its_own_time_not_next_hour(client, session):
+    t, v, teams, match, slots = _setup_open_courts_tournament(session, activity_time=time(8, 30))
+    later = Match(
+        tournament_id=t.id,
+        event_id=match.event_id,
+        schedule_version_id=v.id,
+        match_code="WOM_WF_R1_M02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=teams[1].id,
+        team_b_id=teams[2].id,
+        placeholder_side_a="SEED_2",
+        placeholder_side_b="SEED_3",
+    )
+    session.add(later)
+    session.flush()
+    court1_830 = slots[(FRIDAY, time(8, 30), 1)]
+    court1_930 = slots[(FRIDAY, time(9, 30), 1)]
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=later.id, slot_id=court1_930.id))
+    alpha = _add_players(session, t.id, teams[0].id, "Alpha")
+    delta = _add_players(session, t.id, teams[3].id, "Delta")
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+    _check_in_both_sides(client, t.id, v.id, match.id, alpha, delta)
+
+    assign = client.post(
+        f"/api/desk/tournaments/{t.id}/checkin/assign",
+        json={"version_id": v.id, "match_id": match.id, "slot_id": court1_930.id},
+    )
+    assert assign.status_code == 200, assign.text
+
+    session.refresh(match)
+    assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == v.id,
+            MatchAssignment.match_id == match.id,
+        )
+    ).first()
+    assert match.runtime_status == "IN_PROGRESS"
+    assert assignment is not None
+    assert assignment.slot_id == court1_830.id
 
 
 def test_court_availability_is_isolated_by_tournament(client, session):
