@@ -63,6 +63,22 @@ def court_display_for_slot(slot: ScheduleSlot) -> str:
     return court_display_name(slot.court_label, slot.court_number)
 
 
+def all_desk_courts(
+    court_labels: Iterable[str],
+    grid_slots: Iterable[ScheduleSlot],
+    extra_courts: Iterable[str] = (),
+) -> list[str]:
+    """Every tournament / Grid court, whether it has a slot this hour."""
+    courts = {court_display_name(label) for label in court_labels if str(label or "").strip()}
+    for slot in iter_grid_slots(grid_slots):
+        courts.add(court_display_for_slot(slot))
+    courts.update(court_display_name(name) for name in extra_courts if name)
+    return sorted(
+        courts,
+        key=lambda name: (int("".join(ch for ch in name if ch.isdigit()) or "0"), name),
+    )
+
+
 def is_grid_active_slot(slot: ScheduleSlot) -> bool:
     return bool(getattr(slot, "is_active", True))
 

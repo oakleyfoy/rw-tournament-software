@@ -5,6 +5,7 @@ import pytest
 from app.models.schedule_slot import ScheduleSlot
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
+    all_desk_courts,
     board_courts_for_slot_key,
     current_desk_slot_key,
     desk_board_courts,
@@ -27,6 +28,22 @@ def _slot(*, start: time, court_number: int, is_active: bool = True, day: date =
         block_minutes=60,
         is_active=is_active,
     )
+
+
+def test_all_desk_courts_include_named_and_grid_courts():
+    friday = date(2026, 7, 10)
+    slots = [
+        _slot(start=time(9, 0), court_number=1),
+        _slot(start=time(12, 30), court_number=19),
+        _slot(start=time(12, 30), court_number=22),
+    ]
+    courts = all_desk_courts(["Centerberg", "1", "9"], slots, extra_courts=["Court 10"])
+    assert "Court 1" in courts
+    assert "Court 9" in courts
+    assert "Court 10" in courts
+    assert "Court 19" in courts
+    assert "Court 22" in courts
+    assert "Court Centerberg" in courts
 
 
 def test_board_courts_ignore_inactive_and_other_times():
