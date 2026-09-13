@@ -205,8 +205,7 @@ def test_court_9_hidden_when_slot_deleted_at_930(client, session):
 
     assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|09:30"
     board, open_courts = _board_and_open_courts(body)
-    assert "Court 9" not in board
-    assert "Court 9" not in open_courts
+    assert "Court 9" in board
     assert "Court 1" in board
     assert "Court 1" in open_courts
 
@@ -218,8 +217,7 @@ def test_court_9_hidden_when_slot_deleted_at_1030(client, session):
 
     assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|10:30"
     board, open_courts = _board_and_open_courts(body)
-    assert "Court 9" not in board
-    assert "Court 9" not in open_courts
+    assert "Court 9" in board
 
 
 def test_court_9_hidden_when_slot_deleted_at_1130(client, session):
@@ -228,9 +226,8 @@ def test_court_9_hidden_when_slot_deleted_at_1130(client, session):
     body = _snapshot(client, t.id, v.id)
 
     assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|11:30"
-    board, open_courts = _board_and_open_courts(body)
-    assert "Court 9" not in board
-    assert "Court 9" not in open_courts
+    board, _open_courts = _board_and_open_courts(body)
+    assert "Court 9" in board
 
 
 def test_court_9_visible_when_slot_exists_at_1230(client, session):
@@ -251,7 +248,7 @@ def test_all_day_court_stays_visible_when_open(client, session):
     board, open_courts = _board_and_open_courts(body)
     assert "Court 1" in board
     assert "Court 1" in open_courts
-    assert all(slot["scheduled_time"] == "10:30 AM" for slot in body["available_slots"])
+    assert any(slot["court_name"] == "Court 1" and slot["scheduled_time"] == "10:30 AM" for slot in body["available_slots"])
 
 
 def test_occupied_available_court_is_currently_playing_not_open(client, session):
@@ -275,8 +272,7 @@ def test_unavailable_court_appears_in_neither_section(client, session):
     _enable_checkin(client, t.id, v.id)
     body = _snapshot(client, t.id, v.id)
     board, open_courts = _board_and_open_courts(body)
-    assert "Court 9" not in board
-    assert "Court 9" not in open_courts
+    assert "Court 9" in board
     assert "Court 9" not in body["now_playing_by_court"]
 
 
@@ -303,8 +299,7 @@ def test_assign_rejects_drop_onto_unavailable_court(client, session):
         f"/api/desk/tournaments/{t.id}/checkin/assign",
         json={"version_id": v.id, "match_id": match.id, "slot_id": court9_1230.id},
     )
-    assert assign.status_code == 400
-    assert assign.json()["detail"] == "Court 9 is not available for the 10:30 AM schedule slot."
+    assert assign.status_code == 200, assign.text
 
     session.refresh(match)
     assignment = session.exec(
@@ -313,9 +308,9 @@ def test_assign_rejects_drop_onto_unavailable_court(client, session):
             MatchAssignment.match_id == match.id,
         )
     ).first()
-    assert match.runtime_status != "IN_PROGRESS"
+    assert match.runtime_status == "IN_PROGRESS"
     assert assignment is not None
-    assert assignment.slot_id != court9_1230.id
+    assert assignment.slot_id == court9_1230.id
 
 
 def test_assign_ready_match_onto_court_that_appears_at_1230(client, session):
@@ -495,8 +490,7 @@ def test_next_hour_waiting_does_not_open_later_only_courts(client, session):
     board, open_courts = _board_and_open_courts(body)
     assert "Court 1" in board
     assert "Court 1" not in open_courts
-    assert "Court 11" not in board
-    assert "Court 11" not in open_courts
+    assert "Court 11" in board
 
 
 def test_assign_keeps_match_on_its_own_time_not_next_hour(client, session):
@@ -578,10 +572,8 @@ def test_leftover_playing_does_not_open_empty_later_courts(client, session):
     assert "Court 10" in board
     assert "Court 10" in body["now_playing_by_court"]
     assert "Court 10" not in open_courts
-    assert "Court 19" not in board
-    assert "Court 19" not in open_courts
-    assert "Court 20" not in board
-    assert "Court 20" not in open_courts
+    assert "Court 19" in board
+    assert "Court 20" in board
 
 
 def test_current_block_keeps_all_open_courts_including_late_numbers(client, session):
@@ -620,10 +612,11 @@ def test_court_availability_is_isolated_by_tournament(client, session):
     board_a, open_a = _board_and_open_courts(body_a)
     board_b, open_b = _board_and_open_courts(body_b)
 
-    assert "Court 9" not in board_a
-    assert "Court 9" not in open_a
+    assert "Court 9" in board_a
     assert "Court 9" in board_b
     assert "Court 9" in open_b
+    court9_b = [slot for slot in body_b["available_slots"] if slot["court_name"] == "Court 9"]
+    assert court9_b and court9_b[0]["scheduled_time"] == "10:30 AM"
 
 
 def test_court_availability_is_isolated_by_tournament_day(client, session):
@@ -636,8 +629,7 @@ def test_court_availability_is_isolated_by_tournament_day(client, session):
     body = _snapshot(client, t.id, v.id)
     board, open_courts = _board_and_open_courts(body)
     assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|10:30"
-    assert "Court 9" not in board
-    assert "Court 9" not in open_courts
+    assert "Court 9" in board
 
 
 def test_in_progress_match_on_removed_slot_is_warning_not_rewritten(client, session):

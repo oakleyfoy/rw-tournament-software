@@ -8924,15 +8924,8 @@ function resolveCheckInBoardCourts(data: DeskSnapshotResponse): string[] {
   if (data.checkin_board_courts && data.checkin_board_courts.length > 0) {
     return data.checkin_board_courts
   }
-  const key = data.active_checkin_slot_key
-  if (key) {
-    const courts = new Set<string>()
-    for (const slot of data.slots || []) {
-      if (!slot.is_active) continue
-      const slotKey = `${slot.day_date}|${(slot.start_time || '').slice(0, 5)}`
-      if (slotKey === key) courts.add(courtDisplayFromSnapshotSlot(slot))
-    }
-    return Array.from(courts)
+  if (data.courts && data.courts.length > 0) {
+    return data.courts
   }
   return Array.from(new Set((data.available_slots || []).map((slot) => slot.court_name)))
 }
@@ -10660,13 +10653,7 @@ export default function TournamentDeskPage() {
   })
 
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
-  const openCourtRows = courtBoardRows.filter(
-    (row) =>
-      row.lane === 'open' &&
-      !row.isClosed &&
-      row.availableSlotsForCourt.length > 0 &&
-      checkInBoardCourts.includes(row.court)
-  )
+  const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open' && !row.isClosed)
 
   const getCompactDivisionLabel = (matchCode?: string | null): string => {
     const code = (matchCode || '').toUpperCase()

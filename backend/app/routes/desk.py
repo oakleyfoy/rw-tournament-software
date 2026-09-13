@@ -51,9 +51,9 @@ from app.services.reschedule_engine import (
 )
 from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
+    all_desk_courts,
     court_display_for_slot,
     current_desk_slot_key,
-    desk_board_courts,
     desk_operational_slot_keys,
     find_court_slot,
     format_slot_key_time_label,
@@ -1433,12 +1433,10 @@ def _build_checkin_snapshot(
     )
     if current_board_key:
         active_slot_key = current_board_key
-    checkin_board_courts = desk_board_courts(
+    checkin_board_courts = all_desk_courts(
+        tournament.court_names or [],
         grid_slots,
-        operational_keys=assignable_slot_keys,
-        playing_courts=active_courts,
-        ready_keys=ready_slot_keys,
-        playing_key_counts=playing_key_counts,
+        extra_courts=active_courts,
     )
     checkin_board_court_set = set(checkin_board_courts)
     available_slots: List[AvailableCourtSlot] = []
@@ -1465,17 +1463,17 @@ def _build_checkin_snapshot(
         )
         used_court.add(court_name)
 
-    # Offer every empty Grid court at the current playing block first.
-    if assignable_slot_keys:
-        assignable_key_set = set(assignable_slot_keys)
-        preferred_keys = [current_board_key] if current_board_key else []
-        preferred_keys.extend(key for key in assignable_slot_keys if key not in preferred_keys)
-        for key in preferred_keys:
-            if key not in assignable_key_set:
-                continue
-            for s in grid_slots:
-                if slot_key_for_slot(s) == key:
-                    _append_available_slot(s)
+    # Current block first, then any later Grid cell so every empty court can show.
+    preferred_keys = [current_board_key] if current_board_key else []
+    preferred_keys.extend(key for key in assignable_slot_keys if key not in preferred_keys)
+    for key in preferred_keys:
+        for s in grid_slots:
+            if slot_key_for_slot(s) == key:
+                _append_available_slot(s)
+    for s in grid_slots:
+        if current_board_key and slot_key_for_slot(s) < current_board_key:
+            continue
+        _append_available_slot(s)
 
     available_courts = [s.court_name for s in available_slots]
     checkin_court_warnings: List[CheckInCourtWarning] = []
