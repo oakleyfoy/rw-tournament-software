@@ -132,15 +132,21 @@
   display: grid;
   gap: 12px;
   background: #fff;
+  justify-items: start;
 }
 
-.split-option.recommended {
-  border-color: var(--theme-success);
-  box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.15);
+.split-option > header,
+.split-option > .why-block,
+.split-option > .bracket-range,
+.split-option > .cut-block {
+  width: 100%;
 }
 
-.split-option.selected {
-  border-color: var(--theme-primary-btn);
+.split-option.recommended,
+.split-option.selected,
+.split-option.custom {
+  border-color: var(--theme-border);
+  box-shadow: none;
 }
 
 .option-badge {
@@ -191,6 +197,134 @@
   margin-top: 8px;
   padding: 6px 12px;
   font-size: 13px;
+}
+
+.create-from-rwos .structure-actions,
+.create-from-rwos .recommendation-nav,
+.create-from-rwos .step3-final-actions,
+.create-from-rwos .custom-structure-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.create-from-rwos .btn-compact {
+  width: auto;
+  max-width: max-content;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 13px;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.create-from-rwos .btn-compact:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: 2px;
+}
+
+.create-from-rwos .btn-compact:disabled {
+  background-color: #ccc;
+  border-color: #ccc;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.create-from-rwos .btn-view-teams {
+  background: #88bdf2;
+  color: #fff;
+}
+
+.create-from-rwos .btn-view-teams:hover:not(:disabled) {
+  background: #78ade2;
+}
+
+.create-from-rwos .btn-select-structure {
+  background: #2b6cb0;
+  color: #fff;
+}
+
+.create-from-rwos .btn-select-structure:hover:not(:disabled) {
+  background: #245a94;
+}
+
+.create-from-rwos .btn-selected-structure {
+  background: #dc3545;
+  color: #fff;
+}
+
+.create-from-rwos .btn-selected-structure:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.create-from-rwos .btn-outline-neutral {
+  background: #fff;
+  border-color: #8aa0b3;
+  color: #384959;
+}
+
+.create-from-rwos .btn-outline-neutral:hover:not(:disabled) {
+  background: #f4f7fa;
+}
+
+.create-from-rwos .btn-analyze {
+  background: #4a90c8;
+  color: #fff;
+}
+
+.create-from-rwos .btn-analyze:hover:not(:disabled) {
+  background: #3d7eaf;
+}
+
+.import-readiness {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: #fff3cd;
+  border-left: 4px solid #ffc107;
+  border-radius: 4px;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.import-readiness h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.import-readiness p {
+  margin: 0;
+}
+
+.import-readiness-ok {
+  margin-top: 2px;
+}
+
+.import-readiness-blocking {
+  color: #8a1c24;
+}
+
+.import-readiness-details {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.import-readiness-details table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.import-readiness-details th,
+.import-readiness-details td {
+  padding: 4px 8px 4px 0;
+  text-align: left;
+  vertical-align: top;
 }
 
 .approve-card {
@@ -303,7 +437,7 @@
 }
 
 .split-option.custom {
-  border-color: #2b6cb0;
+  border-color: var(--theme-border);
 }
 
 @media (min-width: 960px) {
