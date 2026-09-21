@@ -20,6 +20,7 @@ import {
   type RwOsSplitOption,
 } from '../api/client'
 import { showToast } from '../utils/toast'
+import { ImportReadinessPanel } from './ImportReadinessPanel'
 import './CreateTournamentFromRwOs.css'
 
 const MAX_FORECAST = 160
@@ -122,7 +123,11 @@ function TeamPreview({
   const unknown = bracket.unknownTeamCount || 0
   return (
     <div className="team-preview">
-      <button className="btn btn-secondary btn-small" type="button" onClick={() => setOpen((value) => !value)}>
+      <button
+        className="btn btn-compact btn-view-teams"
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+      >
         {open ? 'Hide Teams' : `View Known Teams (${bracket.knownTeamCount ?? teams.length})`}
       </button>
       {open && (
@@ -174,51 +179,31 @@ function OptionCard({
   const { reasons, warnings } = optionExplanations(option)
   const recommended = Boolean(option.recommended || badge === 'RECOMMENDED')
   return (
-    <article className={`split-option ${recommended ? 'recommended' : ''} ${option.custom ? 'custom' : ''} ${selected ? 'selected' : ''}`}>
+    <article
+      className={['split-option', option.custom ? 'custom' : ''].filter(Boolean).join(' ')}
+      data-testid={`option-card-${option.optionKey}`}
+      data-selected={selected ? 'true' : 'false'}
+      data-card-tone="neutral"
+    >
       <header>
         <p className="option-badge">{badge || (recommended ? 'RECOMMENDED' : 'ALTERNATIVE')}</p>
         <h4>{formatStructure(option.sizes)}</h4>
       </header>
-      {recommended ? (
-        <div className="why-block">
-          <h5>Why we recommend it</h5>
-          <ul className="why-list positives">
-            {reasons.map((reason) => (
-              <li key={`${reason.code}-${reason.message}`}>✓ {reason.message}</li>
-            ))}
-          </ul>
-          {warnings.length > 0 && (
-            <>
-              <h5>Tradeoffs</h5>
-              <ul className="why-list warnings">
-                {warnings.map((warning) => (
-                  <li key={`${warning.code}-${warning.message}`}>⚠ {warning.message}</li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-      ) : (
+      {(reasons.length > 0 || warnings.length > 0) && (
         <div className="why-block">
           {reasons.length > 0 && (
-            <>
-              <h5>Strengths</h5>
-              <ul className="why-list positives">
-                {reasons.map((reason) => (
-                  <li key={`${reason.code}-${reason.message}`}>✓ {reason.message}</li>
-                ))}
-              </ul>
-            </>
+            <ul className="why-list positives">
+              {reasons.slice(0, 2).map((reason) => (
+                <li key={`${reason.code}-${reason.message}`}>✓ {reason.message}</li>
+              ))}
+            </ul>
           )}
           {warnings.length > 0 && (
-            <>
-              <h5>Tradeoffs</h5>
-              <ul className="why-list warnings">
-                {warnings.map((warning) => (
-                  <li key={`${warning.code}-${warning.message}`}>⚠ {warning.message}</li>
-                ))}
-              </ul>
-            </>
+            <ul className="why-list warnings">
+              {warnings.slice(0, 2).map((warning) => (
+                <li key={`${warning.code}-${warning.message}`}>⚠ {warning.message}</li>
+              ))}
+            </ul>
           )}
         </div>
       )}
@@ -267,9 +252,17 @@ function OptionCard({
           )}
         </div>
       ))}
-      <button className="btn btn-primary" type="button" disabled={disabled} onClick={onSelect}>
-        {selected ? 'Selected Structure' : 'Select This Structure'}
-      </button>
+      <div className="structure-actions">
+        <button
+          className={`btn btn-compact ${selected ? 'btn-selected-structure' : 'btn-select-structure'}`}
+          type="button"
+          disabled={disabled}
+          onClick={onSelect}
+          data-testid={selected ? 'selected-structure' : 'select-this-structure'}
+        >
+          {selected ? 'Selected Structure' : 'Select This Structure'}
+        </button>
+      </div>
     </article>
   )
 }
@@ -320,7 +313,7 @@ function CustomStructureForm({
   }
 
   return (
-    <section className="custom-structure">
+    <section className="custom-structure" data-testid="custom-structure-form">
       <h4>Have another structure in mind?</h4>
       <p className="meta">Enter an exact structure for this expected field. Example: 16 / 20 / 32</p>
       <div className="custom-structure-row">
@@ -331,7 +324,7 @@ function CustomStructureForm({
           placeholder="16 / 20 / 32"
           disabled={disabled}
         />
-        <button className="btn btn-secondary" type="button" disabled={disabled} onClick={handleAnalyze}>
+        <button className="btn btn-compact btn-analyze" type="button" disabled={disabled} onClick={handleAnalyze}>
           Analyze Custom Structure
         </button>
       </div>
@@ -348,6 +341,23 @@ function CustomStructureForm({
       )}
     </section>
   )
+}
+
+export function requiredDraws(draws: RwOsDrawPlan[]): RwOsDrawPlan[] {
+  return draws.filter((draw) => (draw.forecastCount ?? draw.teamCount) > 0 && draw.options.length > 0)
+}
+
+export function allRequiredStructuresSelected(
+  draws: RwOsDrawPlan[],
+  selections: Record<string, string | undefined>,
+): boolean {
+  return requiredDraws(draws).every((draw) => Boolean(selections[draw.drawKind]))
+}
+
+function recommendationQueue(draw: RwOsDrawPlan): RwOsSplitOption[] {
+  const recommended = draw.options.find((option) => option.recommended) || draw.options[0]
+  if (!recommended) return []
+  return [recommended, ...draw.options.filter((option) => option.optionKey !== recommended.optionKey)]
 }
 
 function DrawPlanner({
@@ -367,49 +377,96 @@ function DrawPlanner({
 }) {
   const current = draw.currentCount ?? draw.teamCount
   const expected = draw.forecastCount ?? draw.teamCount
-  const recommended = draw.options.find((option) => option.recommended) || draw.options[0]
-  const alternatives = draw.options.filter((option) => option.optionKey !== recommended?.optionKey)
+  const queue = recommendationQueue(draw)
+  const optionSignature = queue.map((option) => option.optionKey).join('|')
+  const [viewIndex, setViewIndex] = useState(0)
+  const [customOpen, setCustomOpen] = useState(Boolean(customOption && selectedKey === customOption.optionKey))
+
+  useEffect(() => {
+    setViewIndex(0)
+  }, [draw.drawKind, optionSignature])
+
+  useEffect(() => {
+    if (customOption && selectedKey === customOption.optionKey) {
+      setCustomOpen(true)
+    }
+  }, [customOption, selectedKey])
+
+  const safeIndex = Math.min(viewIndex, Math.max(queue.length - 1, 0))
+  const visibleOption = queue[safeIndex]
+  const alternativeNumber = safeIndex
+  const sectionTitle =
+    visibleOption && (visibleOption.recommended || safeIndex === 0)
+      ? 'Recommended'
+      : `Alternative ${alternativeNumber}`
 
   return (
-    <section className="card draw-planner">
-      <h3>{draw.drawLabel.toUpperCase()}</h3>
+    <section className="card draw-planner" data-testid={`draw-planner-${draw.drawKind}`}>
+      <h3>
+        {draw.drawLabel.toUpperCase()} — {expected} team{expected === 1 ? '' : 's'}
+      </h3>
       <p className="count-line">
         Current: {current} · Expected: {expected}
       </p>
       {draw.planningNote && <div className="info-banner">{draw.planningNote}</div>}
       <RatingReviewWarning teams={draw.ratingReviewTeams || []} />
       {expected === 0 && <p className="meta">Forecast is 0 — no bracket plan was generated for this draw.</p>}
-      {recommended && (
+      {visibleOption && (
         <>
-          <h4 className="option-section-title">Recommended</h4>
+          <h4 className="option-section-title">{sectionTitle}</h4>
           <div className="option-grid">
             <OptionCard
-              option={recommended}
-              badge="RECOMMENDED"
-              selected={selectedKey === recommended.optionKey}
+              option={visibleOption}
+              badge={sectionTitle === 'Recommended' ? 'RECOMMENDED' : `ALTERNATIVE ${alternativeNumber}`}
+              selected={selectedKey === visibleOption.optionKey}
               disabled={disabled}
-              onSelect={() => onSelect(recommended.optionKey)}
+              onSelect={() => onSelect(visibleOption.optionKey)}
               drawTeams={draw.teams || []}
             />
+          </div>
+          <div className="structure-actions recommendation-nav">
+            {safeIndex > 0 && (
+              <button
+                className="btn btn-compact btn-outline-neutral"
+                type="button"
+                onClick={() => setViewIndex((value) => Math.max(0, value - 1))}
+              >
+                Previous Recommendation
+              </button>
+            )}
+            {safeIndex < queue.length - 1 && (
+              <button
+                className="btn btn-compact btn-outline-neutral"
+                type="button"
+                onClick={() => setViewIndex((value) => Math.min(queue.length - 1, value + 1))}
+              >
+                Show Another Recommendation
+              </button>
+            )}
+            {expected > 0 && (
+              <button
+                className="btn btn-compact btn-outline-neutral"
+                type="button"
+                onClick={() => setCustomOpen(true)}
+              >
+                Create My Own Split
+              </button>
+            )}
           </div>
         </>
       )}
-      {alternatives.map((option, index) => (
-        <div key={option.optionKey}>
-          <h4 className="option-section-title">Alternative {index + 1}</h4>
-          <div className="option-grid">
-            <OptionCard
-              option={option}
-              badge={`ALTERNATIVE ${index + 1}`}
-              selected={selectedKey === option.optionKey}
-              disabled={disabled}
-              onSelect={() => onSelect(option.optionKey)}
-              drawTeams={draw.teams || []}
-            />
-          </div>
+      {expected > 0 && !visibleOption && !customOpen && (
+        <div className="structure-actions recommendation-nav">
+          <button
+            className="btn btn-compact btn-outline-neutral"
+            type="button"
+            onClick={() => setCustomOpen(true)}
+          >
+            Create My Own Split
+          </button>
         </div>
-      ))}
-      {expected > 0 && (
+      )}
+      {expected > 0 && customOpen && (
         <CustomStructureForm
           draw={draw}
           disabled={disabled}
@@ -515,6 +572,26 @@ function CreateTournamentFromRwOs() {
   }, [importData])
 
   const draws = importData?.planner.draws || []
+  const canProceed = allRequiredStructuresSelected(draws, selections)
+  const selectedStructureSummaries = useMemo(() => {
+    return requiredDraws(draws).flatMap((draw) => {
+      const optionKey = selections[draw.drawKind]
+      if (!optionKey) return []
+      const option =
+        draw.options.find((row) => row.optionKey === optionKey) ||
+        (customByDraw[draw.drawKind]?.optionKey === optionKey ? customByDraw[draw.drawKind] : null)
+      const approved = importData?.approvedPlans.find((plan) => plan.drawKind === draw.drawKind)
+      const brackets = approved?.brackets?.length ? approved.brackets : option?.brackets || []
+      return [
+        {
+          drawKind: draw.drawKind,
+          drawLabel: draw.drawLabel,
+          optionKey,
+          brackets: brackets.map((bracket) => ({ label: bracket.label, size: bracket.size })),
+        },
+      ]
+    })
+  }, [customByDraw, draws, importData?.approvedPlans, selections])
   const currentTotal = draws.reduce((sum, draw) => sum + (draw.currentCount ?? draw.teamCount), 0)
   const expectedTotal = draws.reduce((sum, draw) => {
     const raw = forecastDraft[draw.drawKind]
@@ -629,13 +706,11 @@ function CreateTournamentFromRwOs() {
     }
   }
 
-  const handleApprove = async () => {
+  const handleProceed = async () => {
     if (!importData) return
-    const missing = importData.planner.draws.filter(
-      (draw) => (draw.forecastCount ?? 0) > 0 && draw.options.length > 0 && !selections[draw.drawKind],
-    )
+    const missing = requiredDraws(importData.planner.draws).filter((draw) => !selections[draw.drawKind])
     if (missing.length) {
-      showToast('Select a structure for each draw before approving.', 'error')
+      showToast('Select a structure for each required category before continuing.', 'error')
       return
     }
     try {
@@ -650,34 +725,44 @@ function CreateTournamentFromRwOs() {
       const teamsCreated = projection?.created.teams ?? 0
       const teamsUpdated = projection?.updated.teams ?? 0
       const rosterTouched = teamsCreated + teamsUpdated + (projection?.created.towelRows ?? 0)
-      if (conflicts.length || projectionConflicts.length || result.projectionOk === false) {
+      const hasConflicts = Boolean(
+        conflicts.length || projectionConflicts.length || result.projectionOk === false,
+      )
+      if (hasConflicts) {
         showToast(
           `Events may exist, but the live roster was not fully populated (${conflicts.length + projectionConflicts.length} conflict(s)). Review the conflicts below before using Draw Builder.`,
           'error',
         )
       } else if (projectionWarnings.length && rosterTouched > 0) {
         showToast(
-          `Structure approved and ${teamsCreated || teamsUpdated} team(s) were projected, with ${projectionWarnings.length} warning(s). Draw Builder is ready — review warnings below.`,
+          `Structure saved and ${teamsCreated || teamsUpdated} team(s) were projected, with ${projectionWarnings.length} warning(s). Draw Builder is ready — review warnings below.`,
           'warning',
         )
       } else if (rosterTouched > 0) {
         showToast(
-          `Structure approved. Events, ${teamsCreated || teamsUpdated} team(s), contacts, Who-knows-who, and towels are populated. Draw Builder is ready — no Combined paste needed.`,
+          `Structure saved. Events, ${teamsCreated || teamsUpdated} team(s), contacts, Who-knows-who, and towels are populated. Draw Builder is ready — no Combined paste needed.`,
           'success',
         )
       } else if (created > 0) {
         showToast(
-          `Structure approved and ${created} event(s) were added, but no live roster rows were projected.`,
+          `Structure saved and ${created} event(s) were added, but no live roster rows were projected.`,
           'warning',
         )
       } else {
-        showToast('Structure approved. Tournament events are up to date.', 'success')
+        showToast('Structure saved. Tournament events are up to date.', 'success')
+      }
+      if (!hasConflicts) {
+        navigate(`/tournaments/${result.import.tournamentId}/setup`)
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not approve plan', 'error')
+      showToast(err instanceof Error ? err.message : 'Could not save selected structures', 'error')
     } finally {
       setWorking(false)
     }
+  }
+
+  const handleCancelToList = () => {
+    navigate('/tournaments')
   }
 
   const handleRefresh = async (apply: boolean) => {
@@ -707,7 +792,8 @@ function CreateTournamentFromRwOs() {
           <h1>{resumeTournamentId ? 'Import / Draw Structure' : 'Create Tournament from RW-OS'}</h1>
           <p className="subhead">
             Import the current eligible teams, set the expected final field, then choose a draw split.
-            Approving the structure creates the matching tournament events. Waterfall brackets and matches are not created in this step.
+            Selecting a structure for each required category prepares the matching tournament events.
+            Waterfall brackets and matches are not created in this step.
           </p>
           {source === 'fixtures' && <p className="rwos-source-indicator">RW-OS Source: Fixtures</p>}
         </div>
@@ -803,10 +889,12 @@ function CreateTournamentFromRwOs() {
               These counts come from the imported RW-OS snapshot and cannot be edited here.
               Source hash {importData.import.sourceHash.slice(0, 12)} · Rating rule: NTRP Combined (sum)
             </p>
-            {importData.import.validationStatus === 'needs_attention' && (
-              <div className="warning-banner">
-                Needs Attention: {importData.import.validationIssues.map((issue) => issue.message).join(' ')}
-              </div>
+            {(importData.import.validationStatus === 'needs_attention' ||
+              importData.import.validationIssues.length > 0) && (
+              <ImportReadinessPanel
+                issues={importData.import.validationIssues}
+                teams={[...importData.import.teams, ...importData.import.waitlistTeams]}
+              />
             )}
             {refreshSummary && <div className="warning-banner">{refreshSummary}</div>}
             <div className="header-actions">
@@ -882,37 +970,39 @@ function CreateTournamentFromRwOs() {
           ))}
 
           <section className="card approve-card">
-            {approved && (
+            {selectedStructureSummaries.length > 0 && (
               <>
-                <h3>Plan approved</h3>
-                <p>
-                  The draw split is stored and Events are populated. Live Team, contact, Who-knows-who, and
-                  towel counts are shown below from the current database, including after refresh. Waterfall
-                  brackets, matches, and seeds are not created here.
-                </p>
-                <ul>
-                  {importData.approvedPlans.map((plan) => (
+                <h3>Selected structures</h3>
+                <ul data-testid="selected-structure-summary">
+                  {selectedStructureSummaries.map((plan) => (
                     <li key={plan.drawKind}>
-                      {plan.drawKind}: {plan.brackets.map((bracket) => `${bracket.label} (${bracket.size})`).join(', ')}
+                      {plan.drawLabel}:{' '}
+                      {plan.brackets.length
+                        ? plan.brackets.map((bracket) => `${bracket.label} (${bracket.size})`).join(', ')
+                        : plan.optionKey}
                     </li>
                   ))}
                 </ul>
-                {(importData.structureEventConflicts ?? []).length > 0 && (
-                  <div className="warning-banner">
-                    <p>
-                      These existing events already have draws or matches and were not changed. Resolve them in
-                      Tournament Setup before applying a different structure.
-                    </p>
-                    <ul>
-                      {importData.structureEventConflicts?.map((conflict) => (
-                        <li key={conflict.eventId}>
-                          {conflict.name}: {conflict.reason} (kept {conflict.currentTeamCount} teams, structure
-                          requested {conflict.requestedTeamCount})
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+              </>
+            )}
+            {(importData.structureEventConflicts ?? []).length > 0 && (
+              <div className="warning-banner" data-testid="structure-event-conflicts">
+                <p>
+                  These existing events already have draws or matches and were not changed. Resolve them in
+                  Tournament Setup before applying a different structure.
+                </p>
+                <ul>
+                  {importData.structureEventConflicts?.map((conflict) => (
+                    <li key={conflict.eventId}>
+                      {conflict.name}: {conflict.reason} (kept {conflict.currentTeamCount} teams, structure
+                      requested {conflict.requestedTeamCount})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {approved && (
+              <>
                 <div className="approved-events">
                   <h3>Events</h3>
                   {(importData.tournamentEvents ?? []).length === 0 ? (
@@ -954,7 +1044,7 @@ function CreateTournamentFromRwOs() {
                 </div>
                 {(importData.liveRoster || importData.rosterProjection) && (
                   <div className="approved-events">
-                    <h3>Live roster projection</h3>
+                    <h3>Live roster</h3>
                     {importData.liveRoster ? (
                       <p className="meta">
                         Current source-backed roster: {importData.liveRoster.teams.sourceBacked} team(s),{' '}
@@ -989,7 +1079,7 @@ function CreateTournamentFromRwOs() {
                       </div>
                     )}
                     {((importData.liveRoster?.conflicts ?? importData.rosterProjection?.conflicts) ?? []).length > 0 && (
-                      <div className="warning-banner">
+                      <div className="warning-banner" data-testid="projection-conflicts">
                         <p>Projection conflicts blocked a complete live roster. Events may exist without a full team/contact/towel projection.</p>
                         <ul>
                           {((importData.liveRoster?.conflicts ?? importData.rosterProjection?.conflicts) ?? []).map((conflict, index) => (
@@ -1004,24 +1094,24 @@ function CreateTournamentFromRwOs() {
                 )}
               </>
             )}
-            <p>
-              {approved
-                ? 'Selecting another structure keeps existing events that are already in use. Conflicts are shown instead of deleting draws or matches.'
-                : 'Software recommends. Staff chooses. Approving stores the plan and creates the matching tournament events.'}
-            </p>
-            <div className="header-actions">
-              <button className="btn btn-primary" type="button" disabled={working} onClick={handleApprove}>
-                Approve Selected Structure
+            <div className="step3-final-actions">
+              <button
+                className="btn btn-compact btn-select-structure"
+                type="button"
+                disabled={working || !canProceed}
+                onClick={() => void handleProceed()}
+                data-testid="proceed-plan"
+              >
+                Proceed
               </button>
-              {setupTournamentId ? (
-                <button
-                  className="btn btn-secondary"
-                  type="button"
-                  onClick={() => navigate(`/tournaments/${setupTournamentId}/setup`)}
-                >
-                  Back to Tournament Setup
-                </button>
-              ) : null}
+              <button
+                className="btn btn-compact btn-outline-neutral"
+                type="button"
+                onClick={handleCancelToList}
+                data-testid="cancel-to-list"
+              >
+                Cancel — Back to Tournament List
+              </button>
             </div>
           </section>
         </>

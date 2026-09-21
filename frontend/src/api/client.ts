@@ -380,12 +380,20 @@ export interface RwOsSnapshotPlayer {
   rw_id: string
   name: string
   rating: number | null
+  towelColor?: string | null
+  towel_color?: string | null
 }
 
 export interface RwOsSnapshotTeam {
   teamKey: string
   drawKind: string
   drawLabel: string
+  displayName?: string | null
+  display_name?: string | null
+  fullName?: string | null
+  full_name?: string | null
+  avoidGroup?: string | null
+  avoid_group?: string | null
   player1: RwOsSnapshotPlayer
   player2: RwOsSnapshotPlayer
   teamRating: number | null
@@ -529,7 +537,13 @@ export interface RwOsImportResponse {
     sourceTeamCount: number
     sourceHash: string
     validationStatus: string
-    validationIssues: Array<{ code: string; message: string; team_key?: string | null }>
+    validationIssues: Array<{
+      code: string
+      message: string
+      team_key?: string | null
+      teamKey?: string | null
+      draw_kind?: string | null
+    }>
     refreshDiff: {
       addedCount: number
       withdrawnCount: number
