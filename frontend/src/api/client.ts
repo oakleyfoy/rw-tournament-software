@@ -523,6 +523,16 @@ export interface RwOsDrawPlan {
   }>
 }
 
+export interface RwOsRosterFieldChange {
+  teamKey: string
+  teamLabel?: string
+  field: string
+  label: string
+  before: string | number | null
+  after: string | number | null
+  playerSlot?: number | null
+}
+
 export interface RwOsImportResponse {
   import: {
     id: number
@@ -634,6 +644,7 @@ export interface RwOsImportResponse {
     ok: boolean
     created: { events: number; teams: number; towelRows: number; wkwEdges: number }
     updated: { teams: number; contactFields: number; towelRows: number }
+    fieldChanges?: RwOsRosterFieldChange[]
     warnings: Array<{ code: string; message: string }>
     conflicts: Array<{ code: string; message: string }>
   }
@@ -671,6 +682,7 @@ export async function refreshRwOsImport(importId: number, apply = false): Promis
   diff: NonNullable<RwOsImportResponse['import']['refreshDiff']> & { addedTeams?: unknown[]; withdrawnTeams?: unknown[] }
   applied: boolean
   importResponse: RwOsImportResponse
+  rosterProjection?: RwOsImportResponse['rosterProjection']
 }> {
   return fetchJson(`${API_BASE_URL}/rw-os/imports/${importId}/refresh`, {
     method: 'POST',

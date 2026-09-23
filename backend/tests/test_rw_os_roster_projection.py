@@ -747,6 +747,18 @@ def test_operational_refresh_does_not_change_event_membership(client: TestClient
     assert updated.player1_cellphone == "1112223333"
     assert updated.p1_email == "ops@example.com"
     assert updated.avoid_group == "B"
+    assert updated.display_name == "Ops / Refresh"
+    assert updated.name == "Ops Refresh"
+    assert updated.rating == 9.9
+    towel = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source_team_key == refreshed[0].team_key,
+            TemporaryPlayerLookup.lineup_slot == 1,
+        )
+    ).first()
+    assert towel.towel_color == "Lime"
+    assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []
 
 
 def test_draw_builder_shape_after_projection(client: TestClient, session: Session):
@@ -790,7 +802,11 @@ def test_protected_event_allows_operational_contact_and_towel_updates(client: Te
     original_event_id = _teams_by_key(session, imported.tournament_id)[key].event_id
     refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in teams]
     refreshed[0].player1.cellphone = "4445556666"
+    refreshed[0].player1.email = "protected@example.com"
     refreshed[0].player1.towel_color = "Orange"
+    refreshed[0].display_name = "Prot / Team"
+    refreshed[0].full_name = "Protected Team"
+    refreshed[0].level = 8.8
     persist_snapshot(
         session, _payload(925, refreshed, version="1"), existing=session.get(TournamentImport, imported.id)
     )
@@ -798,6 +814,10 @@ def test_protected_event_allows_operational_contact_and_towel_updates(client: Te
     live = _teams_by_key(session, imported.tournament_id)[key]
     assert live.event_id == original_event_id
     assert live.player1_cellphone == "4445556666"
+    assert live.p1_email == "protected@example.com"
+    assert live.display_name == "Prot / Team"
+    assert live.name == "Protected Team"
+    assert live.rating == 8.8
     towel = session.exec(
         select(TemporaryPlayerLookup).where(
             TemporaryPlayerLookup.tournament_id == imported.tournament_id,
@@ -1014,3 +1034,88 @@ def test_amelia_notes_and_capacity_stay_aligned_when_teams_already_exist(client:
     assert "24 teams" in (event_b.notes or "")
     assert _source_counts(session, imported.tournament_id)["Women's A"] == 20
     assert _source_counts(session, imported.tournament_id)["Women's B"] == 24
+
+
+def test_operational_refresh_updates_identity_without_moving_or_creating_matches(
+    client: TestClient, session: Session
+):
+    womens = _womens_field(8)
+    mixed = _mixed_field(8)
+    imported = _import_payload(session, 930, womens + mixed)
+    _approve(client, imported.id, {"womens": "8", "mixed": "8"})
+    before = _teams_by_key(session, imported.tournament_id)
+    original_event = before[womens[0].team_key].event_id
+    mixed_event_ids = {team.event_id for team in before.values() if team.source_team_key in {row.team_key for row in mixed}}
+    matches_before = session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all()
+
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in womens + mixed]
+    target = next(team for team in refreshed if team.team_key == womens[0].team_key)
+    target.display_name = "Short / Names"
+    target.full_name = "Full Names, City, ST"
+    target.level = 7.75
+    target.player1.cellphone = "2223334444"
+    target.player1.email = "short@example.com"
+    target.player1.towel_color = "Teal"
+    persisted = persist_snapshot(
+        session, _payload(930, refreshed, version="1"), existing=session.get(TournamentImport, imported.id)
+    )
+    projection = getattr(persisted, "_last_roster_projection", None) or {}
+    changes = {item["field"]: item for item in projection.get("fieldChanges") or []}
+    assert changes["displayName"]["before"] == "W1"
+    assert changes["displayName"]["after"] == "Short / Names"
+    assert changes["fullName"]["before"] == "Women Team 1"
+    assert changes["fullName"]["after"] == "Full Names, City, ST"
+    assert changes["rating"]["after"] == 7.75
+    assert changes["player1Cellphone"]["after"] == "2223334444"
+    assert changes["player1Email"]["after"] == "short@example.com"
+    assert changes["player1Towel"]["before"] == "Blue"
+    assert changes["player1Towel"]["after"] == "Teal"
+    session.expire_all()
+
+    after = _teams_by_key(session, imported.tournament_id)
+    updated = after[womens[0].team_key]
+    assert updated.event_id == original_event
+    assert updated.display_name == "Short / Names"
+    assert updated.name == "Full Names, City, ST"
+    assert updated.rating == 7.75
+    assert updated.player1_cellphone == "2223334444"
+    assert updated.p1_email == "short@example.com"
+    assert {team.event_id for team in after.values() if team.source_team_key in {row.team_key for row in mixed}} == mixed_event_ids
+    towel = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source_team_key == womens[0].team_key,
+            TemporaryPlayerLookup.lineup_slot == 1,
+        )
+    ).first()
+    assert towel.towel_color == "Teal"
+    matches_after = session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all()
+    assert len(matches_after) == len(matches_before) == 0
+
+
+def test_operational_refresh_does_not_add_or_move_on_protected_draw(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 931, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).first()
+    event.draw_plan_json = '{"template_type":"WF_8"}'
+    event.draw_status = "generated"
+    session.add(event)
+    session.commit()
+    before = _teams_by_key(session, imported.tournament_id)
+    original_keys = set(before)
+    original_event_ids = {key: team.event_id for key, team in before.items()}
+
+    extra = _team("900/901", 8.0, display="New", full="New Team")
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in teams] + [extra]
+    persist_snapshot(
+        session,
+        _payload(931, refreshed, version="2-structural"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    session.expire_all()
+    after = _teams_by_key(session, imported.tournament_id)
+    assert set(after) == original_keys
+    assert extra.team_key not in after
+    assert {key: team.event_id for key, team in after.items()} == original_event_ids
+    assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []

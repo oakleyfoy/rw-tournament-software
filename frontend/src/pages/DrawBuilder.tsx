@@ -26,7 +26,9 @@ import {
   getScheduleVersions,
   importSeededTeams,
   importCombinedTeams,
+  refreshRwOsImport,
   getEventTeams,
+  RwOsRosterFieldChange,
   ScheduleBuilderResponse,
   SchedulePlanReport,
   updateDrawPlan,
@@ -45,6 +47,12 @@ import {
   MoveDivisionResponse,
 } from '../api/client'
 import MoveDivisionModal from './draw-builder/MoveDivisionModal'
+import {
+  formatRwOsRosterRefreshSummary,
+  isRwOsBackedTournament,
+  RwOsRosterRefreshCard,
+  type RwOsRosterSnapshotDiff,
+} from './draw-builder/RwOsRosterRefreshCard'
 import EditWfMatchupModal from './draw-builder/EditWfMatchupModal'
 import { showToast } from '../utils/toast'
 import {
@@ -325,6 +333,11 @@ function DrawBuilder() {
   // Combined roster + towel import state
   const [importText, setImportText] = useState('')
   const [importLoading, setImportLoading] = useState(false)
+  const [rwOsRefreshLoading, setRwOsRefreshLoading] = useState(false)
+  const [rwOsRefreshSummary, setRwOsRefreshSummary] = useState<string | null>(null)
+  const [rwOsRefreshNotices, setRwOsRefreshNotices] = useState<Array<{ code?: string; message?: string }>>([])
+  const [rwOsRefreshChanges, setRwOsRefreshChanges] = useState<RwOsRosterFieldChange[]>([])
+  const [rwOsSnapshotDiff, setRwOsSnapshotDiff] = useState<RwOsRosterSnapshotDiff | null>(null)
   const [legacyImportOpenEventId, setLegacyImportOpenEventId] = useState<number | null>(null)
   const [legacyImportText, setLegacyImportText] = useState('')
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
@@ -965,6 +978,60 @@ function DrawBuilder() {
       showToast(err?.message || 'Import failed', 'error')
     } finally {
       setImportLoading(false)
+    }
+  }
+
+  const reloadOpenedEventTeams = async (openedEventIds: number[]) => {
+    if (openedEventIds.length === 0) return
+    const rows = await Promise.all(
+      openedEventIds.map(async (eventId) => {
+        try {
+          const teams = await getEventTeams(eventId)
+          return [eventId, teams] as const
+        } catch {
+          return [eventId, null] as const
+        }
+      }),
+    )
+    setEventTeams((prev) => {
+      const next = { ...prev }
+      for (const [eventId, teams] of rows) {
+        if (teams) next[eventId] = teams
+      }
+      return next
+    })
+  }
+
+  const handleRefreshRosterFromRwOs = async () => {
+    if (!tournament?.rw_os_import_id) return
+    setRwOsRefreshLoading(true)
+    try {
+      const result = await refreshRwOsImport(tournament.rw_os_import_id, true)
+      const projection = result.rosterProjection ?? result.importResponse?.rosterProjection
+      const summary = formatRwOsRosterRefreshSummary(projection?.updated)
+      setRwOsRefreshSummary(summary)
+      setRwOsRefreshChanges(projection?.fieldChanges ?? [])
+      setRwOsSnapshotDiff(result.diff ?? null)
+      const notices = [
+        ...(projection?.conflicts ?? []),
+        ...(projection?.warnings ?? []),
+        ...(result.importResponse?.liveRoster?.conflicts ?? []),
+        ...(result.importResponse?.liveRoster?.warnings ?? []),
+      ]
+      const uniqueNotices = notices.filter(
+        (notice, index, all) =>
+          all.findIndex((item) => (item.code || '') + (item.message || '') === (notice.code || '') + (notice.message || '')) === index,
+      )
+      setRwOsRefreshNotices(uniqueNotices)
+      showToast(summary, uniqueNotices.length > 0 ? 'warning' : 'success')
+      uniqueNotices.forEach((notice) => {
+        if (notice.message) showToast(notice.message, 'warning')
+      })
+      await reloadOpenedEventTeams(Object.keys(eventTeams).map((id) => Number(id)))
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to refresh roster from RW-OS', 'error')
+    } finally {
+      setRwOsRefreshLoading(false)
     }
   }
 
@@ -1988,8 +2055,19 @@ function DrawBuilder() {
         )
       })()}
 
-      {/* Combined roster + towel import */}
-      {events.filter(e => e.draw_status === 'final').length > 0 && (
+      {isRwOsBackedTournament(tournament) && (
+        <RwOsRosterRefreshCard
+          loading={rwOsRefreshLoading}
+          summary={rwOsRefreshSummary}
+          notices={rwOsRefreshNotices}
+          fieldChanges={rwOsRefreshChanges}
+          snapshotDiff={rwOsSnapshotDiff}
+          onRefresh={() => void handleRefreshRosterFromRwOs()}
+        />
+      )}
+
+      {/* Combined roster + towel import — hidden for RW-OS tournaments */}
+      {!isRwOsBackedTournament(tournament) && events.filter(e => e.draw_status === 'final').length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
           <h2 className="section-title">Combined Team + Towel Import</h2>
           <div style={{ fontSize: 13, color: 'var(--theme-text)', lineHeight: 1.5, marginBottom: 12 }}>
