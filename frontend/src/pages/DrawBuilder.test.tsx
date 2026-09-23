@@ -24,7 +24,7 @@ vi.mock('../api/client', async () => {
 vi.mock('../utils/toast', () => ({ showToast: vi.fn() }))
 
 import DrawBuilder from './DrawBuilder'
-import { getEvents, getPhase1Status, getPlanReport, getScheduleBuilder, getScheduleVersions, getTournament, getTournamentDays } from '../api/client'
+import { getEventTeams, getEvents, getPhase1Status, getPlanReport, getScheduleBuilder, getScheduleVersions, getTournament, getTournamentDays } from '../api/client'
 
 const tournamentBase: Tournament = {
   id: 5,
@@ -67,6 +67,7 @@ function mockDrawBuilderApis(tournament: Tournament) {
     { id: 1, tournament_id: 5, date: '2026-08-23', is_active: true, courts_available: 8 },
   ])
   vi.mocked(getScheduleBuilder).mockResolvedValue({ tournament_id: 5, events: [] })
+  vi.mocked(getEventTeams).mockResolvedValue([])
 }
 
 function renderDrawBuilder() {
@@ -92,9 +93,11 @@ describe('DrawBuilder RW-OS roster refresh', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Refresh roster from RW-OS' })).toBeInTheDocument()
     })
-    expect(screen.getByText(/This replaces Combined paste/)).toBeInTheDocument()
+    expect(screen.getByText(/Pull the latest names, ratings, contacts, and towels/)).toBeInTheDocument()
     expect(screen.queryByText('Combined Team + Towel Import')).not.toBeInTheDocument()
+    expect(screen.queryByText('Legacy Per-Event Team Import')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Import Teams \+ Towels/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Load teams/i })).not.toBeInTheDocument()
   })
 
   it('keeps Combined paste for manual tournaments', async () => {

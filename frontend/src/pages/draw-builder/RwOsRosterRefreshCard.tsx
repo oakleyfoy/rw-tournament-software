@@ -83,11 +83,11 @@ export function RwOsRosterRefreshCard({
     (snapshotDiff?.drawChanges?.length ?? 0) > 0
 
   return (
-    <div className="card" style={{ marginTop: 24 }} data-testid="rw-os-roster-refresh">
+    <div className="card" style={{ marginBottom: 24 }} data-testid="rw-os-roster-refresh">
       <h2 className="section-title">Refresh roster from RW-OS</h2>
       <p style={{ fontSize: 13, color: 'var(--theme-text)', lineHeight: 1.5, marginTop: 0 }}>
-        This replaces Combined paste for names, ratings, contacts, and towels. Existing teams stay in their
-        draws; no matches are regenerated.
+        Pull the latest names, ratings, contacts, and towels from RW-OS onto teams already in this tournament.
+        Teams stay in their draws; matches are not regenerated.
       </p>
       <button
         type="button"

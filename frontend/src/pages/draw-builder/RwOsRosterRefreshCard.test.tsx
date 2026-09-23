@@ -31,6 +31,7 @@ describe('RwOsRosterRefreshCard', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Refresh roster from RW-OS' }))
     expect(onRefresh).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/Pull the latest names, ratings, contacts, and towels/)).toBeInTheDocument()
     expect(screen.getByTestId('rw-os-roster-refresh-summary')).toHaveTextContent('2 teams updated')
     expect(screen.getByTestId('rw-os-roster-refresh-notices')).toHaveTextContent('Snapshot changed after approval')
     expect(screen.queryByText('Combined Team + Towel Import')).not.toBeInTheDocument()

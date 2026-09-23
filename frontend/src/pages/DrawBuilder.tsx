@@ -421,6 +421,17 @@ function DrawBuilder() {
         states[event.id] = initializeEditorState(event)
       })
       setEventEditorStates(states)
+
+      const teamEntries = await Promise.all(
+        eventsData.map(async (event) => {
+          try {
+            return [event.id, await getEventTeams(event.id)] as const
+          } catch {
+            return [event.id, [] as TeamListItem[]] as const
+          }
+        }),
+      )
+      setEventTeams(Object.fromEntries(teamEntries))
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to load data', 'error')
     } finally {
@@ -981,10 +992,10 @@ function DrawBuilder() {
     }
   }
 
-  const reloadOpenedEventTeams = async (openedEventIds: number[]) => {
-    if (openedEventIds.length === 0) return
+  const reloadEventTeams = async (eventIds: number[]) => {
+    if (eventIds.length === 0) return
     const rows = await Promise.all(
-      openedEventIds.map(async (eventId) => {
+      eventIds.map(async (eventId) => {
         try {
           const teams = await getEventTeams(eventId)
           return [eventId, teams] as const
@@ -1027,7 +1038,7 @@ function DrawBuilder() {
       uniqueNotices.forEach((notice) => {
         if (notice.message) showToast(notice.message, 'warning')
       })
-      await reloadOpenedEventTeams(Object.keys(eventTeams).map((id) => Number(id)))
+      await reloadEventTeams(events.map((event) => event.id))
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to refresh roster from RW-OS', 'error')
     } finally {
@@ -1556,31 +1567,24 @@ function DrawBuilder() {
           </div>
         )}
 
-        <div
-          className="form-group"
-          style={{
-            marginBottom: '16px',
-            padding: '12px',
-            borderRadius: '8px',
-            border: '1px solid var(--theme-input-border)',
-            backgroundColor: 'var(--theme-card-bg)',
-          }}
-        >
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Teams in this event</label>
-          <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
-            After draws exist, use Swap Teams on the WF Round 1 rows to exchange two pairs. Move Division is an advanced one-team tool that leaves a TBD in the source slot.
-          </p>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={loadingTeamsFor === event.id}
-              onClick={() => void handleLoadTeams(event.id)}
-            >
-              {loadingTeamsFor === event.id ? 'Loading…' : eventTeams[event.id] ? 'Refresh teams' : 'Load teams'}
-            </button>
-          </div>
-          {(eventTeams[event.id]?.length ?? 0) > 0 && (
+        {(eventTeams[event.id]?.length ?? 0) > 0 && (
+          <div
+            className="form-group"
+            style={{
+              marginBottom: '16px',
+              padding: '12px',
+              borderRadius: '8px',
+              border: '1px solid var(--theme-input-border)',
+              backgroundColor: 'var(--theme-card-bg)',
+            }}
+          >
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Teams in this event</label>
+            {event.draw_status === 'final' && (
+              <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
+                After draws exist, use Swap Teams on the WF Round 1 rows to exchange two pairs. Move Division is an
+                advanced one-team tool that leaves a TBD in the source slot.
+              </p>
+            )}
             <div style={{ overflowX: 'auto', maxHeight: 280, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
@@ -1610,8 +1614,8 @@ function DrawBuilder() {
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label>Standard Match Length</label>
@@ -1778,6 +1782,17 @@ function DrawBuilder() {
           </button>
         </div>
       </div>
+
+      {isRwOsBackedTournament(tournament) && (
+        <RwOsRosterRefreshCard
+          loading={rwOsRefreshLoading}
+          summary={rwOsRefreshSummary}
+          notices={rwOsRefreshNotices}
+          fieldChanges={rwOsRefreshChanges}
+          snapshotDiff={rwOsSnapshotDiff}
+          onRefresh={() => void handleRefreshRosterFromRwOs()}
+        />
+      )}
 
       {(swapPicks.length > 0 || Object.values(wfR1MatchesByEvent).some((rows) => (rows?.length ?? 0) > 0)) && (
         <div
@@ -2055,17 +2070,6 @@ function DrawBuilder() {
         )
       })()}
 
-      {isRwOsBackedTournament(tournament) && (
-        <RwOsRosterRefreshCard
-          loading={rwOsRefreshLoading}
-          summary={rwOsRefreshSummary}
-          notices={rwOsRefreshNotices}
-          fieldChanges={rwOsRefreshChanges}
-          snapshotDiff={rwOsSnapshotDiff}
-          onRefresh={() => void handleRefreshRosterFromRwOs()}
-        />
-      )}
-
       {/* Combined roster + towel import — hidden for RW-OS tournaments */}
       {!isRwOsBackedTournament(tournament) && events.filter(e => e.draw_status === 'final').length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
@@ -2116,7 +2120,7 @@ function DrawBuilder() {
         </div>
       )}
 
-      {events.filter(e => e.draw_status === 'final').length > 0 && (
+      {!isRwOsBackedTournament(tournament) && events.filter(e => e.draw_status === 'final').length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
           <h2 className="section-title">Legacy Per-Event Team Import</h2>
           {events.filter(e => e.draw_status === 'final').map((ev) => {
