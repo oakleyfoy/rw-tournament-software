@@ -1384,8 +1384,8 @@ def _build_checkin_snapshot(
         waiting_keys=waiting_slot_keys,
         grid_slots=grid_slots,
     )
-    active_slot_key = activity_slot_keys[0] if activity_slot_keys else (
-        ordered_slot_keys[0] if ordered_slot_keys else None
+    active_slot_key = (
+        activity_slot_keys[0] if activity_slot_keys else (ordered_slot_keys[0] if ordered_slot_keys else None)
     )
 
     checkin_match_map = {cm.match_id: cm for cm in checkin_matches}

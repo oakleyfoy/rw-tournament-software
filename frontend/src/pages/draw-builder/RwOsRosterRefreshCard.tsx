@@ -5,8 +5,8 @@ type RefreshNotice = { code?: string; message?: string }
 export type RwOsRosterSnapshotDiff = {
   addedCount?: number
   withdrawnCount?: number
-  addedTeams?: Array<{ teamKey?: string; displayName?: string; fullName?: string }>
-  withdrawnTeams?: Array<{ teamKey?: string; displayName?: string; fullName?: string }>
+  addedTeams?: unknown[]
+  withdrawnTeams?: unknown[]
   partnerChanges?: unknown[]
   drawChanges?: unknown[]
   ratingChanges?: unknown[]
@@ -54,8 +54,10 @@ export function groupRwOsRosterFieldChanges(changes: RwOsRosterFieldChange[]): A
   return groups
 }
 
-function snapshotTeamLabel(team: { teamKey?: string; displayName?: string; fullName?: string }): string {
-  return team.displayName || team.fullName || team.teamKey || 'Team'
+function snapshotTeamLabel(team: unknown): string {
+  if (!team || typeof team !== 'object') return 'Team'
+  const row = team as { teamKey?: string; displayName?: string; fullName?: string }
+  return row.displayName || row.fullName || row.teamKey || 'Team'
 }
 
 export function RwOsRosterRefreshCard({
@@ -128,10 +130,10 @@ export function RwOsRosterRefreshCard({
           <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>RW-OS snapshot changes not applied to draws</div>
           <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
             {added.map((team, index) => (
-              <li key={`added-${team.teamKey || index}`}>Added: {snapshotTeamLabel(team)}</li>
+              <li key={`added-${index}`}>Added: {snapshotTeamLabel(team)}</li>
             ))}
             {withdrawn.map((team, index) => (
-              <li key={`withdrawn-${team.teamKey || index}`}>Withdrawn: {snapshotTeamLabel(team)}</li>
+              <li key={`withdrawn-${index}`}>Withdrawn: {snapshotTeamLabel(team)}</li>
             ))}
             {(snapshotDiff?.partnerChanges?.length ?? 0) > 0 && (
               <li>{snapshotDiff?.partnerChanges?.length} partner change{(snapshotDiff?.partnerChanges?.length ?? 0) === 1 ? '' : 's'}</li>

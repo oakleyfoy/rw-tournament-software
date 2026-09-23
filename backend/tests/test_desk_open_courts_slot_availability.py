@@ -248,7 +248,9 @@ def test_all_day_court_stays_visible_when_open(client, session):
     board, open_courts = _board_and_open_courts(body)
     assert "Court 1" in board
     assert "Court 1" in open_courts
-    assert any(slot["court_name"] == "Court 1" and slot["scheduled_time"] == "10:30 AM" for slot in body["available_slots"])
+    assert any(
+        slot["court_name"] == "Court 1" and slot["scheduled_time"] == "10:30 AM" for slot in body["available_slots"]
+    )
 
 
 def test_occupied_available_court_is_currently_playing_not_open(client, session):

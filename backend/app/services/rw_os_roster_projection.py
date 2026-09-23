@@ -673,9 +673,21 @@ def _apply_operational_team_updates(
     if team.id:
         wkw_assignments.setdefault(team.event_id, []).append((team.id, snapshot_team.avoid_group or team.avoid_group))
     contact_pairs = (
-        ("player1Cellphone", "Player 1 cellphone", 1, snapshot_team.player1.cellphone, team.player1_cellphone or team.p1_cell),
+        (
+            "player1Cellphone",
+            "Player 1 cellphone",
+            1,
+            snapshot_team.player1.cellphone,
+            team.player1_cellphone or team.p1_cell,
+        ),
         ("player1Email", "Player 1 email", 1, snapshot_team.player1.email, team.player1_email or team.p1_email),
-        ("player2Cellphone", "Player 2 cellphone", 2, snapshot_team.player2.cellphone, team.player2_cellphone or team.p2_cell),
+        (
+            "player2Cellphone",
+            "Player 2 cellphone",
+            2,
+            snapshot_team.player2.cellphone,
+            team.player2_cellphone or team.p2_cell,
+        ),
         ("player2Email", "Player 2 email", 2, snapshot_team.player2.email, team.player2_email or team.p2_email),
     )
     for field_name, label, slot, incoming, current in contact_pairs:

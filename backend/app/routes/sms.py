@@ -1083,10 +1083,7 @@ def _sync_players_and_team_links_from_team_slots(
                 updated = False
                 # Never rename a player to a different person because the team
                 # still has the replaced partner's phone.
-                if player_name and (
-                    not player.full_name
-                    or player.full_name.startswith("Unknown (")
-                ):
+                if player_name and (not player.full_name or player.full_name.startswith("Unknown (")):
                     player.full_name = player_name
                     player.display_name = player_name
                     updated = True

@@ -1867,9 +1867,7 @@ def _create_rr_match_for_teams(session: Session, tournament, event, team_a, team
     return version, rr_match, slot
 
 
-def test_rr_first_match_checkin_mode_uses_email_roster_phones(
-    client, session, setup_tournament_with_teams
-):
+def test_rr_first_match_checkin_mode_uses_email_roster_phones(client, session, setup_tournament_with_teams):
     """Check-in RR send must 200 and text Player phones matched by slot email."""
     from app.models.player import Player
     from app.models.team_player import TeamPlayer
@@ -1930,9 +1928,7 @@ def test_rr_first_match_checkin_mode_uses_email_roster_phones(
     assert "+15553334444" not in phones
 
 
-def test_rr_first_match_survives_one_team_send_crash(
-    client, session, setup_tournament_with_teams, monkeypatch
-):
+def test_rr_first_match_survives_one_team_send_crash(client, session, setup_tournament_with_teams, monkeypatch):
     """A single team send exception must not 500 the whole RR run."""
     tournament, event, teams = setup_tournament_with_teams
     _create_rr_match_for_teams(session, tournament, event, teams[0], teams[1])

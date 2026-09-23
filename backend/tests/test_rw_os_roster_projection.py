@@ -1036,16 +1036,16 @@ def test_amelia_notes_and_capacity_stay_aligned_when_teams_already_exist(client:
     assert _source_counts(session, imported.tournament_id)["Women's B"] == 24
 
 
-def test_operational_refresh_updates_identity_without_moving_or_creating_matches(
-    client: TestClient, session: Session
-):
+def test_operational_refresh_updates_identity_without_moving_or_creating_matches(client: TestClient, session: Session):
     womens = _womens_field(8)
     mixed = _mixed_field(8)
     imported = _import_payload(session, 930, womens + mixed)
     _approve(client, imported.id, {"womens": "8", "mixed": "8"})
     before = _teams_by_key(session, imported.tournament_id)
     original_event = before[womens[0].team_key].event_id
-    mixed_event_ids = {team.event_id for team in before.values() if team.source_team_key in {row.team_key for row in mixed}}
+    mixed_event_ids = {
+        team.event_id for team in before.values() if team.source_team_key in {row.team_key for row in mixed}
+    }
     matches_before = session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all()
 
     refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in womens + mixed]
@@ -1080,7 +1080,9 @@ def test_operational_refresh_updates_identity_without_moving_or_creating_matches
     assert updated.rating == 7.75
     assert updated.player1_cellphone == "2223334444"
     assert updated.p1_email == "short@example.com"
-    assert {team.event_id for team in after.values() if team.source_team_key in {row.team_key for row in mixed}} == mixed_event_ids
+    assert {
+        team.event_id for team in after.values() if team.source_team_key in {row.team_key for row in mixed}
+    } == mixed_event_ids
     towel = session.exec(
         select(TemporaryPlayerLookup).where(
             TemporaryPlayerLookup.tournament_id == imported.tournament_id,
