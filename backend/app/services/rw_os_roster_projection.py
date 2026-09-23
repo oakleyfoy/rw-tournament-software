@@ -40,6 +40,7 @@ class RosterProjectionResult:
     updated_teams: int = 0
     updated_contact_fields: int = 0
     updated_towel_rows: int = 0
+    field_changes: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
 
@@ -61,9 +62,52 @@ class RosterProjectionResult:
                 "contactFields": self.updated_contact_fields,
                 "towelRows": self.updated_towel_rows,
             },
+            "fieldChanges": list(self.field_changes),
             "warnings": list(self.warnings),
             "conflicts": list(self.conflicts),
         }
+
+
+def _blank_text(value: Any) -> Optional[str]:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _values_equal(before: Any, after: Any) -> bool:
+    if before is None and after is None:
+        return True
+    if isinstance(before, (int, float)) or isinstance(after, (int, float)):
+        try:
+            return before is not None and after is not None and float(before) == float(after)
+        except (TypeError, ValueError):
+            pass
+    return before == after
+
+
+def _record_field_change(
+    result: RosterProjectionResult,
+    *,
+    team_key: str,
+    team_label: str,
+    field: str,
+    label: str,
+    before: Any,
+    after: Any,
+    player_slot: Optional[int] = None,
+) -> None:
+    if _values_equal(before, after):
+        return
+    result.field_changes.append(
+        {
+            "teamKey": team_key,
+            "teamLabel": team_label,
+            "field": field,
+            "label": label,
+            "before": before,
+            "after": after,
+            "playerSlot": player_slot,
+        }
+    )
 
 
 def current_snapshot_hash(import_row: TournamentImport) -> str:
@@ -245,6 +289,8 @@ def _upsert_rwos_towel_row(
     slot: int,
     player: SnapshotPlayer,
     result: RosterProjectionResult,
+    *,
+    team_label: str | None = None,
 ) -> None:
     from app.routes.desk import _normalize_lookup_email, _normalize_lookup_name, _normalize_lookup_phone
 
@@ -271,6 +317,7 @@ def _upsert_rwos_towel_row(
         "updated_at": datetime.now(timezone.utc),
     }
     if existing:
+        before_color = existing.towel_color
         changed = False
         for name, value in fields.items():
             if getattr(existing, name) != value:
@@ -279,6 +326,16 @@ def _upsert_rwos_towel_row(
         if changed:
             session.add(existing)
             result.updated_towel_rows += 1
+            _record_field_change(
+                result,
+                team_key=team_key,
+                team_label=team_label or team_key,
+                field=f"player{slot}Towel",
+                label=f"Player {slot} towel",
+                before=before_color,
+                after=incoming_color,
+                player_slot=slot,
+            )
         return
 
     lookup_rows = [
@@ -311,6 +368,16 @@ def _upsert_rwos_towel_row(
         )
     )
     result.created_towel_rows += 1
+    _record_field_change(
+        result,
+        team_key=team_key,
+        team_label=team_label or team_key,
+        field=f"player{slot}Towel",
+        label=f"Player {slot} towel",
+        before=None,
+        after=incoming_color,
+        player_slot=slot,
+    )
 
 
 def _maybe_warn_stale_wkw(
@@ -546,12 +613,97 @@ def _apply_operational_team_updates(
     result: RosterProjectionResult,
     wkw_assignments: dict[int, list[tuple[int, Optional[str]]]],
 ) -> int:
+    full_name = _team_full_name(snapshot_team)
+    display_name = _team_display_name(snapshot_team, full_name)
+    rating = _team_rating(snapshot_team)
+    name = _unique_team_name(session, team.event_id, full_name, snapshot_team.team_key, team.id)
+    team_label = display_name or team.display_name or snapshot_team.team_key
+    identity_changed = False
+    if team.name != name:
+        _record_field_change(
+            result,
+            team_key=snapshot_team.team_key,
+            team_label=team_label,
+            field="fullName",
+            label="Full name",
+            before=team.name,
+            after=name,
+        )
+        team.name = name
+        identity_changed = True
+    if team.display_name != display_name:
+        _record_field_change(
+            result,
+            team_key=snapshot_team.team_key,
+            team_label=team_label,
+            field="displayName",
+            label="Short name",
+            before=team.display_name,
+            after=display_name,
+        )
+        team.display_name = display_name
+        identity_changed = True
+    if not _values_equal(team.rating, rating):
+        _record_field_change(
+            result,
+            team_key=snapshot_team.team_key,
+            team_label=team_label,
+            field="rating",
+            label="Rating",
+            before=team.rating,
+            after=rating,
+        )
+        team.rating = rating
+        identity_changed = True
     if team.avoid_group != snapshot_team.avoid_group:
+        _record_field_change(
+            result,
+            team_key=snapshot_team.team_key,
+            team_label=team_label,
+            field="avoidGroup",
+            label="Who Knows Who",
+            before=team.avoid_group,
+            after=snapshot_team.avoid_group,
+        )
         _maybe_warn_stale_wkw(session, team.event_id, team, snapshot_team.avoid_group, result)
         team.avoid_group = snapshot_team.avoid_group
+        identity_changed = True
+    if identity_changed:
         session.add(team)
     if team.id:
         wkw_assignments.setdefault(team.event_id, []).append((team.id, snapshot_team.avoid_group or team.avoid_group))
+    contact_pairs = (
+        (
+            "player1Cellphone",
+            "Player 1 cellphone",
+            1,
+            snapshot_team.player1.cellphone,
+            team.player1_cellphone or team.p1_cell,
+        ),
+        ("player1Email", "Player 1 email", 1, snapshot_team.player1.email, team.player1_email or team.p1_email),
+        (
+            "player2Cellphone",
+            "Player 2 cellphone",
+            2,
+            snapshot_team.player2.cellphone,
+            team.player2_cellphone or team.p2_cell,
+        ),
+        ("player2Email", "Player 2 email", 2, snapshot_team.player2.email, team.player2_email or team.p2_email),
+    )
+    for field_name, label, slot, incoming, current in contact_pairs:
+        incoming_value = _blank_text(incoming)
+        if incoming_value is None:
+            continue
+        _record_field_change(
+            result,
+            team_key=snapshot_team.team_key,
+            team_label=team_label,
+            field=field_name,
+            label=label,
+            before=_blank_text(current),
+            after=incoming_value,
+            player_slot=slot,
+        )
     updated = apply_team_contact_fields(
         team,
         player1_cellphone=snapshot_team.player1.cellphone,
@@ -561,7 +713,7 @@ def _apply_operational_team_updates(
         only_if_present=True,
     )
     result.updated_contact_fields += updated
-    return updated
+    return updated + (1 if identity_changed else 0)
 
 
 def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[str, Any]:
@@ -698,6 +850,7 @@ def roster_projection_from_live(summary: dict[str, Any]) -> dict[str, Any]:
             "contactFields": contact_fields,
             "towelRows": 0,
         },
+        "fieldChanges": [],
         "warnings": list(summary.get("warnings") or []),
         "conflicts": list(summary.get("conflicts") or []),
     }
@@ -709,5 +862,10 @@ def _project_towels(
     snapshot_team: SnapshotTeam,
     result: RosterProjectionResult,
 ) -> None:
-    _upsert_rwos_towel_row(session, tournament_id, snapshot_team.team_key, 1, snapshot_team.player1, result)
-    _upsert_rwos_towel_row(session, tournament_id, snapshot_team.team_key, 2, snapshot_team.player2, result)
+    team_label = _team_display_name(snapshot_team, _team_full_name(snapshot_team))
+    _upsert_rwos_towel_row(
+        session, tournament_id, snapshot_team.team_key, 1, snapshot_team.player1, result, team_label=team_label
+    )
+    _upsert_rwos_towel_row(
+        session, tournament_id, snapshot_team.team_key, 2, snapshot_team.player2, result, team_label=team_label
+    )

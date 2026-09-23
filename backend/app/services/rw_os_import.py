@@ -248,19 +248,19 @@ def _approved_plans(session: Session, import_row: TournamentImport) -> list[Tour
     )
 
 
-def _project_operational_refresh(session: Session, import_row: TournamentImport) -> None:
+def _project_operational_refresh(session: Session, import_row: TournamentImport) -> Optional[dict[str, Any]]:
     from app.services.rw_os_roster_projection import project_approved_roster
 
     plans = _approved_plans(session, import_row)
     if not plans:
-        return
-    project_approved_roster(
+        return None
+    return project_approved_roster(
         session,
         import_row,
         plans,
         operational_only=True,
         allow_structural_rebuild=False,
-    )
+    ).to_dict()
 
 
 def persist_snapshot(
@@ -333,8 +333,10 @@ def persist_snapshot(
     session.add(existing)
     session.commit()
     session.refresh(existing)
-    if existing.plan_status == "approved" and not structural_changed:
-        _project_operational_refresh(session, existing)
+    # Refresh existing source-backed teams even after a structural snapshot change.
+    # operational_only still blocks add/move; withdrawals stay in the diff/conflict path.
+    if existing.plan_status in ("approved", "stale"):
+        setattr(existing, "_last_roster_projection", _project_operational_refresh(session, existing))
     return existing
 
 
@@ -396,8 +398,10 @@ def refresh_import(
     diff = compute_refresh_diff(previous, current)
     import_row.refresh_diff_json = json.dumps(diff)
     import_row.updated_at = datetime.utcnow()
+    roster_projection = None
     if apply:
         persist_snapshot(session, current, organization_slug=import_row.organization_slug, existing=import_row)
+        roster_projection = getattr(import_row, "_last_roster_projection", None)
     else:
         session.add(import_row)
         session.commit()
@@ -407,6 +411,7 @@ def refresh_import(
         "applied": apply,
         "current": current if not apply else None,
         "import": serialize_import(import_row),
+        "rosterProjection": roster_projection,
     }
 
 

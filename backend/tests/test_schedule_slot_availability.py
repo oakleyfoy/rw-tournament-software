@@ -31,7 +31,6 @@ def _slot(*, start: time, court_number: int, is_active: bool = True, day: date =
 
 
 def test_all_desk_courts_include_named_and_grid_courts():
-    friday = date(2026, 7, 10)
     slots = [
         _slot(start=time(9, 0), court_number=1),
         _slot(start=time(12, 30), court_number=19),

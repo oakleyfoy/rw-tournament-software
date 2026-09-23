@@ -26,7 +26,9 @@ import {
   getScheduleVersions,
   importSeededTeams,
   importCombinedTeams,
+  refreshRwOsImport,
   getEventTeams,
+  RwOsRosterFieldChange,
   ScheduleBuilderResponse,
   SchedulePlanReport,
   updateDrawPlan,
@@ -45,6 +47,12 @@ import {
   MoveDivisionResponse,
 } from '../api/client'
 import MoveDivisionModal from './draw-builder/MoveDivisionModal'
+import {
+  formatRwOsRosterRefreshSummary,
+  isRwOsBackedTournament,
+  RwOsRosterRefreshCard,
+  type RwOsRosterSnapshotDiff,
+} from './draw-builder/RwOsRosterRefreshCard'
 import EditWfMatchupModal from './draw-builder/EditWfMatchupModal'
 import { showToast } from '../utils/toast'
 import {
@@ -325,6 +333,11 @@ function DrawBuilder() {
   // Combined roster + towel import state
   const [importText, setImportText] = useState('')
   const [importLoading, setImportLoading] = useState(false)
+  const [rwOsRefreshLoading, setRwOsRefreshLoading] = useState(false)
+  const [rwOsRefreshSummary, setRwOsRefreshSummary] = useState<string | null>(null)
+  const [rwOsRefreshNotices, setRwOsRefreshNotices] = useState<Array<{ code?: string; message?: string }>>([])
+  const [rwOsRefreshChanges, setRwOsRefreshChanges] = useState<RwOsRosterFieldChange[]>([])
+  const [rwOsSnapshotDiff, setRwOsSnapshotDiff] = useState<RwOsRosterSnapshotDiff | null>(null)
   const [legacyImportOpenEventId, setLegacyImportOpenEventId] = useState<number | null>(null)
   const [legacyImportText, setLegacyImportText] = useState('')
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
@@ -408,6 +421,17 @@ function DrawBuilder() {
         states[event.id] = initializeEditorState(event)
       })
       setEventEditorStates(states)
+
+      const teamEntries = await Promise.all(
+        eventsData.map(async (event) => {
+          try {
+            return [event.id, await getEventTeams(event.id)] as const
+          } catch {
+            return [event.id, [] as TeamListItem[]] as const
+          }
+        }),
+      )
+      setEventTeams(Object.fromEntries(teamEntries))
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to load data', 'error')
     } finally {
@@ -968,6 +992,60 @@ function DrawBuilder() {
     }
   }
 
+  const reloadEventTeams = async (eventIds: number[]) => {
+    if (eventIds.length === 0) return
+    const rows = await Promise.all(
+      eventIds.map(async (eventId) => {
+        try {
+          const teams = await getEventTeams(eventId)
+          return [eventId, teams] as const
+        } catch {
+          return [eventId, null] as const
+        }
+      }),
+    )
+    setEventTeams((prev) => {
+      const next = { ...prev }
+      for (const [eventId, teams] of rows) {
+        if (teams) next[eventId] = teams
+      }
+      return next
+    })
+  }
+
+  const handleRefreshRosterFromRwOs = async () => {
+    if (!tournament?.rw_os_import_id) return
+    setRwOsRefreshLoading(true)
+    try {
+      const result = await refreshRwOsImport(tournament.rw_os_import_id, true)
+      const projection = result.rosterProjection ?? result.importResponse?.rosterProjection
+      const summary = formatRwOsRosterRefreshSummary(projection?.updated)
+      setRwOsRefreshSummary(summary)
+      setRwOsRefreshChanges(projection?.fieldChanges ?? [])
+      setRwOsSnapshotDiff(result.diff ?? null)
+      const notices = [
+        ...(projection?.conflicts ?? []),
+        ...(projection?.warnings ?? []),
+        ...(result.importResponse?.liveRoster?.conflicts ?? []),
+        ...(result.importResponse?.liveRoster?.warnings ?? []),
+      ]
+      const uniqueNotices = notices.filter(
+        (notice, index, all) =>
+          all.findIndex((item) => (item.code || '') + (item.message || '') === (notice.code || '') + (notice.message || '')) === index,
+      )
+      setRwOsRefreshNotices(uniqueNotices)
+      showToast(summary, uniqueNotices.length > 0 ? 'warning' : 'success')
+      uniqueNotices.forEach((notice) => {
+        if (notice.message) showToast(notice.message, 'warning')
+      })
+      await reloadEventTeams(events.map((event) => event.id))
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to refresh roster from RW-OS', 'error')
+    } finally {
+      setRwOsRefreshLoading(false)
+    }
+  }
+
   const handleLoadTeams = async (eventId: number) => {
     setLoadingTeamsFor(eventId)
     try {
@@ -1489,31 +1567,24 @@ function DrawBuilder() {
           </div>
         )}
 
-        <div
-          className="form-group"
-          style={{
-            marginBottom: '16px',
-            padding: '12px',
-            borderRadius: '8px',
-            border: '1px solid var(--theme-input-border)',
-            backgroundColor: 'var(--theme-card-bg)',
-          }}
-        >
-          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Teams in this event</label>
-          <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
-            After draws exist, use Swap Teams on the WF Round 1 rows to exchange two pairs. Move Division is an advanced one-team tool that leaves a TBD in the source slot.
-          </p>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={loadingTeamsFor === event.id}
-              onClick={() => void handleLoadTeams(event.id)}
-            >
-              {loadingTeamsFor === event.id ? 'Loading…' : eventTeams[event.id] ? 'Refresh teams' : 'Load teams'}
-            </button>
-          </div>
-          {(eventTeams[event.id]?.length ?? 0) > 0 && (
+        {(eventTeams[event.id]?.length ?? 0) > 0 && (
+          <div
+            className="form-group"
+            style={{
+              marginBottom: '16px',
+              padding: '12px',
+              borderRadius: '8px',
+              border: '1px solid var(--theme-input-border)',
+              backgroundColor: 'var(--theme-card-bg)',
+            }}
+          >
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>Teams in this event</label>
+            {event.draw_status === 'final' && (
+              <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
+                After draws exist, use Swap Teams on the WF Round 1 rows to exchange two pairs. Move Division is an
+                advanced one-team tool that leaves a TBD in the source slot.
+              </p>
+            )}
             <div style={{ overflowX: 'auto', maxHeight: 280, overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
@@ -1543,8 +1614,8 @@ function DrawBuilder() {
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="form-group" style={{ marginBottom: '16px' }}>
           <label>Standard Match Length</label>
@@ -1711,6 +1782,17 @@ function DrawBuilder() {
           </button>
         </div>
       </div>
+
+      {isRwOsBackedTournament(tournament) && (
+        <RwOsRosterRefreshCard
+          loading={rwOsRefreshLoading}
+          summary={rwOsRefreshSummary}
+          notices={rwOsRefreshNotices}
+          fieldChanges={rwOsRefreshChanges}
+          snapshotDiff={rwOsSnapshotDiff}
+          onRefresh={() => void handleRefreshRosterFromRwOs()}
+        />
+      )}
 
       {(swapPicks.length > 0 || Object.values(wfR1MatchesByEvent).some((rows) => (rows?.length ?? 0) > 0)) && (
         <div
@@ -1988,8 +2070,8 @@ function DrawBuilder() {
         )
       })()}
 
-      {/* Combined roster + towel import */}
-      {events.filter(e => e.draw_status === 'final').length > 0 && (
+      {/* Combined roster + towel import — hidden for RW-OS tournaments */}
+      {!isRwOsBackedTournament(tournament) && events.filter(e => e.draw_status === 'final').length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
           <h2 className="section-title">Combined Team + Towel Import</h2>
           <div style={{ fontSize: 13, color: 'var(--theme-text)', lineHeight: 1.5, marginBottom: 12 }}>
@@ -2038,7 +2120,7 @@ function DrawBuilder() {
         </div>
       )}
 
-      {events.filter(e => e.draw_status === 'final').length > 0 && (
+      {!isRwOsBackedTournament(tournament) && events.filter(e => e.draw_status === 'final').length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
           <h2 className="section-title">Legacy Per-Event Team Import</h2>
           {events.filter(e => e.draw_status === 'final').map((ev) => {

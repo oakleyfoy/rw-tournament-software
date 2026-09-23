@@ -89,12 +89,8 @@ def normalize_email(value: Optional[str]) -> Optional[str]:
 
 def _team_slot_email(team: Team, slot: int) -> Optional[str]:
     if slot == 1:
-        return normalize_email(getattr(team, "player1_email", None)) or normalize_email(
-            getattr(team, "p1_email", None)
-        )
-    return normalize_email(getattr(team, "player2_email", None)) or normalize_email(
-        getattr(team, "p2_email", None)
-    )
+        return normalize_email(getattr(team, "player1_email", None)) or normalize_email(getattr(team, "p1_email", None))
+    return normalize_email(getattr(team, "player2_email", None)) or normalize_email(getattr(team, "p2_email", None))
 
 
 def _player_name_key(player: Player) -> str:
