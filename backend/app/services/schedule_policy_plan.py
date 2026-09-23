@@ -12,7 +12,9 @@ A. Daily match cap: no team > 2 matches / day.
 B. Everyone plays match #1 before match #2 (fairness layering).
 C. Event priority: descending team_count; rotation ONLY within same-size buckets
     (optional tournament-level day_orders prefix per calendar day).
-D. Day 1 layering: WF R1 → no-WF firsts → WF R2 → remaining.
+D. Day 1 layering: interleaved wave 1 (every event's WF R1) then interleaved
+   wave 2 (WF R2, or first RR for 1-round WF events). Same-slot leftover courts
+   cannot pull Women's R2 before Mixed has played its Friday WF.
 E. Spare-court reservation: ≥1 spare per time-bucket (except first).
    Deterministic court ordering: court_number asc, court_label asc, slot.id asc.
 F. Day 2+ layering: bracket + RR by event size w/ daily rotation.
@@ -148,13 +150,40 @@ def _get_draw_plan(event: Event) -> Dict[str, Any]:
 
 
 def _event_has_wf(event: Event) -> bool:
-    plan = _get_draw_plan(event)
-    return plan.get("wf_rounds", 0) >= 1
+    return _event_wf_rounds(event) >= 1
 
 
 def _event_wf_rounds(event: Event) -> int:
     plan = _get_draw_plan(event)
-    return plan.get("wf_rounds", 0)
+    raw = plan.get("wf_rounds")
+    if raw is None:
+        raw = plan.get("waterfall_rounds")
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sorted_stage_matches(matches: List[Match]) -> List[Match]:
+    return sorted(matches, key=lambda m: (m.sequence_in_round or 0, m.id or 0))
+
+
+def _wf_round_for_event(unassigned: List[Match], event_id: int, round_number: int) -> List[Match]:
+    return _sorted_stage_matches(
+        [
+            m
+            for m in unassigned
+            if m.event_id == event_id and m.match_type == "WF" and m.round_number == round_number
+        ]
+    )
+
+
+def _first_rr_for_event(unassigned: List[Match], event_id: int) -> List[Match]:
+    rr_matches = [m for m in unassigned if m.event_id == event_id and m.match_type == "RR"]
+    if not rr_matches:
+        return []
+    min_round = min(m.round_index for m in rr_matches)
+    return _sorted_stage_matches([m for m in rr_matches if m.round_index == min_round])
 
 
 # ── True list-rotation for event priority ────────────────────────────
@@ -1033,6 +1062,68 @@ def _interleave_match_lists_round_robin(match_lists: List[List[Match]]) -> List[
     return out
 
 
+def _next_rr_round_slice(
+    event_rr: List[Match],
+    planned_rounds: Set[int],
+    event_id: int,
+    event_rounds_today: Dict[int, int],
+    max_per_day: int = 2,
+) -> List[Match]:
+    if not event_rr or not _can_event_afford_rr_round(event_id, event_rounds_today, max_per_day=max_per_day):
+        return []
+    for rr_round in sorted({m.round_index or 0 for m in event_rr}):
+        if rr_round in planned_rounds:
+            continue
+        return _sorted_stage_matches([m for m in event_rr if (m.round_index or 0) == rr_round])
+    return []
+
+
+def _append_interleaved_rr_waves(
+    batches: List[PlacementBatch],
+    events_ordered: List[Event],
+    rr_by_event: Dict[int, List[Match]],
+    team_day_counts: Dict[int, int],
+    event_rounds_today: Dict[int, int],
+    rr_rounds_planned: Dict[int, Set[int]],
+    *,
+    wave_count: int,
+    day_label: int,
+    max_per_day: int = 2,
+) -> None:
+    """Place the next RR round from each event, interleaved, one wave per timeslot."""
+    for wave_i in range(wave_count):
+        slices: List[List[Match]] = []
+        for event in events_ordered:
+            if event.id is None:
+                continue
+            slice_m = _next_rr_round_slice(
+                rr_by_event.get(event.id, []),
+                rr_rounds_planned[event.id],
+                event.id,
+                event_rounds_today,
+                max_per_day,
+            )
+            if slice_m:
+                slices.append(slice_m)
+        if not slices:
+            break
+        capped = _filter_by_team_cap(_interleave_match_lists_round_robin(slices), team_day_counts)
+        if not capped:
+            break
+        batches.append(
+            PlacementBatch(
+                name=f"DAY{day_label}_RR_WAVE{wave_i + 1}",
+                match_ids=[m.id for m in capped if m.id is not None],
+                description=f"Day {day_label} interleaved RR wave {wave_i + 1} ({len(capped)} matches)",
+            )
+        )
+        for match in capped:
+            if match.match_type == "RR":
+                rr_rounds_planned[match.event_id].add(match.round_index or 0)
+        for event_id in {match.event_id for match in capped}:
+            event_rounds_today[event_id] = event_rounds_today.get(event_id, 0) + 1
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  Day 1 plan builder
 # ══════════════════════════════════════════════════════════════════════════
@@ -1049,53 +1140,40 @@ def _build_day1_plan(
     tournament_day_orders: Optional[List[List[int]]] = None,
 ) -> List[PlacementBatch]:
     """
-    Day 1 layering:
-      1. WF Round 1 (events with WF, by event priority)
-      2. Non-WF events first matches (RR R1 or first bracket)
-      3. WF Round 2 (events with WF R2, by event priority)
-      4. Remaining first-day matches for non-WF-R2 events
+    Day 1 layering — two interleaved waves so leftover courts in a 15-court
+    slot cannot steal the next Women's waterfall before Mixed has played:
+
+      Wave 1: every event's WF R1 (plus non-WF openers), interleaved
+      Wave 2: WF R2, or first RR for 1-round WF events, interleaved
+
+    Example: Mixed 10 (1 WF + RR) + Women's 20 (2 WF) on 15 courts:
+      Slot 1 = 5 Mixed WF + 10 Women's WF R1
+      Slot 2 = 5 Mixed RR + 10 Women's WF R2
     """
     batches: List[PlacementBatch] = []
     unassigned = [m for m in all_matches if m.id not in assigned_match_ids]
 
-    # Build team-day tracker
     team_day_counts = _build_team_match_count_on_day(session, schedule_version_id, day_date)
-
-    # Sort events by priority (largest draw first)
     events_ordered = _build_rotated_event_list(events, 0, tournament_day_orders)
 
     wf_events = [e for e in events_ordered if _event_has_wf(e)]
     wf_event_ids = {e.id for e in wf_events}
     non_wf_events = [e for e in events_ordered if not _event_has_wf(e)]
 
-    # --- WF Round 1: one batch PER EVENT, largest draw first ---
-    # Each event's WF R1 matches are placed contiguously before the
-    # next event starts.  This ensures the grid shows clean event
-    # blocks: all of Women's A R1 fills first, then Women's B R1, etc.
+    wave1_lists: List[List[Match]] = []
     for event in wf_events:
-        e_r1 = [m for m in unassigned if m.event_id == event.id and m.match_type == "WF" and m.round_number == 1]
-        if not e_r1:
-            continue
-        e_r1_sorted = sorted(e_r1, key=lambda m: (m.sequence_in_round or 0, m.id or 0))
-        e_r1_capped = _filter_by_team_cap(e_r1_sorted, team_day_counts)
+        e_r1_capped = _filter_by_team_cap(_wf_round_for_event(unassigned, event.id, 1), team_day_counts)
         if e_r1_capped:
-            batches.append(
-                PlacementBatch(
-                    name=f"DAY1_WF_R1_{event.name}",
-                    match_ids=[m.id for m in e_r1_capped],
-                    description=f"WF R1 {event.name} ({len(e_r1_capped)} matches)",
-                )
-            )
+            wave1_lists.append(e_r1_capped)
 
-    # --- Non-WF events first matches ---
-    non_wf_first_ids = set()
-    for e in non_wf_events:
-        e_matches = [m for m in unassigned if m.event_id == e.id]
+    non_wf_first_ids: Set[int] = set()
+    for event in non_wf_events:
+        e_matches = [m for m in unassigned if m.event_id == event.id]
         if not e_matches:
             continue
         by_stage: Dict[str, List[Match]] = defaultdict(list)
-        for m in e_matches:
-            by_stage[m.match_type].append(m)
+        for match in e_matches:
+            by_stage[match.match_type].append(match)
         first_matches: List[Match] = []
         if "RR" in by_stage:
             min_rr_round = min(m.round_index for m in by_stage["RR"])
@@ -1103,57 +1181,58 @@ def _build_day1_plan(
         elif "MAIN" in by_stage:
             min_main_round = min(m.round_index for m in by_stage["MAIN"])
             first_matches = [m for m in by_stage["MAIN"] if m.round_index == min_main_round]
-        for m in first_matches:
-            non_wf_first_ids.add(m.id)
+        first_capped = _filter_by_team_cap(_sorted_stage_matches(first_matches), team_day_counts)
+        if first_capped:
+            wave1_lists.append(first_capped)
+            non_wf_first_ids.update(m.id for m in first_capped if m.id is not None)
 
-    non_wf_first = [m for m in unassigned if m.id in non_wf_first_ids]
-    non_wf_first_sorted = sorted(non_wf_first, key=lambda m: _match_sort_key(m, event_priority))
-    non_wf_first_capped = _filter_by_team_cap(non_wf_first_sorted, team_day_counts)
-    if non_wf_first_capped:
+    wave1 = _interleave_match_lists_round_robin(wave1_lists)
+    if wave1:
         batches.append(
             PlacementBatch(
-                name="DAY1_NON_WF_FIRST",
-                match_ids=[m.id for m in non_wf_first_capped],
-                description=f"Non-WF events first matches ({len(non_wf_first_capped)} matches)",
+                name="DAY1_WAVE1",
+                match_ids=[m.id for m in wave1 if m.id is not None],
+                description=f"Day 1 wave 1 interleaved openers ({len(wave1)} matches)",
             )
         )
 
-    # --- WF Round 2: one batch PER EVENT, largest draw first ---
-    wf_r2_events = [e for e in wf_events if _event_wf_rounds(e) >= 2]
-    wf_r2_event_ids = {e.id for e in wf_r2_events}
-    for event in wf_r2_events:
-        e_r2 = [m for m in unassigned if m.event_id == event.id and m.match_type == "WF" and m.round_number == 2]
-        if not e_r2:
+    wave2_lists: List[List[Match]] = []
+    wf_r2_event_ids: Set[int] = set()
+    for event in wf_events:
+        if _event_wf_rounds(event) >= 2:
+            e_r2_capped = _filter_by_team_cap(_wf_round_for_event(unassigned, event.id, 2), team_day_counts)
+            if e_r2_capped:
+                wave2_lists.append(e_r2_capped)
+                wf_r2_event_ids.add(event.id)
             continue
-        e_r2_sorted = sorted(e_r2, key=lambda m: (m.sequence_in_round or 0, m.id or 0))
-        e_r2_capped = _filter_by_team_cap(e_r2_sorted, team_day_counts)
-        if e_r2_capped:
-            batches.append(
-                PlacementBatch(
-                    name=f"DAY1_WF_R2_{event.name}",
-                    match_ids=[m.id for m in e_r2_capped],
-                    description=f"WF R2 {event.name} ({len(e_r2_capped)} matches)",
-                )
-            )
+        rr_capped = _filter_by_team_cap(_first_rr_for_event(unassigned, event.id), team_day_counts)
+        if rr_capped:
+            wave2_lists.append(rr_capped)
 
-    # --- Remaining Day 1 matches ---
+    wave2 = _interleave_match_lists_round_robin(wave2_lists)
+    if wave2:
+        batches.append(
+            PlacementBatch(
+                name="DAY1_WAVE2",
+                match_ids=[m.id for m in wave2 if m.id is not None],
+                description=f"Day 1 wave 2 interleaved second matches ({len(wave2)} matches)",
+            )
+        )
+
     already_batched = set()
-    for b in batches:
-        already_batched.update(b.match_ids)
+    for batch in batches:
+        already_batched.update(batch.match_ids)
 
     remaining_day1: List[Match] = []
-    for e in events_ordered:
-        e_matches = [m for m in unassigned if m.event_id == e.id and m.id not in already_batched]
-        if not e_matches:
+    for event in events_ordered:
+        if event.id not in wf_event_ids or event.id in wf_r2_event_ids:
             continue
-        # For WF events that only had R1 (no R2), add their RR R1 as second-layer
-        if e.id in wf_event_ids and e.id not in wf_r2_event_ids:
-            rr_matches = [m for m in e_matches if m.match_type == "RR"]
-            if rr_matches:
-                min_round = min(m.round_index for m in rr_matches)
-                for m in rr_matches:
-                    if m.round_index == min_round:
-                        remaining_day1.append(m)
+        leftover_rr = [
+            m
+            for m in _first_rr_for_event(unassigned, event.id)
+            if m.id not in already_batched and m.id not in non_wf_first_ids
+        ]
+        remaining_day1.extend(leftover_rr)
 
     remaining_day1_sorted = sorted(remaining_day1, key=lambda m: _match_sort_key(m, event_priority))
     remaining_day1_capped = _filter_by_team_cap(remaining_day1_sorted, team_day_counts)
@@ -1161,7 +1240,7 @@ def _build_day1_plan(
         batches.append(
             PlacementBatch(
                 name="DAY1_REMAINING",
-                match_ids=[m.id for m in remaining_day1_capped],
+                match_ids=[m.id for m in remaining_day1_capped if m.id is not None],
                 description=f"Day 1 remaining first-layer matches ({len(remaining_day1_capped)} matches)",
             )
         )
@@ -1231,11 +1310,17 @@ def _build_day2plus_plan(
     another event's MAIN QF/SF instead of waiting until that event's entire
     bracket tier is placed.
 
+      Pool weekend (no live MAIN QF/SF): two interleaved RR waves so
+      Mixed and Women's each play one RR per Saturday slot (or one on
+      a single-slot day). Leftover WF is not dumped ahead of those RR
+      waves.
+
+      Bracket weekend:
       Phase 0: Remaining WF (safety net), still one batch per event
       Phase 1: Interleaved first MAIN tier (QF) or first RR pool round
       Phase 2: Interleaved SF tier or next RR round
-      Phase 2b: Remaining RR rounds (R3+) for pool-play events
-      Phase 3: Consolation — per event (fills remaining slots)
+      Phase 2b: Interleaved extra RR wave (not a per-event dump)
+      Phase 3: Consolation — spare-fill after batches
       Phase 4: Placement matches
 
     No MAIN Finals on Day 2 — capped at 2 MAIN rounds (QF + SF).
@@ -1300,6 +1385,33 @@ def _build_day2plus_plan(
     rr_by_event = _by_event(rr_matches)
 
     rr_rounds_planned: Dict[int, Set[int]] = defaultdict(set)
+    has_bracket_work = bool(qf_all or sf_all)
+
+    # Pool Saturday: 2 RR waves (Mixed + Women's share each 15-court slot).
+    if rr_matches and not has_bracket_work:
+        _append_interleaved_rr_waves(
+            batches,
+            events_ordered,
+            rr_by_event,
+            team_day_counts,
+            event_rounds_today,
+            rr_rounds_planned,
+            wave_count=2,
+            day_label=day_label,
+        )
+        if placement_matches:
+            pl_resolved = _filter_resolved(placement_matches, assigned_match_ids)
+            pl_sorted = sorted(pl_resolved, key=lambda m: _match_sort_key(m, event_priority))
+            pl_capped = _filter_by_team_cap(pl_sorted, team_day_counts)
+            if pl_capped:
+                batches.append(
+                    PlacementBatch(
+                        name=f"DAY{day_label}_PLACEMENT",
+                        match_ids=[m.id for m in pl_capped if m.id is not None],
+                        description=f"Placement matches ({len(pl_capped)} matches)",
+                    )
+                )
+        return batches, deferred_final_ids
 
     # ── Phase 0: Remaining WF (safety net) ──────────────────────────
     if wf_matches:
@@ -1396,37 +1508,17 @@ def _build_day2plus_plan(
                 if m.match_type == "RR":
                     rr_rounds_planned[m.event_id].add(m.round_index or 0)
 
-    # ── Phase 2b: Remaining RR rounds (R3+) for pool-play events ─────
-    # RR-only events (e.g. Mixed with 4 pools of 4 teams) need 3 rounds
-    # of pool play on Day 2.  Phases 1+2 batch R1 and R2; this phase
-    # batches any remaining rounds that haven't been placed yet.
-    # We raise the effective cap for RR-only events (no MAIN matches)
-    # because pool play rounds are lightweight and expected on the same day.
-    for eid in event_ids_ordered:
-        ename = event_name_map.get(eid, str(eid))
-        e_rr = rr_by_event.get(eid, [])
-        e_sf = sf_by_event.get(eid, [])
-        if not e_rr or e_sf:
-            continue  # Only for RR-only events (no bracket SFs)
-        rr_rounds_available = sorted(set(m.round_index for m in e_rr))
-        for rr_round in rr_rounds_available:
-            if rr_round in rr_rounds_planned[eid]:
-                continue
-            # Allow up to 3 RR rounds for pool-play events
-            if not _can_event_afford_rr_round(eid, event_rounds_today, max_per_day=3):
-                break
-            rr_round_matches = [m for m in e_rr if m.round_index == rr_round]
-            rr_sorted = sorted(rr_round_matches, key=lambda m: (m.sequence_in_round or 0, m.id or 0))
-            batches.append(
-                PlacementBatch(
-                    name=f"DAY{day_label}_RR_R{rr_round}_{ename}",
-                    match_ids=[m.id for m in rr_sorted],
-                    description=f"RR R{rr_round} {ename} ({len(rr_sorted)} matches)",
-                )
-            )
-            planned_so_far += len(rr_sorted)
-            event_rounds_today[eid] = event_rounds_today.get(eid, 0) + 1
-            rr_rounds_planned[eid].add(rr_round)
+    # ── Phase 2b: one extra interleaved RR wave, never a per-event dump ──
+    _append_interleaved_rr_waves(
+        batches,
+        events_ordered,
+        rr_by_event,
+        team_day_counts,
+        event_rounds_today,
+        rr_rounds_planned,
+        wave_count=1,
+        day_label=day_label,
+    )
 
     # Phase 3 (Consolation) is handled AFTER the batch loop by the
     # spare-fill function (_fill_spare_courts_with_consolation) which
@@ -1545,6 +1637,39 @@ def _build_day3_plan(
         sp = STAGE_PRECEDENCE.get(m.match_type, 999)
         return (ep, rounds_played, sp, m.round_index or 999, m.sequence_in_round or 999, m.id or 999)
 
+    rr_by_event: Dict[int, List[Match]] = defaultdict(list)
+    for match in rr_matches:
+        rr_by_event[match.event_id].append(match)
+    rr_rounds_planned: Dict[int, Set[int]] = defaultdict(set)
+    events_ordered = sorted(events, key=lambda e: event_priority.get(e.id or 0, 999))
+    has_bracket_work = bool(main_classified.get("qf") or main_classified.get("sf"))
+
+    # Pool Sunday: last RR for Mixed and Women's in the single slot.
+    if rr_matches and not has_bracket_work:
+        _append_interleaved_rr_waves(
+            batches,
+            events_ordered,
+            rr_by_event,
+            team_day_counts,
+            event_rounds_today,
+            rr_rounds_planned,
+            wave_count=1,
+            day_label=day_index + 1,
+        )
+        if placement_matches:
+            pl_resolved = _filter_resolved(placement_matches, assigned_match_ids)
+            pl_sorted = sorted(pl_resolved, key=_catchup_sort_key)
+            pl_capped = _filter_by_team_cap(pl_sorted, team_day_counts)
+            if pl_capped:
+                batches.append(
+                    PlacementBatch(
+                        name=f"DAY{day_index + 1}_PLACEMENT",
+                        match_ids=[m.id for m in pl_capped if m.id is not None],
+                        description=f"Placement matches ({len(pl_capped)} matches)",
+                    )
+                )
+        return batches
+
     # ── Batch 1: Remaining WF (catch-up from prior days) ──
     if wf_matches:
         wf_sorted = sorted(wf_matches, key=_catchup_sort_key)
@@ -1614,34 +1739,18 @@ def _build_day3_plan(
                 )
             )
 
-    # ── Batch 4: RR rounds — lower round first ──
+    # ── Batch 4: one interleaved RR wave (last pool round) ──
     if rr_matches:
-        rr_rounds = sorted(set(m.round_index for m in rr_matches))
-        for rr_round in rr_rounds:
-            rr_round_matches = [m for m in rr_matches if m.round_index == rr_round]
-
-            by_event: Dict[int, List[Match]] = defaultdict(list)
-            for m in rr_round_matches:
-                by_event[m.event_id].append(m)
-
-            eligible_matches: List[Match] = []
-            eligible_events: List[int] = []
-            for eid, ematches in sorted(by_event.items()):
-                if _can_event_afford_rr_round(eid, event_rounds_today):
-                    eligible_matches.extend(ematches)
-                    eligible_events.append(eid)
-
-            if eligible_matches:
-                rr_sorted = sorted(eligible_matches, key=_catchup_sort_key)
-                batches.append(
-                    PlacementBatch(
-                        name=f"DAY{day_index + 1}_RR_R{rr_round}",
-                        match_ids=[m.id for m in rr_sorted],
-                        description=f"RR Round {rr_round} ({len(rr_sorted)} matches)",
-                    )
-                )
-                for eid in eligible_events:
-                    event_rounds_today[eid] = event_rounds_today.get(eid, 0) + 1
+        _append_interleaved_rr_waves(
+            batches,
+            events_ordered,
+            rr_by_event,
+            team_day_counts,
+            event_rounds_today,
+            rr_rounds_planned,
+            wave_count=1,
+            day_label=day_index + 1,
+        )
 
     # ── Batch 5: ALL Finals (MAIN + CONS) — after rest gap from SFs ──
     # By this point SFs were placed early, so the rest gap is satisfied
