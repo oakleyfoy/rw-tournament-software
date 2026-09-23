@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models.match import Match
+from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentImport
 from app.services.rw_os_client import RwOsClient, RwOsClientError
 from app.services.rw_os_import import (
@@ -13,6 +14,7 @@ from app.services.rw_os_import import (
     build_import_response,
     create_import_from_event,
     default_forecasts,
+    ensure_import_for_tournament,
     get_latest_import_for_tournament,
     list_importable_events,
     preview_custom_structure,
@@ -104,6 +106,20 @@ def get_tournament_import(tournament_id: int, session: Session = Depends(get_ses
     row = get_latest_import_for_tournament(session, tournament_id)
     if not row:
         raise HTTPException(status_code=404, detail="No RW-OS import exists for this tournament.")
+    return build_import_response(session, row)
+
+
+@router.post("/tournaments/{tournament_id}/import/ensure")
+def ensure_tournament_import(tournament_id: int, session: Session = Depends(get_session)):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    try:
+        row = ensure_import_for_tournament(session, tournament)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RwOsClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return build_import_response(session, row)
 
 

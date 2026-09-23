@@ -199,6 +199,29 @@ def get_latest_import_for_tournament(session: Session, tournament_id: int) -> Op
     ).first()
 
 
+def ensure_import_for_tournament(
+    session: Session,
+    tournament: Tournament,
+    *,
+    client: Optional[RwOsClient] = None,
+    organization_slug: str = "rw",
+) -> TournamentImport:
+    existing = get_latest_import_for_tournament(session, tournament.id)
+    if existing:
+        return existing
+    source_id = tournament.source_rw_os_tournament_id
+    if source_id is None:
+        raise ValueError("This tournament is not linked to an RW-OS event.")
+    client = client or RwOsClient()
+    payload = client.get_event(int(source_id))
+    return persist_snapshot(
+        session,
+        payload,
+        organization_slug=organization_slug or tournament.source_rw_os_organization_slug or "rw",
+        for_tournament=tournament,
+    )
+
+
 def build_import_response(session: Session, import_row: TournamentImport) -> dict[str, Any]:
     from app.services.rw_os_roster_projection import live_roster_summary, roster_projection_from_live
 
@@ -269,6 +292,7 @@ def persist_snapshot(
     *,
     organization_slug: str = "rw",
     existing: Optional[TournamentImport] = None,
+    for_tournament: Optional[Tournament] = None,
 ) -> TournamentImport:
     teams = parse_teams(payload.get("teams") or [])
     waitlist = parse_teams(payload.get("waitlistTeams") or [])
@@ -279,6 +303,37 @@ def persist_snapshot(
     waitlist_payload = [team.to_dict() for team in waitlist]
     source_id = int(payload["tournamentId"])
     source_hash = snapshot_hash(payload)
+
+    if existing is None and for_tournament is not None:
+        tournament = for_tournament
+        if tournament.source_rw_os_tournament_id is None:
+            tournament.source_rw_os_tournament_id = source_id
+        if not tournament.source_rw_os_organization_slug:
+            tournament.source_rw_os_organization_slug = organization_slug
+        session.add(tournament)
+        session.commit()
+        session.refresh(tournament)
+        import_row = TournamentImport(
+            tournament_id=tournament.id,
+            organization_slug=organization_slug,
+            source_tournament_id=source_id,
+            event_name=str(payload.get("eventName") or tournament.name),
+            event_date=event_date,
+            source_updated_at=payload.get("updatedAt"),
+            source_version=payload.get("version"),
+            source_team_count=len(team_payload),
+            source_hash=source_hash,
+            snapshot_json=json.dumps(team_payload),
+            waitlist_json=json.dumps(waitlist_payload),
+            validation_status="needs_attention" if issues else "ok",
+            validation_issues_json=json.dumps(issues),
+            plan_status="imported",
+            forecast_json=json.dumps(current_draw_counts(team_payload)),
+        )
+        session.add(import_row)
+        session.commit()
+        session.refresh(import_row)
+        return import_row
 
     if existing is None:
         tournament = Tournament(

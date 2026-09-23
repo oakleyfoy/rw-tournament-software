@@ -668,6 +668,12 @@ export async function getRwOsImport(importId: number): Promise<RwOsImportRespons
   return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}`)
 }
 
+export async function ensureTournamentRwOsImport(tournamentId: number): Promise<RwOsImportResponse> {
+  return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/tournaments/${tournamentId}/import/ensure`, {
+    method: 'POST',
+  })
+}
+
 export async function getTournamentRwOsImport(tournamentId: number): Promise<RwOsImportResponse | null> {
   try {
     return await fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/tournaments/${tournamentId}/import`)

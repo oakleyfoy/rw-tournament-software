@@ -899,14 +899,18 @@ def _latest_rw_os_import_id(session: Session, tournament_id: int) -> Optional[in
     ).first()
 
 
+def _tournament_response(session: Session, tournament: Tournament) -> TournamentResponse:
+    response = TournamentResponse.model_validate(tournament)
+    return response.model_copy(update={"rw_os_import_id": _latest_rw_os_import_id(session, tournament.id)})
+
+
 @router.get("/tournaments/{tournament_id}", response_model=TournamentResponse)
 def get_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """Get a tournament by ID"""
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    response = TournamentResponse.model_validate(tournament)
-    return response.model_copy(update={"rw_os_import_id": _latest_rw_os_import_id(session, tournament_id)})
+    return _tournament_response(session, tournament)
 
 
 @router.get("/tournaments/{tournament_id}/print-packet/{category}.pdf")
@@ -1067,7 +1071,7 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
         generate_tournament_days(session, tournament_id, new_start, new_end)
 
     session.refresh(tournament)
-    return tournament
+    return _tournament_response(session, tournament)
 
 
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
