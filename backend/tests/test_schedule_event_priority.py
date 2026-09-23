@@ -1,8 +1,7 @@
 import json
-
-from app.models.event import Event, EventCategory
 from datetime import date
 
+from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.services.schedule_policy_plan import (
     _build_day1_plan,
@@ -363,6 +362,36 @@ def test_day1_interleaves_mixed_wf_then_rr_with_womens_both_waterfalls():
     assert batches[0].match_ids[:4] == [11, 51, 12, 52]
 
 
+def test_day1_caps_flat_mixed_rr_and_keeps_womens_first_even_if_mixed_ordered_first():
+    """If Mixed RR shares one round_index (legacy flat indexing), still cap to 5 courts."""
+    womens = _wf_event(1, "Women's A", 20, wf_rounds=2)
+    mixed = _wf_event(2, "Mixed A", 10, wf_rounds=1)
+    # Day order puts Mixed first — wave interleave must still prefer Women's (larger).
+    matches = (
+        [_day1_match(10 + i, 1, "WF", 1, i) for i in range(1, 11)]
+        + [_day1_match(30 + i, 1, "WF", 2, i) for i in range(1, 11)]
+        + [_day1_match(50 + i, 2, "WF", 1, i) for i in range(1, 6)]
+        + [_day1_match(70 + i, 2, "RR", 1, i) for i in range(1, 9)]  # 8 flat RR
+    )
+    batches = _build_day1_plan(
+        _EmptySession(),
+        [mixed, womens],
+        matches,
+        set(),
+        {2: 0, 1: 1},
+        date(2026, 10, 16),
+        1,
+        tournament_day_orders=[[2, 1]],
+    )
+    wave2_ids = set(batches[1].match_ids)
+    womens_r2 = {30 + i for i in range(1, 11)}
+    mixed_rr_kept = {70 + i for i in range(1, 6)}  # capped to team_count//2 == 5
+    mixed_rr_dropped = {70 + i for i in range(6, 9)}
+    assert wave2_ids == womens_r2 | mixed_rr_kept
+    assert wave2_ids.isdisjoint(mixed_rr_dropped)
+    assert batches[1].match_ids[:4] == [31, 71, 32, 72]
+
+
 def _rr_round(event_id: int, round_number: int, count: int, id_base: int) -> list[Match]:
     return [_day1_match(id_base + seq, event_id, "RR", round_number, seq) for seq in range(1, count + 1)]
 
@@ -370,8 +399,7 @@ def _rr_round(event_id: int, round_number: int, count: int, id_base: int) -> lis
 def test_saturday_two_interleaved_rr_waves_for_mixed_and_womens():
     womens = _wf_event(1, "Women's A", 20, wf_rounds=2)
     mixed = _wf_event(2, "Mixed A", 10, wf_rounds=1)
-    leftover_wf = [_day1_match(90 + i, 1, "WF", 2, i) for i in range(1, 6)]
-    matches = leftover_wf + _rr_round(1, 1, 10, 200) + _rr_round(1, 2, 10, 220) + _rr_round(1, 3, 10, 240)
+    matches = _rr_round(1, 1, 10, 200) + _rr_round(1, 2, 10, 220) + _rr_round(1, 3, 10, 240)
     matches += _rr_round(2, 2, 5, 300) + _rr_round(2, 3, 5, 320) + _rr_round(2, 4, 5, 340)
     batches, _deferred = _build_day2plus_plan(
         _EmptySession(),
@@ -385,12 +413,38 @@ def test_saturday_two_interleaved_rr_waves_for_mixed_and_womens():
         set(),
     )
     assert [batch.name for batch in batches[:2]] == ["DAY2_RR_WAVE1", "DAY2_RR_WAVE2"]
-    assert not any("WF" in (batch.name or "") for batch in batches)
+    assert not any(batch.name.startswith("DAY2_WF_") for batch in batches)
     wave1 = set(batches[0].match_ids)
     wave2 = set(batches[1].match_ids)
     assert wave1 == set(range(201, 211)) | set(range(301, 306))
     assert wave2 == set(range(221, 231)) | set(range(321, 326))
     assert not (set(range(241, 251)) & (wave1 | wave2))
+
+
+def test_saturday_folds_leftover_wf_into_first_rr_wave():
+    womens = _wf_event(1, "Women's A", 20, wf_rounds=2)
+    mixed = _wf_event(2, "Mixed A", 10, wf_rounds=1)
+    leftover_wf = [_day1_match(90 + i, 1, "WF", 2, i) for i in range(1, 4)]
+    matches = leftover_wf + _rr_round(1, 1, 10, 200) + _rr_round(1, 2, 10, 220)
+    matches += _rr_round(2, 2, 5, 300) + _rr_round(2, 3, 5, 320)
+    batches, _deferred = _build_day2plus_plan(
+        _EmptySession(),
+        [womens, mixed],
+        matches,
+        set(),
+        {1: 0, 2: 1},
+        date(2026, 10, 17),
+        1,
+        1,
+        set(),
+    )
+    assert batches[0].name == "DAY2_RR_WAVE1"
+    assert not any(batch.name.startswith("DAY2_WF_") for batch in batches)
+    wave1 = set(batches[0].match_ids)
+    assert {91, 92, 93} <= wave1
+    # Women's cap 10: 3 WF + 7 RR from round 1.
+    assert len(wave1 & set(range(201, 211))) == 7
+    assert set(range(301, 306)) <= wave1
 
 
 def test_sunday_one_interleaved_rr_wave_for_last_round():
