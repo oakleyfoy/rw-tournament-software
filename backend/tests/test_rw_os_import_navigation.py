@@ -74,6 +74,12 @@ def test_c_navigation_resolves_the_existing_import(client: TestClient):
     assert second_import.json()["import"]["id"] == second["import"]["id"]
     assert first_import.json()["import"]["id"] != second_import.json()["import"]["id"]
     assert client.get(f"/api/tournaments/{first_tid}").json()["rw_os_import_id"] == first["import"]["id"]
+    updated = client.put(
+        f"/api/tournaments/{first_tid}",
+        json={"notes": "keep import id on update"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["rw_os_import_id"] == first["import"]["id"]
 
 
 def test_d_returning_after_approval_loads_selected_structure(client: TestClient):

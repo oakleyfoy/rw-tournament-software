@@ -28,6 +28,8 @@ import {
   importCombinedTeams,
   refreshRwOsImport,
   getEventTeams,
+  getTournamentRwOsImport,
+  ensureTournamentRwOsImport,
   RwOsRosterFieldChange,
   ScheduleBuilderResponse,
   SchedulePlanReport,
@@ -373,7 +375,13 @@ function DrawBuilder() {
     
     try {
       setLoading(true)
-      const tournamentData = await getTournament(tournamentId)
+      const [tournamentData, importData] = await Promise.all([
+        getTournament(tournamentId),
+        getTournamentRwOsImport(tournamentId),
+      ])
+      if (importData?.import?.id && !tournamentData.rw_os_import_id) {
+        tournamentData.rw_os_import_id = importData.import.id
+      }
       const [eventsData, statusData, versionsData, planReportData, daysData] = await Promise.all([
         getEvents(tournamentId),
         getPhase1Status(tournamentId),
@@ -1014,10 +1022,16 @@ function DrawBuilder() {
   }
 
   const handleRefreshRosterFromRwOs = async () => {
-    if (!tournament?.rw_os_import_id) return
+    if (!tournamentId || !isRwOsBackedTournament(tournament)) return
     setRwOsRefreshLoading(true)
     try {
-      const result = await refreshRwOsImport(tournament.rw_os_import_id, true)
+      let importId = tournament?.rw_os_import_id
+      if (!importId) {
+        const ensured = await ensureTournamentRwOsImport(tournamentId)
+        importId = ensured.import.id
+        setTournament((prev) => (prev ? { ...prev, rw_os_import_id: importId } : prev))
+      }
+      const result = await refreshRwOsImport(importId, true)
       const projection = result.rosterProjection ?? result.importResponse?.rosterProjection
       const summary = formatRwOsRosterRefreshSummary(projection?.updated)
       setRwOsRefreshSummary(summary)

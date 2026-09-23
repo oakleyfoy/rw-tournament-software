@@ -15,6 +15,8 @@ vi.mock('../api/client', async () => {
     getTournamentDays: vi.fn(),
     getScheduleBuilder: vi.fn(),
     refreshRwOsImport: vi.fn(),
+    getTournamentRwOsImport: vi.fn(),
+    ensureTournamentRwOsImport: vi.fn(),
     getEventTeams: vi.fn(),
     importCombinedTeams: vi.fn(),
     updateTournament: vi.fn(),
@@ -24,7 +26,7 @@ vi.mock('../api/client', async () => {
 vi.mock('../utils/toast', () => ({ showToast: vi.fn() }))
 
 import DrawBuilder from './DrawBuilder'
-import { getEventTeams, getEvents, getPhase1Status, getPlanReport, getScheduleBuilder, getScheduleVersions, getTournament, getTournamentDays } from '../api/client'
+import { getEventTeams, getEvents, getPhase1Status, getPlanReport, getScheduleBuilder, getScheduleVersions, getTournament, getTournamentDays, getTournamentRwOsImport } from '../api/client'
 
 const tournamentBase: Tournament = {
   id: 5,
@@ -68,6 +70,7 @@ function mockDrawBuilderApis(tournament: Tournament) {
   ])
   vi.mocked(getScheduleBuilder).mockResolvedValue({ tournament_id: 5, events: [] })
   vi.mocked(getEventTeams).mockResolvedValue([])
+  vi.mocked(getTournamentRwOsImport).mockResolvedValue(null)
 }
 
 function renderDrawBuilder() {
@@ -98,6 +101,16 @@ describe('DrawBuilder RW-OS roster refresh', () => {
     expect(screen.queryByText('Legacy Per-Event Team Import')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Import Teams \+ Towels/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Load teams/i })).not.toBeInTheDocument()
+  })
+
+  it('shows RW-OS refresh when only source_rw_os_tournament_id is set', async () => {
+    mockDrawBuilderApis({ ...tournamentBase, source_rw_os_tournament_id: 151 })
+    renderDrawBuilder()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Refresh roster from RW-OS' })).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Combined Team + Towel Import')).not.toBeInTheDocument()
   })
 
   it('keeps Combined paste for manual tournaments', async () => {

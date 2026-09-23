@@ -12,8 +12,10 @@ export type RwOsRosterSnapshotDiff = {
   ratingChanges?: unknown[]
 }
 
-export function isRwOsBackedTournament(tournament: { rw_os_import_id?: number | null } | null): boolean {
-  return tournament?.rw_os_import_id != null
+export function isRwOsBackedTournament(
+  tournament: { rw_os_import_id?: number | null; source_rw_os_tournament_id?: number | null } | null,
+): boolean {
+  return tournament?.rw_os_import_id != null || tournament?.source_rw_os_tournament_id != null
 }
 
 export function formatRwOsRosterRefreshSummary(updated?: {

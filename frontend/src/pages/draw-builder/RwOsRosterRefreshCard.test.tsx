@@ -9,6 +9,7 @@ import {
 describe('RwOsRosterRefreshCard', () => {
   it('treats rw_os_import_id as the RW-OS roster path', () => {
     expect(isRwOsBackedTournament({ rw_os_import_id: 12 })).toBe(true)
+    expect(isRwOsBackedTournament({ source_rw_os_tournament_id: 151 })).toBe(true)
     expect(isRwOsBackedTournament({ rw_os_import_id: null })).toBe(false)
     expect(isRwOsBackedTournament(null)).toBe(false)
   })
