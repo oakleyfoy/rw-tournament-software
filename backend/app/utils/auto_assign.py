@@ -357,6 +357,10 @@ def check_round_dependencies_for_auto_assign(
         return True, None
 
     # ── WF: sequential round dependency ──
+    # Same-day waterfall waves (e.g. Fri 11:00 R1 → 12:30 R2) are intentional
+    # back-to-back slots. Require R1 to finish before R2 starts, but do not
+    # demand an extra full match-duration rest gap (that would need 2×duration
+    # between slot starts and block Women's R2 into Saturday).
     if stage == "WF":
         if match.round_index is None or match.round_index <= 1:
             return True, None
@@ -371,7 +375,7 @@ def check_round_dependencies_for_auto_assign(
         ).all()
         if not prereqs:
             return True, None
-        return _check_prereqs(prereqs, f"WF R{prereq_round}")
+        return _check_prereqs(prereqs, f"WF R{prereq_round}", use_rest_gap=False)
 
     # ── RR: sequential round dependency ──
     if stage == "RR":
