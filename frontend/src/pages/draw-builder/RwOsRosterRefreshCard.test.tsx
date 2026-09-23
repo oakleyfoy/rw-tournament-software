@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   formatRwOsRosterRefreshSummary,
   isRwOsBackedTournament,
+  summarizeRwOsRefreshNotices,
   RwOsRosterRefreshCard,
 } from './RwOsRosterRefreshCard'
 
@@ -68,5 +69,25 @@ describe('RwOsRosterRefreshCard', () => {
     expect(screen.getByTestId('rw-os-roster-refresh-changes')).toHaveTextContent('Short name: W1 → Short / Names')
     expect(screen.getByTestId('rw-os-roster-refresh-changes')).toHaveTextContent('Rating: 9 → 7.75')
     expect(screen.getByTestId('rw-os-roster-refresh-snapshot')).toHaveTextContent('Added: New Team')
+  })
+
+  it('collapses repeated towel, Who Knows Who, and generated-draw notices', () => {
+    expect(
+      summarizeRwOsRefreshNotices([
+        { code: 'structural_snapshot_changed_after_approval', message: 'The structural snapshot changed after approval.' },
+        { code: 'missing_towel_color', message: 'Team 15430/15431 player 1 is missing a towel color.', teamKey: '15430/15431' },
+        { code: 'missing_towel_color', message: 'Team 15430/15431 player 2 is missing a towel color.', teamKey: '15430/15431' },
+        { code: 'missing_who_knows_who', message: 'Team 15430/15431 is missing Who-knows-who.', teamKey: '15430/15431' },
+        { code: 'missing_towel_color', message: 'Team 750/751 player 1 is missing a towel color.', teamKey: '750/751' },
+        { code: 'missing_who_knows_who', message: 'Team 750/751 is missing Who-knows-who.', teamKey: '750/751' },
+        { code: 'live_draw_protection_blocks_structural_change', message: "Mixed A: event has generated draw." },
+        { code: 'live_draw_protection_blocks_structural_change', message: "Women's A: event has generated draw." },
+      ]).map((notice) => notice.message),
+    ).toEqual([
+      'The structural snapshot changed after approval.',
+      '2 teams still missing a towel color in RW-OS',
+      '2 teams still missing Who Knows Who in RW-OS',
+      'Live draws were left in place. Withdrawals and new teams were not added or removed from the bracket.',
+    ])
   })
 })

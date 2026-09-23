@@ -1,6 +1,62 @@
 import type { RwOsRosterFieldChange } from '../../api/client'
 
-type RefreshNotice = { code?: string; message?: string }
+type RefreshNotice = { code?: string; message?: string; teamKey?: string }
+
+const TOWEL_NOTICE_CODE = 'missing_towel_color'
+const WKW_NOTICE_CODE = 'missing_who_knows_who'
+const DRAW_PROTECTION_CODE = 'live_draw_protection_blocks_structural_change'
+
+function teamKeyFromNotice(notice: RefreshNotice): string | null {
+  if (notice.teamKey) return notice.teamKey
+  const snakeKey = (notice as { team_key?: string }).team_key
+  if (snakeKey) return snakeKey
+  const match = notice.message?.match(/Team\s+(\d+\/\d+)/i)
+  return match?.[1] || null
+}
+
+export function summarizeRwOsRefreshNotices(notices: RefreshNotice[]): RefreshNotice[] {
+  const towels = new Set<string>()
+  const wkw = new Set<string>()
+  const protectedDraws: string[] = []
+  const rest: RefreshNotice[] = []
+  for (const notice of notices) {
+    const code = notice.code || ''
+    const message = notice.message || ''
+    if (code === TOWEL_NOTICE_CODE || /missing a towel color/i.test(message)) {
+      towels.add(teamKeyFromNotice(notice) || message)
+      continue
+    }
+    if (code === WKW_NOTICE_CODE || /missing Who-knows-who/i.test(message)) {
+      wkw.add(teamKeyFromNotice(notice) || message)
+      continue
+    }
+    if (code === DRAW_PROTECTION_CODE || /event has generated draw/i.test(message)) {
+      if (message && !protectedDraws.includes(message)) protectedDraws.push(message)
+      continue
+    }
+    rest.push(notice)
+  }
+  const summarized = [...rest]
+  if (towels.size) {
+    summarized.push({
+      code: TOWEL_NOTICE_CODE,
+      message: `${towels.size} team${towels.size === 1 ? '' : 's'} still missing a towel color in RW-OS`,
+    })
+  }
+  if (wkw.size) {
+    summarized.push({
+      code: WKW_NOTICE_CODE,
+      message: `${wkw.size} team${wkw.size === 1 ? '' : 's'} still missing Who Knows Who in RW-OS`,
+    })
+  }
+  if (protectedDraws.length) {
+    summarized.push({
+      code: DRAW_PROTECTION_CODE,
+      message: 'Live draws were left in place. Withdrawals and new teams were not added or removed from the bracket.',
+    })
+  }
+  return summarized
+}
 
 export type RwOsRosterSnapshotDiff = {
   addedCount?: number
@@ -80,6 +136,7 @@ export function RwOsRosterRefreshCard({
   const groups = groupRwOsRosterFieldChanges(fieldChanges ?? [])
   const added = snapshotDiff?.addedTeams ?? []
   const withdrawn = snapshotDiff?.withdrawnTeams ?? []
+  const summarizedNotices = summarizeRwOsRefreshNotices(notices ?? [])
   const showSnapshot =
     added.length > 0 ||
     withdrawn.length > 0 ||
@@ -146,12 +203,12 @@ export function RwOsRosterRefreshCard({
           </ul>
         </div>
       )}
-      {notices && notices.length > 0 && (
+      {summarizedNotices.length > 0 && (
         <ul
           style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 12, color: '#8a6d3b' }}
           data-testid="rw-os-roster-refresh-notices"
         >
-          {notices.map((notice, index) => (
+          {summarizedNotices.map((notice, index) => (
             <li key={`${notice.code || 'notice'}-${index}`}>{notice.message || notice.code}</li>
           ))}
         </ul>

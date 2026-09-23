@@ -52,6 +52,7 @@ import MoveDivisionModal from './draw-builder/MoveDivisionModal'
 import {
   formatRwOsRosterRefreshSummary,
   isRwOsBackedTournament,
+  summarizeRwOsRefreshNotices,
   RwOsRosterRefreshCard,
   type RwOsRosterSnapshotDiff,
 } from './draw-builder/RwOsRosterRefreshCard'
@@ -1045,13 +1046,18 @@ function DrawBuilder() {
       ]
       const uniqueNotices = notices.filter(
         (notice, index, all) =>
-          all.findIndex((item) => (item.code || '') + (item.message || '') === (notice.code || '') + (notice.message || '')) === index,
+          all.findIndex((item) => `${item.code || ''}:${item.message || ''}` === `${notice.code || ''}:${notice.message || ''}`) ===
+          index,
       )
       setRwOsRefreshNotices(uniqueNotices)
-      showToast(summary, uniqueNotices.length > 0 ? 'warning' : 'success')
-      uniqueNotices.forEach((notice) => {
-        if (notice.message) showToast(notice.message, 'warning')
-      })
+      const summarized = summarizeRwOsRefreshNotices(uniqueNotices)
+      const needsAttention = summarized.some(
+        (notice) =>
+          notice.code !== 'missing_towel_color' &&
+          notice.code !== 'missing_who_knows_who' &&
+          notice.code !== 'live_draw_protection_blocks_structural_change',
+      )
+      showToast(summary, needsAttention ? 'warning' : 'success')
       await reloadEventTeams(events.map((event) => event.id))
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to refresh roster from RW-OS', 'error')
