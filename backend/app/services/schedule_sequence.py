@@ -60,7 +60,7 @@ PHASE_ORDER: Dict[Tuple[str, int], int] = {
     ("WF", 2): 20,
     # Team Round 3: team's 3rd match
     ("MAIN", 1): 30,  # MAIN QF
-    ("RR", 1): 31,  # RR R1
+    ("RR", 1): 31,  # RR R1 (2-WF events; 1-WF uses per-event phase map)
     # Team Round 4: team's 4th match (MAIN, then RR, then CONS)
     ("MAIN", 2): 40,  # MAIN SF
     ("RR", 2): 41,  # RR R2
@@ -69,6 +69,11 @@ PHASE_ORDER: Dict[Tuple[str, int], int] = {
     ("MAIN", 3): 50,  # MAIN Final
     ("RR", 3): 51,  # RR R3
     ("CONSOLATION", 2): 52,  # CONS Final+ (C3+C4+C5)
+    # Further RR rounds (pool of 5 has 5 rounds) — must NOT fall through to
+    # STAGE_ORDER_FALLBACK which mapped RR4→14 and dumped them into Friday TR1.
+    ("RR", 4): 61,
+    ("RR", 5): 71,
+    ("RR", 6): 81,
     # Placement (if any)
     ("PLACEMENT", 1): 60,
 }
@@ -210,34 +215,105 @@ def _sort_events_for_sequence(events: List[Event]) -> List[Event]:
     )
 
 
+def _event_wf_rounds_for_sequence(event: Event, matches: List[Match]) -> int:
+    """How many waterfall rounds this event plays before RR/MAIN.
+
+    Prefer draw_plan wf_rounds / waterfall_rounds. Fall back to distinct WF
+    rounds present in the match list so Mixed 10 (1 WF) does not inherit the
+    global PHASE_ORDER assumption that RR R1 is always team-match #3.
+    """
+    raw_plan = getattr(event, "draw_plan_json", None)
+    if raw_plan:
+        try:
+            plan = json.loads(raw_plan) if isinstance(raw_plan, str) else raw_plan
+        except (TypeError, json.JSONDecodeError):
+            plan = None
+        if isinstance(plan, dict):
+            raw = plan.get("wf_rounds")
+            if raw is None:
+                raw = plan.get("waterfall_rounds")
+            try:
+                parsed = int(raw or 0)
+                if parsed >= 0:
+                    return parsed
+            except (TypeError, ValueError):
+                pass
+
+    wf_rounds = {_wf_round_for_match(m) for m in matches if (m.match_type or "").upper() == "WF"}
+    return max(wf_rounds) if wf_rounds else 0
+
+
+def _phase_for_match(match: Match, wf_rounds: int) -> int:
+    """Team-round phase for one match, relative to this event's waterfall count.
+
+    Tens digit = which match number it is for the team (1st, 2nd, ...).
+    Units digit = stage sub-order (MAIN=0, RR=1, CONSOLATION=2, PLACEMENT=3).
+
+    Mixed 10 (wf_rounds=1): WF R1→10, RR R1→21, RR R2→31, RR R4→51, ...
+    Women's 20 (wf_rounds=2): WF R1→10, WF R2→20, RR R1→31, ...
+
+    Bracket MAIN / CONSOLATION / PLACEMENT keep legacy PHASE_ORDER so WF_14
+    day tags and finals stay on the intended weekend days.
+    """
+    override = _cons_flight_phase(match.match_code)
+    if override is not None:
+        return override
+
+    mtype = (match.match_type or "").upper()
+    if mtype == "WF":
+        return 10 * max(1, _wf_round_for_match(match))
+
+    if mtype == "RR":
+        round_index = match.round_index or 1
+        if round_index < 1:
+            round_index = 1
+        team_match_num = (wf_rounds + round_index) if wf_rounds > 0 else round_index
+        return 10 * team_match_num + 1
+
+    # MAIN / CONSOLATION / PLACEMENT / unknown — legacy global map
+    key = (mtype, match.round_index or 1)
+    if key in PHASE_ORDER:
+        return PHASE_ORDER[key]
+    return STAGE_ORDER_FALLBACK.get(mtype, 99) * 10 + (match.round_index or 0)
+
+
 def _build_event_phase_map(
     matches: List[Match],
+    wf_rounds: int = 2,
 ) -> Dict[int, Tuple[str, int, List[Match]]]:
     """
     Group an event's matches by phase number.
 
     Returns dict mapping phase_number → (match_type, round_index, [matches]).
+    Phase tens-digit is the team's match number for THIS event (WF count aware),
+    so 1-WF Mixed RR R1 shares Friday team-round 2 with Women's WF R2 instead of
+    dumping late RR rounds into Friday via the old RR4→phase 14 fallback.
     """
     groups: Dict[Tuple[str, int], List[Match]] = defaultdict(list)
     for m in matches:
         if (m.match_type or "").upper() == "WF":
             key = ("WF", _wf_round_for_match(m))
         else:
-            key = (m.match_type, m.round_index or 0)
+            key = ((m.match_type or "").upper(), m.round_index or 0)
         groups[key].append(m)
 
-    # Sort each group's matches by match_id for determinism
     for key in groups:
-        groups[key].sort(key=lambda m: m.id)
+        groups[key].sort(key=lambda m: m.id or 0)
 
-    # Map to phase number
     result: Dict[int, Tuple[str, int, List[Match]]] = {}
     for (mt, ri), match_list in groups.items():
-        # WF_14 consolation blocks are day-tagged in the match code; honor that
-        # tag so they land on the correct day instead of following MAIN round_index.
-        override = _cons_flight_phase(match_list[0].match_code if match_list else None)
-        phase = override if override is not None else _phase_key((mt, ri))
-        result[phase] = (mt, ri, match_list)
+        if not match_list:
+            continue
+        phase = _phase_for_match(match_list[0], wf_rounds)
+        # If two groups collide on phase (shouldn't for normal draws), keep stable by appending
+        # into the existing list rather than dropping matches.
+        if phase in result:
+            existing_mt, existing_ri, existing = result[phase]
+            merged = existing + match_list
+            merged.sort(key=lambda m: m.id or 0)
+            result[phase] = (existing_mt, existing_ri, merged)
+        else:
+            result[phase] = (mt, ri, match_list)
 
     return result
 
@@ -359,13 +435,16 @@ def build_master_sequence(
     for m in all_matches:
         matches_by_event[m.event_id].append(m)
 
-    # Build event phase maps (phase_number -> round data)
+    # Build event phase maps (phase_number -> round data), WF-count aware so
+    # Mixed 10 RR R1 is team-round 2 (Friday) not team-round 3 (Saturday), and
+    # RR R4/R5 never fall into phase 14/15 via the old global fallback.
     event_phases: Dict[int, Dict[int, Tuple[str, int, List[Match]]]] = {}
     for e in events:
         if e.id is None:
             continue
-        event_phases[e.id] = _build_event_phase_map(matches_by_event.get(e.id, []))
-
+        e_matches = matches_by_event.get(e.id, [])
+        wf_rounds = _event_wf_rounds_for_sequence(e, e_matches)
+        event_phases[e.id] = _build_event_phase_map(e_matches, wf_rounds=wf_rounds)
     # Collect all phase numbers across all events, sorted
     all_phase_nums = sorted(set(ph for pm in event_phases.values() for ph in pm.keys()))
 

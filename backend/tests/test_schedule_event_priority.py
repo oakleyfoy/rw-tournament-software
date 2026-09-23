@@ -273,7 +273,7 @@ def test_wf14_consolation_blocks_land_on_tagged_team_rounds():
         _m(6, "WOM_CONS_SUN_01", "PLACEMENT", 1),
     ]
 
-    phase_map = _build_event_phase_map(matches)
+    phase_map = _build_event_phase_map(matches, wf_rounds=2)
     # phase -> match_code of first match in that phase group
     code_by_phase = {phase: data[2][0].match_code for phase, data in phase_map.items()}
 
