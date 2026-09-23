@@ -1,7 +1,13 @@
 import json
 
 from app.models.event import Event, EventCategory
+from datetime import date
+
+from app.models.match import Match
 from app.services.schedule_policy_plan import (
+    _build_day1_plan,
+    _build_day2plus_plan,
+    _build_day3_plan,
     _build_event_priority_map,
     _build_rotated_event_list,
     _event_has_wf,
@@ -286,3 +292,121 @@ def test_wf14_consolation_blocks_land_on_tagged_team_rounds():
     assert team_round("WOM_CONS_SAT2_01") == 4
     # Sunday = team-rounds 5 & 6 (placement stays phase 60 -> tr 6)
     assert team_round("WOM_CONS_SUN_01") == 6
+
+
+class _EmptyExec:
+    def all(self):
+        return []
+
+
+class _EmptySession:
+    def exec(self, _query):
+        return _EmptyExec()
+
+
+def _day1_match(
+    match_id: int,
+    event_id: int,
+    match_type: str,
+    round_number: int,
+    seq: int,
+) -> Match:
+    return Match(
+        id=match_id,
+        tournament_id=1,
+        event_id=event_id,
+        schedule_version_id=1,
+        match_code=f"E{event_id}_{match_type}_{round_number:02d}_{seq:02d}",
+        match_type=match_type,
+        round_number=round_number,
+        round_index=round_number,
+        sequence_in_round=seq,
+        duration_minutes=60,
+        placeholder_side_a="a",
+        placeholder_side_b="b",
+        team_a_id=1000 + match_id,
+        team_b_id=2000 + match_id,
+    )
+
+
+def test_day1_interleaves_mixed_wf_then_rr_with_womens_both_waterfalls():
+    """Mixed 10: Friday WF then RR. Women's 20: both WF rounds. Share each 15-court slot."""
+    womens = _wf_event(1, "Women's A", 20, wf_rounds=2)
+    mixed = _wf_event(2, "Mixed A", 10, wf_rounds=1)
+    matches = (
+        [_day1_match(10 + i, 1, "WF", 1, i) for i in range(1, 11)]
+        + [_day1_match(30 + i, 1, "WF", 2, i) for i in range(1, 11)]
+        + [_day1_match(50 + i, 2, "WF", 1, i) for i in range(1, 6)]
+        + [_day1_match(70 + i, 2, "RR", 1, i) for i in range(1, 6)]
+    )
+    batches = _build_day1_plan(
+        _EmptySession(),
+        [womens, mixed],
+        matches,
+        set(),
+        {1: 0, 2: 1},
+        date(2026, 10, 16),
+        1,
+    )
+    assert [batch.name for batch in batches[:2]] == ["DAY1_WAVE1", "DAY1_WAVE2"]
+    wave1_ids = set(batches[0].match_ids)
+    wave2_ids = set(batches[1].match_ids)
+    womens_r1 = {10 + i for i in range(1, 11)}
+    womens_r2 = {30 + i for i in range(1, 11)}
+    mixed_wf = {50 + i for i in range(1, 6)}
+    mixed_rr = {70 + i for i in range(1, 6)}
+    assert wave1_ids == womens_r1 | mixed_wf
+    assert wave2_ids == womens_r2 | mixed_rr
+    assert wave1_ids.isdisjoint(womens_r2)
+    assert wave1_ids.isdisjoint(mixed_rr)
+    # Women's first (larger draw): W, M, W, M... so leftover courts stay Mixed WF, not Women's R2.
+    assert batches[0].match_ids[:4] == [11, 51, 12, 52]
+
+
+def _rr_round(event_id: int, round_number: int, count: int, id_base: int) -> list[Match]:
+    return [_day1_match(id_base + seq, event_id, "RR", round_number, seq) for seq in range(1, count + 1)]
+
+
+def test_saturday_two_interleaved_rr_waves_for_mixed_and_womens():
+    womens = _wf_event(1, "Women's A", 20, wf_rounds=2)
+    mixed = _wf_event(2, "Mixed A", 10, wf_rounds=1)
+    leftover_wf = [_day1_match(90 + i, 1, "WF", 2, i) for i in range(1, 6)]
+    matches = leftover_wf + _rr_round(1, 1, 10, 200) + _rr_round(1, 2, 10, 220) + _rr_round(1, 3, 10, 240)
+    matches += _rr_round(2, 2, 5, 300) + _rr_round(2, 3, 5, 320) + _rr_round(2, 4, 5, 340)
+    batches, _deferred = _build_day2plus_plan(
+        _EmptySession(),
+        [womens, mixed],
+        matches,
+        set(),
+        {1: 0, 2: 1},
+        date(2026, 10, 17),
+        1,
+        1,
+        set(),
+    )
+    assert [batch.name for batch in batches[:2]] == ["DAY2_RR_WAVE1", "DAY2_RR_WAVE2"]
+    assert not any("WF" in (batch.name or "") for batch in batches)
+    wave1 = set(batches[0].match_ids)
+    wave2 = set(batches[1].match_ids)
+    assert wave1 == set(range(201, 211)) | set(range(301, 306))
+    assert wave2 == set(range(221, 231)) | set(range(321, 326))
+    assert not (set(range(241, 251)) & (wave1 | wave2))
+
+
+def test_sunday_one_interleaved_rr_wave_for_last_round():
+    womens = _wf_event(1, "Women's A", 20, wf_rounds=2)
+    mixed = _wf_event(2, "Mixed A", 10, wf_rounds=1)
+    matches = _rr_round(1, 3, 10, 240) + _rr_round(2, 4, 5, 340)
+    batches = _build_day3_plan(
+        _EmptySession(),
+        [womens, mixed],
+        matches,
+        set(),
+        {1: 0, 2: 1},
+        date(2026, 10, 18),
+        2,
+        1,
+        set(),
+    )
+    assert batches[0].name == "DAY3_RR_WAVE1"
+    assert set(batches[0].match_ids) == set(range(241, 251)) | set(range(341, 346))
