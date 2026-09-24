@@ -53,7 +53,8 @@ def rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
         return "FUN"
 
     if _LOSS_RR_RE.search(upper):
-        return "LOSS"
+        # Losers 4-team RR surfaces as Pool C (alongside winners A/B).
+        return "POOLC"
 
     return None
 

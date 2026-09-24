@@ -7,6 +7,7 @@ import {
   ReadyQueueItem,
   CheckInMatchItem,
 } from '../../api/client'
+import { getDivisionPhrase } from '../../utils/matchDivisionLabel'
 
 const STAGE_COLORS: Record<string, string> = {
   WF: '#1a237e',
@@ -100,17 +101,7 @@ function LiveDot() {
 function formatReadyQueueLabel(rq: ReadyQueueItem): string {
   const code = (rq.match_code || '').toUpperCase()
   const isWf = code.includes('_WF_')
-  const division = code.includes('BWW') || code.includes('POOLA')
-    ? 'Div I'
-    : code.includes('BWL') || code.includes('POOLB')
-      ? 'Div II'
-      : code.includes('BLW') || code.includes('POOLC')
-        ? 'Div III'
-        : code.includes('BLL') || code.includes('POOLD')
-          ? 'Div IV'
-          : code.includes('POOLE')
-            ? 'Div V'
-            : ''
+  const division = getDivisionPhrase(rq.match_code)
   if (isWf) return `${rq.event_name} WF`
   return division ? `${rq.event_name} ${division}` : rq.event_name
 }

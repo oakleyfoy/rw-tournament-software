@@ -657,8 +657,8 @@ def compute_wf10_projection(
         )
         pools.append(
             ProjectedPool(
-                pool_label="LOSS",
-                pool_display="Losers pool",
+                pool_label="POOLC",
+                pool_display="Pool C (losers)",
                 teams=[_team_entry(loss_rank[r], r, "L") for r in range(1, 5) if r in loss_rank],
             )
         )
