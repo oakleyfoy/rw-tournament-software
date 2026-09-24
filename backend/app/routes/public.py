@@ -1105,7 +1105,7 @@ class RoundRobinResponse(BaseModel):
 _CD_PLACEMENT_POOL_CODE = "CD_PLACEMENT"
 _WF10_PLACEMENT_POOL_CODE = "WF10_PLACEMENT"
 
-_WF10_POOL_ORDER = ("POOLA", "POOLB", "FUN", "LOSS", _WF10_PLACEMENT_POOL_CODE)
+_WF10_POOL_ORDER = ("POOLA", "POOLB", "FUN", "POOLC", _WF10_PLACEMENT_POOL_CODE)
 
 
 def _pool_display_sort_key(pool_code: str) -> tuple:
@@ -1255,15 +1255,15 @@ def _public_round_robin_impl(
                 return "Division III \u00b7 Pool C"
             if pool_code == "POOLD":
                 return "Division III \u00b7 Pool D"
-        if is_wf10 or pool_code in ("FUN", "LOSS", WF10_PLACEMENT_POOL_CODE):
+        if is_wf10 or pool_code in ("FUN", WF10_PLACEMENT_POOL_CODE):
             if pool_code == "POOLA":
-                return "Winners \u00b7 Pool A"
+                return "Division I"
             if pool_code == "POOLB":
-                return "Winners \u00b7 Pool B"
+                return "Division II"
+            if pool_code == "POOLC":
+                return "Pool C"
             if pool_code == "FUN":
-                return "Fun Matches"
-            if pool_code == "LOSS":
-                return "Losers Round Robin"
+                return "Fun Match"
             if pool_code == WF10_PLACEMENT_POOL_CODE:
                 return "Sunday Placement"
         return _POOL_LABELS.get(pool_code, pool_code)

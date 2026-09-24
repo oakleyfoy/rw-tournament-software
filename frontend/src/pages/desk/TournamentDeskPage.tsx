@@ -132,6 +132,7 @@ import {
   useDraggable,
 } from '@dnd-kit/core'
 import { confirmDialog } from '../../utils/confirm'
+import { getCompactDivisionLabel, getDivisionPhrase } from '../../utils/matchDivisionLabel'
 
 const SLOT_TINT_PALETTE = [
   { bg: '#f7fff7', border: '#c8e6c9', accent: '#1b5e20' },
@@ -3267,7 +3268,10 @@ function PoolProjectionPanel({
         const isScheduleCollapsed = collapsedSchedules[evt.event_id] ?? false
         // WF_14 loser flight (Division III = Pools C/D) is split mid-tournament on
         // the live version, so it is not gated behind DRAFT like the winner flight.
-        const isWf14LoserFlight = evt.pools.some(p => p.pool_label === 'POOLC' || p.pool_label === 'POOLD')
+        // Require both C and D so WF_10 Mixed "Pool C" (losers only) is not treated as WF_14.
+        const isWf14LoserFlight =
+          evt.pools.some(p => p.pool_label === 'POOLC') &&
+          evt.pools.some(p => p.pool_label === 'POOLD')
         return (
           <div key={evt.event_id} style={{ marginBottom: 14, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fff' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, padding: '10px 12px 0' }}>
@@ -3650,7 +3654,9 @@ function PoolProjectionPanel({
             boxShadow: '0 8px 32px rgba(0,0,0,0.25)', minWidth: 300, maxWidth: 400,
           }}>
             {(() => {
-              const isWf14Loser = confirmEvt.pools.some(p => p.pool_label === 'POOLC' || p.pool_label === 'POOLD')
+              const isWf14Loser =
+                confirmEvt.pools.some(p => p.pool_label === 'POOLC') &&
+                confirmEvt.pools.some(p => p.pool_label === 'POOLD')
               return (
                 <>
                   <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#1a237e' }}>
@@ -9788,17 +9794,7 @@ export default function TournamentDeskPage() {
   const formatReadyQueueLabel = useCallback((rq: ReadyQueueItem) => {
     const code = (rq.match_code || '').toUpperCase()
     const isWf = code.includes('_WF_')
-    const division = code.includes('BWW') || code.includes('POOLA')
-      ? 'Div I'
-      : code.includes('BWL') || code.includes('POOLB')
-        ? 'Div II'
-        : code.includes('BLW') || code.includes('POOLC')
-          ? 'Div III'
-          : code.includes('BLL') || code.includes('POOLD')
-            ? 'Div IV'
-            : code.includes('POOLE')
-              ? 'Div V'
-              : ''
+    const division = getDivisionPhrase(rq.match_code)
     if (isWf) return `${rq.event_name} WF`
     return division ? `${rq.event_name} ${division}` : rq.event_name
   }, [])
@@ -10654,17 +10650,6 @@ export default function TournamentDeskPage() {
 
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
   const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open' && !row.isClosed)
-
-  const getCompactDivisionLabel = (matchCode?: string | null): string => {
-    const code = (matchCode || '').toUpperCase()
-    if (code.includes('_WF_')) return 'WF'
-    if (code.includes('BWW') || code.includes('POOLA')) return 'DIV I'
-    if (code.includes('BWL') || code.includes('POOLB')) return 'DIV II'
-    if (code.includes('BLW') || code.includes('POOLC')) return 'DIV III'
-    if (code.includes('BLL') || code.includes('POOLD')) return 'DIV IV'
-    if (code.includes('POOLE')) return 'DIV V'
-    return 'DIV'
-  }
 
   const renderCheckInPlayerCircle = (
     checked: boolean,

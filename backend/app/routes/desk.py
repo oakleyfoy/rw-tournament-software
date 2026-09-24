@@ -4502,9 +4502,9 @@ def get_standings(
         ev = event_map.get(eid)
         ev_name = ev.name if ev else "Unknown"
         if pool == "FUN":
-            div_name = "Fun Matches"
-        elif pool == "LOSS":
-            div_name = "Losers Round Robin"
+            div_name = "Fun Match"
+        elif pool == "POOLC" and any("LOSS_" in (m.match_code or "").upper() for m in matches):
+            div_name = "Pool C"
         else:
             div_name = _POOL_LABELS.get(pool) if pool else None
 

@@ -902,15 +902,15 @@ def test_public_roundrobin_wf10_shows_win_fun_loss_and_sunday(client, session):
     body = resp.json()
 
     pools = {p["pool_code"]: p for p in body["pools"]}
-    assert set(pools) == {"POOLA", "POOLB", "FUN", "LOSS", "WF10_PLACEMENT"}
-    assert pools["POOLA"]["pool_label"] == "Winners \u00b7 Pool A"
-    assert pools["POOLB"]["pool_label"] == "Winners \u00b7 Pool B"
-    assert pools["FUN"]["pool_label"] == "Fun Matches"
-    assert pools["LOSS"]["pool_label"] == "Losers Round Robin"
+    assert set(pools) == {"POOLA", "POOLB", "FUN", "POOLC", "WF10_PLACEMENT"}
+    assert pools["POOLA"]["pool_label"] == "Division I"
+    assert pools["POOLB"]["pool_label"] == "Division II"
+    assert pools["FUN"]["pool_label"] == "Fun Match"
+    assert pools["POOLC"]["pool_label"] == "Pool C"
     assert len(pools["POOLA"]["matches"]) == 2
     assert len(pools["POOLB"]["matches"]) == 1
     assert len(pools["FUN"]["matches"]) == 1
-    assert len(pools["LOSS"]["matches"]) == 2
+    assert len(pools["POOLC"]["matches"]) == 2
 
     win_lines = {pools["POOLA"]["matches"][0]["line1"], pools["POOLA"]["matches"][0]["line2"]}
     assert win_lines == {"Winner #1", "Winner #6"}
