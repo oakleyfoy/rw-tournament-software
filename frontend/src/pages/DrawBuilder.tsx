@@ -669,6 +669,11 @@ function DrawBuilder() {
       templateType = 'WF_14_TOP2_BYE'
       wfRounds = requiredWfRounds('WF_14_TOP2_BYE', 14)
     }
+    // 10-team events use winners 6 + losers 4 (ignore stale 2×5 pool drafts).
+    if (n === 10) {
+      templateType = 'WF_10_SIX_FOUR'
+      wfRounds = requiredWfRounds('WF_10_SIX_FOUR', 10)
+    }
 
     return {
       templateType,
@@ -711,6 +716,12 @@ function DrawBuilder() {
       )
     }
 
+    if (n === 10 && state.templateType !== 'WF_10_SIX_FOUR') {
+      errors.push(
+        '10 teams require template "10-team WF (winners 6 + losers 4)"',
+      )
+    }
+
     // Template-specific validations using rules module
     if (state.templateType === 'WF_TO_POOLS_DYNAMIC') {
       if (!isTeamCountValidForFamily('WF_TO_POOLS_DYNAMIC', n)) {
@@ -740,6 +751,16 @@ function DrawBuilder() {
       const expectedWfRounds = requiredWfRounds('WF_14_TOP2_BYE', n)
       if (state.wfRounds !== expectedWfRounds) {
         errors.push(`WF_14_TOP2_BYE requires ${expectedWfRounds} waterfall rounds (R1 on 12 + R2 on 8)`)
+      }
+    }
+
+    if (state.templateType === 'WF_10_SIX_FOUR') {
+      if (!isTeamCountValidForFamily('WF_10_SIX_FOUR', n)) {
+        errors.push('WF_10_SIX_FOUR requires exactly 10 teams')
+      }
+      const expectedWfRounds = requiredWfRounds('WF_10_SIX_FOUR', n)
+      if (state.wfRounds !== expectedWfRounds) {
+        errors.push(`WF_10_SIX_FOUR requires ${expectedWfRounds} waterfall round`)
       }
     }
 
@@ -1350,7 +1371,13 @@ function DrawBuilder() {
               const updates: Partial<EventEditorState> = { templateType: newType }
               
               // Auto-set wfRounds based on template + team count (using rules module)
-              if (newType === 'WF_TO_POOLS_DYNAMIC' || newType === 'WF_TO_BRACKETS_8' || newType === 'WF_14_TOP2_BYE' || newType === 'RR_ONLY') {
+              if (
+                newType === 'WF_TO_POOLS_DYNAMIC' ||
+                newType === 'WF_TO_BRACKETS_8' ||
+                newType === 'WF_14_TOP2_BYE' ||
+                newType === 'WF_10_SIX_FOUR' ||
+                newType === 'RR_ONLY'
+              ) {
                 updates.wfRounds = requiredWfRounds(newType, n)
               }
               
@@ -1383,10 +1410,17 @@ function DrawBuilder() {
               14-team WF (top-2 rating byes + consolation flight)
               {!isTeamCountValidForFamily('WF_14_TOP2_BYE', event.team_count) && ' — requires 14 teams'}
             </option>
+            <option
+              value="WF_10_SIX_FOUR"
+              disabled={!isTeamCountValidForFamily('WF_10_SIX_FOUR', event.team_count)}
+            >
+              10-team WF (winners 6 + losers 4)
+              {!isTeamCountValidForFamily('WF_10_SIX_FOUR', event.team_count) && ' — requires 10 teams'}
+            </option>
           </select>
         </div>
 
-        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE') && (
+        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE' || state.templateType === 'WF_10_SIX_FOUR') && (
           <div className="form-group" style={{ marginBottom: '16px' }}>
             <label>Waterfall Rounds</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1400,17 +1434,18 @@ function DrawBuilder() {
               </span>
               <span style={{ fontSize: '12px', color: '#666' }}>
                 {state.templateType === 'WF_TO_POOLS_DYNAMIC' && 
-                  (event.team_count === 8 || event.team_count === 10 
-                    ? '(Fixed at 1 for 8-10 teams)' 
+                  (event.team_count === 8
+                    ? '(Fixed at 1 for 8 teams)' 
                     : '(Fixed at 2 for 12+ teams)')}
                 {state.templateType === 'WF_TO_BRACKETS_8' && '(Fixed at 2 for 32 teams)'}
                 {state.templateType === 'WF_14_TOP2_BYE' && '(R1: 12 teams / 6 matches; R2: 8 teams / 4 matches; top 2 combined rating byes)'}
+                {state.templateType === 'WF_10_SIX_FOUR' && '(1 WF → winners 6 + losers 4; Fri/Sat RR; Sunday placement)'}
               </span>
             </div>
           </div>
         )}
 
-        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_POOLS_4' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE' || state.templateType === 'CANONICAL_32') && state.wfRounds > 0 && (
+        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_POOLS_4' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE' || state.templateType === 'WF_10_SIX_FOUR' || state.templateType === 'CANONICAL_32') && state.wfRounds > 0 && (
           <div className="form-group" style={{ marginBottom: '16px' }}>
             <label>Waterfall Match Length</label>
             <select
@@ -1428,7 +1463,7 @@ function DrawBuilder() {
           </div>
         )}
 
-        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE') && state.wfRounds > 0 && (
+        {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE' || state.templateType === 'WF_10_SIX_FOUR') && state.wfRounds > 0 && (
           <div
             className="form-group"
             style={{

@@ -145,23 +145,31 @@ def _phase_key(k: Tuple[str, int]) -> int:
     return STAGE_ORDER_FALLBACK.get(k[0], 99) * 10 + k[1]
 
 
-# WF_14_TOP2_BYE consolation flight carries the intended play day in its match
-# code (CONS_FRI / CONS_SAT1 / CONS_SAT2). Those matches are stored as MAIN with
-# round_index 1/2/3, which would otherwise sequence them into team-rounds 3/4/5
-# (Sat/Sat/Sun). The WF R1 losers only play one waterfall round, so their
-# consolation is really their 2nd/3rd/4th tournament match — map each block to
-# the team-round that lands it on the tagged day (units digit 2 = consolation).
+# Day-tagged post-WF flights (WF_14 CONS_* and WF_10 WIN_/FUN_/LOSS_/WIN_SUN/LOSS_SUN).
+# Tens digit = team match number; map Fri/Sat/Sun onto TR2/TR3/TR4/TR5 for 1-WF events.
 _CONS_FLIGHT_PHASE: Dict[str, int] = {
-    "CONS_FRI": 22,  # losers' 2nd match → team-round 2 (Friday, with WF R2)
-    "CONS_SAT1": 32,  # losers' 3rd match → team-round 3 (Saturday)
-    "CONS_SAT2": 42,  # losers' 4th match → team-round 4 (Saturday)
+    "CONS_FRI": 22,
+    "CONS_SAT1": 32,
+    "CONS_SAT2": 42,
+    "WIN_FRI": 22,
+    "WIN_SAT1": 32,
+    "WIN_SAT2": 42,
+    "FUN_FRI": 22,
+    "FUN_SAT1": 32,
+    "FUN_SAT2": 42,
+    "LOSS_FRI": 22,
+    "LOSS_SAT1": 32,
+    "LOSS_SAT2": 42,
+    "WIN_SUN": 53,
+    "LOSS_SUN": 53,
 }
 
 
 def _cons_flight_phase(match_code: Optional[str]) -> Optional[int]:
-    """Return an override phase for WF_14 day-tagged consolation matches, else None."""
+    """Return an override phase for day-tagged post-WF flight matches, else None."""
     code = (match_code or "").upper()
-    for tag, phase in _CONS_FLIGHT_PHASE.items():
+    # Longer tags first so WIN_SAT1 beats WIN_SAT, WIN_SUN beats WIN_
+    for tag, phase in sorted(_CONS_FLIGHT_PHASE.items(), key=lambda kv: -len(kv[0])):
         if tag in code:
             return phase
     return None

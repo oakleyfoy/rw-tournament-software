@@ -246,9 +246,11 @@ def apply_advancement_for_final_match(session: Session, match_id: int) -> int:
 
     event = session.get(Event, match.event_id)
     if event:
+        from app.services.wf_10_advancement import refresh_wf10_after_advancement
         from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
 
         updated_count += refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
+        updated_count += refresh_wf10_after_advancement(session, match.tournament_id, match.event_id, version_id)
 
     return updated_count
 
@@ -383,13 +385,14 @@ def apply_advancement_with_details(session: Session, match_id: int) -> Dict[str,
     updates.extend(auto_updates)
     warnings.extend(auto_warnings)
 
-    # WF_14 loser flights: once all six R1 losers are known, populate the
-    # Division III/IV (Pool C/D) consolation matches and Sunday cross placement.
+    # WF_14 / WF_10 flights: once WF losers/winners are known, fill RR + Sunday shells.
     event = session.get(Event, match.event_id)
     if event:
+        from app.services.wf_10_advancement import refresh_wf10_after_advancement
         from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
 
         refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
+        refresh_wf10_after_advancement(session, match.tournament_id, match.event_id, version_id)
 
     return {"downstream_updates": updates, "warnings": warnings}
 

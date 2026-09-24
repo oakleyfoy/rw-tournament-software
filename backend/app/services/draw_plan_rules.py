@@ -12,14 +12,15 @@ from typing import Dict, FrozenSet, Literal, Optional, Tuple
 # =============================================================================
 
 # Template families
-TemplateFamily = Literal["RR_ONLY", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE"]
+TemplateFamily = Literal["RR_ONLY", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE", "WF_10_SIX_FOUR"]
 
 # Allowed team counts per family
 ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
     "RR_ONLY": frozenset({4, 6}),
-    "WF_TO_POOLS_DYNAMIC": frozenset({8, 10, 12, 16, 20, 24, 28}),
+    "WF_TO_POOLS_DYNAMIC": frozenset({8, 12, 16, 20, 24, 28}),
     "WF_TO_BRACKETS_8": frozenset({32}),
     "WF_14_TOP2_BYE": frozenset({14}),
+    "WF_10_SIX_FOUR": frozenset({10}),
 }
 
 # All Phase 1 supported team counts (union of all families)
@@ -40,17 +41,23 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
 
     Rules:
     - RR_ONLY: always 0
-    - WF_TO_POOLS_DYNAMIC: 1 for 8/10 teams, 2 for 12+ teams
+    - WF_TO_POOLS_DYNAMIC: 1 for 8 teams, 2 for 12+ teams
     - WF_TO_BRACKETS_8: always 2
+    - WF_10_SIX_FOUR: always 1
+    - WF_14_TOP2_BYE: always 2
     """
     if family == "RR_ONLY":
         return 0
     elif family == "WF_TO_POOLS_DYNAMIC":
-        return 1 if team_count in (8, 10) else 2
+        return 1 if team_count == 8 else 2
     elif family == "WF_TO_BRACKETS_8":
         return 2
     elif family == "WF_14_TOP2_BYE":
         from app.services.wf_14_format import REQUIRED_WF_ROUNDS
+
+        return REQUIRED_WF_ROUNDS
+    elif family == "WF_10_SIX_FOUR":
+        from app.services.wf_10_format import REQUIRED_WF_ROUNDS
 
         return REQUIRED_WF_ROUNDS
     return 0
@@ -66,13 +73,9 @@ def pool_config(team_count: int) -> Tuple[int, int]:
     Return (pools_count, teams_per_pool) for WF_TO_POOLS_DYNAMIC.
 
     Rules:
-    - 10 teams: 2 pools of 5
-    - All others: n/4 pools of 4
+    - All sizes: n/4 pools of 4 (10-team uses WF_10_SIX_FOUR, not this)
     """
-    if team_count == 10:
-        return (2, 5)
-    else:
-        return (team_count // 4, 4)
+    return (team_count // 4, 4)
 
 
 def rr_matches_per_pool(teams_per_pool: int) -> int:
@@ -152,13 +155,16 @@ def get_valid_family_for_team_count(team_count: int) -> Optional[TemplateFamily]
     Priority order (most specific first):
     1. WF_TO_BRACKETS_8 (32 only)
     2. WF_14_TOP2_BYE (14 only)
-    3. WF_TO_POOLS_DYNAMIC (8, 10, 12, 16, 20, 24, 28)
-    4. RR_ONLY (4, 6)
+    3. WF_10_SIX_FOUR (10 only)
+    4. WF_TO_POOLS_DYNAMIC (8, 12, 16, 20, 24, 28)
+    5. RR_ONLY (4, 6)
     """
     if team_count in ALLOWED_TEAM_COUNTS["WF_TO_BRACKETS_8"]:
         return "WF_TO_BRACKETS_8"
     if team_count in ALLOWED_TEAM_COUNTS["WF_14_TOP2_BYE"]:
         return "WF_14_TOP2_BYE"
+    if team_count in ALLOWED_TEAM_COUNTS["WF_10_SIX_FOUR"]:
+        return "WF_10_SIX_FOUR"
     if team_count in ALLOWED_TEAM_COUNTS["WF_TO_POOLS_DYNAMIC"]:
         return "WF_TO_POOLS_DYNAMIC"
     if team_count in ALLOWED_TEAM_COUNTS["RR_ONLY"]:
