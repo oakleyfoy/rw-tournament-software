@@ -3817,9 +3817,7 @@ def clear_version_assignments(
 ):
     """Clear all match assignments for a draft version (keep matches and slots)."""
     require_draft_version(session, version_id, tournament_id)
-    existing = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
-    ).all()
+    existing = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)).all()
     for assignment in existing:
         session.delete(assignment)
     session.commit()

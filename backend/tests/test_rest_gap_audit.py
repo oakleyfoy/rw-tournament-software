@@ -22,7 +22,6 @@ from app.services.schedule_quality_report import (
     generate_quality_report,
 )
 
-
 DAY = date(2026, 3, 6)  # Friday
 
 
@@ -222,9 +221,7 @@ def test_quality_report_rest_details_use_names(session: Session):
 
 def test_clear_assignments_endpoint(client: TestClient, session: Session):
     tid, vid = _seed_short_rest_schedule(session)
-    before = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)
-    ).all()
+    before = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)).all()
     assert len(before) == 2
 
     resp = client.post(f"/api/tournaments/{tid}/schedule/versions/{vid}/clear-assignments")
@@ -232,9 +229,7 @@ def test_clear_assignments_endpoint(client: TestClient, session: Session):
     assert resp.json()["cleared_assignments_count"] == 2
 
     session.expire_all()
-    after = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)
-    ).all()
+    after = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)).all()
     assert after == []
 
 
@@ -296,23 +291,17 @@ def test_run_full_policy_needs_rest_approval(client: TestClient, session: Sessio
 
     # Assignments remain committed
     session.expire_all()
-    remaining = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)
-    ).all()
+    remaining = session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == vid)).all()
     assert len(remaining) == 2
 
     # accept_short_rest skips soft gate flag
-    resp2 = client.post(
-        f"/api/tournaments/{tid}/schedule/versions/{vid}/run-full-policy?accept_short_rest=true"
-    )
+    resp2 = client.post(f"/api/tournaments/{tid}/schedule/versions/{vid}/run-full-policy?accept_short_rest=true")
     assert resp2.status_code == 200, resp2.text
     data2 = resp2.json()
     assert data2["needs_rest_approval"] is False
     assert data2["rest_gap_report"] is not None  # still returned for visibility
 
     # force also skips soft gate
-    resp3 = client.post(
-        f"/api/tournaments/{tid}/schedule/versions/{vid}/run-full-policy?force=true"
-    )
+    resp3 = client.post(f"/api/tournaments/{tid}/schedule/versions/{vid}/run-full-policy?force=true")
     assert resp3.status_code == 200, resp3.text
     assert resp3.json()["needs_rest_approval"] is False
