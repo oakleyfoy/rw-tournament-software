@@ -463,7 +463,11 @@ def public_draws_list(
                 template_type = (_json.loads(e.draw_plan_json) or {}).get("template_type")
             except Exception:
                 template_type = None
-        pools_only_format = template_type in ("WF_14_TOP2_BYE", "WF_TO_POOLS_DYNAMIC")
+        pools_only_format = template_type in (
+            "WF_14_TOP2_BYE",
+            "WF_TO_POOLS_DYNAMIC",
+            "WF_10_SIX_FOUR",
+        )
 
         _DIV_ORDER = ["BWW", "BWL", "BLW", "BLL"]
         found = set()
@@ -1020,23 +1024,10 @@ def _safe_int_field(value: Any, default: int = 0) -> int:
 
 
 def _rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
-    """Resolve the pool code (POOLA..POOLH) for a pool round-robin match.
+    """Resolve the pool code for a pool round-robin match (see rr_match_codes)."""
+    from app.services.rr_match_codes import rr_pool_code_for_match
 
-    Handles both standard RR pools (``..._POOLA_RR_01``) and the WF_14
-    loser-flight consolation pools, which are 3-team round robins encoded as
-    ``..._CONS_<DAYTAG>_<POOL><SEQ>`` (e.g. ``WOM_CONS_FRI_C01`` → POOLC).
-    """
-    if not match_code:
-        return None
-    upper = match_code.upper()
-    if "_RR_" in upper:
-        head = match_code.split("_RR_")[0]
-        return head.split("_")[-1].upper() or None
-    if "_CONS_" in upper:
-        last = upper.split("_")[-1]  # e.g. "C01" or "01" (Sunday cross-placement)
-        if last and last[0].isalpha():
-            return f"POOL{last[0]}"
-    return None
+    return rr_pool_code_for_match(match_code)
 
 
 # Temporary live-display override for the current women's Jekyll RR board.
@@ -1112,6 +1103,17 @@ class RoundRobinResponse(BaseModel):
 
 
 _CD_PLACEMENT_POOL_CODE = "CD_PLACEMENT"
+_WF10_PLACEMENT_POOL_CODE = "WF10_PLACEMENT"
+
+_WF10_POOL_ORDER = ("POOLA", "POOLB", "FUN", "LOSS", _WF10_PLACEMENT_POOL_CODE)
+
+
+def _pool_display_sort_key(pool_code: str) -> tuple:
+    if pool_code in _WF10_POOL_ORDER:
+        return (0, _WF10_POOL_ORDER.index(pool_code))
+    if pool_code == _CD_PLACEMENT_POOL_CODE:
+        return (2, 0)
+    return (1, pool_code)
 
 
 def _build_rr_match_box(
@@ -1234,9 +1236,16 @@ def _public_round_robin_impl(
         return NotPublishedResponse()
     show_court_info = _public_show_court_info(tournament)
 
+    from app.services.rr_match_codes import (
+        WF10_PLACEMENT_POOL_CODE,
+        is_public_rr_pool_match_code,
+        is_wf10_sunday_placement_code,
+    )
+    from app.services.wf_10_advancement import event_uses_wf10
     from app.services.wf_14_consolation import event_uses_wf14
 
     is_wf14 = event_uses_wf14(session, event_id, version.id)
+    is_wf10 = event_uses_wf10(session, event_id, version.id)
 
     def _pool_label(pool_code: str) -> str:
         # WF_14 loser flight is one "Division III" split into two pools (C/D),
@@ -1246,6 +1255,17 @@ def _public_round_robin_impl(
                 return "Division III \u00b7 Pool C"
             if pool_code == "POOLD":
                 return "Division III \u00b7 Pool D"
+        if is_wf10 or pool_code in ("FUN", "LOSS", WF10_PLACEMENT_POOL_CODE):
+            if pool_code == "POOLA":
+                return "Winners \u00b7 Pool A"
+            if pool_code == "POOLB":
+                return "Winners \u00b7 Pool B"
+            if pool_code == "FUN":
+                return "Fun Matches"
+            if pool_code == "LOSS":
+                return "Losers Round Robin"
+            if pool_code == WF10_PLACEMENT_POOL_CODE:
+                return "Sunday Placement"
         return _POOL_LABELS.get(pool_code, pool_code)
 
     rr_matches = session.exec(
@@ -1256,7 +1276,8 @@ def _public_round_robin_impl(
         )
     ).all()
     # Defensive filter: only true RR pool matches should drive RR cards/standings.
-    rr_matches = [m for m in rr_matches if "_RR_" in (m.match_code or "").upper()]
+    # Includes standard ``_RR_`` pools and WF_10 WIN_/FUN_/LOSS_ day-tagged RRs.
+    rr_matches = [m for m in rr_matches if is_public_rr_pool_match_code(m.match_code)]
 
     # WF_14 loser-flight pools (C/D) are 3-team round robins encoded as
     # consolation matches. Surface them as additional divisions alongside A/B.
@@ -1277,7 +1298,17 @@ def _public_round_robin_impl(
         if "_CONS_SUN_" not in (m.match_code or "").upper() and _rr_pool_code_for_match(m.match_code) is not None
     ]
 
-    display_matches = list(rr_matches) + list(cons_pool_matches) + list(cross_matches)
+    # WF_10 Sunday placement (WIN_SUN / LOSS_SUN) — match_type PLACEMENT.
+    wf10_sun_matches = session.exec(
+        select(Match).where(
+            Match.event_id == event_id,
+            Match.schedule_version_id == version.id,
+            Match.match_type == "PLACEMENT",
+        )
+    ).all()
+    wf10_sun_matches = [m for m in wf10_sun_matches if is_wf10_sunday_placement_code(m.match_code)]
+
+    display_matches = list(rr_matches) + list(cons_pool_matches) + list(cross_matches) + list(wf10_sun_matches)
 
     if not display_matches:
         return RoundRobinResponse(
@@ -1320,7 +1351,7 @@ def _public_round_robin_impl(
         pool_matches.setdefault(pool_key, []).append(m)
 
     pools: List[RRPool] = []
-    for pool_code in sorted(pool_matches.keys()):
+    for pool_code in sorted(pool_matches.keys(), key=_pool_display_sort_key):
         matches = sorted(
             pool_matches[pool_code],
             key=lambda m: (
@@ -1445,7 +1476,7 @@ def _public_round_robin_impl(
             rows=[RRStandingsRow(team_id=tid, team_display=_disp(tid), **r) for tid, r in sorted_rows],
         )
 
-    for pool_code in sorted(pool_matches.keys()):
+    for pool_code in sorted(pool_matches.keys(), key=_pool_display_sort_key):
         try:
             standings_list.append(_compute_pool_standings(pool_code))
         except Exception:
@@ -1483,6 +1514,37 @@ def _public_round_robin_impl(
             )
         )
 
+    # WF_10 Sunday placement (winners cross + losers place) — own section.
+    if wf10_sun_matches:
+        sun_boxes = []
+        for m in sorted(
+            wf10_sun_matches,
+            key=lambda m: (_safe_int_field(m.sequence_in_round, 0), m.match_code or ""),
+        ):
+            try:
+                sun_boxes.append(
+                    _build_rr_match_box(
+                        m,
+                        team_map,
+                        assignment_map,
+                        slot_map,
+                        _safe_int_field(m.round_index, 1) or 1,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "public_round_robin: failed to build WF10 Sunday box for match %s (%s)",
+                    m.id,
+                    m.match_code,
+                )
+        pools.append(
+            RRPool(
+                pool_code=_WF10_PLACEMENT_POOL_CODE,
+                pool_label=_pool_label(_WF10_PLACEMENT_POOL_CODE),
+                matches=sun_boxes,
+            )
+        )
+
     return RoundRobinResponse(
         tournament_name=tournament.name,
         event_name=event.name,
@@ -1502,8 +1564,13 @@ def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: 
             return f"Seed {placeholder[5:]}"
         if placeholder.startswith("ConsL"):
             return f"Cons Seed {placeholder[5:]}"
-        # Cross-pool placement slots within Division III: C{n}=Pool C #{n}, D{n}=Pool D #{n}.
-        if len(placeholder) == 2 and placeholder[0] in ("C", "D") and placeholder[1].isdigit():
+        # WF_10 winners / losers flight ranks before advancement fills teams.
+        if len(placeholder) >= 2 and placeholder[0] == "W" and placeholder[1:].isdigit():
+            return f"Winner #{placeholder[1:]}"
+        if len(placeholder) >= 2 and placeholder[0] == "L" and placeholder[1:].isdigit():
+            return f"Loser #{placeholder[1:]}"
+        # Cross-pool placement slots: A/B (WF_10) or C/D (WF_14).
+        if len(placeholder) == 2 and placeholder[0] in ("A", "B", "C", "D") and placeholder[1].isdigit():
             return f"Pool {placeholder[0]} #{placeholder[1]}"
         return placeholder
     return "TBD"

@@ -4457,7 +4457,10 @@ def get_standings(
         q = q.where(Match.event_id == event_id)
     # Defensive filter: standings must only use true RR pool matches.
     # Some legacy data can have non-RR codes mislabeled with match_type="RR".
-    all_rr = [m for m in session.exec(q).all() if "_RR_" in (m.match_code or "").upper()]
+    # WF_10 uses WIN_/FUN_/LOSS_ day tags (no ``_RR_`` token).
+    from app.services.rr_match_codes import is_public_rr_pool_match_code, rr_pool_code_for_match
+
+    all_rr = [m for m in session.exec(q).all() if is_public_rr_pool_match_code(m.match_code)]
 
     if not all_rr:
         return StandingsResponse(
@@ -4490,12 +4493,7 @@ def get_standings(
 
     matches_by_event_pool: Dict[tuple, List[Match]] = defaultdict(list)
     for m in all_rr:
-        pool = None
-        code_upper = (m.match_code or "").upper()
-        for pool_code in _POOL_LABELS:
-            if f"_{pool_code}_" in code_upper:
-                pool = pool_code
-                break
+        pool = rr_pool_code_for_match(m.match_code)
         matches_by_event_pool[(m.event_id, pool)].append(m)
 
     standings_events: List[StandingsEvent] = []
@@ -4503,7 +4501,12 @@ def get_standings(
     for (eid, pool), matches in sorted(matches_by_event_pool.items(), key=lambda item: (item[0][0], item[0][1] or "")):
         ev = event_map.get(eid)
         ev_name = ev.name if ev else "Unknown"
-        div_name = _POOL_LABELS.get(pool) if pool else None
+        if pool == "FUN":
+            div_name = "Fun Matches"
+        elif pool == "LOSS":
+            div_name = "Losers Round Robin"
+        else:
+            div_name = _POOL_LABELS.get(pool) if pool else None
 
         # Collect all teams in this pool (from all matches, not just FINAL)
         pool_team_ids: set = set()
