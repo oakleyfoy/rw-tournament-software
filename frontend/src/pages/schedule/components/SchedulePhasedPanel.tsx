@@ -12,6 +12,7 @@ import {
   previewPolicyPlan,
   runDailyPolicy,
   runFullPolicy,
+  clearScheduleAssignments,
   getScheduleReport,
   getQualityReport,
   listPolicyRuns,
@@ -24,6 +25,7 @@ import {
   PolicyRunResponse,
   PolicyPlanPreview,
   FullPolicyRunResponse,
+  RestGapReport,
   ScheduleReportResponse,
   QualityReport,
   PolicyRunSummary,
@@ -382,6 +384,9 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
   // ─── Full policy run result state ──────────────────────────────────
   const [lastFullPolicyResult, setLastFullPolicyResult] = useState<FullPolicyRunResponse | null>(null)
   const [, setFullPolicyResultExpanded] = useState(false)
+  const [restGapReport, setRestGapReport] = useState<RestGapReport | null>(null)
+  const [showRestApprovalModal, setShowRestApprovalModal] = useState(false)
+  const [restApprovalBusy, setRestApprovalBusy] = useState(false)
 
   // ─── Policy run history state ─────────────────────────────────────
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false)
@@ -484,10 +489,7 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     if (!tournamentId || !activeVersion) return
     setBusy('Run Full Policy')
     try {
-      const result: FullPolicyRunResponse = await runFullPolicy(
-        tournamentId,
-        activeVersion.id
-      )
+      const result: FullPolicyRunResponse = await runFullPolicy(tournamentId, activeVersion.id)
       setLastFullPolicyResult(result)
       setFullPolicyResultExpanded(true)
       const daysSummary = result.day_results
@@ -501,12 +503,21 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
             .map((m) => `${m.event_name} ${m.round_label} (${m.match_code})`)
             .join(', ')}.`
         : ''
-      showToast(
-        `Full schedule: ${result.total_assigned} placed, ${result.total_failed} failed.${invariantMsg}${failedMsg} ${daysSummary}`,
-        result.total_failed > 0 ? 'warning' : 'success'
-      )
       onRefresh()
       onInventoryAction?.('assigned')
+      if (result.needs_rest_approval && result.rest_gap_report && result.rest_gap_report.issue_count > 0) {
+        setRestGapReport(result.rest_gap_report)
+        setShowRestApprovalModal(true)
+        showToast(
+          `Schedule placed with ${result.rest_gap_report.issue_count} short-rest issue(s). Review and approve or cancel.`,
+          'warning'
+        )
+      } else {
+        showToast(
+          `Full schedule: ${result.total_assigned} placed, ${result.total_failed} failed.${invariantMsg}${failedMsg} ${daysSummary}`,
+          result.total_failed > 0 ? 'warning' : 'success'
+        )
+      }
     } catch (e: unknown) {
       const err = e as { status?: number; detail?: { detail?: { message?: string; invariant_report?: { violations?: Array<{ code: string; message: string }>; stats?: Record<string, number> } } }; message?: string }
       if (err?.status === 409 && err?.detail?.detail) {
@@ -537,16 +548,40 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
     }
   }, [tournamentId, activeVersion, onRefresh, onInventoryAction])
 
+  const handleApproveShortRest = useCallback(() => {
+    setShowRestApprovalModal(false)
+    setRestGapReport(null)
+    showToast('Schedule kept with short-rest gaps acknowledged.', 'success')
+  }, [])
+
+  const handleCancelShortRest = useCallback(async () => {
+    if (!tournamentId || !activeVersion) return
+    setRestApprovalBusy(true)
+    try {
+      const cleared = await clearScheduleAssignments(tournamentId, activeVersion.id)
+      setShowRestApprovalModal(false)
+      setRestGapReport(null)
+      showToast(
+        `Schedule discarded (${cleared.cleared_assignments_count} assignments cleared).`,
+        'warning'
+      )
+      onRefresh()
+      onInventoryAction?.('unassigned')
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to clear assignments', 'error')
+    } finally {
+      setRestApprovalBusy(false)
+    }
+  }, [tournamentId, activeVersion, onRefresh, onInventoryAction])
+
   const handleForceSchedule = useCallback(async () => {
     if (!tournamentId || !activeVersion) return
     if (!window.confirm('Force schedule ignoring invariant violations?\n\nThis will keep the placement even if rules are broken (e.g., team plays >2/day, fairness ordering, etc.).\n\nContinue?')) return
     setBusy('Force Schedule')
     try {
-      const result: FullPolicyRunResponse = await runFullPolicy(
-        tournamentId,
-        activeVersion.id,
-        true
-      )
+      const result: FullPolicyRunResponse = await runFullPolicy(tournamentId, activeVersion.id, {
+        force: true,
+      })
       setLastFullPolicyResult(result)
       setFullPolicyResultExpanded(true)
       showToast(
@@ -2073,6 +2108,72 @@ export const SchedulePhasedPanel: React.FC<SchedulePhasedPanelProps> = ({
                 }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Short-rest approval modal (after Schedule Entire Tournament) */}
+      {showRestApprovalModal && restGapReport && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 2100,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 640,
+              width: '92%',
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px 0' }}>Short rest gaps detected</h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: 14, color: '#555' }}>
+              The schedule was placed, but {restGapReport.issue_count} short-rest issue
+              {restGapReport.issue_count === 1 ? '' : 's'} need review. Approve to keep
+              this placement, or Cancel to clear all assignments.
+            </p>
+
+            <div style={{ flex: 1, overflowY: 'auto', marginBottom: 16 }}>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#333' }}>
+                {restGapReport.issues.map((issue, idx) => (
+                  <li key={idx} style={{ marginBottom: 8 }}>
+                    {issue.summary}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn btn-secondary"
+                disabled={restApprovalBusy}
+                onClick={handleCancelShortRest}
+              >
+                {restApprovalBusy ? 'Clearing…' : 'Cancel (clear schedule)'}
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={restApprovalBusy}
+                onClick={handleApproveShortRest}
+              >
+                Approve (keep schedule)
               </button>
             </div>
           </div>

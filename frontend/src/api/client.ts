@@ -2099,6 +2099,31 @@ export interface FullPolicyDayResult {
   batches: Array<{ name: string; attempted: number; assigned: number; failed_count: number }>
 }
 
+export interface RestGapIssue {
+  kind: 'team' | 'structural' | string
+  summary: string
+  team_id?: number | null
+  team_name?: string | null
+  event_id?: number | null
+  event_name?: string | null
+  day?: string | null
+  prev_match_code?: string | null
+  prev_stage?: string | null
+  prev_end_time?: string | null
+  curr_match_code?: string | null
+  curr_stage?: string | null
+  curr_start_time?: string | null
+  actual_minutes?: number | null
+  required_minutes?: number | null
+  match_duration_minutes?: number | null
+  stage_transition?: string | null
+}
+
+export interface RestGapReport {
+  issue_count: number
+  issues: RestGapIssue[]
+}
+
 export interface FullPolicyRunResponse {
   total_assigned: number
   total_failed: number
@@ -2129,16 +2154,31 @@ export interface FullPolicyRunResponse {
     round_label: string
     reason: string
   }> | null
+  needs_rest_approval?: boolean
+  rest_gap_report?: RestGapReport | null
 }
 
 export async function runFullPolicy(
   tournamentId: number,
   versionId: number,
-  force: boolean = false
+  options: { force?: boolean; acceptShortRest?: boolean } = {}
 ): Promise<FullPolicyRunResponse> {
-  const qs = force ? '?force=true' : ''
+  const params = new URLSearchParams()
+  if (options.force) params.set('force', 'true')
+  if (options.acceptShortRest) params.set('accept_short_rest', 'true')
+  const qs = params.toString() ? `?${params.toString()}` : ''
   return fetchJson<FullPolicyRunResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/run-full-policy${qs}`,
+    { method: 'POST' }
+  )
+}
+
+export async function clearScheduleAssignments(
+  tournamentId: number,
+  versionId: number
+): Promise<{ schedule_version_id: number; cleared_assignments_count: number }> {
+  return fetchJson(
+    `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/clear-assignments`,
     { method: 'POST' }
   )
 }
@@ -2250,6 +2290,7 @@ export interface QualityReportStats {
   utilization_pct: number
   matches_per_day: Record<string, number>
   matches_per_event: Record<string, { total: number; assigned: number }>
+  rest_gap_report?: RestGapReport
 }
 
 export interface QualityReport {
