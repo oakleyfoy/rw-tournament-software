@@ -1189,14 +1189,15 @@ class TestWfToPoolsDynamic:
         assert inv.total_matches == 16, f"Expected Total=16, got {inv.total_matches}"
 
     def test_10_teams_wf1(self):
-        """10 teams, 1 WF round → wf=5, rr=20 (2 pools×10), total=25."""
-        spec = make_spec("WF_TO_POOLS_DYNAMIC", 10, wf_rounds=1)
+        """10 teams use WF_10_SIX_FOUR: wf=5, rr=15 (win+fun+loss), placement in total=25."""
+        spec = make_spec("WF_10_SIX_FOUR", 10, wf_rounds=1)
         inv = compute_inventory(spec)
         assert not inv.has_errors(), f"Errors: {inv.errors}"
         assert inv.wf_matches == 5, f"Expected WF=5, got {inv.wf_matches}"
         assert inv.bracket_matches == 0, f"Expected Bracket=0, got {inv.bracket_matches}"
-        assert inv.rr_matches == 20, f"Expected RR=20, got {inv.rr_matches}"
+        assert inv.rr_matches == 15, f"Expected RR=15, got {inv.rr_matches}"
         assert inv.total_matches == 25, f"Expected Total=25, got {inv.total_matches}"
+        assert inv.counts_by_stage.get("PLACEMENT") == 5
 
     def test_12_teams_wf2(self):
         """12 teams, 2 WF rounds → wf=12, rr=18 (3 pools×6), total=30."""

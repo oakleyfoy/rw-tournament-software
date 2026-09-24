@@ -19,14 +19,14 @@ from app.services.schedule_sequence import (
 )
 
 
-def _event(eid: int, name: str, team_count: int, wf_rounds: int) -> Event:
+def _event(eid: int, name: str, team_count: int, wf_rounds: int, template: str = "WF_TO_POOLS_DYNAMIC") -> Event:
     return Event(
         id=eid,
         tournament_id=1,
         name=name,
         category="mixed",
         team_count=team_count,
-        draw_plan_json=json.dumps({"wf_rounds": wf_rounds, "template_type": "WF_TO_POOLS_DYNAMIC"}),
+        draw_plan_json=json.dumps({"wf_rounds": wf_rounds, "template_type": template}),
     )
 
 
@@ -48,12 +48,20 @@ def _m(mid: int, event_id: int, mtype: str, round_index: int, code: str | None =
 
 
 def test_mixed_1wf_rr1_is_friday_team_round_2():
-    mixed = _event(2, "Mixed A", 10, wf_rounds=1)
-    matches = [_m(1, 2, "WF", 1, "MIX_WF_R1_01")] + [_m(10 + i, 2, "RR", i) for i in range(1, 6)]
+    mixed = _event(2, "Mixed A", 10, wf_rounds=1, template="WF_10_SIX_FOUR")
+    matches = [
+        _m(1, 2, "WF", 1, "MIX_WF_R1_01"),
+        _m(11, 2, "RR", 1, "MIX_WIN_FRI_A01"),
+        _m(12, 2, "RR", 2, "MIX_WIN_SAT1_A01"),
+        _m(13, 2, "RR", 3, "MIX_WIN_SAT2_A01"),
+        _m(14, 2, "PLACEMENT", 1, "MIX_WIN_SUN_01"),
+    ]
     assert _event_wf_rounds_for_sequence(mixed, matches) == 1
     assert _phase_for_match(matches[0], 1) // 10 == 1  # WF R1 → Friday TR1
-    assert _phase_for_match(matches[1], 1) // 10 == 2  # RR R1 → Friday TR2 with Women's WF R2
-    assert _phase_for_match(matches[4], 1) // 10 == 5  # RR R4 → not Friday TR1
+    assert _phase_for_match(matches[1], 1) // 10 == 2  # Fri RR → Friday TR2
+    assert _phase_for_match(matches[2], 1) // 10 == 3  # Sat1
+    assert _phase_for_match(matches[3], 1) // 10 == 4  # Sat2
+    assert _phase_for_match(matches[4], 1) // 10 == 5  # Sunday
 
 
 def test_womens_2wf_rr1_is_saturday_team_round_3():

@@ -6,14 +6,20 @@
  */
 
 // Template families
-export type TemplateFamily = 'RR_ONLY' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8' | 'WF_14_TOP2_BYE';
+export type TemplateFamily =
+  | 'RR_ONLY'
+  | 'WF_TO_POOLS_DYNAMIC'
+  | 'WF_TO_BRACKETS_8'
+  | 'WF_14_TOP2_BYE'
+  | 'WF_10_SIX_FOUR';
 
 // Allowed team counts per family
 export const ALLOWED_TEAM_COUNTS: Record<TemplateFamily, readonly number[]> = {
   RR_ONLY: [4, 6],
-  WF_TO_POOLS_DYNAMIC: [8, 10, 12, 16, 20, 24, 28],
+  WF_TO_POOLS_DYNAMIC: [8, 12, 16, 20, 24, 28],
   WF_TO_BRACKETS_8: [32],
   WF_14_TOP2_BYE: [14],
+  WF_10_SIX_FOUR: [10],
 } as const;
 
 // All Phase 1 supported team counts (union of all families)
@@ -22,6 +28,7 @@ export const PHASE1_SUPPORTED_TEAM_COUNTS = [
   ...ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC,
   ...ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8,
   ...ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE,
+  ...ALLOWED_TEAM_COUNTS.WF_10_SIX_FOUR,
 ] as const;
 
 /** Sorted for stable UI error messages (includes 14 when WF_14_TOP2_BYE is enabled). */
@@ -44,11 +51,13 @@ export function requiredWfRounds(family: TemplateFamily, teamCount: number): num
     case 'RR_ONLY':
       return 0;
     case 'WF_TO_POOLS_DYNAMIC':
-      return teamCount === 8 || teamCount === 10 ? 1 : 2;
+      return teamCount === 8 ? 1 : 2;
     case 'WF_TO_BRACKETS_8':
       return 2;
     case 'WF_14_TOP2_BYE':
       return 2;
+    case 'WF_10_SIX_FOUR':
+      return 1;
     default:
       return 0;
   }
@@ -58,10 +67,7 @@ export function requiredWfRounds(family: TemplateFamily, teamCount: number): num
  * Return (poolsCount, teamsPerPool) for WF_TO_POOLS_DYNAMIC.
  */
 export function poolConfig(teamCount: number): [number, number] {
-  if (teamCount === 10) {
-    return [2, 5]; // 2 pools of 5
-  }
-  return [teamCount / 4, 4]; // n/4 pools of 4
+  return [teamCount / 4, 4]; // n/4 pools of 4 (10-team uses WF_10_SIX_FOUR)
 }
 
 /**
@@ -73,6 +79,9 @@ export function getValidFamilyForTeamCount(teamCount: number): TemplateFamily | 
   }
   if (ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE.includes(teamCount)) {
     return 'WF_14_TOP2_BYE';
+  }
+  if (ALLOWED_TEAM_COUNTS.WF_10_SIX_FOUR.includes(teamCount)) {
+    return 'WF_10_SIX_FOUR';
   }
   if (ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.includes(teamCount)) {
     return 'WF_TO_POOLS_DYNAMIC';

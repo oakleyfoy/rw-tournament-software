@@ -4310,6 +4310,7 @@ def confirm_pool_placement(
     session: Session = Depends(get_session),
 ):
     """Confirm pool placement — resolves SEED_N placeholders on RR matches."""
+    from app.services.wf_10_advancement import event_uses_wf10, refresh_wf10_after_advancement
     from app.services.wf_14_consolation import (
         event_uses_wf14,
         refresh_wf14_consolation_after_advancement,
@@ -4326,10 +4327,11 @@ def confirm_pool_placement(
         raise HTTPException(status_code=404, detail="Schedule version not found")
 
     is_wf14 = payload.event_id is not None and event_uses_wf14(session, payload.event_id, payload.version_id)
+    is_wf10 = payload.event_id is not None and event_uses_wf10(session, payload.event_id, payload.version_id)
 
-    # The WF_14 loser-flight split runs mid-tournament (after WF R1) on the live
+    # The WF_14/WF_10 loser-flight split runs mid-tournament (after WF R1) on the live
     # version, so it is not restricted to DRAFT versions like the winner flight.
-    if not is_wf14 and version.status != "draft":
+    if not is_wf14 and not is_wf10 and version.status != "draft":
         raise HTTPException(status_code=400, detail="Pool placement only allowed on DRAFT versions")
 
     # Check WF completeness
@@ -4353,6 +4355,11 @@ def confirm_pool_placement(
         # match entirely; this backfills and places it as part of Split Pools.
         placement_fix = _repair_wf14_placement_day(session, payload.version_id, payload.event_id)
         result = {"updated_matches": updated, "assignments": [], "placement_fix": placement_fix}
+    elif is_wf10:
+        updated = refresh_wf10_after_advancement(
+            session, tournament_id, payload.event_id, payload.version_id
+        )
+        result = {"updated_matches": updated, "assignments": []}
     else:
         try:
             result = apply_pool_placement(

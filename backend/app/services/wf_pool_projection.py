@@ -292,10 +292,14 @@ def compute_wf_projection(
     if not event or event.tournament_id != tournament_id:
         return None
 
+    from app.services.wf_10_advancement import event_uses_wf10
     from app.services.wf_14_consolation import event_uses_wf14
 
     if event_uses_wf14(session, event_id, version_id):
         return compute_wf14_loser_projection(session, tournament_id, version_id, event_id)
+
+    if event_uses_wf10(session, event_id, version_id):
+        return compute_wf10_projection(session, tournament_id, version_id, event_id)
 
     draw_plan = {}
     if event.draw_plan_json:
@@ -305,7 +309,7 @@ def compute_wf_projection(
             pass
 
     template_type = draw_plan.get("template_type", "RR_ONLY")
-    if "WF_TO_POOLS" not in template_type:
+    if "WF_TO_POOLS" not in template_type and template_type != "WF_10_SIX_FOUR":
         return None
 
     n = event.team_count or 0
@@ -579,6 +583,95 @@ def compute_wf_projection(
                 teams=pool_teams,
             )
         )
+
+    return EventProjection(
+        event_id=event_id,
+        event_name=event.name,
+        wf_complete=wf_complete,
+        total_wf_matches=total_wf,
+        finalized_wf_matches=finalized_wf,
+        pools=pools,
+        unresolved_teams=unresolved,
+    )
+
+
+def compute_wf10_projection(
+    session: Session,
+    tournament_id: int,
+    version_id: int,
+    event_id: int,
+) -> Optional[EventProjection]:
+    """Project WF_10_SIX_FOUR winners 6 + losers 4 after WF R1 completes."""
+    from app.services.wf_10_advancement import compute_wf10_flight_ranks
+    from app.services.wf_10_format import POOL_A_RANKS, POOL_B_RANKS
+
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        return None
+
+    r1 = session.exec(
+        select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.schedule_version_id == version_id,
+            Match.event_id == event_id,
+            Match.match_type == "WF",
+            Match.round_index == 1,
+        )
+    ).all()
+    r1 = [m for m in r1 if m.team_a_id and m.team_b_id]
+    total_wf = len(r1)
+    finalized_wf = sum(1 for m in r1 if (m.runtime_status or "").upper() == "FINAL" and m.winner_team_id)
+    wf_complete = total_wf == 5 and finalized_wf == 5
+
+    ranks = compute_wf10_flight_ranks(session, tournament_id, event_id, version_id)
+    pools: List[ProjectedPool] = []
+    unresolved: List[Dict[str, Any]] = []
+
+    if ranks:
+        win_rank, loss_rank = ranks
+
+        def _team_entry(tid: int, seed_in_pool: int, bucket: str) -> ProjectedTeam:
+            t = session.get(Team, tid)
+            return ProjectedTeam(
+                team_id=tid,
+                team_display=(t.display_name or t.name or f"Team {tid}") if t else f"Team {tid}",
+                seed_position=seed_in_pool,
+                bucket=bucket,
+                status="projected",
+                placement_reason="wf10_flight",
+            )
+
+        pools.append(
+            ProjectedPool(
+                pool_label="WIN_A",
+                pool_display="Winners A (1/4/6)",
+                teams=[
+                    _team_entry(win_rank[r], i + 1, "W")
+                    for i, r in enumerate(POOL_A_RANKS)
+                    if r in win_rank
+                ],
+            )
+        )
+        pools.append(
+            ProjectedPool(
+                pool_label="WIN_B",
+                pool_display="Winners B (2/3/5)",
+                teams=[
+                    _team_entry(win_rank[r], i + 1, "W")
+                    for i, r in enumerate(POOL_B_RANKS)
+                    if r in win_rank
+                ],
+            )
+        )
+        pools.append(
+            ProjectedPool(
+                pool_label="LOSS",
+                pool_display="Losers pool",
+                teams=[_team_entry(loss_rank[r], r, "L") for r in range(1, 5) if r in loss_rank],
+            )
+        )
+    elif not wf_complete:
+        unresolved.append({"reason": "WF_INCOMPLETE", "detail": f"{finalized_wf}/{total_wf} WF finalized"})
 
     return EventProjection(
         event_id=event_id,

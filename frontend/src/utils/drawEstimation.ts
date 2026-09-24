@@ -1,6 +1,14 @@
 // Draw estimation utilities for Phase 2
 
-export type TemplateType = 'RR_ONLY' | 'WF_TO_POOLS_4' | 'WF_TO_POOLS_DYNAMIC' | 'WF_TO_BRACKETS_8' | 'WF_14_TOP2_BYE' | 'CANONICAL_32' | 'SPLIT_FLIGHTS';
+export type TemplateType =
+  | 'RR_ONLY'
+  | 'WF_TO_POOLS_4'
+  | 'WF_TO_POOLS_DYNAMIC'
+  | 'WF_TO_BRACKETS_8'
+  | 'WF_14_TOP2_BYE'
+  | 'WF_10_SIX_FOUR'
+  | 'CANONICAL_32'
+  | 'SPLIT_FLIGHTS';
 
 export interface DrawPlan {
   version: string;
@@ -103,22 +111,12 @@ export function calculateMatches(
       };
 
     case 'WF_TO_POOLS_DYNAMIC': {
-      // WF_TO_POOLS_DYNAMIC: Phase 1 template for 8,10,12,16,20,24,28 teams
-      // Pools: n==10 -> 2 pools of 5, else n/4 pools of 4
-      // WF rounds: 1 for 8/10 teams, 2 for 12+ teams
+      // WF_TO_POOLS_DYNAMIC: Phase 1 template for 8,12,16,20,24,28 teams
+      // (10-team events use WF_10_SIX_FOUR)
+      // Pools: n/4 pools of 4; WF rounds: 1 for 8 teams, 2 for 12+
       const wfMatchesDynamic = wfRoundMatches(teamCount) * wfRounds;
-      
-      let poolCount: number;
-      let rrMatchesPerPool: number;
-      
-      if (teamCount === 10) {
-        poolCount = 2;
-        rrMatchesPerPool = (5 * 4) / 2; // 10 matches per pool of 5
-      } else {
-        poolCount = teamCount / 4;
-        rrMatchesPerPool = (4 * 3) / 2; // 6 matches per pool of 4
-      }
-      
+      const poolCount = teamCount / 4;
+      const rrMatchesPerPool = (4 * 3) / 2; // 6 matches per pool of 4
       const totalRrMatches = poolCount * rrMatchesPerPool;
       
       return {
@@ -211,6 +209,28 @@ export function calculateMatches(
       return {
         wfMatches: 10,
         standardMatches: 21,
+      }
+    }
+
+    case 'WF_10_SIX_FOUR': {
+      if (teamCount !== 10) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_10_SIX_FOUR requires exactly 10 teams, got ${teamCount}`,
+        }
+      }
+      if (wfRounds !== 1) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_10_SIX_FOUR requires 1 waterfall round, got ${wfRounds}`,
+        }
+      }
+      // 5 WF + 6 win RR + 3 fun + 6 loss RR + 5 Sunday = 25
+      return {
+        wfMatches: 5,
+        standardMatches: 20,
       }
     }
 
