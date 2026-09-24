@@ -617,9 +617,7 @@ def _assign_preferred_days(session, spec: DrawPlanSpec, matches: list) -> None:
             code = (m.match_code or "").upper()
             if day_count >= 3 and any(tag in code for tag in ("WIN_FRI", "FUN_FRI", "LOSS_FRI")):
                 m.preferred_day = day_weekdays[0]
-            elif day_count >= 2 and any(
-                tag in code for tag in ("WIN_SAT", "FUN_SAT", "LOSS_SAT", "CONS_SAT")
-            ):
+            elif day_count >= 2 and any(tag in code for tag in ("WIN_SAT", "FUN_SAT", "LOSS_SAT", "CONS_SAT")):
                 m.preferred_day = day_weekdays[1]
             elif day_count >= 3:
                 # RR rounds 1-2 -> day 1 (Saturday), round 3+ -> day 2 (Sunday)

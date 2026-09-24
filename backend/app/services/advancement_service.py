@@ -250,9 +250,7 @@ def apply_advancement_for_final_match(session: Session, match_id: int) -> int:
         from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
 
         updated_count += refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
-        updated_count += refresh_wf10_after_advancement(
-            session, match.tournament_id, match.event_id, version_id
-        )
+        updated_count += refresh_wf10_after_advancement(session, match.tournament_id, match.event_id, version_id)
 
     return updated_count
 

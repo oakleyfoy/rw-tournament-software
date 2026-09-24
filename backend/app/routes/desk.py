@@ -4356,9 +4356,7 @@ def confirm_pool_placement(
         placement_fix = _repair_wf14_placement_day(session, payload.version_id, payload.event_id)
         result = {"updated_matches": updated, "assignments": [], "placement_fix": placement_fix}
     elif is_wf10:
-        updated = refresh_wf10_after_advancement(
-            session, tournament_id, payload.event_id, payload.version_id
-        )
+        updated = refresh_wf10_after_advancement(session, tournament_id, payload.event_id, payload.version_id)
         result = {"updated_matches": updated, "assignments": []}
     else:
         try:
