@@ -839,6 +839,92 @@ def test_public_roundrobin_mixed_sequence_in_round_sorts(client, session):
     assert body["pools"][0]["matches"][0]["score_display"] == "8"
 
 
+def test_public_roundrobin_wf10_shows_win_fun_loss_and_sunday(client, session):
+    """WF_10 codes use WIN_/FUN_/LOSS_ (no ``_RR_`` token) and must still render."""
+    tournament = Tournament(
+        name="WF10 Mixed Draws",
+        location="Scottsdale",
+        timezone="America/Phoenix",
+        start_date=date(2026, 9, 25),
+        end_date=date(2026, 9, 27),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Mixed A",
+        category="mixed",
+        team_count=10,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_10_SIX_FOUR","wf_rounds":1}',
+    )
+    session.add(event)
+    session.flush()
+
+    def _mk(code, mtype, rnd, seq, pa, pb, **kw):
+        m = Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=code,
+            match_type=mtype,
+            round_number=rnd,
+            round_index=rnd,
+            sequence_in_round=seq,
+            duration_minutes=90,
+            placeholder_side_a=pa,
+            placeholder_side_b=pb,
+            **kw,
+        )
+        session.add(m)
+        return m
+
+    _mk("MIX_WIN_FRI_A01", "RR", 1, 1, "W1", "W6")
+    _mk("MIX_WIN_FRI_B02", "RR", 1, 2, "W2", "W5")
+    _mk("MIX_FUN_FRI_01", "RR", 1, 11, "W4", "W3", placement_type="WF10_FUN")
+    _mk("MIX_LOSS_FRI_01", "RR", 1, 21, "L1", "L4")
+    _mk("MIX_LOSS_FRI_02", "RR", 1, 22, "L2", "L3")
+    _mk("MIX_WIN_SAT1_A01", "RR", 2, 1, "W4", "W6")
+    _mk("MIX_WIN_SUN_01", "PLACEMENT", 1, 1, "A1", "B1", placement_type="WF10_WIN_CROSS")
+    _mk("MIX_LOSS_SUN_01", "PLACEMENT", 1, 11, "L1", "L2", placement_type="WF10_LOSS_PLACE")
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/events/{event.id}/roundrobin")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    pools = {p["pool_code"]: p for p in body["pools"]}
+    assert set(pools) == {"POOLA", "POOLB", "FUN", "LOSS", "WF10_PLACEMENT"}
+    assert pools["POOLA"]["pool_label"] == "Winners \u00b7 Pool A"
+    assert pools["POOLB"]["pool_label"] == "Winners \u00b7 Pool B"
+    assert pools["FUN"]["pool_label"] == "Fun Matches"
+    assert pools["LOSS"]["pool_label"] == "Losers Round Robin"
+    assert len(pools["POOLA"]["matches"]) == 2
+    assert len(pools["POOLB"]["matches"]) == 1
+    assert len(pools["FUN"]["matches"]) == 1
+    assert len(pools["LOSS"]["matches"]) == 2
+
+    win_lines = {pools["POOLA"]["matches"][0]["line1"], pools["POOLA"]["matches"][0]["line2"]}
+    assert win_lines == {"Winner #1", "Winner #6"}
+
+    assert body["pools"][-1]["pool_code"] == "WF10_PLACEMENT"
+    placement = pools["WF10_PLACEMENT"]
+    assert placement["pool_label"] == "Sunday Placement"
+    assert len(placement["matches"]) == 2
+    assert placement["matches"][0]["line1"] == "Pool A #1"
+    assert placement["matches"][0]["line2"] == "Pool B #1"
+    assert placement["matches"][1]["line1"] == "Loser #1"
+    assert placement["matches"][1]["line2"] == "Loser #2"
+
+
 def test_short_team_name_capitalizes_first_names():
     from app.routes.public import _schedule_short_player_name, _schedule_short_team_name
 
