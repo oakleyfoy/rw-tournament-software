@@ -645,22 +645,14 @@ def compute_wf10_projection(
             ProjectedPool(
                 pool_label="WIN_A",
                 pool_display="Winners A (1/4/6)",
-                teams=[
-                    _team_entry(win_rank[r], i + 1, "W")
-                    for i, r in enumerate(POOL_A_RANKS)
-                    if r in win_rank
-                ],
+                teams=[_team_entry(win_rank[r], i + 1, "W") for i, r in enumerate(POOL_A_RANKS) if r in win_rank],
             )
         )
         pools.append(
             ProjectedPool(
                 pool_label="WIN_B",
                 pool_display="Winners B (2/3/5)",
-                teams=[
-                    _team_entry(win_rank[r], i + 1, "W")
-                    for i, r in enumerate(POOL_B_RANKS)
-                    if r in win_rank
-                ],
+                teams=[_team_entry(win_rank[r], i + 1, "W") for i, r in enumerate(POOL_B_RANKS) if r in win_rank],
             )
         )
         pools.append(
