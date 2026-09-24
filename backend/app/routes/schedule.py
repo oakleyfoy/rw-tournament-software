@@ -3797,6 +3797,36 @@ class FullPolicyRunResponse(BaseModel):
     invariant_stats: Optional[dict] = None
     policy_run_id: Optional[int] = None
     failed_matches: Optional[List[dict]] = None
+    needs_rest_approval: bool = False
+    rest_gap_report: Optional[dict] = None
+
+
+class ClearAssignmentsResponse(BaseModel):
+    schedule_version_id: int
+    cleared_assignments_count: int
+
+
+@router.post(
+    "/tournaments/{tournament_id}/schedule/versions/{version_id}/clear-assignments",
+    response_model=ClearAssignmentsResponse,
+)
+def clear_version_assignments(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    """Clear all match assignments for a draft version (keep matches and slots)."""
+    require_draft_version(session, version_id, tournament_id)
+    existing = session.exec(
+        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version_id)
+    ).all()
+    for assignment in existing:
+        session.delete(assignment)
+    session.commit()
+    return ClearAssignmentsResponse(
+        schedule_version_id=version_id,
+        cleared_assignments_count=len(existing),
+    )
 
 
 @router.post(
@@ -3807,6 +3837,7 @@ def run_full_policy(
     tournament_id: int,
     version_id: int,
     force: bool = False,
+    accept_short_rest: bool = False,
     session: Session = Depends(get_session),
 ):
     """
@@ -3818,6 +3849,8 @@ def run_full_policy(
     4. Runs invariant verification across all days
     5. If violations found: ROLLBACK and return HTTP 409
     6. If clean: compute output hash, persist snapshot, commit
+    7. Soft rest-gap audit: when short rests exist and accept_short_rest/force
+       are false, still commit but set needs_rest_approval for UI approve/cancel
 
     The entire run is wrapped in a single transaction so rollback is real.
     """
@@ -3836,6 +3869,7 @@ def run_full_policy(
         hash_policy_output,
         verify_full_schedule,
     )
+    from app.services.schedule_quality_report import audit_rest_gaps
     from app.services.schedule_sequence import run_sequence_schedule
 
     try:
@@ -4026,6 +4060,11 @@ def run_full_policy(
                 version_id,
             )
 
+        # Soft rest-gap audit (does not roll back; UI approve/cancel)
+        rest_report = audit_rest_gaps(session, tournament_id, version_id)
+        rest_dict = rest_report.to_dict()
+        needs_rest_approval = rest_report.has_issues and not (force or accept_short_rest)
+
         # All invariants passed — persist snapshot and commit
         snapshot = {
             "input_hash": input_h,
@@ -4037,6 +4076,10 @@ def run_full_policy(
             "total_reserved_spares": result.total_reserved_spares,
             "rolled_back": False,
             "locks": locks_snapshot,
+            "rest_gap_report": rest_dict,
+            "needs_rest_approval": needs_rest_approval,
+            "accept_short_rest": accept_short_rest,
+            "force": force,
         }
 
         policy_run = PolicyRun(
@@ -4069,6 +4112,8 @@ def run_full_policy(
             invariant_stats=report.to_dict()["stats"],
             policy_run_id=policy_run.id,
             failed_matches=getattr(result, "failed_matches", None),
+            needs_rest_approval=needs_rest_approval,
+            rest_gap_report=rest_dict if rest_report.has_issues else None,
         )
     except HTTPException:
         raise  # re-raise 409s as-is
