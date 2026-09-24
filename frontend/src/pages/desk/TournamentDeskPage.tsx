@@ -133,6 +133,7 @@ import {
 } from '@dnd-kit/core'
 import { confirmDialog } from '../../utils/confirm'
 import { getCompactDivisionLabel, getDivisionPhrase } from '../../utils/matchDivisionLabel'
+import { summarizeTowelCountsFromLookup, summarizeTowelCountsFromMatches } from '../../utils/towelCounts'
 
 const SLOT_TINT_PALETTE = [
   { bg: '#f7fff7', border: '#c8e6c9', accent: '#1b5e20' },
@@ -9270,6 +9271,8 @@ export default function TournamentDeskPage() {
   const [lookupDeletingIds, setLookupDeletingIds] = useState<Set<number>>(new Set())
   const [lookupCreating, setLookupCreating] = useState(false)
   const [lookupClearing, setLookupClearing] = useState(false)
+  const [lookupMatchFilter, setLookupMatchFilter] = useState<'all' | 'matched' | 'unmatched'>('all')
+  const [lookupSearchText, setLookupSearchText] = useState('')
 
   const [draftVersionId, setDraftVersionId] = useState<number | null>(null)
   const [creatingDraft, setCreatingDraft] = useState(false)
@@ -10384,26 +10387,10 @@ export default function TournamentDeskPage() {
             .sort((a, b) => a.match_number - b.match_number)
     ).filter(cm => !cm.match_ready)
 
-  const summarizeTowelCounts = (matches: CheckInMatchItem[]) => {
-    const counts = new Map<string, number>()
-    matches.forEach((match) => {
-      ;[match.side_a, match.side_b].forEach((sideState) => {
-        ;(sideState.players || []).forEach((player) => {
-          const colorName = (player.towel_color || '').trim()
-          if (!colorName) return
-          counts.set(colorName, (counts.get(colorName) || 0) + 1)
-        })
-      })
-    })
-    return Array.from(counts.entries())
-      .map(([colorName, count]) => ({ colorName, count }))
-      .sort((a, b) => b.count - a.count || a.colorName.localeCompare(b.colorName))
-  }
-
   const towelSlotSummaries = slotSections
     .map((section) => {
       const matches = getSectionCheckInMatches(section)
-      const counts = summarizeTowelCounts(matches)
+      const counts = summarizeTowelCountsFromMatches(matches)
       return {
         key: section.key,
         label: section.label,
@@ -10414,10 +10401,9 @@ export default function TournamentDeskPage() {
     })
     .filter(section => section.totalTowels > 0)
 
-  const towelOverallCounts = summarizeTowelCounts(towelSlotSummaries.flatMap(section => {
-    const slotSection = slotSections.find(s => s.key === section.key)
-    return slotSection ? getSectionCheckInMatches(slotSection) : []
-  }))
+  // Overall packing totals come from the imported towel roster (one row per player),
+  // not from match seats — otherwise partners who appear in multiple matches are double-counted.
+  const towelOverallCounts = summarizeTowelCountsFromLookup(lookupItems)
   const towelOverallTotal = towelOverallCounts.reduce((sum, row) => sum + row.count, 0)
   const towelOverallMax = towelOverallCounts.reduce((max, row) => Math.max(max, row.count), 0)
   const towelSlotMax = towelSlotSummaries.reduce(
@@ -10426,6 +10412,30 @@ export default function TournamentDeskPage() {
   )
   const matchedLookupCount = lookupItems.filter(item => item.matched).length
   const unmatchedLookupCount = lookupItems.length - matchedLookupCount
+  const lookupSearchNeedle = lookupSearchText.trim().toLowerCase()
+  const filteredLookupItems = lookupItems
+    .filter((item) => {
+      if (lookupMatchFilter === 'matched' && !item.matched) return false
+      if (lookupMatchFilter === 'unmatched' && item.matched) return false
+      if (!lookupSearchNeedle) return true
+      const draft = lookupDrafts[item.id] || toLookupDraft(item)
+      const haystack = [
+        draft.source_name,
+        draft.towel_color,
+        draft.report_url,
+        item.source_name,
+        item.towel_color,
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(lookupSearchNeedle)
+    })
+    .slice()
+    .sort((a, b) => {
+      // Unmatched first so desk staff can fix names quickly.
+      if (a.matched !== b.matched) return a.matched ? 1 : -1
+      return (a.source_name || '').localeCompare(b.source_name || '', undefined, { sensitivity: 'base' })
+    })
   const slotOrderByKey = new Map<string, number>()
   const slotLabelByKey = new Map<string, string>()
   const slotKeyBySlotId = new Map<number, string>()
@@ -11526,15 +11536,57 @@ export default function TournamentDeskPage() {
                         >
                           {lookupClearing ? 'Clearing...' : 'Clear All Towels'}
                         </button>
-                        <span style={{ fontSize: 12, color: '#546e7a' }}>
+                        <button
+                          type="button"
+                          onClick={() => setLookupMatchFilter('all')}
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            border: lookupMatchFilter === 'all' ? '1px solid #90a4ae' : '1px solid transparent',
+                            backgroundColor: lookupMatchFilter === 'all' ? '#eceff1' : 'transparent',
+                            fontSize: 12,
+                            color: '#546e7a',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                          title="Show all imported rows"
+                        >
                           {lookupItems.length} imported row{lookupItems.length === 1 ? '' : 's'}
-                        </span>
-                        <span style={{ fontSize: 12, color: '#2e7d32', fontWeight: 700 }}>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLookupMatchFilter(lookupMatchFilter === 'matched' ? 'all' : 'matched')}
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            border: lookupMatchFilter === 'matched' ? '1px solid #81c784' : '1px solid transparent',
+                            backgroundColor: lookupMatchFilter === 'matched' ? '#e8f5e9' : 'transparent',
+                            fontSize: 12,
+                            color: '#2e7d32',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                          title="Show matched rows only"
+                        >
                           {matchedLookupCount} matched
-                        </span>
-                        <span style={{ fontSize: 12, color: unmatchedLookupCount > 0 ? '#ef6c00' : '#607d8b', fontWeight: 700 }}>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLookupMatchFilter(lookupMatchFilter === 'unmatched' ? 'all' : 'unmatched')}
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            border: lookupMatchFilter === 'unmatched' ? '1px solid #ffb74d' : '1px solid transparent',
+                            backgroundColor: lookupMatchFilter === 'unmatched' ? '#fff3e0' : 'transparent',
+                            fontSize: 12,
+                            color: unmatchedLookupCount > 0 ? '#ef6c00' : '#607d8b',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                          title="Show unmatched rows only"
+                        >
                           {unmatchedLookupCount} unmatched
-                        </span>
+                        </button>
                         {lookupMessage && (
                           <span style={{ fontSize: 12, color: lookupMessage.toLowerCase().includes('fail') ? '#c62828' : '#2e7d32' }}>
                             {lookupMessage}
@@ -11543,11 +11595,63 @@ export default function TournamentDeskPage() {
                       </div>
                       {lookupItems.length > 0 && (
                         <div style={{ marginTop: 10, maxHeight: 300, overflow: 'auto', borderTop: '1px solid #eef2f5', paddingTop: 8 }}>
-                          <div style={{ fontSize: 12, color: '#334155', fontWeight: 700, marginBottom: 8 }}>
-                            Color Table
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                            <div style={{ fontSize: 12, color: '#334155', fontWeight: 700 }}>
+                              Color Table
+                              {lookupMatchFilter !== 'all' && (
+                                <span style={{ marginLeft: 6, fontWeight: 600, color: '#607d8b' }}>
+                                  · {lookupMatchFilter}
+                                </span>
+                              )}
+                              <span style={{ marginLeft: 6, fontWeight: 600, color: '#90a4ae' }}>
+                                ({filteredLookupItems.length})
+                              </span>
+                            </div>
+                            <input
+                              type="search"
+                              value={lookupSearchText}
+                              onChange={(e) => setLookupSearchText(e.target.value)}
+                              placeholder="Find name or color…"
+                              style={{
+                                width: 180,
+                                maxWidth: '100%',
+                                padding: '5px 8px',
+                                borderRadius: 4,
+                                border: '1px solid #cbd5e1',
+                                fontSize: 12,
+                                boxSizing: 'border-box',
+                              }}
+                            />
                           </div>
+                          {filteredLookupItems.length === 0 ? (
+                            <div style={{ fontSize: 12, color: '#888', padding: '4px 0 8px' }}>
+                              No rows match this filter.
+                              {(lookupMatchFilter !== 'all' || lookupSearchNeedle) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setLookupMatchFilter('all')
+                                    setLookupSearchText('')
+                                  }}
+                                  style={{
+                                    marginLeft: 8,
+                                    padding: 0,
+                                    border: 'none',
+                                    background: 'none',
+                                    color: '#1565c0',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    textDecoration: 'underline',
+                                  }}
+                                >
+                                  Clear filters
+                                </button>
+                              )}
+                            </div>
+                          ) : null}
                           <div style={{ display: 'grid', gap: 8 }}>
-                            {lookupItems.map((item) => {
+                            {filteredLookupItems.map((item) => {
                               const draft = lookupDrafts[item.id] || toLookupDraft(item)
                               const saving = lookupSavingIds.has(item.id)
                               const deleting = lookupDeletingIds.has(item.id)
@@ -11647,7 +11751,7 @@ export default function TournamentDeskPage() {
                         </div>
                       </div>
                       {towelOverallCounts.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#888' }}>No towel colors are attached to the current not-ready check-in matches.</div>
+                        <div style={{ fontSize: 12, color: '#888' }}>No towel colors in the imported roster yet.</div>
                       ) : (
                         <div style={{ display: 'grid', gap: 8 }}>
                           {towelOverallCounts.map((row) => (
