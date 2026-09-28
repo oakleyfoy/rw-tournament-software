@@ -7,13 +7,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.models.event import Event, EventCategory
+from app.models.match import Match
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament_import import TournamentDrawPlan, TournamentImport
+from app.services.active_roster import team_is_active
 from app.services.canonical_teams import SnapshotPlayer, SnapshotTeam, sort_teams_for_planning
 from app.services.combined_roster_writes import (
     add_missing_group_avoid_edges,
@@ -21,6 +24,7 @@ from app.services.combined_roster_writes import (
     group_map_from_avoid_groups,
     sync_players_from_team_slots_if_enabled,
 )
+from app.services.post_draw_corrections import match_locked_for_participant_edit
 from app.services.rw_os_import import parse_teams, snapshot_hash
 from app.services.structure_events import event_category_for_draw_kind, event_protection_reason
 
@@ -29,6 +33,9 @@ RWOS_LOOKUP_SOURCE = "rwos-import"
 CONFLICT_STRUCTURAL_SNAPSHOT = "structural_snapshot_changed_after_approval"
 CONFLICT_TEAM_WOULD_MOVE = "projected_team_would_move_bracket"
 CONFLICT_DRAW_PROTECTION = "live_draw_protection_blocks_structural_change"
+CONFLICT_ROSTER_RECONCILIATION_BLOCKED = "roster_reconciliation_blocked"
+CONFLICT_DRAW_PLACEMENT_UNRESOLVED = "roster_draw_placement_unresolved"
+EMPTY_DRAW_SLOT = "TBD"
 
 
 @dataclass
@@ -40,6 +47,8 @@ class RosterProjectionResult:
     updated_teams: int = 0
     updated_contact_fields: int = 0
     updated_towel_rows: int = 0
+    withdrawn_teams: int = 0
+    draw_slots_replaced: int = 0
     field_changes: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
@@ -61,6 +70,10 @@ class RosterProjectionResult:
                 "teams": self.updated_teams,
                 "contactFields": self.updated_contact_fields,
                 "towelRows": self.updated_towel_rows,
+            },
+            "reconciled": {
+                "withdrawnTeams": self.withdrawn_teams,
+                "drawSlotsReplaced": self.draw_slots_replaced,
             },
             "fieldChanges": list(self.field_changes),
             "warnings": list(self.warnings),
@@ -380,31 +393,393 @@ def _upsert_rwos_towel_row(
     )
 
 
-def _maybe_warn_stale_wkw(
-    session: Session, event_id: int, team: Team, new_group: Optional[str], result: RosterProjectionResult
-) -> None:
-    new_letters = {part.strip().upper() for part in (new_group or "").split(",") if part.strip()}
+def _group_letters(avoid_group: Optional[str]) -> set[str]:
+    return {part.strip().upper() for part in (avoid_group or "").split(",") if part.strip()}
+
+
+def _drop_stale_group_edges(session: Session, event_id: int, team: Team, new_group: Optional[str]) -> int:
+    """Remove imported group edges that are no longer part of this team's RW-OS avoid group."""
+    if team.id is None:
+        return 0
+    new_letters = _group_letters(new_group)
     edges = session.exec(
         select(TeamAvoidEdge).where(
             TeamAvoidEdge.event_id == event_id,
             (TeamAvoidEdge.team_id_a == team.id) | (TeamAvoidEdge.team_id_b == team.id),
         )
     ).all()
-    stale = False
+    removed = 0
     for edge in edges:
         reason = edge.reason or ""
         if not reason.startswith("group:"):
             continue
         letter = reason.split(":", 1)[1].strip().upper()
         if letter and letter not in new_letters:
-            stale = True
-            break
-    if stale:
-        result.warnings.append(
-            _warning(
-                "stale_wkw_edges_cannot_safely_delete",
-                f"Team {team.source_team_key} may still have imported group edges that cannot be deleted safely.",
-                teamKey=team.source_team_key,
+            session.delete(edge)
+            removed += 1
+    return removed
+
+
+def _delete_team_avoid_edges(session: Session, event_id: int, team_id: int) -> int:
+    edges = session.exec(
+        select(TeamAvoidEdge).where(
+            TeamAvoidEdge.event_id == event_id,
+            or_(TeamAvoidEdge.team_id_a == team_id, TeamAvoidEdge.team_id_b == team_id),
+        )
+    ).all()
+    for edge in edges:
+        session.delete(edge)
+    return len(edges)
+
+
+def _maybe_warn_stale_wkw(
+    session: Session, event_id: int, team: Team, new_group: Optional[str], result: RosterProjectionResult
+) -> None:
+    del result
+    _drop_stale_group_edges(session, event_id, team, new_group)
+
+
+@dataclass
+class _VacatedDrawSlot:
+    match_id: int
+    event_id: int
+    side: str
+    seed: Optional[int]
+    sort_key: tuple
+    withdrawn_key: str
+    withdrawn_label: str
+
+
+@dataclass
+class _BlockedWithdrawal:
+    team: Team
+    event_name: str
+    reason: str
+    label: str
+
+
+def _team_label(team: Team) -> str:
+    return team.display_name or team.name or team.source_team_key or f"Team {team.id}"
+
+
+def _matches_for_team(session: Session, team: Team) -> list[Match]:
+    if team.id is None:
+        return []
+    return list(
+        session.exec(
+            select(Match).where(
+                Match.event_id == team.event_id,
+                or_(
+                    Match.team_a_id == team.id,
+                    Match.team_b_id == team.id,
+                    Match.winner_team_id == team.id,
+                ),
+            )
+        ).all()
+    )
+
+
+def _team_draw_lock_reason(session: Session, team: Team) -> Optional[str]:
+    """Why this team's draw slot must not be rewritten. None when every slot is still an unplayed entry."""
+    for match in _matches_for_team(session, team):
+        locked = match_locked_for_participant_edit(session, match)
+        if locked:
+            return locked
+        if match.team_a_id == team.id and match.source_match_a_id is not None:
+            return "team has advanced into a downstream match"
+        if match.team_b_id == team.id and match.source_match_b_id is not None:
+            return "team has advanced into a downstream match"
+        if match.winner_team_id == team.id:
+            return "team is already recorded as a match winner"
+    return None
+
+
+def _delete_rwos_towel_rows(session: Session, tournament_id: int, team_key: str) -> int:
+    rows = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == tournament_id,
+            TemporaryPlayerLookup.source == RWOS_LOOKUP_SOURCE,
+            TemporaryPlayerLookup.source_team_key == team_key,
+        )
+    ).all()
+    for row in rows:
+        session.delete(row)
+    return len(rows)
+
+
+def _event_has_matches(session: Session, event_id: int) -> bool:
+    return session.exec(select(Match.id).where(Match.event_id == event_id).limit(1)).first() is not None
+
+
+def _team_occupies_match(session: Session, team: Team) -> bool:
+    if team.id is None:
+        return False
+    row = session.exec(
+        select(Match.id).where(
+            Match.event_id == team.event_id,
+            or_(Match.team_a_id == team.id, Match.team_b_id == team.id),
+        )
+    ).first()
+    return row is not None
+
+
+def _withdraw_absent_source_teams(
+    session: Session,
+    import_row: TournamentImport,
+    active_keys: set[str],
+    result: RosterProjectionResult,
+) -> tuple[list[_VacatedDrawSlot], list[_BlockedWithdrawal]]:
+    """Retire source teams that are no longer on the active RW-OS roster.
+
+    Unplayed entry slots are cleared. Started, scored, won, or advanced matches are left intact
+    and reported as conflicts.
+    """
+    live_teams = session.exec(
+        select(Team)
+        .join(Event)
+        .where(Event.tournament_id == import_row.tournament_id, Team.source_team_key.is_not(None))
+    ).all()
+    vacated: list[_VacatedDrawSlot] = []
+    blocked: list[_BlockedWithdrawal] = []
+    for team in live_teams:
+        key = team.source_team_key or ""
+        if not key or key in active_keys or team.is_defaulted or team.id is None:
+            continue
+        event = session.get(Event, team.event_id)
+        event_name = event.name if event else "Event"
+        label = _team_label(team)
+        reason = _team_draw_lock_reason(session, team)
+        if reason:
+            blocked.append(_BlockedWithdrawal(team=team, event_name=event_name, reason=reason, label=label))
+            continue
+
+        seed = team.seed
+        for match in _matches_for_team(session, team):
+            if match.team_a_id == team.id and match.source_match_a_id is None:
+                match.team_a_id = None
+                match.placeholder_side_a = EMPTY_DRAW_SLOT
+                vacated.append(
+                    _VacatedDrawSlot(
+                        match_id=match.id,  # type: ignore[arg-type]
+                        event_id=team.event_id,
+                        side="A",
+                        seed=seed,
+                        sort_key=(match.round_index or 0, match.sequence_in_round or 0, 0, match.id or 0),
+                        withdrawn_key=key,
+                        withdrawn_label=label,
+                    )
+                )
+                session.add(match)
+            if match.team_b_id == team.id and match.source_match_b_id is None:
+                match.team_b_id = None
+                match.placeholder_side_b = EMPTY_DRAW_SLOT
+                vacated.append(
+                    _VacatedDrawSlot(
+                        match_id=match.id,  # type: ignore[arg-type]
+                        event_id=team.event_id,
+                        side="B",
+                        seed=seed,
+                        sort_key=(match.round_index or 0, match.sequence_in_round or 0, 1, match.id or 0),
+                        withdrawn_key=key,
+                        withdrawn_label=label,
+                    )
+                )
+                session.add(match)
+
+        _record_field_change(
+            result,
+            team_key=key,
+            team_label=label,
+            field="rosterStatus",
+            label="Roster status",
+            before="Active",
+            after="Withdrawn",
+        )
+        team.is_defaulted = True
+        team.seed = None
+        session.add(team)
+        _delete_team_avoid_edges(session, team.event_id, team.id)
+        _delete_rwos_towel_rows(session, import_row.tournament_id, key)
+        result.withdrawn_teams += 1
+
+    if vacated or blocked:
+        session.flush()
+    return vacated, blocked
+
+
+def _create_source_team(
+    session: Session,
+    *,
+    event: Event,
+    snapshot_team: SnapshotTeam,
+    seed: Optional[int],
+    result: RosterProjectionResult,
+    wkw_assignments: dict[int, list[tuple[int, Optional[str]]]],
+    tournament_id: int,
+) -> Team:
+    full_name = _team_full_name(snapshot_team)
+    display_name = _team_display_name(snapshot_team, full_name)
+    rating = _team_rating(snapshot_team)
+    name = _unique_team_name(session, event.id, full_name, snapshot_team.team_key, None)  # type: ignore[arg-type]
+    usable_seed = seed if seed is not None and _seed_available(session, event.id, seed, None) else None  # type: ignore[arg-type]
+    team = Team(
+        event_id=event.id,  # type: ignore[arg-type]
+        name=name,
+        seed=usable_seed,
+        rating=rating,
+        avoid_group=snapshot_team.avoid_group,
+        display_name=display_name,
+        source_team_key=snapshot_team.team_key,
+        is_defaulted=False,
+    )
+    apply_team_contact_fields(
+        team,
+        player1_cellphone=snapshot_team.player1.cellphone,
+        player1_email=snapshot_team.player1.email,
+        player2_cellphone=snapshot_team.player2.cellphone,
+        player2_email=snapshot_team.player2.email,
+        only_if_present=True,
+    )
+    session.add(team)
+    session.flush()
+    result.created_teams += 1
+    if team.id and event.id:
+        wkw_assignments.setdefault(event.id, []).append((team.id, snapshot_team.avoid_group))
+    _project_towels(session, tournament_id, snapshot_team, result)
+    return team
+
+
+def _assign_draw_slot(session: Session, match: Match, side: str, team: Team) -> bool:
+    if match_locked_for_participant_edit(session, match):
+        return False
+    label = team.name or team.display_name or EMPTY_DRAW_SLOT
+    if side == "A":
+        if match.source_match_a_id is not None or match.team_a_id is not None:
+            return False
+        match.team_a_id = team.id
+        match.placeholder_side_a = label
+    else:
+        if match.source_match_b_id is not None or match.team_b_id is not None:
+            return False
+        match.team_b_id = team.id
+        match.placeholder_side_b = label
+    session.add(match)
+    return True
+
+
+def _place_replacements_in_vacated_slots(
+    session: Session,
+    *,
+    vacated: list[_VacatedDrawSlot],
+    blocked: list[_BlockedWithdrawal],
+    candidates: list[Team],
+    result: RosterProjectionResult,
+) -> None:
+    """Put newly active teams into slots vacated by a safe withdrawal. Do not rebuild the draw."""
+    explained_unplaced: set[int] = set()
+    slots_by_event: dict[int, list[_VacatedDrawSlot]] = {}
+    for slot in vacated:
+        slots_by_event.setdefault(slot.event_id, []).append(slot)
+    candidates_by_event: dict[int, list[Team]] = {}
+    for team in candidates:
+        if team.id is None or _team_occupies_match(session, team):
+            continue
+        candidates_by_event.setdefault(team.event_id, []).append(team)
+
+    for event_id, slots in slots_by_event.items():
+        grouped: dict[str, list[_VacatedDrawSlot]] = {}
+        for slot in slots:
+            grouped.setdefault(slot.withdrawn_key, []).append(slot)
+        ordered_groups = sorted(grouped.values(), key=lambda group: min(slot.sort_key for slot in group))
+        ordered_teams = sorted(
+            candidates_by_event.get(event_id, []),
+            key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+        )
+        for group, team in zip(ordered_groups, ordered_teams):
+            for slot in sorted(group, key=lambda item: item.sort_key):
+                match = session.get(Match, slot.match_id)
+                if match is None or not _assign_draw_slot(session, match, slot.side, team):
+                    continue
+                if (
+                    team.seed is None
+                    and slot.seed is not None
+                    and _seed_available(session, event_id, slot.seed, team.id)
+                ):
+                    team.seed = slot.seed
+                    session.add(team)
+                result.draw_slots_replaced += 1
+                _record_field_change(
+                    result,
+                    team_key=team.source_team_key or "",
+                    team_label=_team_label(team),
+                    field="drawSlot",
+                    label="Draw slot",
+                    before=slot.withdrawn_label,
+                    after=_team_label(team),
+                )
+        if len(ordered_groups) > len(ordered_teams):
+            for group in ordered_groups[len(ordered_teams) :]:
+                slot = group[0]
+                result.warnings.append(
+                    _warning(
+                        "draw_slot_left_open",
+                        (
+                            f"{slot.withdrawn_label} was withdrawn from an unplayed draw slot and no replacement "
+                            "team was available to take that spot."
+                        ),
+                        teamKey=slot.withdrawn_key,
+                        eventId=event_id,
+                    )
+                )
+
+    for item in blocked:
+        replacements = [team for team in candidates if team.event_id == item.team.event_id and team.id is not None]
+        unplaced = [team for team in replacements if not _team_occupies_match(session, team)]
+        for team in unplaced:
+            if team.id is not None:
+                explained_unplaced.add(team.id)
+        names = ", ".join(_team_label(team) for team in unplaced)
+        replacement_sentence = (
+            f" {names} is active in RW-OS but was not placed into that match."
+            if names
+            else " No replacement team was placed into that match."
+        )
+        result.conflicts.append(
+            _conflict(
+                CONFLICT_ROSTER_RECONCILIATION_BLOCKED,
+                (
+                    f"{item.event_name}: {item.label} is withdrawn in RW-OS, but automatic draw reconciliation was "
+                    f"blocked because {item.reason} The draw and match history were not changed."
+                    f"{replacement_sentence} Staff must resolve this matchup."
+                ),
+                teamKey=item.team.source_team_key,
+                eventId=item.team.event_id,
+                eventName=item.event_name,
+                withdrawnTeam=item.label,
+                replacementTeam=names or None,
+                reason=item.reason,
+            )
+        )
+
+    for event_id, teams in candidates_by_event.items():
+        unplaced = [
+            team for team in teams if team.id not in explained_unplaced and not _team_occupies_match(session, team)
+        ]
+        if not unplaced or not _event_has_matches(session, event_id):
+            continue
+        event = session.get(Event, event_id)
+        event_name = event.name if event else "Event"
+        names = ", ".join(_team_label(team) for team in unplaced)
+        result.conflicts.append(
+            _conflict(
+                CONFLICT_DRAW_PLACEMENT_UNRESOLVED,
+                (
+                    f"{event_name}: {names} added from RW-OS, but no safe unplayed draw slot was open. "
+                    "The team is on the active roster and must be placed by staff."
+                ),
+                eventId=event_id,
+                eventName=event_name,
+                replacementTeam=names,
             )
         )
 
@@ -424,7 +799,7 @@ def project_approved_roster(
     approved_hash = import_row.approved_source_hash
     structural_mismatch = bool(approved_hash and current_hash != approved_hash)
 
-    if structural_mismatch and not allow_structural_rebuild:
+    if structural_mismatch and not allow_structural_rebuild and not operational_only:
         result.conflicts.append(
             _conflict(
                 CONFLICT_STRUCTURAL_SNAPSHOT,
@@ -433,14 +808,16 @@ def project_approved_roster(
                 currentSourceHash=current_hash,
             )
         )
-        if not operational_only:
-            return result
+        return result
 
     events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
     if allow_structural_rebuild and not operational_only:
         _release_projected_seeds(session, import_row.tournament_id)
     touched_teams: list[Team] = []
+    placement_candidates: list[Team] = []
     wkw_assignments: dict[int, list[tuple[int, Optional[str]]]] = {}
+    active_keys = {team.team_key for team in teams}
+    vacated_slots, blocked_withdrawals = _withdraw_absent_source_teams(session, import_row, active_keys, result)
 
     for plan in plans:
         draw_teams = [team for team in teams if team.draw_kind == plan.draw_kind]
@@ -456,6 +833,23 @@ def project_approved_roster(
                         drawKind=plan.draw_kind,
                     )
                 )
+                if operational_only and _find_projected_team(session, import_row.tournament_id, team.team_key) is None:
+                    brackets = _brackets_from_plan(plan)
+                    last = brackets[-1] if brackets else None
+                    last_label = str((last or {}).get("label") or "").strip()
+                    fallback_event = _event_by_route(events, plan.draw_kind, last_label) if last_label else None
+                    if fallback_event is not None and fallback_event.id is not None:
+                        created = _create_source_team(
+                            session,
+                            event=fallback_event,
+                            snapshot_team=team,
+                            seed=None,
+                            result=result,
+                            wkw_assignments=wkw_assignments,
+                            tournament_id=import_row.tournament_id,
+                        )
+                        touched_teams.append(created)
+                        placement_candidates.append(created)
 
         for snapshot_team, bracket, planner_rank in routed:
             _collect_operational_warnings(snapshot_team, result.warnings)
@@ -517,9 +911,11 @@ def project_approved_roster(
                 existing.event_id = event.id
 
             if existing is None:
-                if operational_only or (structural_mismatch and not allow_structural_rebuild):
+                # Refresh creates the roster row even when a draw exists. Placement into a started
+                # match is refused later; draw_status alone is not a block.
+                if not operational_only and structural_mismatch and not allow_structural_rebuild:
                     continue
-                if protection:
+                if not operational_only and protection:
                     result.conflicts.append(
                         _conflict(
                             CONFLICT_DRAW_PROTECTION,
@@ -530,36 +926,23 @@ def project_approved_roster(
                         )
                     )
                     continue
-                name = _unique_team_name(session, event.id, full_name, snapshot_team.team_key, None)
-                seed = in_bracket_seed if _seed_available(session, event.id, in_bracket_seed, None) else None
-                team = Team(
-                    event_id=event.id,
-                    name=name,
-                    seed=seed,
-                    rating=rating,
-                    avoid_group=avoid_group,
-                    display_name=display_name,
-                    source_team_key=snapshot_team.team_key,
-                    is_defaulted=False,
+                team = _create_source_team(
+                    session,
+                    event=event,
+                    snapshot_team=snapshot_team,
+                    seed=in_bracket_seed,
+                    result=result,
+                    wkw_assignments=wkw_assignments,
+                    tournament_id=import_row.tournament_id,
                 )
-                apply_team_contact_fields(
-                    team,
-                    player1_cellphone=snapshot_team.player1.cellphone,
-                    player1_email=snapshot_team.player1.email,
-                    player2_cellphone=snapshot_team.player2.cellphone,
-                    player2_email=snapshot_team.player2.email,
-                    only_if_present=True,
-                )
-                session.add(team)
-                session.flush()
-                result.created_teams += 1
                 touched_teams.append(team)
-                if team.id:
-                    wkw_assignments.setdefault(event.id, []).append((team.id, avoid_group))
-                _project_towels(session, import_row.tournament_id, snapshot_team, result)
+                placement_candidates.append(team)
                 continue
 
+            was_inactive = bool(existing.is_defaulted)
             contact_updates = _apply_operational_team_updates(session, existing, snapshot_team, result, wkw_assignments)
+            if was_inactive and team_is_active(existing):
+                placement_candidates.append(existing)
             structural_blocked = bool(protection) and existing.event_id == event.id
             if (
                 not operational_only
@@ -594,6 +977,14 @@ def project_approved_roster(
             touched_teams.append(existing)
             _project_towels(session, import_row.tournament_id, snapshot_team, result)
 
+    _place_replacements_in_vacated_slots(
+        session,
+        vacated=vacated_slots,
+        blocked=blocked_withdrawals,
+        candidates=placement_candidates,
+        result=result,
+    )
+
     for event_id, assignments in wkw_assignments.items():
         group_map = group_map_from_avoid_groups(assignments)
         try:
@@ -619,6 +1010,18 @@ def _apply_operational_team_updates(
     name = _unique_team_name(session, team.event_id, full_name, snapshot_team.team_key, team.id)
     team_label = display_name or team.display_name or snapshot_team.team_key
     identity_changed = False
+    if team.is_defaulted:
+        _record_field_change(
+            result,
+            team_key=snapshot_team.team_key,
+            team_label=team_label,
+            field="rosterStatus",
+            label="Roster status",
+            before="Withdrawn",
+            after="Active",
+        )
+        team.is_defaulted = False
+        identity_changed = True
     if team.name != name:
         _record_field_change(
             result,
@@ -753,7 +1156,7 @@ def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[
     protection_warnings: list[dict[str, Any]] = []
     for event in events:
         event_category = event.category.value if isinstance(event.category, EventCategory) else str(event.category)
-        event_teams = teams_by_event.get(event.id or 0, [])
+        event_teams = [team for team in teams_by_event.get(event.id or 0, []) if team_is_active(team)]
         source_count = sum(1 for team in event_teams if team.source_team_key)
         protection = event_protection_reason(session, event)
         wanted = requested.get((event_category, event.name))
@@ -787,7 +1190,9 @@ def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[
                 }
             )
 
-    source_teams = [team for team in teams if team.source_team_key]
+    active_teams = [team for team in teams if team_is_active(team)]
+    source_teams = [team for team in active_teams if team.source_team_key]
+    inactive_teams = [team for team in teams if not team_is_active(team)]
     rwos_towels = [row for row in towels if row.source == RWOS_LOOKUP_SOURCE]
     group_edges = [edge for edge in edges if (edge.reason or "").startswith("group:")]
 
@@ -797,9 +1202,10 @@ def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[
     return {
         "ok": not capacity_conflicts,
         "teams": {
-            "total": len(teams),
+            "total": len(active_teams),
             "sourceBacked": len(source_teams),
-            "manual": len(teams) - len(source_teams),
+            "manual": len(active_teams) - len(source_teams),
+            "inactive": len(inactive_teams),
         },
         "towels": {
             "total": len(towels),

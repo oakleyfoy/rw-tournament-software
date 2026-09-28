@@ -52,7 +52,7 @@ export function summarizeRwOsRefreshNotices(notices: RefreshNotice[]): RefreshNo
   if (protectedDraws.length) {
     summarized.push({
       code: DRAW_PROTECTION_CODE,
-      message: 'Live draws were left in place. Withdrawals and new teams were not added or removed from the bracket.',
+      message: 'A live draw blocked a structural roster move. Started matches were not rewritten.',
     })
   }
   return summarized
@@ -78,6 +78,9 @@ export function formatRwOsRosterRefreshSummary(updated?: {
   teams: number
   contactFields: number
   towelRows: number
+  createdTeams?: number
+  withdrawnTeams?: number
+  drawSlotsReplaced?: number
 } | null): string {
   if (!updated) return 'Roster refreshed from RW-OS'
   const parts = [
@@ -85,6 +88,15 @@ export function formatRwOsRosterRefreshSummary(updated?: {
     `${updated.contactFields} contact field${updated.contactFields === 1 ? '' : 's'}`,
     `${updated.towelRows} towel${updated.towelRows === 1 ? '' : 's'}`,
   ]
+  if (updated.createdTeams) {
+    parts.push(`${updated.createdTeams} team${updated.createdTeams === 1 ? '' : 's'} added`)
+  }
+  if (updated.withdrawnTeams) {
+    parts.push(`${updated.withdrawnTeams} withdrawn`)
+  }
+  if (updated.drawSlotsReplaced) {
+    parts.push(`${updated.drawSlotsReplaced} draw slot${updated.drawSlotsReplaced === 1 ? '' : 's'} replaced`)
+  }
   return parts.join(' · ')
 }
 
@@ -147,8 +159,8 @@ export function RwOsRosterRefreshCard({
     <div className="card" style={{ marginBottom: 24 }} data-testid="rw-os-roster-refresh">
       <h2 className="section-title">Refresh roster from RW-OS</h2>
       <p style={{ fontSize: 13, color: 'var(--theme-text)', lineHeight: 1.5, marginTop: 0 }}>
-        Pull the latest names, ratings, contacts, and towels from RW-OS onto teams already in this tournament.
-        Teams stay in their draws; matches are not regenerated.
+        Reconcile this tournament with the current RW-OS roster. New and withdrawn teams update unplayed
+        draw slots. Started, scored, or advanced matches stay as they are and are reported for staff.
       </p>
       <button
         type="button"
@@ -186,7 +198,7 @@ export function RwOsRosterRefreshCard({
       )}
       {showSnapshot && (
         <div style={{ marginTop: 12, fontSize: 12 }} data-testid="rw-os-roster-refresh-snapshot">
-          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>RW-OS snapshot changes not applied to draws</div>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>RW-OS roster changes</div>
           <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
             {added.map((team, index) => (
               <li key={`added-${index}`}>Added: {snapshotTeamLabel(team)}</li>

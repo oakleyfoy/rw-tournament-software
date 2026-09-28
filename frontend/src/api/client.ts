@@ -627,7 +627,7 @@ export interface RwOsImportResponse {
   projectionOk?: boolean
   liveRoster?: {
     ok: boolean
-    teams: { total: number; sourceBacked: number; manual: number }
+    teams: { total: number; sourceBacked: number; manual: number; inactive?: number }
     towels: { total: number; rwosImport: number; untagged: number }
     wkwEdges: { total: number; groupReason: number }
     contacts: {
@@ -644,6 +644,7 @@ export interface RwOsImportResponse {
     ok: boolean
     created: { events: number; teams: number; towelRows: number; wkwEdges: number }
     updated: { teams: number; contactFields: number; towelRows: number }
+    reconciled?: { withdrawnTeams: number; drawSlotsReplaced: number }
     fieldChanges?: RwOsRosterFieldChange[]
     warnings: Array<{ code: string; message: string }>
     conflicts: Array<{ code: string; message: string }>

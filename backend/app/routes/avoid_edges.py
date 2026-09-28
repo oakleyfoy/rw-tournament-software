@@ -62,11 +62,19 @@ def get_avoid_edges(event_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Get all avoid edges for this event
+    from app.services.active_roster import team_is_active
+
     edges = session.exec(
         select(TeamAvoidEdge)
         .where(TeamAvoidEdge.event_id == event_id)
         .order_by(TeamAvoidEdge.team_id_a, TeamAvoidEdge.team_id_b)
     ).all()
+    active_ids = {
+        team.id
+        for team in session.exec(select(Team).where(Team.event_id == event_id)).all()
+        if team.id is not None and team_is_active(team)
+    }
+    edges = [edge for edge in edges if edge.team_id_a in active_ids and edge.team_id_b in active_ids]
 
     return [
         AvoidEdgeResponse(

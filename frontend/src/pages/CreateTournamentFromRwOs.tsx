@@ -776,7 +776,12 @@ function CreateTournamentFromRwOs() {
       )
       if (apply) {
         setImportData(result.importResponse)
-        showToast('Snapshot refreshed from RW-OS. Expected final counts were kept.', 'success')
+        const conflicts = result.rosterProjection?.conflicts ?? []
+        if (conflicts.length) {
+          showToast(conflicts[0].message || 'Roster refresh needs staff review.', 'warning')
+        } else {
+          showToast('Roster reconciled with RW-OS. Expected final counts were kept.', 'success')
+        }
       }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Refresh failed', 'error')

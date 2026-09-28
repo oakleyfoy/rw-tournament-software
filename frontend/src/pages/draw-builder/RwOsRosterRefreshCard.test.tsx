@@ -33,7 +33,7 @@ describe('RwOsRosterRefreshCard', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Refresh roster from RW-OS' }))
     expect(onRefresh).toHaveBeenCalledTimes(1)
-    expect(screen.getByText(/Pull the latest names, ratings, contacts, and towels/)).toBeInTheDocument()
+    expect(screen.getByText(/Reconcile this tournament with the current RW-OS roster/)).toBeInTheDocument()
     expect(screen.getByTestId('rw-os-roster-refresh-summary')).toHaveTextContent('2 teams updated')
     expect(screen.getByTestId('rw-os-roster-refresh-notices')).toHaveTextContent('Snapshot changed after approval')
     expect(screen.queryByText('Combined Team + Towel Import')).not.toBeInTheDocument()
@@ -87,7 +87,7 @@ describe('RwOsRosterRefreshCard', () => {
       'The structural snapshot changed after approval.',
       '2 teams still missing a towel color in RW-OS',
       '2 teams still missing Who Knows Who in RW-OS',
-      'Live draws were left in place. Withdrawals and new teams were not added or removed from the bracket.',
+      'A live draw blocked a structural roster move. Started matches were not rewritten.',
     ])
   })
 })

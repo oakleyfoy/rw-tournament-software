@@ -101,13 +101,20 @@ def get_wf_conflict_lens(event_id: int, session: Session = Depends(get_session))
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # Load teams
-    teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
+    from app.services.active_roster import team_is_active
+
+    # Load active teams. Withdrawn/defaulted teams do not contribute operational WKW warnings.
+    teams = [team for team in session.exec(select(Team).where(Team.event_id == event_id)).all() if team_is_active(team)]
     team_count = len(teams)
     team_map = {team.id: team for team in teams}
 
-    # Load avoid edges
-    edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event_id)).all()
+    # Load avoid edges between active teams
+    active_ids = set(team_map)
+    edges = [
+        edge
+        for edge in session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event_id)).all()
+        if edge.team_id_a in active_ids and edge.team_id_b in active_ids
+    ]
     avoid_edges_count = len(edges)
 
     # Build adjacency for graph analysis

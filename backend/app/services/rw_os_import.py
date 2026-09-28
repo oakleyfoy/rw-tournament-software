@@ -388,8 +388,8 @@ def persist_snapshot(
     session.add(existing)
     session.commit()
     session.refresh(existing)
-    # Refresh existing source-backed teams even after a structural snapshot change.
-    # operational_only still blocks add/move; withdrawals stay in the diff/conflict path.
+    # Reconcile the live roster with the current RW-OS snapshot. Unplayed draw slots can
+    # gain or lose teams. Started, scored, or advanced matches are left in place and reported.
     if existing.plan_status in ("approved", "stale"):
         setattr(existing, "_last_roster_projection", _project_operational_refresh(session, existing))
     return existing
