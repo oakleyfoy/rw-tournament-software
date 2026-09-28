@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   getEvents,
   getTournament,
+  getTournamentRwOsImport,
   getDeskSnapshot,
   getDeskImpact,
   getPoolProjection,
@@ -134,6 +135,7 @@ import {
 import { confirmDialog } from '../../utils/confirm'
 import { getCompactDivisionLabel, getDivisionPhrase } from '../../utils/matchDivisionLabel'
 import { summarizeTowelCountsFromLookup, summarizeTowelCountsFromMatches } from '../../utils/towelCounts'
+import { DeskRwOsRefresh } from './DeskRwOsRefresh'
 
 const SLOT_TINT_PALETTE = [
   { bg: '#f7fff7', border: '#c8e6c9', accent: '#1b5e20' },
@@ -6413,10 +6415,12 @@ function TeamsTab({
   tournamentId,
   versionId,
   onRefresh,
+  rosterReloadKey = 0,
 }: {
   tournamentId: number
   versionId: number
   onRefresh: () => void
+  rosterReloadKey?: number
 }) {
   const [teams, setTeams] = useState<DeskTeamItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -6441,7 +6445,7 @@ function TeamsTab({
     } finally {
       setLoading(false)
     }
-  }, [tournamentId])
+  }, [tournamentId, rosterReloadKey])
 
   useEffect(() => { loadTeams() }, [loadTeams])
 
@@ -7299,10 +7303,12 @@ function SmsAdminTab({
   tournamentId,
   quickTarget,
   managementMode,
+  rosterReloadKey = 0,
 }: {
   tournamentId: number
   quickTarget?: SmsQuickTargetPrefill | null
   managementMode?: 'court_management' | 'checkin_management'
+  rosterReloadKey?: number
 }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -7403,7 +7409,7 @@ function SmsAdminTab({
   const loadTeams = useCallback(async () => {
     const rows = await getDeskTeams(tournamentId)
     setTeams(rows)
-  }, [tournamentId])
+  }, [tournamentId, rosterReloadKey])
 
   const loadMatches = useCallback(async (phase: 'upcoming' | 'completed') => {
     setLoadingMatches(true)
@@ -9259,6 +9265,8 @@ export default function TournamentDeskPage() {
   const tid = tournamentId ? parseInt(tournamentId, 10) : null
 
   const [data, setData] = useState<DeskSnapshotResponse | null>(null)
+  const [rwOsImportId, setRwOsImportId] = useState<number | null>(null)
+  const [rosterReloadKey, setRosterReloadKey] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lookupItems, setLookupItems] = useState<TemporaryPlayerLookupItem[]>([])
@@ -9361,6 +9369,32 @@ export default function TournamentDeskPage() {
     loadCourtStates()
     loadTemporaryPlayerLookups()
   }, [loadSnapshot, loadCourtStates, loadTemporaryPlayerLookups])
+
+  useEffect(() => {
+    if (!tid) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const tournament = await getTournament(tid)
+        if (cancelled) return
+        if (tournament.rw_os_import_id) {
+          setRwOsImportId(tournament.rw_os_import_id)
+          return
+        }
+        if (!tournament.source_rw_os_tournament_id) {
+          setRwOsImportId(null)
+          return
+        }
+        const linked = await getTournamentRwOsImport(tid)
+        if (!cancelled) setRwOsImportId(linked?.import.id ?? null)
+      } catch {
+        if (!cancelled) setRwOsImportId(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [tid])
 
   const handleCreateDraft = useCallback(async () => {
     if (!tid) return
@@ -10825,6 +10859,13 @@ export default function TournamentDeskPage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <DeskRwOsRefresh
+            importId={rwOsImportId}
+            onApplied={async () => {
+              await refreshSnapshotAndLookups()
+              setRosterReloadKey((key) => key + 1)
+            }}
+          />
           <button
             onClick={() => {
               if (!tid) return
@@ -11894,6 +11935,7 @@ export default function TournamentDeskPage() {
           <TeamsTab
             tournamentId={tid!}
             versionId={data.version_id}
+            rosterReloadKey={rosterReloadKey}
             onRefresh={() => loadSnapshot(data.version_id)}
           />
         )}
@@ -11903,6 +11945,7 @@ export default function TournamentDeskPage() {
             tournamentId={tid!}
             quickTarget={smsQuickTarget}
             managementMode={'checkin_management'}
+            rosterReloadKey={rosterReloadKey}
           />
         )}
 
