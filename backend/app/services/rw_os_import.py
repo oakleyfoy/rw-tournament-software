@@ -21,7 +21,7 @@ from app.services.bracket_split_planner import (
     plan_snapshot,
     validate_custom_sizes,
 )
-from app.services.canonical_teams import SnapshotTeam, validate_import_snapshot
+from app.services.canonical_teams import SnapshotTeam, normalize_avoid_group, validate_import_snapshot
 from app.services.rw_os_client import RwOsClient
 
 
@@ -395,6 +395,64 @@ def persist_snapshot(
     return existing
 
 
+def _diff_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _diff_player(team: dict[str, Any], slot: int) -> dict[str, Any]:
+    player = team.get(f"player{slot}") or {}
+    return player if isinstance(player, dict) else {}
+
+
+def _diff_towel(player: dict[str, Any]) -> Optional[str]:
+    if "towelColor" in player:
+        return _diff_text(player.get("towelColor"))
+    return _diff_text(player.get("towel_color"))
+
+
+def _diff_team_label(team: dict[str, Any]) -> str:
+    return _diff_text(
+        team.get("displayName") or team.get("display_name") or team.get("fullName") or team.get("full_name")
+    ) or str(team.get("teamKey") or "Team")
+
+
+def _diff_draw_label(team: dict[str, Any]) -> str:
+    return (
+        _diff_text(team.get("drawLabel") or team.get("draw_label") or team.get("drawKind") or team.get("draw_kind"))
+        or ""
+    )
+
+
+def _append_player_field_changes(
+    changes: list[dict[str, Any]],
+    *,
+    before_team: dict[str, Any],
+    after_team: dict[str, Any],
+    slot: int,
+    field: str,
+    before_value: Optional[str],
+    after_value: Optional[str],
+) -> None:
+    if before_value == after_value:
+        return
+    player = _diff_player(after_team, slot) or _diff_player(before_team, slot)
+    changes.append(
+        {
+            "teamKey": after_team.get("teamKey"),
+            "teamLabel": _diff_team_label(after_team),
+            "drawLabel": _diff_draw_label(after_team),
+            "playerSlot": slot,
+            "playerName": _diff_text(player.get("name")) or f"Player {slot}",
+            "field": field,
+            "before": before_value,
+            "after": after_value,
+        }
+    )
+
+
 def compute_refresh_diff(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     prev_teams = {team["teamKey"]: team for team in previous.get("teams") or []}
     next_teams = {team["teamKey"]: team for team in current.get("teams") or []}
@@ -403,6 +461,9 @@ def compute_refresh_diff(previous: dict[str, Any], current: dict[str, Any]) -> d
     partner_changes = []
     draw_changes = []
     rating_changes = []
+    contact_changes = []
+    towel_changes = []
+    avoid_group_changes = []
     for key in next_teams.keys() & prev_teams.keys():
         before = prev_teams[key]
         after = next_teams[key]
@@ -420,15 +481,70 @@ def compute_refresh_diff(previous: dict[str, Any], current: dict[str, Any]) -> d
                     "after": after.get("teamRating"),
                 }
             )
+        before_avoid = normalize_avoid_group(before.get("avoidGroup") or before.get("avoid_group"))
+        after_avoid = normalize_avoid_group(after.get("avoidGroup") or after.get("avoid_group"))
+        if before_avoid != after_avoid:
+            avoid_group_changes.append(
+                {
+                    "teamKey": key,
+                    "teamLabel": _diff_team_label(after),
+                    "drawLabel": _diff_draw_label(after),
+                    "before": before_avoid,
+                    "after": after_avoid,
+                }
+            )
+        for slot in (1, 2):
+            before_player = _diff_player(before, slot)
+            after_player = _diff_player(after, slot)
+            _append_player_field_changes(
+                contact_changes,
+                before_team=before,
+                after_team=after,
+                slot=slot,
+                field="name",
+                before_value=_diff_text(before_player.get("name")),
+                after_value=_diff_text(after_player.get("name")),
+            )
+            _append_player_field_changes(
+                contact_changes,
+                before_team=before,
+                after_team=after,
+                slot=slot,
+                field="cellphone",
+                before_value=_diff_text(before_player.get("cellphone")),
+                after_value=_diff_text(after_player.get("cellphone")),
+            )
+            _append_player_field_changes(
+                contact_changes,
+                before_team=before,
+                after_team=after,
+                slot=slot,
+                field="email",
+                before_value=_diff_text(before_player.get("email")),
+                after_value=_diff_text(after_player.get("email")),
+            )
+            _append_player_field_changes(
+                towel_changes,
+                before_team=before,
+                after_team=after,
+                slot=slot,
+                field="towel",
+                before_value=_diff_towel(before_player),
+                after_value=_diff_towel(after_player),
+            )
+    operational_changed = bool(contact_changes or towel_changes or avoid_group_changes)
     return {
         "addedTeams": added,
         "withdrawnTeams": removed,
         "partnerChanges": partner_changes,
         "drawChanges": draw_changes,
         "ratingChanges": rating_changes,
+        "contactChanges": contact_changes,
+        "towelChanges": towel_changes,
+        "avoidGroupChanges": avoid_group_changes,
         "addedCount": len(added),
         "withdrawnCount": len(removed),
-        "changed": bool(added or removed or partner_changes or draw_changes or rating_changes),
+        "changed": bool(added or removed or partner_changes or draw_changes or rating_changes or operational_changed),
         "previousHash": snapshot_hash(previous),
         "currentHash": snapshot_hash(current),
     }

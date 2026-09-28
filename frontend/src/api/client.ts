@@ -560,6 +560,9 @@ export interface RwOsImportResponse {
       partnerChanges: unknown[]
       drawChanges: unknown[]
       ratingChanges: unknown[]
+      contactChanges?: unknown[]
+      towelChanges?: unknown[]
+      avoidGroupChanges?: unknown[]
       changed: boolean
     } | null
     planStatus: string
