@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.models.event import Event
 from app.models.match import Match
 from app.models.team import Team
+from app.services.active_roster import team_is_active
 
 
 class TeamInjectionError(Exception):
@@ -34,7 +35,7 @@ def get_deterministic_teams(session: Session, event_id: int) -> List[Team]:
         List of Team objects in deterministic order
     """
     query = select(Team).where(Team.event_id == event_id)
-    teams = session.exec(query).all()
+    teams = [team for team in session.exec(query).all() if team_is_active(team)]
 
     def sort_key(team: Team):
         return (

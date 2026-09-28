@@ -57,6 +57,7 @@ import {
   type RwOsRosterSnapshotDiff,
 } from './draw-builder/RwOsRosterRefreshCard'
 import EditWfMatchupModal from './draw-builder/EditWfMatchupModal'
+import { isActiveTeam } from '../utils/activeTeam'
 import { showToast } from '../utils/toast'
 import {
   TemplateType,
@@ -1055,7 +1056,16 @@ function DrawBuilder() {
       }
       const result = await refreshRwOsImport(importId, true)
       const projection = result.rosterProjection ?? result.importResponse?.rosterProjection
-      const summary = formatRwOsRosterRefreshSummary(projection?.updated)
+      const summary = formatRwOsRosterRefreshSummary(
+        projection?.updated
+          ? {
+              ...projection.updated,
+              createdTeams: projection.created?.teams ?? 0,
+              withdrawnTeams: projection.reconciled?.withdrawnTeams ?? 0,
+              drawSlotsReplaced: projection.reconciled?.drawSlotsReplaced ?? 0,
+            }
+          : projection?.updated,
+      )
       setRwOsRefreshSummary(summary)
       setRwOsRefreshChanges(projection?.fieldChanges ?? [])
       setRwOsSnapshotDiff(result.diff ?? null)
@@ -1650,7 +1660,7 @@ function DrawBuilder() {
                   </tr>
                 </thead>
                 <tbody>
-                  {eventTeams[event.id]!.map((t) => (
+                  {eventTeams[event.id]!.filter((t) => isActiveTeam(t)).map((t) => (
                     <tr key={t.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
                       <td style={{ padding: '6px 8px' }}>{t.seed ?? '—'}</td>
                       <td style={{ padding: '6px 8px' }}>{t.display_name || t.name}</td>
@@ -2257,7 +2267,7 @@ function DrawBuilder() {
                             </tr>
                           </thead>
                           <tbody>
-                            {teams.map((t) => (
+                            {teams.filter((t) => isActiveTeam(t)).map((t) => (
                               <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '4px 8px', fontWeight: 600 }}>{t.seed ?? '—'}</td>
                                 <td style={{ padding: '4px 8px', fontFamily: 'monospace' }}>{t.avoid_group ?? '—'}</td>

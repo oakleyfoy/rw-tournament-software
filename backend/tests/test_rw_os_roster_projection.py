@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +7,8 @@ from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
+from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
@@ -323,7 +325,7 @@ def test_11_and_12_wkw_add_only_edges_and_no_duplicate(client: TestClient, sessi
     assert len(edges_after_second) == len(edges_after_first)
 
 
-def test_13_wkw_refresh_does_not_delete_existing_edges(client: TestClient, session: Session):
+def test_13_wkw_refresh_updates_group_edges_and_keeps_manual_edges(client: TestClient, session: Session):
     teams = _womens_field(8)
     imported = _import_payload(session, 908, teams)
     _approve(client, imported.id, {"womens": "8"})
@@ -331,30 +333,27 @@ def test_13_wkw_refresh_does_not_delete_existing_edges(client: TestClient, sessi
     live = _teams_by_key(session, imported.tournament_id)
     first_id = live[teams[0].team_key].id
     second_id = live[teams[1].team_key].id
+    quiet_id = live[teams[7].team_key].id
     a_id, b_id = min(first_id, second_id), max(first_id, second_id)
-    before = session.exec(
-        select(TeamAvoidEdge).where(
-            TeamAvoidEdge.event_id == event.id,
-            TeamAvoidEdge.team_id_a == a_id,
-            TeamAvoidEdge.team_id_b == b_id,
-        )
-    ).first()
-    assert before is not None
+    manual_a, manual_b = min(first_id, quiet_id), max(first_id, quiet_id)
+    manual = TeamAvoidEdge(event_id=event.id, team_id_a=manual_a, team_id_b=manual_b, reason="staff note")
+    session.add(manual)
+    session.commit()
+    session.refresh(manual)
 
     refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in teams]
     refreshed[0].avoid_group = "B"
     persist_snapshot(
         session, _payload(908, refreshed, version="1"), existing=session.get(TournamentImport, imported.id)
     )
-    after = session.exec(
-        select(TeamAvoidEdge).where(
-            TeamAvoidEdge.event_id == event.id,
-            TeamAvoidEdge.team_id_a == a_id,
-            TeamAvoidEdge.team_id_b == b_id,
-        )
-    ).first()
-    assert after is not None
-    assert after.id == before.id
+    session.expire_all()
+    edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    pair_reasons = {edge.reason for edge in edges if {edge.team_id_a, edge.team_id_b} == {a_id, b_id}}
+    assert "group:A" not in pair_reasons
+    assert "group:B" in pair_reasons
+    assert all(edge.reason != "group:A" or first_id not in {edge.team_id_a, edge.team_id_b} for edge in edges)
+    kept = next(edge for edge in edges if edge.id == manual.id)
+    assert kept.reason == "staff note"
 
 
 def test_14_and_15_towel_rows_created_and_reprojected(client: TestClient, session: Session):
@@ -1095,7 +1094,7 @@ def test_operational_refresh_updates_identity_without_moving_or_creating_matches
     assert len(matches_after) == len(matches_before) == 0
 
 
-def test_operational_refresh_does_not_add_or_move_on_protected_draw(client: TestClient, session: Session):
+def test_operational_refresh_adds_team_when_draw_exists_but_play_has_not_started(client: TestClient, session: Session):
     teams = _womens_field(8)
     imported = _import_payload(session, 931, teams)
     _approve(client, imported.id, {"womens": "8"})
@@ -1105,7 +1104,6 @@ def test_operational_refresh_does_not_add_or_move_on_protected_draw(client: Test
     session.add(event)
     session.commit()
     before = _teams_by_key(session, imported.tournament_id)
-    original_keys = set(before)
     original_event_ids = {key: team.event_id for key, team in before.items()}
 
     extra = _team("900/901", 8.0, display="New", full="New Team")
@@ -1117,7 +1115,456 @@ def test_operational_refresh_does_not_add_or_move_on_protected_draw(client: Test
     )
     session.expire_all()
     after = _teams_by_key(session, imported.tournament_id)
-    assert set(after) == original_keys
-    assert extra.team_key not in after
-    assert {key: team.event_id for key, team in after.items()} == original_event_ids
+    assert extra.team_key in after
+    assert after[extra.team_key].is_defaulted is False
+    assert after[extra.team_key].event_id == event.id
+    assert {key: team.event_id for key, team in after.items() if key in original_event_ids} == original_event_ids
     assert session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all() == []
+
+
+def _torrie_nancy() -> SnapshotTeam:
+    team = _team(
+        "8801/8802",
+        9.0,
+        display="Torrie / Nancy",
+        full="Torrie Example / Nancy Example",
+        towel1="Purple",
+        towel2="Gold",
+        avoid="A",
+        cellphone1="5559990001",
+        email1="torrie@example.com",
+        cellphone2="5559990002",
+        email2="nancy@example.com",
+    )
+    team.player1.name = "Torrie"
+    team.player2.name = "Nancy"
+    return team
+
+
+def _assign_unplayed_wf_slot(session: Session, tournament_id: int, event: Event, team_a: Team, team_b: Team) -> Match:
+    version = ScheduleVersion(tournament_id=tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    match = Match(
+        tournament_id=tournament_id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_R1_01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a=team_a.name,
+        placeholder_side_b=team_b.name,
+    )
+    session.add(match)
+    event.draw_plan_json = '{"template_type":"WF_8"}'
+    event.draw_status = "generated"
+    session.add(event)
+    session.commit()
+    session.refresh(match)
+    return match
+
+
+def _schedule_match(session: Session, tournament: Tournament, match: Match) -> tuple[MatchAssignment, ScheduleSlot]:
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=match.schedule_version_id,
+        day_date=tournament.start_date,
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=3,
+        court_label="Court 3",
+        block_minutes=60,
+    )
+    session.add(slot)
+    session.commit()
+    session.refresh(slot)
+    assignment = MatchAssignment(
+        schedule_version_id=match.schedule_version_id,
+        match_id=match.id,
+        slot_id=slot.id,
+        assigned_by="POLICY",
+    )
+    session.add(assignment)
+    session.commit()
+    session.refresh(assignment)
+    return assignment, slot
+
+
+def test_refresh_replaces_withdrawn_team_with_torrie_nancy_before_play(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 940, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    session.expire_all()
+    live = _teams_by_key(session, imported.tournament_id)
+    withdrawn = live[teams[0].team_key]
+    partner = live[teams[1].team_key]
+    event = session.get(Event, withdrawn.event_id)
+    match = _assign_unplayed_wf_slot(session, imported.tournament_id, event, withdrawn, partner)
+    tournament = session.get(Tournament, imported.tournament_id)
+    assignment, slot = _schedule_match(session, tournament, match)
+    match_id = match.id
+    assignment_id = assignment.id
+    slot_id = slot.id
+    version_id = match.schedule_version_id
+    matches_before = session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all()
+    before_edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    assert any(edge.team_id_a == withdrawn.id or edge.team_id_b == withdrawn.id for edge in before_edges)
+    before_towels = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source_team_key == withdrawn.source_team_key,
+        )
+    ).all()
+    assert len(before_towels) == 2
+
+    replacement = _torrie_nancy()
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in teams[1:]]
+    refreshed.append(replacement)
+    persisted = persist_snapshot(
+        session,
+        _payload(940, refreshed, version="replacement"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    projection = getattr(persisted, "_last_roster_projection", None) or {}
+    assert projection["reconciled"]["withdrawnTeams"] == 1
+    assert projection["reconciled"]["drawSlotsReplaced"] == 1
+    assert projection["created"]["teams"] == 1
+    assert not any(conflict["code"] == "roster_reconciliation_blocked" for conflict in projection["conflicts"])
+
+    session.expire_all()
+    after = _teams_by_key(session, imported.tournament_id)
+    assert replacement.team_key in after
+    new_team = after[replacement.team_key]
+    assert new_team.is_defaulted is False
+    assert new_team.event_id == event.id
+    assert new_team.display_name == "Torrie / Nancy"
+    assert new_team.player1_cellphone == "5559990001"
+    assert new_team.player1_email == "torrie@example.com"
+    assert new_team.avoid_group == "A"
+    assert list(after).count(replacement.team_key) == 1
+
+    old = session.get(Team, withdrawn.id)
+    assert old.is_defaulted is True
+    assert old.source_team_key == teams[0].team_key
+
+    session.refresh(match)
+    assert match.id == match_id
+    assert match.team_a_id == new_team.id
+    assert match.team_b_id == partner.id
+    assert match.match_code == "WF_R1_01"
+    assert match.round_index == 1
+    assert match.sequence_in_round == 1
+    assert match.schedule_version_id == version_id
+    assert match.winner_team_id is None
+    assert match.score_json is None
+    matches_after = session.exec(select(Match).where(Match.tournament_id == imported.tournament_id)).all()
+    assert {row.id for row in matches_after} == {row.id for row in matches_before}
+    session.refresh(assignment)
+    session.refresh(slot)
+    assert assignment.id == assignment_id
+    assert assignment.match_id == match.id
+    assert assignment.slot_id == slot_id
+    assert slot.court_number == 3
+    assert slot.court_label == "Court 3"
+    assert slot.day_date == tournament.start_date
+    assert str(slot.start_time).startswith("09:00")
+
+    towels = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == imported.tournament_id)
+    ).all()
+    by_key = {(row.source_team_key, row.lineup_slot): row.towel_color for row in towels if row.source == "rwos-import"}
+    assert by_key[(replacement.team_key, 1)] == "Purple"
+    assert by_key[(replacement.team_key, 2)] == "Gold"
+    assert all(row.source_team_key != withdrawn.source_team_key for row in towels)
+
+    edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    assert all(edge.team_id_a != old.id and edge.team_id_b != old.id for edge in edges)
+    assert any(edge.team_id_a == new_team.id or edge.team_id_b == new_team.id for edge in edges)
+
+    active = [team for team in after.values() if not team.is_defaulted]
+    assert len(active) == 8
+    desk = client.get(f"/api/desk/tournaments/{imported.tournament_id}/teams")
+    assert desk.status_code == 200, desk.text
+    desk_ids = {row["team_id"] for row in desk.json()}
+    assert new_team.id in desk_ids
+    assert old.id not in desk_ids
+
+    checkin = client.get(
+        f"/api/desk/tournaments/{imported.tournament_id}/checkin/queue",
+        params={"version_id": version_id},
+    )
+    assert checkin.status_code == 200, checkin.text
+    checkin_ids = set()
+    for row in checkin.json()["checkin_matches"]:
+        checkin_ids.add(row["side_a"]["team_id"])
+        checkin_ids.add(row["side_b"]["team_id"])
+    assert new_team.id in checkin_ids
+    assert old.id not in checkin_ids
+
+    sms = client.post(
+        f"/api/tournaments/{imported.tournament_id}/sms/preview/event/{event.id}",
+        json={"message": "Roster check"},
+    )
+    assert sms.status_code == 200, sms.text
+    sms_ids = {row["team_id"] for row in sms.json()["recipients"]}
+    assert new_team.id in sms_ids
+    assert old.id not in sms_ids
+
+    chart = client.get(f"/api/desk/tournaments/{imported.tournament_id}/temporary-player-lookups")
+    assert chart.status_code == 200, chart.text
+    chart_colors = {item["towel_color"] for item in chart.json()["items"]}
+    chart_names = " ".join(item["source_name"] for item in chart.json()["items"])
+    assert "Purple" in chart_colors
+    assert "Gold" in chart_colors
+    assert "Torrie" in chart_names
+    assert "Nancy" in chart_names
+    assert "P100" not in chart_names
+
+    wkw = client.get(f"/api/events/{event.id}/avoid-edges")
+    assert wkw.status_code == 200, wkw.text
+    wkw_ids = {edge["team_id_a"] for edge in wkw.json()} | {edge["team_id_b"] for edge in wkw.json()}
+    assert new_team.id in wkw_ids
+    assert old.id not in wkw_ids
+
+    towel_ids = {
+        row.id for row in towels if row.source == "rwos-import" and row.source_team_key == replacement.team_key
+    }
+    edge_ids = {edge.id for edge in edges if edge.team_id_a == new_team.id or edge.team_id_b == new_team.id}
+    again = persist_snapshot(
+        session,
+        _payload(940, refreshed, version="replacement"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    second = getattr(again, "_last_roster_projection", None) or {}
+    assert second["created"]["teams"] == 0
+    assert second["reconciled"]["withdrawnTeams"] == 0
+    assert second["reconciled"]["drawSlotsReplaced"] == 0
+    assert not any(
+        conflict["code"] in {"roster_reconciliation_blocked", "roster_draw_placement_unresolved"}
+        for conflict in second["conflicts"]
+    )
+    session.expire_all()
+    replay = _teams_by_key(session, imported.tournament_id)
+    assert list(replay).count(replacement.team_key) == 1
+    session.refresh(match)
+    assert match.team_a_id == new_team.id
+    assert match.team_b_id == partner.id
+    replay_towels = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source == "rwos-import",
+            TemporaryPlayerLookup.source_team_key == replacement.team_key,
+        )
+    ).all()
+    assert {row.id for row in replay_towels} == towel_ids
+    assert len(replay_towels) == 2
+    replay_edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    assert {
+        edge.id for edge in replay_edges if edge.team_id_a == new_team.id or edge.team_id_b == new_team.id
+    } == edge_ids
+    assert all(edge.team_id_a != old.id and edge.team_id_b != old.id for edge in replay_edges)
+
+
+def test_refresh_does_not_rewrite_started_match_and_reports_conflict(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 941, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    session.expire_all()
+    live = _teams_by_key(session, imported.tournament_id)
+    withdrawn = live[teams[0].team_key]
+    partner = live[teams[1].team_key]
+    event = session.get(Event, withdrawn.event_id)
+    match = _assign_unplayed_wf_slot(session, imported.tournament_id, event, withdrawn, partner)
+    match.started_at = datetime.utcnow()
+    match.runtime_status = "FINAL"
+    match.score_json = {"display": "4-2"}
+    match.winner_team_id = withdrawn.id
+    session.add(match)
+    session.commit()
+    advanced = Match(
+        tournament_id=imported.tournament_id,
+        event_id=event.id,
+        schedule_version_id=match.schedule_version_id,
+        match_code="WF_R2_01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=withdrawn.id,
+        source_match_a_id=match.id,
+        source_a_role="WINNER",
+        placeholder_side_a=withdrawn.name,
+        placeholder_side_b="TBD",
+    )
+    session.add(advanced)
+    session.commit()
+    session.refresh(advanced)
+
+    replacement = _torrie_nancy()
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in teams[1:]]
+    survivor = next(team for team in refreshed if team.team_key == teams[1].team_key)
+    survivor.player1.cellphone = "5557778888"
+    survivor.player1.email = "survivor@example.com"
+    survivor.player1.towel_color = "Lime"
+    refreshed.append(replacement)
+    persisted = persist_snapshot(
+        session,
+        _payload(941, refreshed, version="protected-replacement"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    projection = getattr(persisted, "_last_roster_projection", None) or {}
+    blocked = [item for item in projection["conflicts"] if item["code"] == "roster_reconciliation_blocked"]
+    assert len(blocked) == 1
+    assert not any(item["code"] == "roster_draw_placement_unresolved" for item in projection["conflicts"])
+    message = blocked[0]["message"]
+    assert "W1" in message or teams[0].team_key in message
+    assert "Torrie / Nancy" in message
+    assert event.name in message
+    assert projection["reconciled"]["drawSlotsReplaced"] == 0
+    assert projection["reconciled"]["withdrawnTeams"] == 0
+
+    session.expire_all()
+    after = _teams_by_key(session, imported.tournament_id)
+    assert replacement.team_key in after
+    new_team = after[replacement.team_key]
+    assert list(after).count(replacement.team_key) == 1
+    old = session.get(Team, withdrawn.id)
+    assert old.is_defaulted is False
+    session.refresh(match)
+    session.refresh(advanced)
+    assert match.team_a_id == old.id
+    assert match.team_b_id == partner.id
+    assert match.runtime_status == "FINAL"
+    assert match.score_json == {"display": "4-2"}
+    assert match.winner_team_id == old.id
+    assert advanced.team_a_id == old.id
+    assert advanced.source_match_a_id == match.id
+    assert advanced.source_a_role == "WINNER"
+    assert new_team.id not in {match.team_a_id, match.team_b_id, advanced.team_a_id, advanced.team_b_id}
+
+    survivor_row = after[teams[1].team_key]
+    assert survivor_row.player1_cellphone == "5557778888"
+    assert survivor_row.player1_email == "survivor@example.com"
+    towel = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source_team_key == teams[1].team_key,
+            TemporaryPlayerLookup.lineup_slot == 1,
+        )
+    ).first()
+    assert towel.towel_color == "Lime"
+    old_towels = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source_team_key == teams[0].team_key,
+        )
+    ).all()
+    assert len(old_towels) == 2
+    new_towels = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source_team_key == replacement.team_key,
+        )
+    ).all()
+    assert {row.towel_color for row in new_towels} == {"Purple", "Gold"}
+
+
+def test_staff_defaulted_team_leaves_active_lists_and_keeps_match_label(client: TestClient, session: Session):
+    """Weekend default uses the same is_defaulted flag as an RW-OS withdrawal."""
+    teams = _womens_field(8)
+    imported = _import_payload(session, 942, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    session.expire_all()
+    live = _teams_by_key(session, imported.tournament_id)
+    defaulted = live[teams[0].team_key]
+    opponent = live[teams[1].team_key]
+    active = live[teams[2].team_key]
+    active_partner = live[teams[3].team_key]
+    event = session.get(Event, defaulted.event_id)
+    defaulted.is_defaulted = True
+    session.add(defaulted)
+    session.commit()
+
+    finished = _assign_unplayed_wf_slot(session, imported.tournament_id, event, defaulted, opponent)
+    finished.match_type = "RR"
+    finished.match_code = "RR_FINAL_01"
+    finished.runtime_status = "FINAL"
+    finished.winner_team_id = opponent.id
+    finished.score_json = {"display": "6-4 6-4"}
+    session.add(finished)
+    upcoming = Match(
+        tournament_id=imported.tournament_id,
+        event_id=event.id,
+        schedule_version_id=finished.schedule_version_id,
+        match_code="WF_R1_02",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=active.id,
+        team_b_id=active_partner.id,
+        placeholder_side_a=active.name,
+        placeholder_side_b=active_partner.name,
+    )
+    session.add(upcoming)
+    session.commit()
+    session.refresh(upcoming)
+    tournament = session.get(Tournament, imported.tournament_id)
+    _schedule_match(session, tournament, upcoming)
+
+    desk = client.get(f"/api/desk/tournaments/{imported.tournament_id}/teams")
+    assert desk.status_code == 200, desk.text
+    desk_ids = {row["team_id"] for row in desk.json()}
+    assert defaulted.id not in desk_ids
+    assert opponent.id in desk_ids
+
+    sms = client.post(
+        f"/api/tournaments/{imported.tournament_id}/sms/preview/event/{event.id}",
+        json={"message": "Active roster"},
+    )
+    assert sms.status_code == 200, sms.text
+    sms_ids = {row["team_id"] for row in sms.json()["recipients"]}
+    assert defaulted.id not in sms_ids
+    assert opponent.id in sms_ids
+
+    wkw = client.get(f"/api/events/{event.id}/avoid-edges")
+    assert wkw.status_code == 200, wkw.text
+    assert all(edge["team_id_a"] != defaulted.id and edge["team_id_b"] != defaulted.id for edge in wkw.json())
+
+    lens = client.get(f"/api/events/{event.id}/waterfall/conflicts")
+    assert lens.status_code == 200, lens.text
+    summary = lens.json()["graph_summary"]
+    assert summary["team_count"] == 7
+    assert all(row["team_id"] != defaulted.id for row in summary["top_degree_teams"])
+
+    checkin = client.get(
+        f"/api/desk/tournaments/{imported.tournament_id}/checkin/queue",
+        params={"version_id": finished.schedule_version_id},
+    )
+    assert checkin.status_code == 200, checkin.text
+    checkin_ids = set()
+    for row in checkin.json()["checkin_matches"]:
+        checkin_ids.add(row["side_a"]["team_id"])
+        checkin_ids.add(row["side_b"]["team_id"])
+    assert defaulted.id not in checkin_ids
+    assert active.id in checkin_ids
+
+    snapshot = client.get(
+        f"/api/desk/tournaments/{imported.tournament_id}/snapshot",
+        params={"version_id": finished.schedule_version_id},
+    )
+    assert snapshot.status_code == 200, snapshot.text
+    finished_row = next(row for row in snapshot.json()["matches"] if row["match_id"] == finished.id)
+    assert finished_row["team1_id"] == defaulted.id
+    assert finished_row["team1_display"]
+    assert finished_row["team1_defaulted"] is True
+    assert finished_row["winner_team_id"] == opponent.id
+    assert finished_row["score_display"]

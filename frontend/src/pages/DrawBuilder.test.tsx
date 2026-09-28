@@ -96,7 +96,7 @@ describe('DrawBuilder RW-OS roster refresh', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Refresh roster from RW-OS' })).toBeInTheDocument()
     })
-    expect(screen.getByText(/Pull the latest names, ratings, contacts, and towels/)).toBeInTheDocument()
+    expect(screen.getByText(/Reconcile this tournament with the current RW-OS roster/)).toBeInTheDocument()
     expect(screen.queryByText('Combined Team + Towel Import')).not.toBeInTheDocument()
     expect(screen.queryByText('Legacy Per-Event Team Import')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Import Teams \+ Towels/i })).not.toBeInTheDocument()

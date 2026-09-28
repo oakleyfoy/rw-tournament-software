@@ -25,6 +25,7 @@ from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
+from app.services.active_roster import team_is_active
 
 logger = logging.getLogger(__name__)
 
@@ -596,7 +597,7 @@ def get_wf_r1_matchup_context(session: Session, match_id: int, tournament_id: in
     available = [
         _team_summary(t, event.id)  # type: ignore[arg-type]
         for t in _event_teams_sorted(session, event.id)  # type: ignore[arg-type]
-        if not bool(t.is_defaulted)
+        if team_is_active(t)
     ]
     block_reason = match_locked_for_participant_edit(session, match)
     _slot_id, court, start, day = _assignment_view(session, match)

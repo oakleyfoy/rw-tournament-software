@@ -21,6 +21,7 @@ import {
   Tournament,
 } from '../api/client'
 import ScheduleBuilderTable from '../components/ScheduleBuilderTable'
+import { isActiveTeam } from '../utils/activeTeam'
 import { SchedulePhasedPanel } from './schedule/components/SchedulePhasedPanel'
 import ScheduleInventoryPanel, { type InventoryTab } from './schedule/components/ScheduleInventoryPanel'
 import AvoidanceSummaryPanel from './schedule/components/AvoidanceSummaryPanel'
@@ -649,7 +650,7 @@ export default function ScheduleBuilderPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {teams.map((t) => (
+                            {teams.filter((t) => isActiveTeam(t)).map((t) => (
                               <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '4px 8px', fontWeight: 600 }}>{t.seed ?? '—'}</td>
                                 <td style={{ padding: '4px 8px', fontFamily: 'monospace' }}>{t.avoid_group ?? '—'}</td>

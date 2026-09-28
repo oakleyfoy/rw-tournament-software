@@ -266,8 +266,12 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
         inventory = compute_inventory(spec)
         if inventory.has_errors():
             raise HTTPException(status_code=422, detail="; ".join(inventory.errors))
+        from app.services.active_roster import team_is_active
+
         linked_team_ids = [
-            t.id for t in session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)).all()
+            t.id
+            for t in session.exec(select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)).all()
+            if team_is_active(t)
         ]
         existing_codes: set[str] = set(
             session.exec(select(Match.match_code).where(Match.schedule_version_id == schedule_version_id)).all()

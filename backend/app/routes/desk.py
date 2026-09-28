@@ -236,10 +236,14 @@ def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[s
             if short_alias:
                 matched_names.add(short_alias)
 
+    from app.services.active_roster import team_is_active
+
     teams = session.exec(
         select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament_id)
     ).all()
     for team in teams:
+        if not team_is_active(team):
+            continue
         for field in (team.display_name, team.name):
             for name in _split_team_player_names(field):
                 for alias in _lookup_name_keys(name):
@@ -389,9 +393,15 @@ def _resolve_lookup_player_ids(
             if short_name:
                 players_by_short_name.setdefault(short_name, []).append(player.id)
 
-    teams = session.exec(
-        select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament_id)
-    ).all()
+    from app.services.active_roster import team_is_active
+
+    teams = [
+        team
+        for team in session.exec(
+            select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament_id)
+        ).all()
+        if team_is_active(team)
+    ]
     roster_names = {
         alias
         for team in teams
@@ -4978,9 +4988,10 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
 )
 def get_desk_teams(
     tournament_id: int,
+    include_inactive: bool = Query(False),
     session: Session = Depends(get_session),
 ):
-    """List all teams across all events for this tournament."""
+    """List teams for this tournament. Inactive/withdrawn teams are omitted unless requested."""
     from app.models.event import Event
 
     events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
@@ -4993,7 +5004,11 @@ def get_desk_teams(
 
     if restore_team_phones_from_slot_emails(session, tournament_id):
         session.commit()
+    from app.services.active_roster import team_is_active
+
     teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()
+    if not include_inactive:
+        teams = [team for team in teams if team_is_active(team)]
 
     items = []
     for t in sorted(teams, key=lambda t: (event_map.get(t.event_id, ""), t.seed or 9999, t.id)):

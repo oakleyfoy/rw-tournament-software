@@ -1564,9 +1564,15 @@ def generate_matches(
             )
 
             # Get linked teams in seed order
-            linked_teams = session.exec(
-                select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)
-            ).all()
+            from app.services.active_roster import team_is_active
+
+            linked_teams = [
+                team
+                for team in session.exec(
+                    select(Team).where(Team.event_id == event.id).order_by(Team.seed, Team.id)
+                ).all()
+                if team_is_active(team)
+            ]
             linked_team_ids = [t.id for t in linked_teams]
 
             # Generate matches via engine (existing_codes mutated in-place for idempotency)

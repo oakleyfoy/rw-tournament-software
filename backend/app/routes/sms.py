@@ -525,10 +525,12 @@ def _get_all_teams_for_tournament(session: Session, tournament_id: int) -> List[
     if not event_ids:
         return []
 
+    from app.services.active_roster import team_is_active
+
     teams = session.exec(
         select(Team).where(Team.event_id.in_(event_ids))  # type: ignore
     ).all()
-    return list(teams)
+    return [team for team in teams if team_is_active(team)]
 
 
 def _resolve_match_lookup_version(
@@ -1685,8 +1687,10 @@ def _get_teams_for_event(
     if not event or event.tournament_id != tournament_id:
         raise HTTPException(404, f"Event {event_id} not found in tournament")
 
+    from app.services.active_roster import team_is_active
+
     teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
-    return list(teams)
+    return [team for team in teams if team_is_active(team)]
 
 
 def _get_teams_for_division(
@@ -1732,10 +1736,12 @@ def _get_teams_for_division(
             ),
         )
 
+    from app.services.active_roster import team_is_active
+
     teams = session.exec(
         select(Team).where(Team.event_id.in_(matched_event_ids))  # type: ignore
     ).all()
-    return list(teams)
+    return [team for team in teams if team_is_active(team)]
 
 
 def _preview_for_teams(
