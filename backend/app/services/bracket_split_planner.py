@@ -492,13 +492,7 @@ def score_option(
             _add(warnings, "weak_cut", f"Little rating separation after team #{rank}.")
         else:
             _add(warnings, "weak_cut", f"The rating cut after team #{rank} is weak.")
-    if len(sizes) == 1 and sizes[0] == 24:
-        _add(
-            positives,
-            "wf24_brackets",
-            "Two waterfall rounds, then seed 1–24. Seeds 1–8, 9–16, and 17–24 each play an 8-team bracket.",
-        )
-    elif len(sizes) == 1:
+    if len(sizes) == 1:
         _add(positives, "single_bracket", "Single bracket — no rating cut required.")
 
     operational_count = sum(1 for size in sizes if is_operational_size(size))
@@ -890,12 +884,16 @@ def plan_snapshot(
 
 
 def approved_brackets_from_option(option: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {
+    play_format = option.get("playFormat")
+    brackets = []
+    for bracket in option["brackets"]:
+        row = {
             "label": bracket["label"],
             "size": bracket["size"],
             "rankStart": bracket["rankStart"],
             "rankEnd": bracket["rankEnd"],
         }
-        for bracket in option["brackets"]
-    ]
+        if play_format and int(bracket["size"]) == 24:
+            row["playFormat"] = play_format
+        brackets.append(row)
+    return brackets

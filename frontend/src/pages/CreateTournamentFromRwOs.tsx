@@ -18,6 +18,7 @@ import {
   type RwOsRatingReviewTeam,
   type RwOsExplanation,
   type RwOsSplitOption,
+  type Wf24PlayFormat,
 } from '../api/client'
 import { showToast } from '../utils/toast'
 import { ImportReadinessPanel } from './ImportReadinessPanel'
@@ -168,6 +169,8 @@ function OptionCard({
   disabled,
   drawTeams,
   badge,
+  playFormat,
+  onPlayFormatChange,
 }: {
   option: RwOsSplitOption
   selected: boolean
@@ -175,9 +178,12 @@ function OptionCard({
   disabled: boolean
   drawTeams: NonNullable<RwOsDrawPlan['teams']>
   badge?: string
+  playFormat?: Wf24PlayFormat
+  onPlayFormatChange?: (format: Wf24PlayFormat) => void
 }) {
   const { reasons, warnings } = optionExplanations(option)
   const recommended = Boolean(option.recommended || badge === 'RECOMMENDED')
+  const offersWf24 = option.sizes.includes(24)
   return (
     <article
       className={['split-option', option.custom ? 'custom' : ''].filter(Boolean).join(' ')}
@@ -252,6 +258,31 @@ function OptionCard({
           )}
         </div>
       ))}
+      {offersWf24 && onPlayFormatChange && (
+        <fieldset className="play-format" data-testid="wf24-play-format">
+          <legend>24-team play format</legend>
+          <label>
+            <input
+              type="radio"
+              name={`wf24-${option.optionKey}`}
+              checked={playFormat !== 'wf_brackets'}
+              disabled={disabled}
+              onChange={() => onPlayFormatChange('pools')}
+            />
+            <span>Waterfall to pools</span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              name={`wf24-${option.optionKey}`}
+              checked={playFormat === 'wf_brackets'}
+              disabled={disabled}
+              onChange={() => onPlayFormatChange('wf_brackets')}
+            />
+            <span>Two waterfalls, then three brackets (seeds 1–8, 9–16, and 17–24)</span>
+          </label>
+        </fieldset>
+      )}
       <div className="structure-actions">
         <button
           className={`btn btn-compact ${selected ? 'btn-selected-structure' : 'btn-select-structure'}`}
@@ -274,6 +305,8 @@ function CustomStructureForm({
   customOption,
   selected,
   onSelect,
+  playFormat,
+  onPlayFormatChange,
 }: {
   draw: RwOsDrawPlan
   disabled: boolean
@@ -281,6 +314,8 @@ function CustomStructureForm({
   customOption?: RwOsSplitOption | null
   selected: boolean
   onSelect: (optionKey: string) => void
+  playFormat: Wf24PlayFormat
+  onPlayFormatChange: (format: Wf24PlayFormat) => void
 }) {
   const [raw, setRaw] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -337,6 +372,8 @@ function CustomStructureForm({
           disabled={disabled}
           onSelect={() => onSelect(customOption.optionKey)}
           drawTeams={draw.teams || []}
+          playFormat={playFormat}
+          onPlayFormatChange={onPlayFormatChange}
         />
       )}
     </section>
@@ -370,7 +407,7 @@ function DrawPlanner({
 }: {
   draw: RwOsDrawPlan
   selectedKey?: string
-  onSelect: (optionKey: string) => void
+  onSelect: (optionKey: string, playFormat?: Wf24PlayFormat) => void
   disabled: boolean
   customOption?: RwOsSplitOption | null
   onAnalyzeCustom: (sizes: number[]) => void
@@ -380,6 +417,7 @@ function DrawPlanner({
   const queue = recommendationQueue(draw)
   const optionSignature = queue.map((option) => option.optionKey).join('|')
   const [viewIndex, setViewIndex] = useState(0)
+  const [playFormat, setPlayFormat] = useState<Wf24PlayFormat>('pools')
   const [customOpen, setCustomOpen] = useState(Boolean(customOption && selectedKey === customOption.optionKey))
 
   useEffect(() => {
@@ -420,8 +458,15 @@ function DrawPlanner({
               badge={sectionTitle === 'Recommended' ? 'RECOMMENDED' : `ALTERNATIVE ${alternativeNumber}`}
               selected={selectedKey === visibleOption.optionKey}
               disabled={disabled}
-              onSelect={() => onSelect(visibleOption.optionKey)}
+              onSelect={() =>
+                onSelect(visibleOption.optionKey, visibleOption.sizes.includes(24) ? playFormat : undefined)
+              }
               drawTeams={draw.teams || []}
+              playFormat={playFormat}
+              onPlayFormatChange={(format) => {
+                setPlayFormat(format)
+                if (selectedKey === visibleOption.optionKey) onSelect(visibleOption.optionKey, format)
+              }}
             />
           </div>
           <div className="structure-actions recommendation-nav">
@@ -473,7 +518,14 @@ function DrawPlanner({
           onAnalyze={onAnalyzeCustom}
           customOption={customOption}
           selected={selectedKey === customOption?.optionKey}
-          onSelect={onSelect}
+          onSelect={(optionKey) =>
+            onSelect(optionKey, customOption?.sizes.includes(24) ? playFormat : undefined)
+          }
+          playFormat={playFormat}
+          onPlayFormatChange={(format) => {
+            setPlayFormat(format)
+            if (customOption && selectedKey === customOption.optionKey) onSelect(customOption.optionKey, format)
+          }}
         />
       )}
     </section>
@@ -677,11 +729,11 @@ function CreateTournamentFromRwOs() {
     }
   }
 
-  const handleSelect = async (drawKind: string, optionKey: string) => {
+  const handleSelect = async (drawKind: string, optionKey: string, playFormat?: Wf24PlayFormat) => {
     if (!importData) return
     try {
       setWorking(true)
-      const result = await selectRwOsStructure(importData.import.id, drawKind, optionKey)
+      const result = await selectRwOsStructure(importData.import.id, drawKind, optionKey, playFormat)
       setImportData(result)
       setSelections((prev) => ({ ...prev, [drawKind]: optionKey }))
     } catch (err) {
@@ -969,7 +1021,7 @@ function CreateTournamentFromRwOs() {
               selectedKey={selections[draw.drawKind]}
               disabled={working}
               customOption={customByDraw[draw.drawKind]}
-              onSelect={(optionKey) => handleSelect(draw.drawKind, optionKey)}
+              onSelect={(optionKey, playFormat) => handleSelect(draw.drawKind, optionKey, playFormat)}
               onAnalyzeCustom={(sizes) => handleCustomAnalyze(draw.drawKind, sizes)}
             />
           ))}

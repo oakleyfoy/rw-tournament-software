@@ -116,7 +116,9 @@ def test_approved_24_team_event_uses_three_seeded_brackets(session: Session):
         option_key="24",
         approved=True,
         option_json="{}",
-        brackets_json=json.dumps([{"label": "Mixed A", "size": 24, "rankStart": 1, "rankEnd": 24}]),
+        brackets_json=json.dumps(
+            [{"label": "Mixed A", "size": 24, "rankStart": 1, "rankEnd": 24, "playFormat": "wf_brackets"}]
+        ),
     )
     session.add(plan)
     session.commit()

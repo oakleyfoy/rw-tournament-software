@@ -71,15 +71,27 @@ def _canonical_name(bracket: dict[str, Any]) -> str:
     return str(bracket.get("label") or "").strip()
 
 
-def initial_draw_plan_json(team_count: int) -> Optional[str]:
-    """Play format for a newly approved bracket size.
+def initial_draw_plan_json(team_count: int, play_format: Optional[str] = None) -> Optional[str]:
+    """Play format chosen for a 24-team bracket.
 
-    A 24-team event is two waterfall rounds, then an overall 1-24 seed
-    into brackets 1-8, 9-16, and 17-24. Other sizes keep the Draw Builder default.
+    ``wf_brackets`` is two waterfall rounds, then an overall 1-24 seed
+    into brackets 1-8, 9-16, and 17-24. Pools stays the Draw Builder default.
     """
-    if team_count != 24:
-        return None
-    return json.dumps({"version": "1.0", "template_type": "WF_TO_BRACKETS_8", "wf_rounds": 2})
+    if team_count == 24 and play_format == "wf_brackets":
+        return json.dumps({"version": "1.0", "template_type": "WF_TO_BRACKETS_8", "wf_rounds": 2})
+    return None
+
+
+def is_generated_play_plan(raw: Optional[str]) -> bool:
+    if not raw:
+        return True
+    try:
+        plan = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(plan, dict):
+        return False
+    return set(plan).issubset({"version", "template_type", "wf_rounds"}) and plan.get("template_type") == "WF_TO_BRACKETS_8"
 
 
 def _bracket_team_count(bracket: dict[str, Any]) -> Optional[int]:
@@ -208,7 +220,7 @@ def sync_events_from_approved_plans(
                     name=name,
                     team_count=team_count,
                     notes=structure_event_notes(bracket),
-                    draw_plan_json=initial_draw_plan_json(team_count),
+                    draw_plan_json=initial_draw_plan_json(team_count, bracket.get("playFormat")),
                 )
                 session.add(event)
                 session.flush()
@@ -235,9 +247,9 @@ def sync_events_from_approved_plans(
             if not reason and event.team_count != team_count:
                 event.team_count = team_count
                 changed = True
-            if not reason and not event.draw_plan_json:
-                plan_json = initial_draw_plan_json(team_count)
-                if plan_json:
+            if not reason and is_generated_play_plan(event.draw_plan_json):
+                plan_json = initial_draw_plan_json(team_count, bracket.get("playFormat"))
+                if event.draw_plan_json != plan_json:
                     event.draw_plan_json = plan_json
                     changed = True
             if not reason and _notes_are_structure_generated(event.notes):
