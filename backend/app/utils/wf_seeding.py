@@ -33,6 +33,43 @@ class WFTeamResult:
     original_seed: int = 999999
 
 
+def wf_overall_seed_key(
+    result: WFTeamResult,
+    schedule_version_id: int,
+    event_id: int,
+) -> tuple:
+    """Rank the whole field 1..n after waterfall. Lower = better.
+
+    Wins come first. Equal records are broken by waterfall tiebreakers
+    (round-2 game diff, then overall game diff, then original seed).
+    Win/loss path is not a separate tier, so a 1-1 team is not ranked
+    above another 1-1 team just because it won round 1.
+    """
+    stable_hash = _stable_hash(schedule_version_id, event_id, result.team_id)
+    return (
+        1 if result.bucket_rank == 99 else 0,
+        -result.wf_matches_won,
+        -result.wf2_game_diff,
+        -result.wf_game_diff,
+        result.original_seed,
+        stable_hash,
+    )
+
+
+def wf24_quarterfinal_seeds() -> list[list[tuple[int, int]]]:
+    """Three 8-team brackets from an overall 1-24 seed.
+
+    Bracket 1 is seeds 1-8, bracket 2 is 9-16, bracket 3 is 17-24.
+    Inside each bracket the quarterfinals are 1v8, 4v5, 2v7, 3v6.
+    """
+    local_pairs = [(1, 8), (4, 5), (2, 7), (3, 6)]
+    brackets: list[list[tuple[int, int]]] = []
+    for bracket_index in range(3):
+        offset = bracket_index * 8
+        brackets.append([(offset + left, offset + right) for left, right in local_pairs])
+    return brackets
+
+
 def wf_rank_key(
     result: WFTeamResult,
     schedule_version_id: int,

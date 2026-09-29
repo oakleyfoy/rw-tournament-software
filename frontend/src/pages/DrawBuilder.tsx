@@ -737,7 +737,8 @@ function DrawBuilder() {
 
     if (state.templateType === 'WF_TO_BRACKETS_8') {
       if (!isTeamCountValidForFamily('WF_TO_BRACKETS_8', n)) {
-        errors.push('WF_TO_BRACKETS_8 requires exactly 32 teams')
+        const allowed = ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.join(', ')
+        errors.push(`WF_TO_BRACKETS_8 requires team count in {${allowed}}, got ${n}`)
       }
       const expectedWfRounds = requiredWfRounds('WF_TO_BRACKETS_8', n)
       if (state.wfRounds !== expectedWfRounds) {
@@ -1410,8 +1411,9 @@ function DrawBuilder() {
               value="WF_TO_BRACKETS_8" 
               disabled={!isTeamCountValidForFamily('WF_TO_BRACKETS_8', event.team_count)}
             >
-              Waterfall to Brackets ({ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.join(',')} teams)
-              {!isTeamCountValidForFamily('WF_TO_BRACKETS_8', event.team_count) && ' — requires 32 teams'}
+              Waterfall to Brackets ({ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.join(', ')} teams)
+              {!isTeamCountValidForFamily('WF_TO_BRACKETS_8', event.team_count) &&
+                ` — requires ${ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.join(' or ')} teams`}
             </option>
             <option
               value="WF_14_TOP2_BYE"
@@ -1428,6 +1430,12 @@ function DrawBuilder() {
               {!isTeamCountValidForFamily('WF_10_SIX_FOUR', event.team_count) && ' — requires 10 teams'}
             </option>
           </select>
+          {state.templateType === 'WF_TO_BRACKETS_8' && event.team_count === 24 && (
+            <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#334' }}>
+              Two waterfall rounds, then seed the field 1–24 on tiebreakers. Seeds 1–8, 9–16, and 17–24
+              each play an 8-team bracket.
+            </p>
+          )}
         </div>
 
         {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE' || state.templateType === 'WF_10_SIX_FOUR') && (
@@ -1447,7 +1455,7 @@ function DrawBuilder() {
                   (event.team_count === 8
                     ? '(Fixed at 1 for 8 teams)' 
                     : '(Fixed at 2 for 12+ teams)')}
-                {state.templateType === 'WF_TO_BRACKETS_8' && '(Fixed at 2 for 32 teams)'}
+                {state.templateType === 'WF_TO_BRACKETS_8' && '(Fixed at 2)'}
                 {state.templateType === 'WF_14_TOP2_BYE' && '(R1: 12 teams / 6 matches; R2: 8 teams / 4 matches; top 2 combined rating byes)'}
                 {state.templateType === 'WF_10_SIX_FOUR' && '(1 WF → winners 6 + losers 4; Fri/Sat RR; Sunday placement)'}
               </span>

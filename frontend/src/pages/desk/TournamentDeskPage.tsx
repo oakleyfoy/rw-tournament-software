@@ -2962,28 +2962,37 @@ function DrawsTab({
   matches: DeskMatchItem[]
 }) {
   const eventGroups = useMemo(() => {
-    const map: Record<number, { name: string; hasWF: boolean; hasBracket: boolean; hasRR: boolean }> = {}
+    const map: Record<number, { name: string; hasWF: boolean; hasBracket: boolean; hasRR: boolean; bracketCodes: string[] }> = {}
     for (const m of matches) {
       if (!map[m.event_id]) {
-        map[m.event_id] = { name: m.event_name, hasWF: false, hasBracket: false, hasRR: false }
+        map[m.event_id] = { name: m.event_name, hasWF: false, hasBracket: false, hasRR: false, bracketCodes: [] }
       }
       // WF_14 loser-flight pools (C/D) are stored as MAIN matches (stage BRACKET)
       // but are round-robin pools, not bracket divisions — count them as RR.
       const isWf14ConsPool =
         m.stage === 'BRACKET' && (m.match_code || '').toUpperCase().includes('_CONS_')
       if (m.stage === 'WF') map[m.event_id].hasWF = true
-      if ((m.stage === 'BRACKET' && !isWf14ConsPool) || m.stage === 'CONS') map[m.event_id].hasBracket = true
+      if ((m.stage === 'BRACKET' && !isWf14ConsPool) || m.stage === 'CONS') {
+        map[m.event_id].hasBracket = true
+        const division = (m.match_code || '').toUpperCase().match(/_(BWW|BWL|BLW|BLL|B1|B2|B3)_/)
+        if (division && !map[m.event_id].bracketCodes.includes(division[1])) {
+          map[m.event_id].bracketCodes.push(division[1])
+        }
+      }
       if (m.stage === 'RR' || isWf14ConsPool) map[m.event_id].hasRR = true
     }
     return Object.entries(map).sort(([, a], [, b]) => a.name.localeCompare(b.name))
   }, [matches])
 
-  const divisionCodes = ['BWW', 'BWL', 'BLW', 'BLL']
+  const divisionOrder = ['BWW', 'BWL', 'BLW', 'BLL', 'B1', 'B2', 'B3']
   const divisionLabels: Record<string, string> = {
     BWW: 'Division I',
     BWL: 'Division II',
     BLW: 'Division III',
     BLL: 'Division IV',
+    B1: 'Bracket 1',
+    B2: 'Bracket 2',
+    B3: 'Bracket 3',
   }
 
   return (
@@ -3024,7 +3033,10 @@ function DrawsTab({
                   Waterfall
                 </a>
               )}
-              {ev.hasBracket && divisionCodes.map(dc => (
+              {ev.hasBracket && (ev.bracketCodes.length
+                ? divisionOrder.filter(dc => ev.bracketCodes.includes(dc))
+                : ['BWW', 'BWL', 'BLW', 'BLL']
+              ).map(dc => (
                 <a
                   key={dc}
                   href={`/t/${tournamentId}/draws/${eid}/bracket/${dc}?version_id=${versionId}`}

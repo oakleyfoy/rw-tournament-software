@@ -3024,6 +3024,9 @@ def finalize_match(
 
     # Auto-advance
     adv_result = apply_advancement_with_details(session, match.id)
+    from app.services.wf_24_brackets import maybe_place_wf24_brackets
+
+    maybe_place_wf24_brackets(session, match)
 
     management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
 

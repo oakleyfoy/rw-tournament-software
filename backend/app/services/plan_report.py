@@ -411,7 +411,7 @@ def _check_cross_division_leak(
         return
 
     # Group by bracket label (extract B{label} from match_code)
-    bracket_pattern = re.compile(r"B(WW|WL|LW|LL)_")
+    bracket_pattern = re.compile(r"B(WW|WL|LW|LL|1|2|3)_")
 
     for m in bracket_matches:
         mc = m.match_code or ""

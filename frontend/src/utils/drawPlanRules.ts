@@ -17,18 +17,20 @@ export type TemplateFamily =
 export const ALLOWED_TEAM_COUNTS: Record<TemplateFamily, readonly number[]> = {
   RR_ONLY: [4, 6],
   WF_TO_POOLS_DYNAMIC: [8, 12, 16, 20, 24, 28],
-  WF_TO_BRACKETS_8: [32],
+  WF_TO_BRACKETS_8: [24, 32],
   WF_14_TOP2_BYE: [14],
   WF_10_SIX_FOUR: [10],
 } as const;
 
-// All Phase 1 supported team counts (union of all families)
+// All Phase 1 supported team counts (union of all families; 24 is in two families)
 export const PHASE1_SUPPORTED_TEAM_COUNTS = [
-  ...ALLOWED_TEAM_COUNTS.RR_ONLY,
-  ...ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC,
-  ...ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8,
-  ...ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE,
-  ...ALLOWED_TEAM_COUNTS.WF_10_SIX_FOUR,
+  ...new Set([
+    ...ALLOWED_TEAM_COUNTS.RR_ONLY,
+    ...ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC,
+    ...ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8,
+    ...ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE,
+    ...ALLOWED_TEAM_COUNTS.WF_10_SIX_FOUR,
+  ]),
 ] as const;
 
 /** Sorted for stable UI error messages (includes 14 when WF_14_TOP2_BYE is enabled). */
@@ -74,9 +76,6 @@ export function poolConfig(teamCount: number): [number, number] {
  * Return the valid template family for a given team count, or null if unsupported.
  */
 export function getValidFamilyForTeamCount(teamCount: number): TemplateFamily | null {
-  if (ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.includes(teamCount)) {
-    return 'WF_TO_BRACKETS_8';
-  }
   if (ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE.includes(teamCount)) {
     return 'WF_14_TOP2_BYE';
   }
@@ -85,6 +84,9 @@ export function getValidFamilyForTeamCount(teamCount: number): TemplateFamily | 
   }
   if (ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.includes(teamCount)) {
     return 'WF_TO_POOLS_DYNAMIC';
+  }
+  if (ALLOWED_TEAM_COUNTS.WF_TO_BRACKETS_8.includes(teamCount)) {
+    return 'WF_TO_BRACKETS_8';
   }
   if (ALLOWED_TEAM_COUNTS.RR_ONLY.includes(teamCount)) {
     return 'RR_ONLY';

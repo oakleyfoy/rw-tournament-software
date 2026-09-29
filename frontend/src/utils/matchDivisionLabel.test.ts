@@ -6,6 +6,9 @@ describe('getCompactDivisionLabel', () => {
     expect(getCompactDivisionLabel('WOM_POOLA_RR_01')).toBe('DIV I')
     expect(getCompactDivisionLabel('WOM_POOLB_RR_01')).toBe('DIV II')
     expect(getCompactDivisionLabel('WOM_BWW_R1_01')).toBe('DIV I')
+    expect(getCompactDivisionLabel('MIX_E1_B1_M1')).toBe('BR 1')
+    expect(getCompactDivisionLabel('MIX_E1_B2_M1')).toBe('BR 2')
+    expect(getCompactDivisionLabel('MIX_E1_B3_M1')).toBe('BR 3')
     expect(getCompactDivisionLabel('WOM_WF_R1_01')).toBe('WF')
   })
 
