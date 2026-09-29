@@ -631,15 +631,31 @@ def select_draw_structure(
     option_key: str,
     *,
     approve: bool = False,
+    play_format: Optional[str] = None,
 ) -> TournamentDrawPlan:
     draw, option = resolve_draw_option(import_row, draw_kind, option_key)
-
+    option = dict(option)
     existing = session.exec(
         select(TournamentDrawPlan).where(
             TournamentDrawPlan.import_id == import_row.id,
             TournamentDrawPlan.draw_kind == draw_kind,
         )
     ).first()
+    if play_format is None and existing and existing.option_key == option_key and existing.option_json:
+        try:
+            saved = json.loads(existing.option_json)
+        except (json.JSONDecodeError, TypeError):
+            saved = {}
+        if isinstance(saved, dict):
+            play_format = saved.get("playFormat")
+    if any(int(size) == 24 for size in option.get("sizes") or []):
+        chosen = play_format or "pools"
+        if chosen not in ("pools", "wf_brackets"):
+            raise ValueError("24-team play format must be pools or wf_brackets.")
+        option["playFormat"] = chosen
+    elif play_format:
+        raise ValueError("A play format only applies to a 24-team bracket.")
+
     brackets = approved_brackets_from_option(option)
     now = datetime.utcnow()
     if existing:

@@ -39,6 +39,7 @@ class RefreshRequest(BaseModel):
 class SelectStructureRequest(BaseModel):
     draw_kind: str
     option_key: str
+    play_format: Optional[str] = None
 
 
 class ApprovePlanRequest(BaseModel):
@@ -185,7 +186,14 @@ def select_rw_os_structure(
 ):
     row = _get_import(session, import_id)
     try:
-        select_draw_structure(session, row, payload.draw_kind, payload.option_key, approve=False)
+        select_draw_structure(
+            session,
+            row,
+            payload.draw_kind,
+            payload.option_key,
+            approve=False,
+            play_format=payload.play_format,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return build_import_response(session, row)

@@ -291,7 +291,7 @@ describe('CreateTournamentFromRwOs Step 3 workflow', () => {
     const selectedCard = within(mixed).getByTestId('option-card-10')
     expect(selectedCard).toHaveAttribute('data-card-tone', 'neutral')
     expect(selectedCard.className).not.toMatch(/success|green/)
-    expect(selectRwOsStructure).toHaveBeenCalledWith(44, 'mixed', '10')
+    expect(selectRwOsStructure).toHaveBeenCalledWith(44, 'mixed', '10', undefined)
   })
 
   it('keeps Proceed unavailable until every required category is selected', async () => {
@@ -364,5 +364,30 @@ describe('CreateTournamentFromRwOs Step 3 workflow', () => {
     const mixed = screen.getByTestId('draw-planner-mixed')
     fireEvent.click(within(mixed).getByRole('button', { name: /View Known Teams/ }))
     expect(within(mixed).getByText(/Known Mixed A/)).toBeInTheDocument()
+  })
+
+  it('lets a 24-team structure choose three brackets', async () => {
+    const draw = makeDraw('mixed', 'Mixed', [makeOption('24', [24], true, ['Mixed A'])])
+    draw.teamCount = 24
+    draw.currentCount = 20
+    draw.forecastCount = 24
+    await loadPage(
+      makeImport({
+        planner: {
+          draws: [draw],
+          maxBracketSize: 32,
+          minBracketSize: 8,
+          preferredBracketSizes: [8, 24, 32],
+          byeLogicApplicable: false,
+          teamRatingFormula: 'ntrp_combined',
+        },
+      }),
+    )
+    const mixed = screen.getByTestId('draw-planner-mixed')
+    fireEvent.click(within(mixed).getByRole('radio', { name: /three brackets/i }))
+    fireEvent.click(within(mixed).getByRole('button', { name: 'Select This Structure' }))
+    await waitFor(() => {
+      expect(selectRwOsStructure).toHaveBeenCalledWith(44, 'mixed', '24', 'wf_brackets')
+    })
   })
 })

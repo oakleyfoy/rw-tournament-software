@@ -138,8 +138,30 @@
 .split-option > header,
 .split-option > .why-block,
 .split-option > .bracket-range,
-.split-option > .cut-block {
+.split-option > .cut-block,
+.split-option > .play-format {
   width: 100%;
+}
+
+.play-format {
+  border: 1px solid var(--theme-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.play-format legend {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+
+.play-format label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
 }
 
 .split-option.recommended,

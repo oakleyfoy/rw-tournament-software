@@ -733,14 +733,21 @@ export async function submitRwOsCustomStructure(
   })
 }
 
+export type Wf24PlayFormat = 'pools' | 'wf_brackets'
+
 export async function selectRwOsStructure(
   importId: number,
   drawKind: string,
   optionKey: string,
+  playFormat?: Wf24PlayFormat,
 ): Promise<RwOsImportResponse> {
   return fetchJson<RwOsImportResponse>(`${API_BASE_URL}/rw-os/imports/${importId}/select-structure`, {
     method: 'POST',
-    body: JSON.stringify({ draw_kind: drawKind, option_key: optionKey }),
+    body: JSON.stringify({
+      draw_kind: drawKind,
+      option_key: optionKey,
+      ...(playFormat ? { play_format: playFormat } : {}),
+    }),
   })
 }
 
