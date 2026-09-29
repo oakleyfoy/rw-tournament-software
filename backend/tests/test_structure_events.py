@@ -77,6 +77,58 @@ def test_b_derived_fields_match_approved_structure(client: TestClient, session: 
             assert str(bracket["rankEnd"]) in event.notes
 
 
+def test_approved_24_team_event_uses_three_seeded_brackets(session: Session):
+    import json
+    from datetime import date
+
+    from app.models.tournament import Tournament
+    from app.models.tournament_import import TournamentDrawPlan, TournamentImport
+    from app.services.structure_events import sync_events_from_approved_plans
+
+    tournament = Tournament(
+        name="Mixed 24",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 1, 15),
+        end_date=date(2026, 1, 17),
+        use_time_windows=False,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    imported = TournamentImport(
+        tournament_id=tournament.id,
+        source_tournament_id=1,
+        event_name="Mixed",
+        event_date="2026-01-15",
+        source_hash="abc",
+        snapshot_json="{}",
+    )
+    session.add(imported)
+    session.commit()
+    session.refresh(imported)
+    plan = TournamentDrawPlan(
+        import_id=imported.id,
+        tournament_id=tournament.id,
+        draw_kind="mixed",
+        draw_label="Mixed",
+        team_count=24,
+        option_key="24",
+        approved=True,
+        option_json="{}",
+        brackets_json=json.dumps([{"label": "Mixed A", "size": 24, "rankStart": 1, "rankEnd": 24}]),
+    )
+    session.add(plan)
+    session.commit()
+
+    sync_events_from_approved_plans(session, tournament.id, [plan])
+    event = session.exec(select(Event).where(Event.tournament_id == tournament.id)).one()
+    saved = json.loads(event.draw_plan_json)
+    assert event.team_count == 24
+    assert saved["template_type"] == "WF_TO_BRACKETS_8"
+    assert saved["wf_rounds"] == 2
+
+
 def test_c_approve_twice_does_not_duplicate(client: TestClient, session: Session):
     created = _import_tournament(client)
     import_id = created["import"]["id"]

@@ -492,7 +492,13 @@ def score_option(
             _add(warnings, "weak_cut", f"Little rating separation after team #{rank}.")
         else:
             _add(warnings, "weak_cut", f"The rating cut after team #{rank} is weak.")
-    if len(sizes) == 1:
+    if len(sizes) == 1 and sizes[0] == 24:
+        _add(
+            positives,
+            "wf24_brackets",
+            "Two waterfall rounds, then seed 1–24. Seeds 1–8, 9–16, and 17–24 each play an 8-team bracket.",
+        )
+    elif len(sizes) == 1:
         _add(positives, "single_bracket", "Single bracket — no rating cut required.")
 
     operational_count = sum(1 for size in sizes if is_operational_size(size))

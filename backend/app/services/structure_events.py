@@ -71,6 +71,17 @@ def _canonical_name(bracket: dict[str, Any]) -> str:
     return str(bracket.get("label") or "").strip()
 
 
+def initial_draw_plan_json(team_count: int) -> Optional[str]:
+    """Play format for a newly approved bracket size.
+
+    A 24-team event is two waterfall rounds, then an overall 1-24 seed
+    into brackets 1-8, 9-16, and 17-24. Other sizes keep the Draw Builder default.
+    """
+    if team_count != 24:
+        return None
+    return json.dumps({"version": "1.0", "template_type": "WF_TO_BRACKETS_8", "wf_rounds": 2})
+
+
 def _bracket_team_count(bracket: dict[str, Any]) -> Optional[int]:
     raw = bracket.get("size")
     if raw is None:
@@ -197,6 +208,7 @@ def sync_events_from_approved_plans(
                     name=name,
                     team_count=team_count,
                     notes=structure_event_notes(bracket),
+                    draw_plan_json=initial_draw_plan_json(team_count),
                 )
                 session.add(event)
                 session.flush()
@@ -223,6 +235,11 @@ def sync_events_from_approved_plans(
             if not reason and event.team_count != team_count:
                 event.team_count = team_count
                 changed = True
+            if not reason and not event.draw_plan_json:
+                plan_json = initial_draw_plan_json(team_count)
+                if plan_json:
+                    event.draw_plan_json = plan_json
+                    changed = True
             if not reason and _notes_are_structure_generated(event.notes):
                 notes = structure_event_notes(bracket)
                 if event.notes != notes:
