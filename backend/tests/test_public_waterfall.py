@@ -921,8 +921,8 @@ def test_public_roundrobin_wf10_shows_win_fun_loss_and_sunday(client, session):
     assert len(placement["matches"]) == 2
     assert placement["matches"][0]["line1"] == "Pool A #1"
     assert placement["matches"][0]["line2"] == "Pool B #1"
-    assert placement["matches"][1]["line1"] == "Loser #1"
-    assert placement["matches"][1]["line2"] == "Loser #2"
+    assert placement["matches"][1]["line1"] == "Pool C #1"
+    assert placement["matches"][1]["line2"] == "Pool C #2"
 
 
 def test_short_team_name_capitalizes_first_names():

@@ -1125,8 +1125,11 @@ def _build_rr_match_box(
 ) -> RRMatchBox:
     import json
 
-    line1 = _rr_team_line(m.team_a_id, m.placeholder_side_a, team_map)
-    line2 = _rr_team_line(m.team_b_id, m.placeholder_side_b, team_map)
+    loss_sunday = (getattr(m, "placement_type", None) or "") == "WF10_LOSS_PLACE" or (
+        "LOSS_SUN" in (m.match_code or "").upper()
+    )
+    line1 = _rr_team_line(m.team_a_id, m.placeholder_side_a, team_map, loss_sunday=loss_sunday)
+    line2 = _rr_team_line(m.team_b_id, m.placeholder_side_b, team_map, loss_sunday=loss_sunday)
 
     status = (m.runtime_status or "SCHEDULED").upper()
     score_display = None
@@ -1554,7 +1557,13 @@ def _public_round_robin_impl(
     )
 
 
-def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: Dict[int, Team]) -> str:
+def _rr_team_line(
+    team_id: Optional[int],
+    placeholder: Optional[str],
+    team_map: Dict[int, Team],
+    *,
+    loss_sunday: bool = False,
+) -> str:
     if team_id:
         t = team_map.get(team_id)
         if t:
@@ -1568,6 +1577,9 @@ def _rr_team_line(team_id: Optional[int], placeholder: Optional[str], team_map: 
         if len(placeholder) >= 2 and placeholder[0] == "W" and placeholder[1:].isdigit():
             return f"Winner #{placeholder[1:]}"
         if len(placeholder) >= 2 and placeholder[0] == "L" and placeholder[1:].isdigit():
+            # Sunday placement is Pool C standings (#1 vs #2, #3 vs #4).
+            if loss_sunday:
+                return f"Pool C #{placeholder[1:]}"
             return f"Loser #{placeholder[1:]}"
         # Cross-pool placement slots: A/B (WF_10) or C/D (WF_14).
         if len(placeholder) == 2 and placeholder[0] in ("A", "B", "C", "D") and placeholder[1].isdigit():
