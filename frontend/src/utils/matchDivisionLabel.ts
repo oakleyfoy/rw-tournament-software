@@ -24,6 +24,9 @@ export function getCompactDivisionLabel(matchCode?: string | null): string {
     return winPool[1] === 'A' ? 'DIV I' : 'DIV II'
   }
 
+  if (code.includes('_B1_')) return 'BR 1'
+  if (code.includes('_B2_')) return 'BR 2'
+  if (code.includes('_B3_')) return 'BR 3'
   if (code.includes('BWW') || code.includes('POOLA')) return 'DIV I'
   if (code.includes('BWL') || code.includes('POOLB')) return 'DIV II'
   if (code.includes('BLW') || code.includes('POOLC')) return 'DIV III'
@@ -56,6 +59,12 @@ export function getDivisionPhrase(matchCode?: string | null): string {
       return 'Div IV'
     case 'DIV V':
       return 'Div V'
+    case 'BR 1':
+      return 'Bracket 1'
+    case 'BR 2':
+      return 'Bracket 2'
+    case 'BR 3':
+      return 'Bracket 3'
     case 'FUNMATCH':
       return 'Fun Match'
     case 'PLACE':

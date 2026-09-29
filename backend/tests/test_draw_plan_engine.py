@@ -1042,12 +1042,22 @@ class TestInventoryWFToBrackets8:
         assert inv.bracket_matches == 2 * BRACKET_MATCHES_G5  # 2 * 12 = 24
         assert inv.total_matches == 16 + 24  # 40
 
+    def test_24_teams_2_rounds_three_brackets(self):
+        """24 teams, 2 WF rounds → 3 brackets of 8 (seeds 1-8, 9-16, 17-24)."""
+        spec = make_spec("WF_TO_BRACKETS_8", 24, wf_rounds=2, guarantee=5)
+        inv = compute_inventory(spec)
+        assert not inv.has_errors(), inv.errors
+        assert inv.wf_matches == 24  # 12 * 2
+        assert inv.bracket_matches == 3 * BRACKET_MATCHES_G5
+        assert inv.rr_matches == 0
+        assert inv.total_matches == 24 + 36
+
     def test_invalid_team_count(self):
         """Unsupported team count should return error."""
-        spec = make_spec("WF_TO_BRACKETS_8", 24, wf_rounds=2)
+        spec = make_spec("WF_TO_BRACKETS_8", 20, wf_rounds=2)
         inv = compute_inventory(spec)
         assert inv.has_errors()
-        assert any("{8,12,16,32}" in e for e in inv.errors)
+        assert any("{8,12,16,24,32}" in e for e in inv.errors)
 
     def test_invalid_wf_rounds(self):
         """Unsupported WF rounds should return error."""

@@ -185,8 +185,8 @@ def is_slot_compatible(
 
 
 def _extract_division(match_code: str) -> str:
-    """Extract bracket division from match_code (BWW/BWL/BLW/BLL), or '' if none."""
-    m = re.search(r"B(WW|WL|LW|LL)[_]", match_code or "")
+    """Extract bracket division from match_code (WW/WL/LW/LL or 1/2/3), or '' if none."""
+    m = re.search(r"B(WW|WL|LW|LL|1|2|3)[_]", match_code or "")
     return m.group(1) if m else ""
 
 

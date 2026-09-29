@@ -18,7 +18,8 @@ TemplateFamily = Literal["RR_ONLY", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "
 ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
     "RR_ONLY": frozenset({4, 6}),
     "WF_TO_POOLS_DYNAMIC": frozenset({8, 12, 16, 20, 24, 28}),
-    "WF_TO_BRACKETS_8": frozenset({32}),
+    # 24 is also a pools size. Pools stays the default; brackets is the other option.
+    "WF_TO_BRACKETS_8": frozenset({24, 32}),
     "WF_14_TOP2_BYE": frozenset({14}),
     "WF_10_SIX_FOUR": frozenset({10}),
 }
@@ -153,20 +154,20 @@ def get_valid_family_for_team_count(team_count: int) -> Optional[TemplateFamily]
     Return the valid template family for a given team count, or None if unsupported.
 
     Priority order (most specific first):
-    1. WF_TO_BRACKETS_8 (32 only)
-    2. WF_14_TOP2_BYE (14 only)
-    3. WF_10_SIX_FOUR (10 only)
-    4. WF_TO_POOLS_DYNAMIC (8, 12, 16, 20, 24, 28)
+    1. WF_14_TOP2_BYE (14 only)
+    2. WF_10_SIX_FOUR (10 only)
+    3. WF_TO_POOLS_DYNAMIC (8, 12, 16, 20, 24, 28) — default for 24
+    4. WF_TO_BRACKETS_8 (32, and 24 when explicitly selected)
     5. RR_ONLY (4, 6)
     """
-    if team_count in ALLOWED_TEAM_COUNTS["WF_TO_BRACKETS_8"]:
-        return "WF_TO_BRACKETS_8"
     if team_count in ALLOWED_TEAM_COUNTS["WF_14_TOP2_BYE"]:
         return "WF_14_TOP2_BYE"
     if team_count in ALLOWED_TEAM_COUNTS["WF_10_SIX_FOUR"]:
         return "WF_10_SIX_FOUR"
     if team_count in ALLOWED_TEAM_COUNTS["WF_TO_POOLS_DYNAMIC"]:
         return "WF_TO_POOLS_DYNAMIC"
+    if team_count in ALLOWED_TEAM_COUNTS["WF_TO_BRACKETS_8"]:
+        return "WF_TO_BRACKETS_8"
     if team_count in ALLOWED_TEAM_COUNTS["RR_ONLY"]:
         return "RR_ONLY"
     return None

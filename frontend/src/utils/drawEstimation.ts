@@ -173,10 +173,19 @@ export function calculateMatches(
       };
 
     case 'WF_TO_BRACKETS_8': {
-      // WF_TO_BRACKETS_8: 8, 12, 16, or 32 teams. Brackets of 8.
+      // WF_TO_BRACKETS_8: 8, 12, 16, 24, or 32 teams. Brackets of 8.
+      // 24 teams is three brackets (seeds 1-8, 9-16, 17-24).
       // Bracket per 8-team: G4=9, G5=12
       const bracketCount =
-        teamCount === 8 ? 1 : teamCount === 12 || teamCount === 16 ? 2 : teamCount === 32 ? 4 : 1
+        teamCount === 8
+          ? 1
+          : teamCount === 12 || teamCount === 16
+            ? 2
+            : teamCount === 24
+              ? 3
+              : teamCount === 32
+                ? 4
+                : 1
       const bracketG4 = 9
       const bracketG5 = 12
       const standardFor4 = bracketCount * bracketG4

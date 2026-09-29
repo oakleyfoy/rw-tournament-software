@@ -403,6 +403,9 @@ export function MatchCardsPage() {
                 if (matchCode.includes('_BWL_')) return 'WL'
                 if (matchCode.includes('_BLW_')) return 'LW'
                 if (matchCode.includes('_BLL_')) return 'LL'
+                if (matchCode.includes('_B1_')) return 'B1'
+                if (matchCode.includes('_B2_')) return 'B2'
+                if (matchCode.includes('_B3_')) return 'B3'
                 return null
               }
 
@@ -440,6 +443,9 @@ export function MatchCardsPage() {
                 if (matchCode.includes('_BWL_')) return 'DIV_II_WL'
                 if (matchCode.includes('_BLW_')) return 'DIV_III_LW'
                 if (matchCode.includes('_BLL_')) return 'DIV_IV_LL'
+                if (matchCode.includes('_B1_')) return 'BR_1'
+                if (matchCode.includes('_B2_')) return 'BR_2'
+                if (matchCode.includes('_B3_')) return 'BR_3'
                 return null
               }
 
@@ -544,12 +550,15 @@ export function MatchCardsPage() {
               })
 
               // Render main bracket division sections in order: WW, WL, LW, LL
-              const mainBracketDivisionOrder = ['WW', 'WL', 'LW', 'LL']
+              const mainBracketDivisionOrder = ['WW', 'WL', 'LW', 'LL', 'B1', 'B2', 'B3']
               const mainBracketDivisionLabels: Record<string, string> = {
                 'WW': 'Division I',
                 'WL': 'Division II',
                 'LW': 'Division III',
                 'LL': 'Division IV',
+                'B1': 'Bracket 1',
+                'B2': 'Bracket 2',
+                'B3': 'Bracket 3',
               }
 
               const mainBracketSections = mainBracketDivisionOrder
@@ -565,12 +574,15 @@ export function MatchCardsPage() {
                 })
 
               // Render consolation division sections in order: I (WW), II (WL), III (LW), IV (LL)
-              const divisionOrder = ['DIV_I_WW', 'DIV_II_WL', 'DIV_III_LW', 'DIV_IV_LL']
+              const divisionOrder = ['DIV_I_WW', 'DIV_II_WL', 'DIV_III_LW', 'DIV_IV_LL', 'BR_1', 'BR_2', 'BR_3']
               const divisionLabels: Record<string, string> = {
                 'DIV_I_WW': 'Division I',
                 'DIV_II_WL': 'Division II',
                 'DIV_III_LW': 'Division III',
                 'DIV_IV_LL': 'Division IV',
+                'BR_1': 'Bracket 1',
+                'BR_2': 'Bracket 2',
+                'BR_3': 'Bracket 3',
               }
 
               const divisionSections = divisionOrder

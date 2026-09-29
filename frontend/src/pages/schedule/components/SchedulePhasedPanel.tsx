@@ -229,6 +229,9 @@ const DIVISION_DISPLAY_NAMES: Record<string, string> = {
   WL: 'Division II',
   LW: 'Division III',
   LL: 'Division IV',
+  '1': 'Bracket 1',
+  '2': 'Bracket 2',
+  '3': 'Bracket 3',
 }
 
 /** Get user-facing division name from bracket code. */
@@ -241,7 +244,7 @@ export function divisionDisplayName(code: string): string {
  * Match codes contain B{div}_ patterns, e.g. "WOM_E11_BWW_M1" → "WW"
  */
 function getDivisionCode(match: GridMatch): string {
-  const m = match.match_code.match(/B(WW|WL|LW|LL)[_]/)
+  const m = match.match_code.match(/B(WW|WL|LW|LL|1|2|3)[_]/)
   return m ? m[1] : 'UNK'
 }
 

@@ -716,7 +716,7 @@ def _fill_spare_courts_with_consolation(
     # ── 4. Round dependency — round N needs round N-1 fully assigned ──
     # Group consolation by event + division to check round ordering
     def _cons_round_key(m: Match) -> Tuple[int, str]:
-        div_match = re.search(r"B(WW|WL|LW|LL)[_]", m.match_code or "")
+        div_match = re.search(r"B(WW|WL|LW|LL|1|2|3)[_]", m.match_code or "")
         div = div_match.group(1) if div_match else "XX"
         return (m.event_id, div)
 
@@ -1314,7 +1314,7 @@ def _classify_bracket_matches(
     # Group matches
     groups: Dict[str, List[Match]] = defaultdict(list)
     for m in matches:
-        div_match = re.search(r"B(WW|WL|LW|LL)[_]", m.match_code or "")
+        div_match = re.search(r"B(WW|WL|LW|LL|1|2|3)[_]", m.match_code or "")
         div = div_match.group(1) if div_match else "XX"
         key = f"{m.event_id}|{m.match_type}|{div}"
         groups[key].append(m)

@@ -782,7 +782,15 @@ def public_waterfall(
 
 # ── Public bracket ──────────────────────────────────────────────────────
 
-_CODE_TO_DIV = {"BWW": "Division I", "BWL": "Division II", "BLW": "Division III", "BLL": "Division IV"}
+_CODE_TO_DIV = {
+    "BWW": "Division I",
+    "BWL": "Division II",
+    "BLW": "Division III",
+    "BLL": "Division IV",
+    "B1": "Bracket 1",
+    "B2": "Bracket 2",
+    "B3": "Bracket 3",
+}
 
 _ROUND_LABELS = {1: "Quarterfinal", 2: "Semifinal", 3: "Final"}
 

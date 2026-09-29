@@ -32,12 +32,15 @@ DRAW_TYPE_LABELS = {
     DRAW_TYPE_BRACKET: "Bracket",
 }
 
-BRACKET_DIV_ORDER = ("BWW", "BWL", "BLW", "BLL")
+BRACKET_DIV_ORDER = ("BWW", "BWL", "BLW", "BLL", "B1", "B2", "B3")
 BRACKET_DIV_LABELS = {
     "BWW": "Division I",
     "BWL": "Division II",
     "BLW": "Division III",
     "BLL": "Division IV",
+    "B1": "Bracket 1",
+    "B2": "Bracket 2",
+    "B3": "Bracket 3",
 }
 POOLS_ONLY_TEMPLATES = ("WF_14_TOP2_BYE", "WF_TO_POOLS_DYNAMIC")
 

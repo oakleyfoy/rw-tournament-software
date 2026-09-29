@@ -419,16 +419,16 @@ def _compute_wf_to_pools_dynamic(spec: DrawPlanSpec) -> InventoryCounts:
 def _compute_wf_to_brackets_8(spec: DrawPlanSpec) -> InventoryCounts:
     """
     Compute inventory for WF_TO_BRACKETS_8 family.
-    Supports: 8, 12, 16, 32 teams with waterfall rounds 0-2.
-    Post-WF yields K brackets of 8.
+    Supports: 8, 12, 16, 24, 32 teams with waterfall rounds 0-2.
+    Post-WF yields K brackets of 8. 24 teams is 3 brackets (seeds 1-8, 9-16, 17-24).
     """
     errors: List[str] = []
     n = spec.team_count
     wf_rounds = spec.waterfall_rounds
 
     # V1 supported team counts
-    if n not in (8, 12, 16, 32):
-        errors.append(f"WF_TO_BRACKETS_8 supports team_count in {{8,12,16,32}}, got {n}")
+    if n not in (8, 12, 16, 24, 32):
+        errors.append(f"WF_TO_BRACKETS_8 supports team_count in {{8,12,16,24,32}}, got {n}")
         return InventoryCounts(errors=errors)
 
     # V1 supported WF rounds
@@ -441,6 +441,8 @@ def _compute_wf_to_brackets_8(spec: DrawPlanSpec) -> InventoryCounts:
         k = 1
     elif n in (12, 16):
         k = 2
+    elif n == 24:
+        k = 3
     elif n == 32:
         k = 4
     else:
@@ -1216,7 +1218,9 @@ def _generate_wf_to_brackets_8(
 ) -> Tuple[List, List[str]]:
     """
     Generate matches for WF_TO_BRACKETS_8 family.
-    Supports 8, 12, 16, 32 teams with waterfall rounds 0-2.
+    Supports 8, 12, 16, 24, 32 teams with waterfall rounds 0-2.
+    24 teams: two waterfall rounds, then an overall 1-24 tiebreaker seed
+    into brackets 1-8, 9-16, and 17-24.
     """
     from app.models.match import Match
 
@@ -1225,8 +1229,8 @@ def _generate_wf_to_brackets_8(
     n = spec.team_count
     wf_rounds = spec.waterfall_rounds
 
-    if n not in (8, 12, 16, 32):
-        warnings.append(f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,32}}, got {n}")
+    if n not in (8, 12, 16, 24, 32):
+        warnings.append(f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,24,32}}, got {n}")
         return matches, warnings
 
     # Determine bracket count
@@ -1234,6 +1238,8 @@ def _generate_wf_to_brackets_8(
         bracket_count = 1
     elif n in (12, 16):
         bracket_count = 2
+    elif n == 24:
+        bracket_count = 3
     else:  # 32
         bracket_count = 4
 
@@ -1397,6 +1403,15 @@ def _generate_wf_to_brackets_8(
         For 32-team fields, WW/WL still use ``W01``–``W08`` and LW/LL use ``L01``–``L08``
         (same ordinal slots as the green track; there is no second R2 octet in inventory).
         """
+        if n == 24:
+            from app.utils.wf_seeding import wf24_quarterfinal_seeds
+
+            bracket_index = {"1": 0, "2": 1, "3": 2}.get(bracket_label)
+            if bracket_index is None:
+                raise ValueError(f"Unknown 24-team bracket_label: {bracket_label}")
+            left, right = wf24_quarterfinal_seeds()[bracket_index][qf_sequence - 1]
+            return (f"WFSEED:{left:02d}", f"WFSEED:{right:02d}")
+
         if bracket_label in ("WW", "WL"):
             token_type = "W"
         elif bracket_label in ("LW", "LL"):
@@ -1412,7 +1427,7 @@ def _generate_wf_to_brackets_8(
             f"{event_prefix}_WF_R2_{token_type}{sb:02d}",
         )
 
-    bracket_labels = ["WW", "WL", "LW", "LL"][:bracket_count]
+    bracket_labels = ["1", "2", "3"] if n == 24 else ["WW", "WL", "LW", "LL"][:bracket_count]
     matches_per_bracket = bracket_matches_for_guarantee(spec.guarantee)
 
     # Sort WF2 matches deterministically by sequence_in_round
