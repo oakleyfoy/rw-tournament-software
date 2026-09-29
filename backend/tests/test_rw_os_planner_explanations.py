@@ -89,6 +89,14 @@ def test_g_provisional_cut_becomes_future_team_warning():
     assert any("have not registered" in item["message"] for item in option["warnings"])
 
 
+def test_k_single_24_describes_waterfall_then_three_brackets():
+    teams = [_team(f"{index}/{index + 400}", 9 - index * 0.05, draw="mixed") for index in range(1, 25)]
+    option = analyze_custom_structure(teams, (24,))
+    messages = [item["message"] for item in option["reasons"]]
+    assert any("Seeds 1–8, 9–16, and 17–24" in message for message in messages)
+    assert all("Single bracket" not in message for message in messages)
+
+
 def test_h_recommended_card_has_reasons():
     teams = [SnapshotTeam.from_dict(row) for row in get_fixture_event(244)["teams"]]
     plan = plan_draw("womens", teams)

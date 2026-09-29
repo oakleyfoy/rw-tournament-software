@@ -220,9 +220,10 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
             status_code=422, detail=f"WF_TO_POOLS_4 requires team_count divisible by 4, got {event.team_count}"
         )
 
-    if template_type == "WF_TO_BRACKETS_8" and event.team_count not in [8, 12, 16, 32]:
+    if template_type == "WF_TO_BRACKETS_8" and event.team_count not in (8, 12, 16, 24, 32):
         raise HTTPException(
-            status_code=422, detail=f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,32}}, got {event.team_count}"
+            status_code=422,
+            detail=f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,24,32}}, got {event.team_count}",
         )
 
     # Ensure draw_plan_json is persisted (full replace, not partial)
