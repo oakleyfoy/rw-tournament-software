@@ -156,7 +156,7 @@ def test_h_live_network_failure_is_502_without_fixtures(clean_rw_os_env, monkeyp
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(RwOsClientError, match=REQUEST_FAILED_ERROR) as exc:
         RwOsClient().list_events()
-    assert exc.value.status_code == 502
+    assert exc.value.status_code == 424
 
 
 def test_i_live_malformed_json_is_controlled_502(clean_rw_os_env, monkeypatch):
@@ -171,7 +171,7 @@ def test_i_live_malformed_json_is_controlled_502(clean_rw_os_env, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(RwOsClientError, match=INVALID_RESPONSE_ERROR) as exc:
         RwOsClient().list_events()
-    assert exc.value.status_code == 502
+    assert exc.value.status_code == 424
     assert "not json" not in str(exc.value)
     assert "test-key" not in str(exc.value)
 

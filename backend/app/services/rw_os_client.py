@@ -23,7 +23,7 @@ _FALSY = frozenset({"0", "false", "no"})
 
 
 class RwOsClientError(Exception):
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 424):
         super().__init__(message)
         self.status_code = status_code
 
@@ -141,15 +141,20 @@ class RwOsClient:
             with urllib.request.urlopen(request, timeout=LIVE_REQUEST_TIMEOUT_SECONDS) as response:
                 raw_bytes = response.read()
         except urllib.error.HTTPError as exc:
-            raise RwOsClientError(f"RW-OS request failed ({exc.code}).", exc.code) from exc
+            # Gateway statuses are replaced by HTML error pages in front of this app,
+            # which hides the JSON detail. Surface upstream 5xx as 424 instead.
+            status = exc.code if isinstance(exc.code, int) else 424
+            if status >= 500:
+                raise RwOsClientError(f"RW-OS request failed ({status}).", 424) from exc
+            raise RwOsClientError(f"RW-OS request failed ({status}).", status) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise RwOsClientError(REQUEST_FAILED_ERROR, 502) from exc
+            raise RwOsClientError(REQUEST_FAILED_ERROR, 424) from exc
         try:
             body = json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise RwOsClientError(INVALID_RESPONSE_ERROR, 502) from exc
+            raise RwOsClientError(INVALID_RESPONSE_ERROR, 424) from exc
         if isinstance(body, dict) and body.get("success") is True and "data" in body:
             return body["data"]
         if isinstance(body, dict):
             return body
-        raise RwOsClientError(INVALID_RESPONSE_ERROR, 502)
+        raise RwOsClientError(INVALID_RESPONSE_ERROR, 424)

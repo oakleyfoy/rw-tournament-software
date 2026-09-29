@@ -150,10 +150,14 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const hasBody = options?.body != null
   let headers: HeadersInit = hasBody
     ? {
+        Accept: 'application/json',
         'Content-Type': 'application/json',
         ...options?.headers,
       }
-    : { ...options?.headers }
+    : {
+        Accept: 'application/json',
+        ...options?.headers,
+      }
   if (token && !isPublicRoute && !isAuthLogin && !isAuthBootstrap) {
     headers = {
       ...headers,
@@ -211,7 +215,9 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
         errorMessage = error.message;
       }
     } catch {
-      // If JSON parsing fails, use default message
+      if (response.status === 502 || response.status === 504) {
+        errorMessage = `The server did not return a response (${response.status}). The request may have timed out.`
+      }
     }
     if (response.status === 500) {
       if (errorDetail?.detail && typeof errorDetail.detail === 'string') {
