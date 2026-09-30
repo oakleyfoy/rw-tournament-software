@@ -26,6 +26,11 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.services.assignment_ownership import try_create_owned_assignment
+from app.services.court_assignment_mode import (
+    note_preassigned_reservation,
+    preassigned_court_block_reason,
+    preassigned_reservations,
+)
 
 # ============================================================================
 # Stage Precedence (matches must be processed in this order)
@@ -476,6 +481,7 @@ def auto_assign_with_rest(
 
     # Track which slots are occupied
     occupied_slot_ids: Set[int] = set()
+    court_reservations = preassigned_reservations(session, schedule_version_id)
 
     # Team busy intervals for overlap constraint: team_id -> list of (start_dt, end_dt)
     team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
@@ -617,6 +623,9 @@ def auto_assign_with_rest(
             if slot.id in occupied_slot_ids:
                 reject_counts["slot_already_taken"] += 1
                 continue
+            if preassigned_court_block_reason(slot, court_reservations, ignore_match_id=match.id):
+                reject_counts["slot_already_taken"] += 1
+                continue
 
             # Check duration compatibility
             if slot.block_minutes < match.duration_minutes:
@@ -726,6 +735,7 @@ def auto_assign_with_rest(
                 assigned = False
                 continue
             occupied_slot_ids.add(slot.id)
+            note_preassigned_reservation(court_reservations, session, match, slot)
             assigned = True
             assigned_count += 1
 

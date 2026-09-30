@@ -35,6 +35,8 @@ class Event(SQLModel, table=True):
     standard_block_minutes: int = Field(default=120)
     guarantee_selected: Optional[int] = Field(default=None)
     schedule_profile_json: Optional[str] = Field(default=None)
+    # {"YYYY-MM-DD": "PREASSIGNED"|"DYNAMIC_CHECKIN"}. Missing dates stay DYNAMIC_CHECKIN.
+    court_assignment_by_date_json: Optional[str] = Field(default=None)
 
     # Relationships
     tournament: "Tournament" = Relationship(back_populates="events")

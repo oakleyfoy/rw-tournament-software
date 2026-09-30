@@ -613,8 +613,13 @@ def _try_move_prerequisite_earlier(
     occupied_slot_ids = {a.slot_id for a in existing_assignments}
 
     # Find earliest compatible slot
+    from app.services.court_assignment_mode import preassigned_court_block_reason, preassigned_reservations
+
+    court_reservations = preassigned_reservations(session, schedule_version_id)
     for slot in sorted(earlier_slots, key=lambda s: (s.start_time, s.court_number)):
         if slot.id in occupied_slot_ids:
+            continue
+        if preassigned_court_block_reason(slot, court_reservations, ignore_match_id=prerequisite_match.id):
             continue
 
         # Check if slot is compatible (court type, etc.)

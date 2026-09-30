@@ -15,6 +15,7 @@ REQUIRED_EVENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("standard_block_minutes", "INTEGER", "INTEGER"),
     ("guarantee_selected", "INTEGER", "INTEGER"),
     ("schedule_profile_json", "TEXT", "TEXT"),
+    ("court_assignment_by_date_json", "TEXT", "TEXT"),
 ]
 
 # Columns we must ensure exist in the "tournament" table.

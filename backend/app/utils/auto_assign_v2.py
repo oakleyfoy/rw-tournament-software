@@ -20,7 +20,7 @@ Key differences from V1:
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from sqlmodel import Session, select
 
@@ -29,6 +29,11 @@ from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.services.assignment_ownership import try_create_owned_assignment
+from app.services.court_assignment_mode import (
+    note_preassigned_reservation,
+    preassigned_court_block_reason,
+    preassigned_reservations,
+)
 
 # Import V1 utilities that we reuse
 from app.utils.auto_assign import (
@@ -186,6 +191,7 @@ def is_slot_compatible_v2(
     team_tracker: TeamAssignmentTracker,
     min_rest_minutes: int = DEFAULT_MIN_REST_MINUTES,
     require_court_type_match: bool = False,
+    reservations: Optional[Sequence[Tuple[Match, ScheduleSlot]]] = None,
 ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """
     V2 compatibility check with enhanced constraints.
@@ -204,6 +210,9 @@ def is_slot_compatible_v2(
     # V1 checks first
     if slot.id in occupied_slot_ids:
         return False, CONFLICT_SLOT_OCCUPIED, {"slot_id": slot.id}
+
+    if reservations and preassigned_court_block_reason(slot, reservations, ignore_match_id=match.id):
+        return False, "PREASSIGNED_COURT_RESERVED", {"slot_id": slot.id}
 
     if slot.is_manual_only:
         return False, "MANUAL_ONLY_SLOT", {"slot_id": slot.id}
@@ -416,6 +425,7 @@ def auto_assign_v2(
     ).all()
 
     occupied_slot_ids = {a.slot_id for a in existing_assignments}
+    court_reservations = preassigned_reservations(session, schedule_version_id)
 
     # Manual Schedule Editor: Track locked assignments
     # Locked matches should NOT be reassigned by auto-assign (admin overrides)
@@ -454,7 +464,13 @@ def auto_assign_v2(
         # Scan slots in deterministic order (same as V1)
         for slot in slots_sorted:
             compatible, reason, details = is_slot_compatible_v2(
-                slot, match, occupied_slot_ids, team_tracker, min_rest_minutes, require_court_type_match
+                slot,
+                match,
+                occupied_slot_ids,
+                team_tracker,
+                min_rest_minutes,
+                require_court_type_match,
+                reservations=court_reservations,
             )
 
             if compatible:
@@ -487,6 +503,7 @@ def auto_assign_v2(
 
                 # Mark slot as occupied
                 occupied_slot_ids.add(slot.id)
+                note_preassigned_reservation(court_reservations, session, match, slot)
                 assigned_match_ids.add(match.id)
 
                 # Update team tracker

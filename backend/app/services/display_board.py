@@ -30,6 +30,7 @@ from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
+from app.services.court_assignment_mode import is_preassigned
 
 DESK_DRAFT_TAG = "Desk Draft"
 UPCOMING_WINDOW_HOURS = 12
@@ -494,12 +495,15 @@ def build_display_board(
 
         is_playing = runtime in PLAYING_STATUSES
         both_checked = team_a_checked and team_b_checked
+        preassigned = is_preassigned(event, slot.day_date)
         if is_playing:
             board_section = "currently_playing"
-        elif both_checked:
+        elif both_checked and not preassigned:
             board_section = "waiting_for_court"
         else:
             board_section = "upcoming"
+
+        show_scheduled_court = is_playing or preassigned
 
         in_next_12_hours = (not is_playing) and (now_local_dt <= scheduled_dt < window_end)
 
@@ -522,7 +526,7 @@ def build_display_board(
             team_b_has_tbd=team_b_has_tbd,
             board_section=board_section,
             in_next_12_hours=in_next_12_hours,
-            court=court_display(slot) if is_playing else None,
+            court=court_display(slot) if show_scheduled_court else None,
         )
 
         if board_section == "currently_playing":
@@ -533,7 +537,7 @@ def build_display_board(
             upcoming.append(item)
 
         if in_next_12_hours:
-            upcoming_copy = DisplayMatchData(**{**item.__dict__, "court": None})
+            upcoming_copy = DisplayMatchData(**item.__dict__)
             upcoming_12h.append(upcoming_copy)
 
     currently_playing.sort(key=_playing_sort_key)
@@ -602,13 +606,13 @@ def snapshot_to_public_dict(snapshot: DisplayBoardSnapshot) -> Dict[str, Any]:
         "now_local": snapshot.now_local,
         "currently_playing": [match_dict(item, True) for item in snapshot.currently_playing],
         "waiting_for_court": [match_dict(item, False) for item in snapshot.waiting_for_court],
-        "upcoming": [match_dict(item, False) for item in snapshot.upcoming],
-        "upcoming_12h": [match_dict(item, False) for item in snapshot.upcoming_12h],
+        "upcoming": [match_dict(item, bool(item.court)) for item in snapshot.upcoming],
+        "upcoming_12h": [match_dict(item, bool(item.court)) for item in snapshot.upcoming_12h],
         "upcoming_12h_groups": [
             {
                 "scheduled_time": group.scheduled_time,
                 "sort_time": group.sort_time,
-                "matches": [match_dict(item, False) for item in group.matches],
+                "matches": [match_dict(item, bool(item.court)) for item in group.matches],
             }
             for group in snapshot.upcoming_12h_groups
         ],

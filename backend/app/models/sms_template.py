@@ -44,5 +44,5 @@ DEFAULT_SMS_TEMPLATES = {
     "checkin_post_match_next": (
         "{team_name}: Your next match is {date} at {time}. Please check in at the desk for your next match."
     ),
-    "checkin_court_assigned": ("{team_name}: Court assigned. Please go to your court."),
+    "checkin_court_assigned": ("{team_name}: Court assigned. Please go to {court}."),
 }

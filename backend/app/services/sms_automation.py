@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from sqlmodel import Session, select
 
 from app.database import engine
+from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
@@ -20,6 +21,7 @@ from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.services.court_assignment_mode import is_preassigned
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +163,11 @@ class SmsAutomationEngine:
     ) -> None:
         """Run auto_court_change when a match's slot changes."""
         if self._is_checkin_management():
-            return
+            new_slot_for_mode = self._slot_by_id(new_slot_id) if new_slot_id else None
+            event = self.session.get(Event, match.event_id) if match.event_id else None
+            day = new_slot_for_mode.day_date if new_slot_for_mode else None
+            if not is_preassigned(event, day):
+                return
         if not self._is_enabled("auto_court_change", default=True):
             return
         if not previous_slot_id or not new_slot_id:
@@ -659,6 +665,7 @@ class SmsAutomationEngine:
         active, template_body = self._template_for(message_type)
         if not active:
             return None
+        template_body = self._preassigned_court_template(message_type, match, slot, template_body)
 
         message = self._render_template_message(
             team=team,
@@ -707,17 +714,27 @@ class SmsAutomationEngine:
     ) -> str:
         from app.routes.sms import _normalize_sms_message, _render_template
 
+        court = self._visible_court_label(match, slot)
+        body = template_body
+        if court and "{court}" not in body:
+            if "{time}" in body:
+                body = body.replace("{time}", "{time} on {court}", 1)
+            else:
+                body = f"{body.rstrip()} on {{court}}"
         message = _render_template(
-            template_body,
+            body,
             tournament_name=self.tournament.name,
             team_name=self._team_label(team),
             date=self._format_date(slot.day_date) if slot else None,
             time=self._format_time(slot.start_time) if slot else None,
-            court=self._format_court(slot) if slot else None,
+            court=court,
             match_code=match.match_code if match else None,
             opponent=opponent,
             day_number=self._day_number(slot.day_date) if slot else None,
         )
+        if court is None:
+            message = message.replace("{court}", "")
+            message = message.replace(" on .", ".").replace(" on !", "!")
         if match and match.match_code:
             suffix = f"({match.match_code})"
             trimmed = message.rstrip()
@@ -963,6 +980,7 @@ class SmsAutomationEngine:
                     "disabled_reason": "template_inactive",
                     "jobs": [],
                 }
+            template_body = self._preassigned_court_template(message_type, next_match, next_slot, template_body)
             jobs.append(
                 {
                     "team": team,
@@ -1263,6 +1281,47 @@ class SmsAutomationEngine:
         if coerced == time(23, 59) and not isinstance(start_time, (str, datetime, time)):
             return ""
         return coerced.strftime("%I:%M %p").lstrip("0")
+
+    def _preassigned_court_template(
+        self,
+        message_type: str,
+        match: Optional[Match],
+        slot: Optional[ScheduleSlot],
+        template_body: str,
+    ) -> str:
+        """Use the court-bearing wording when this match already has its court."""
+        if match is None or slot is None:
+            return template_body
+        event = self.session.get(Event, match.event_id) if match.event_id else None
+        if not is_preassigned(event, slot.day_date):
+            return template_body
+        replacement = {
+            "checkin_post_match_next": "post_match_next",
+            "checkin_first_match": "first_match",
+            "checkin_rr_first_match": "rr_first_match",
+        }.get(message_type)
+        if replacement is None:
+            return template_body
+        _active, court_body = self._template_for(replacement)
+        return court_body or template_body
+
+    def _visible_court_label(self, match: Optional[Match], slot: Optional[ScheduleSlot]) -> Optional[str]:
+        """Court text that is safe to put in a player message.
+
+        Preassigned matches always use the scheduled court. Dynamic check-in
+        matches omit the scheduled slot court until the desk assigns one.
+        Court-management tournaments keep the previous scheduled-court text.
+        """
+        if slot is None:
+            return None
+        event = self.session.get(Event, match.event_id) if match is not None and match.event_id else None
+        if is_preassigned(event, slot.day_date):
+            return self._format_court(slot)
+        if self._is_checkin_management():
+            assignment = self._assignment_for_match(match.id) if match is not None and match.id is not None else None
+            if assignment is None or (assignment.assigned_by or "").upper() != "CHECKIN_DESK":
+                return None
+        return self._format_court(slot)
 
     @staticmethod
     def _format_court(slot: ScheduleSlot) -> str:

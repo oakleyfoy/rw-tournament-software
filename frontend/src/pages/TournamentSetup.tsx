@@ -30,6 +30,7 @@ import {
   ScheduleVersion,
 } from '../api/client'
 import { showToast } from '../utils/toast'
+import CourtAssignmentModesCard from './setup/CourtAssignmentModesCard'
 import { confirmDialog } from '../utils/confirm'
 import { minutesToHours, timeTo12Hour } from '../utils/timeFormat'
 import { CAPACITY_SOURCE_HELP } from '../constants/capacitySourceHelp'
@@ -1927,6 +1928,8 @@ function TournamentSetup() {
           </table>
         </div>
       )}
+
+      {!isNew && tournament.id && <CourtAssignmentModesCard tournamentId={tournament.id} />}
 
       {/* Section 4: Phase 1 Status */}
       {!isNew && tournament.id && phase1Status && (

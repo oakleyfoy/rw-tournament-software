@@ -57,7 +57,6 @@ export const sampleBoard: DisplayBoardResponse = {
       match_id: 13,
       team_a_checked_in: true,
       team_b_checked_in: false,
-      court: 'Court 4',
     }),
   ],
   upcoming_12h: [

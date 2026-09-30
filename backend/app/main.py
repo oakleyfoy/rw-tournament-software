@@ -29,6 +29,7 @@ from app.db_schema_patch import (
 from app.routes import (
     auth,
     avoid_edges,
+    court_assignment,
     debug,
     desk,
     display_board,
@@ -156,6 +157,7 @@ _protected_deps = [Depends(require_authenticated_user)]
 app.include_router(tournaments.router, prefix="/api", tags=["tournaments"], dependencies=_protected_deps)
 app.include_router(tournament_days.router, prefix="/api", tags=["tournament_days"], dependencies=_protected_deps)
 app.include_router(events.router, prefix="/api", tags=["events"], dependencies=_protected_deps)
+app.include_router(court_assignment.router, prefix="/api", tags=["court-assignment"], dependencies=_protected_deps)
 app.include_router(phase1_status.router, prefix="/api", tags=["phase1"], dependencies=_protected_deps)
 app.include_router(debug.router, prefix="/api", tags=["debug"], dependencies=_protected_deps)
 app.include_router(draw_builder.router, prefix="/api", tags=["draw-builder"], dependencies=_protected_deps)

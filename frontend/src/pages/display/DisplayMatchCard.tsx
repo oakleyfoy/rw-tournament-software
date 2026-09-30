@@ -9,7 +9,7 @@ export function DisplayMatchCard({
   match: DisplayMatch
   variant: CardVariant
 }) {
-  const showCourt = variant === 'playing'
+  const showCourt = variant === 'playing' || ((variant === 'upcoming' || variant === 'upcoming12') && Boolean(match.court))
   const showCheckin = variant === 'upcoming' || variant === 'waiting'
   const cardClass =
     variant === 'playing'

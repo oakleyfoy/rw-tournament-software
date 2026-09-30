@@ -38,6 +38,12 @@ from app.services.assignment_ownership import (
     create_owned_assignment,
     validate_assignment_ownership,
 )
+from app.services.court_assignment_mode import (
+    is_preassigned,
+    preassigned_court_block_reason,
+    preassigned_reservations,
+    resolve_court_assignment_mode,
+)
 from app.services.reschedule_engine import (
     RebuildDayConfig as RebuildDayConfigDC,
 )
@@ -474,6 +480,7 @@ class DeskMatchItem(BaseModel):
     scheduled_time: Optional[str] = None
     sort_time: Optional[str] = None
     court_name: Optional[str] = None
+    court_assignment_mode: str = "DYNAMIC_CHECKIN"
     status: str
     team1_id: Optional[int] = None
     team1_display: str
@@ -1334,6 +1341,12 @@ def _build_checkin_snapshot(
         status = (m.runtime_status or "SCHEDULED").upper()
         if status in ("IN_PROGRESS", "PAUSED", "FINAL"):
             continue
+        ready_slot = slot_map.get(cm.slot_id) if cm.slot_id is not None else None
+        ready_event = event_map.get(m.event_id)
+        if ready_slot is not None and is_preassigned(ready_event, ready_slot.day_date):
+            # Preassigned matches already have a court. Check-in does not put them
+            # in the dynamic ready-for-court queue.
+            continue
         ready_items.append(
             ReadyQueueItem(
                 match_id=cm.match_id,
@@ -1451,6 +1464,7 @@ def _build_checkin_snapshot(
     checkin_board_court_set = set(checkin_board_courts)
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
+    reserved_slots = preassigned_reservations(session, version.id)
 
     def _append_available_slot(slot: ScheduleSlot) -> None:
         court_name = court_display_for_slot(slot)
@@ -1459,6 +1473,8 @@ def _build_checkin_snapshot(
         if court_name not in checkin_board_court_set:
             return
         if court_name in active_courts or court_name in closed_courts:
+            return
+        if preassigned_court_block_reason(slot, reserved_slots):
             return
         a = assignment_by_slot.get(slot.id)
         # Pre-assigned future matches should not block immediate assignment.
@@ -1683,6 +1699,7 @@ def _build_match_items(
 
         a = assignment_map.get(m.id)
         slot = slot_map.get(a.slot_id) if a else None
+        court_mode = resolve_court_assignment_mode(ev, slot.day_date if slot else None)
 
         if slot:
             day_offset = (slot.day_date - tournament.start_date).days + 1
@@ -1704,10 +1721,12 @@ def _build_match_items(
 
             court_name = court_display_for_slot(slot)
             # In check-in mode, hide pre-assigned scheduled matches unless explicitly
-            # assigned at runtime through check-in queue flow.
+            # assigned at runtime through check-in queue flow. Preassigned dates keep
+            # the scheduled court without entering that queue.
             status = (m.runtime_status or "SCHEDULED").upper()
             preassigned_hidden = (
                 management_mode == MODE_CHECKIN_MANAGEMENT
+                and court_mode != "PREASSIGNED"
                 and status == "SCHEDULED"
                 and (a is not None and (a.assigned_by or "").upper() != "CHECKIN_DESK")
             )
@@ -1746,6 +1765,7 @@ def _build_match_items(
                 scheduled_time=scheduled_time,
                 sort_time=sort_time,
                 court_name=court_name,
+                court_assignment_mode=court_mode,
                 status=status,
                 team1_id=m.team_a_id,
                 team1_display=_team_display(m.team_a_id, m.placeholder_side_a, team_map),
@@ -2641,6 +2661,19 @@ def assign_ready_match_to_slot(
     target_slot = session.get(ScheduleSlot, payload.slot_id)
     if not target_slot or target_slot.schedule_version_id != payload.version_id:
         raise HTTPException(status_code=404, detail="Target slot not found")
+    match_event = session.get(Event, match.event_id)
+    if is_preassigned(match_event, target_slot.day_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Preassigned matches keep their scheduled court and are not assigned from the check-in queue.",
+        )
+    reserved_reason = preassigned_court_block_reason(
+        target_slot,
+        preassigned_reservations(session, payload.version_id),
+        ignore_match_id=payload.match_id,
+    )
+    if reserved_reason:
+        raise HTTPException(status_code=409, detail=reserved_reason)
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
     (
@@ -2671,6 +2704,11 @@ def assign_ready_match_to_slot(
         select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == payload.version_id)
     ).all()
     match_slot = session.get(ScheduleSlot, selected_assignment.slot_id)
+    if match_slot is not None and is_preassigned(match_event, match_slot.day_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Preassigned matches keep their scheduled court and are not assigned from the check-in queue.",
+        )
     slot_ids = {s.slot_id for s in available_slots}
     effective_slot_id = payload.slot_id
     target_court_name = court_display_for_slot(target_slot)
@@ -2729,6 +2767,14 @@ def assign_ready_match_to_slot(
     except CourtSlotUnavailableError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    overlap_reason = preassigned_court_block_reason(
+        target_slot,
+        preassigned_reservations(session, payload.version_id),
+        ignore_match_id=payload.match_id,
+    )
+    if overlap_reason:
+        raise HTTPException(status_code=409, detail=overlap_reason)
+
     target_assignment = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == payload.version_id,
@@ -2744,6 +2790,19 @@ def assign_ready_match_to_slot(
             raise HTTPException(
                 status_code=409,
                 detail="That court already has an active match in progress; cannot assign here.",
+            )
+        occupant_slot = session.get(ScheduleSlot, target_assignment.slot_id)
+        occupant_event = session.get(Event, occupant_match.event_id) if occupant_match else None
+        occupant_still_reserved = (
+            occupant_match is not None
+            and occupant_slot is not None
+            and (occupant_match.runtime_status or "").upper() != "FINAL"
+            and is_preassigned(occupant_event, occupant_slot.day_date)
+        )
+        if occupant_still_reserved:
+            raise HTTPException(
+                status_code=409,
+                detail="That court is reserved for a preassigned match.",
             )
         # In check-in mode, chosen courts may still carry preplanned assignments.
         # Park the occupant into any currently unoccupied slot so this court can
