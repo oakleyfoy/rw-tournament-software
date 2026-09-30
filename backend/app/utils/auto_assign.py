@@ -17,7 +17,7 @@ Non-goals (V1):
 import re
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlmodel import Session, select
 
@@ -26,6 +26,11 @@ from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.services.assignment_ownership import try_create_owned_assignment
+from app.services.court_assignment_mode import (
+    note_preassigned_reservation,
+    preassigned_court_block_reason,
+    preassigned_reservations,
+)
 
 # Stage precedence mapping (hard-coded, authoritative)
 # WF=1, RR=2 (pools), MAIN=3 (brackets), CONSOLATION=4, PLACEMENT=5
@@ -157,6 +162,7 @@ def is_slot_compatible(
     occupied_slot_ids: set,
     *,
     allow_manual_only: bool = False,
+    reservations: Optional[Sequence[Tuple[Match, ScheduleSlot]]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Check if a slot is compatible for a match.
@@ -167,10 +173,14 @@ def is_slot_compatible(
     1. Slot is unassigned (not in occupied_slot_ids)
     2. Slot duration >= match duration
     3. Same schedule_version_id (already validated in validate_inputs)
+    4. Slot does not overlap a preassigned court reservation
     """
     # Check if slot is already occupied
     if slot.id in occupied_slot_ids:
         return False, "SLOT_OCCUPIED"
+
+    if reservations and preassigned_court_block_reason(slot, reservations, ignore_match_id=match.id):
+        return False, "PREASSIGNED_COURT_RESERVED"
 
     if slot.is_manual_only and not allow_manual_only:
         return False, "MANUAL_ONLY_SLOT"
@@ -516,6 +526,7 @@ def auto_assign_v1(session: Session, schedule_version_id: int, clear_existing: b
     ).all()
 
     occupied_slot_ids = {a.slot_id for a in existing_assignments}
+    court_reservations = preassigned_reservations(session, schedule_version_id)
 
     # Build bracket-tier cache for MAIN/CONSOLATION dependency checks
     bt_cache = _build_bracket_tier_cache(matches_sorted)
@@ -530,7 +541,7 @@ def auto_assign_v1(session: Session, schedule_version_id: int, clear_existing: b
 
         # Scan slots in order
         for slot in slots_sorted:
-            compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids)
+            compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids, reservations=court_reservations)
 
             if compatible:
                 # Check round dependencies
@@ -565,6 +576,7 @@ def auto_assign_v1(session: Session, schedule_version_id: int, clear_existing: b
                 # Mark slot as occupied
                 occupied_slot_ids.add(slot.id)
                 assigned_match_ids.add(match.id)
+                note_preassigned_reservation(court_reservations, session, match, slot)
 
                 # Track for reporting
                 result.assigned_count += 1
@@ -736,6 +748,7 @@ def assign_with_scope(
             select(MatchAssignment).where(MatchAssignment.schedule_version_id == schedule_version_id)
         ).all()
     }
+    court_reservations = preassigned_reservations(session, schedule_version_id)
 
     # Build bracket-tier cache
     all_ver_matches = session.exec(select(Match).where(Match.schedule_version_id == schedule_version_id)).all()
@@ -748,7 +761,7 @@ def assign_with_scope(
         assigned = False
         failure_reason = "NO_COMPATIBLE_SLOT"
         for slot in slots_sorted:
-            compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids)
+            compatible, reason = is_slot_compatible(slot, match, occupied_slot_ids, reservations=court_reservations)
             if compatible:
                 round_deps_ok, round_deps_reason = check_round_dependencies_for_auto_assign(
                     session,
@@ -778,6 +791,7 @@ def assign_with_scope(
                     continue
                 occupied_slot_ids.add(slot.id)
                 assigned_match_ids.add(match.id)
+                note_preassigned_reservation(court_reservations, session, match, slot)
                 result.assigned_count += 1
                 if len(result.assigned_examples) < 10:
                     result.assigned_examples.append(
@@ -915,6 +929,7 @@ def assign_by_match_ids(
 
     validate_inputs(to_assign, slots_sorted, schedule_version_id)
     occupied_slot_ids = {a.slot_id for a in existing_assignments}
+    court_reservations = preassigned_reservations(session, schedule_version_id)
     local_assigned_ids = set(assigned_match_ids_set)
 
     # Build bracket-tier cache from ALL version matches (not just this batch)
@@ -926,7 +941,11 @@ def assign_by_match_ids(
         failure_reason = "NO_COMPATIBLE_SLOT"
         for slot in slots_sorted:
             compatible, reason = is_slot_compatible(
-                slot, match, occupied_slot_ids, allow_manual_only=allow_manual_only_slots
+                slot,
+                match,
+                occupied_slot_ids,
+                allow_manual_only=allow_manual_only_slots,
+                reservations=court_reservations,
             )
             if compatible:
                 round_deps_ok, round_deps_reason = check_round_dependencies_for_auto_assign(
@@ -957,6 +976,7 @@ def assign_by_match_ids(
                     continue
                 occupied_slot_ids.add(slot.id)
                 local_assigned_ids.add(match.id)
+                note_preassigned_reservation(court_reservations, session, match, slot)
                 result.assigned_count += 1
                 if len(result.assigned_examples) < 10:
                     result.assigned_examples.append(

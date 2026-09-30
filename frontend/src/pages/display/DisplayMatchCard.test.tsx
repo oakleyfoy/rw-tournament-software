@@ -23,14 +23,16 @@ describe('DisplayMatchCard', () => {
     expect(screen.queryByText('Helen Robinson')).not.toBeInTheDocument()
   })
 
-  it('does not show court on waiting or upcoming cards even if court is present', () => {
+  it('shows a preassigned court on upcoming cards and hides court on the waiting queue', () => {
     const waiting = makeMatch({ match_id: 2, court: 'Court 3', team_a_checked_in: true, team_b_checked_in: true })
     const { rerender } = render(<DisplayMatchCard match={waiting} variant="waiting" />)
     expect(screen.queryByText('Court 3')).not.toBeInTheDocument()
     rerender(<DisplayMatchCard match={waiting} variant="upcoming" />)
+    expect(screen.getByText('Court 3')).toBeInTheDocument()
+    rerender(<DisplayMatchCard match={makeMatch({ match_id: 3 })} variant="upcoming" />)
     expect(screen.queryByText('Court 3')).not.toBeInTheDocument()
     rerender(<DisplayMatchCard match={waiting} variant="upcoming12" />)
-    expect(screen.queryByText('Court 3')).not.toBeInTheDocument()
+    expect(screen.getByText('Court 3')).toBeInTheDocument()
   })
 
   it('highlights a checked-in team on upcoming cards', () => {
@@ -93,14 +95,14 @@ describe('DisplayMatchCard', () => {
     }
   })
 
-  it('shows only time, names, and vs on upcoming cards', () => {
-    render(<DisplayMatchCard match={makeMatch({ court: 'Court 4' })} variant="upcoming" />)
+  it('shows only time, names, and vs on upcoming cards without a court', () => {
+    render(<DisplayMatchCard match={makeMatch()} variant="upcoming" />)
     const card = screen.getByTestId('display-match-1')
     expect(card).toHaveTextContent('3:30 PM')
     expect(card).toHaveTextContent('Helen / Simone')
     expect(card).toHaveTextContent('vs')
     expect(card).toHaveTextContent('Amy / Terry')
-    expect(card).not.toHaveTextContent('Court 4')
+    expect(card).not.toHaveTextContent('Court')
     expect(card).not.toHaveTextContent("Women's B")
     expect(card).not.toHaveTextContent('WF R1')
   })

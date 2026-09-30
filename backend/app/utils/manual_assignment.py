@@ -19,6 +19,8 @@ from typing import Optional, Tuple
 
 from sqlmodel import Session, select
 
+# Import stage precedence from auto_assign
+from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
@@ -28,8 +30,11 @@ from app.services.assignment_ownership import (
     create_owned_assignment,
     validate_assignment_ownership,
 )
-
-# Import stage precedence from auto_assign
+from app.services.court_assignment_mode import (
+    is_preassigned,
+    preassigned_court_block_reason,
+    preassigned_reservations,
+)
 from app.utils.auto_assign import STAGE_PRECEDENCE
 
 
@@ -393,6 +398,15 @@ def validate_manual_reassignment(
     if not available:
         return False, reason
 
+    # 4a. Preassigned reservations use the same half-open slot window as auto-assign.
+    reserved_reason = preassigned_court_block_reason(
+        slot,
+        preassigned_reservations(session, schedule_version_id),
+        ignore_match_id=match_id,
+    )
+    if reserved_reason:
+        return False, reserved_reason
+
     # 4b. Check for overlaps with other matches on the same court and day
 
     # Get all assignments on the same court, same day, same version
@@ -415,6 +429,10 @@ def validate_manual_reassignment(
         existing_match = session.get(Match, existing_assignment.match_id)
 
         if existing_slot and existing_match:
+            if (existing_match.runtime_status or "SCHEDULED").upper() == "FINAL":
+                existing_event = session.get(Event, existing_match.event_id) if existing_match.event_id else None
+                if is_preassigned(existing_event, existing_slot.day_date):
+                    continue
             existing_start_minutes = existing_slot.start_time.hour * 60 + existing_slot.start_time.minute
             existing_end_minutes = existing_start_minutes + existing_match.duration_minutes
 

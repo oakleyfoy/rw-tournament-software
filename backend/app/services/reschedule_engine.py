@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import case
@@ -26,6 +27,11 @@ from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.tournament import Tournament
 from app.services.assignment_ownership import create_owned_assignment, validate_assignment_ownership
+from app.services.court_assignment_mode import (
+    note_preassigned_reservation,
+    preassigned_court_block_reason,
+    preassigned_reservations,
+)
 from app.utils.courts import court_label_for_index
 
 DAILY_CAP = 2
@@ -492,6 +498,7 @@ def compute_reschedule(
 
     # Auto-assign affected matches to available slots
     occupied_new: Set[int] = set()
+    court_reservations = preassigned_reservations(session, params.version_id)
     proposed_moves: List[ProposedMove] = []
     unplaceable: List[UnplaceableMatch] = []
 
@@ -510,6 +517,8 @@ def compute_reschedule(
         placed = False
         for slot in available_slots:
             if slot.id in occupied_new:
+                continue
+            if preassigned_court_block_reason(slot, court_reservations, ignore_match_id=m.id):
                 continue
 
             if slot.block_minutes < m.duration_minutes:
@@ -562,6 +571,7 @@ def compute_reschedule(
 
             # Place match here
             occupied_new.add(slot.id)
+            note_preassigned_reservation(court_reservations, session, m, slot)
             placed_end_times[m.id] = slot_end
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
@@ -1051,6 +1061,7 @@ def compute_rebuild_preview(
 
     # Simulate first-fit placement
     occupied: Set[int] = set()  # index into sim_slots
+    court_reservations = preassigned_reservations(session, version_id)
     match_day_assignments: Dict[int, Tuple[str, str]] = {}  # match_id -> (day_str, time_str)
     unplaceable_count = 0
     day1_date = day_configs[0].day_date if day_configs else None
@@ -1062,6 +1073,17 @@ def compute_rebuild_preview(
         placed = False
         for idx, slot in enumerate(sim_slots):
             if idx in occupied:
+                continue
+            simulated = SimpleNamespace(
+                id=None,
+                day_date=slot["day_date"],
+                court_number=slot["court_number"],
+                court_label=None,
+                start_time=slot["start_time"],
+                end_time=slot["end_time"],
+                block_minutes=slot["block_minutes"],
+            )
+            if preassigned_court_block_reason(simulated, court_reservations, ignore_match_id=m.id):
                 continue
 
             # Day boundary enforcement
@@ -1105,6 +1127,7 @@ def compute_rebuild_preview(
                 continue
 
             occupied.add(idx)
+            note_preassigned_reservation(court_reservations, session, m, simulated)
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))
@@ -1346,6 +1369,7 @@ def apply_rebuild(
 
     # First-fit assignment with constraints
     occupied: Set[int] = set()
+    court_reservations = preassigned_reservations(session, version_id)
     assigned_count = 0
     unplaceable_count = 0
     day1_date = day_configs[0].day_date if day_configs else None
@@ -1355,6 +1379,8 @@ def apply_rebuild(
         placed = False
         for slot in new_slots:
             if slot.id in occupied:
+                continue
+            if preassigned_court_block_reason(slot, court_reservations, ignore_match_id=m.id):
                 continue
 
             # Day boundary enforcement
@@ -1398,6 +1424,7 @@ def apply_rebuild(
                 continue
 
             occupied.add(slot.id)
+            note_preassigned_reservation(court_reservations, session, m, slot)
             for tid in (m.team_a_id, m.team_b_id):
                 if tid is not None:
                     team_busy.setdefault(tid, []).append((slot_start, slot_end))

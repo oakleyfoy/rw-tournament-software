@@ -1238,6 +1238,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 standard_block_minutes=event.standard_block_minutes,
                 guarantee_selected=event.guarantee_selected,
                 schedule_profile_json=event.schedule_profile_json,
+                court_assignment_by_date_json=event.court_assignment_by_date_json,
             )
             session.add(cloned)
             session.flush()

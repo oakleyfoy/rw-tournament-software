@@ -765,6 +765,28 @@ export async function getTournament(id: number): Promise<Tournament> {
   return fetchJson<Tournament>(`${API_BASE_URL}/tournaments/${id}`);
 }
 
+export type CourtAssignmentMode = 'DYNAMIC_CHECKIN' | 'PREASSIGNED'
+
+export interface CourtAssignmentModes {
+  tournament_id: number
+  days: Array<{ date: string; label: string }>
+  events: Array<{ event_id: number; event_name: string; modes: Record<string, CourtAssignmentMode> }>
+}
+
+export async function getCourtAssignmentModes(tournamentId: number): Promise<CourtAssignmentModes> {
+  return fetchJson<CourtAssignmentModes>(`${API_BASE_URL}/tournaments/${tournamentId}/court-assignment-modes`)
+}
+
+export async function saveCourtAssignmentModes(
+  tournamentId: number,
+  events: Array<{ event_id: number; modes: Record<string, CourtAssignmentMode> }>,
+): Promise<CourtAssignmentModes> {
+  return fetchJson<CourtAssignmentModes>(`${API_BASE_URL}/tournaments/${tournamentId}/court-assignment-modes`, {
+    method: 'PUT',
+    body: JSON.stringify({ events }),
+  })
+}
+
 export async function updateTournament(id: number, payload: TournamentUpdate): Promise<Tournament> {
   return fetchJson<Tournament>(`${API_BASE_URL}/tournaments/${id}`, {
     method: 'PUT',

@@ -20,6 +20,7 @@ from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.tournament import Tournament
 from app.services.assignment_ownership import load_owned_matches_for_version
+from app.services.court_assignment_mode import is_preassigned
 from app.services.draw_plan_rules import pool_config
 
 logger = logging.getLogger(__name__)
@@ -214,6 +215,36 @@ def _public_show_court_info(tournament: Tournament) -> bool:
     return mode != "checkin_management"
 
 
+def _slot_for_match(match: Match, assignment_map: Dict[int, Any], slot_map: Dict[int, Any]):
+    assignment = assignment_map.get(match.id) if match is not None and match.id is not None else None
+    if not assignment:
+        return None
+    return slot_map.get(assignment.slot_id)
+
+
+def _match_show_scheduled_court(
+    tournament: Tournament,
+    event: Optional[Event],
+    match: Match,
+    assignment_map: Dict[int, Any],
+    slot_map: Dict[int, Any],
+) -> bool:
+    """Court is visible when the tournament already shows courts, or this match is preassigned.
+
+    Dynamic check-in matches keep the scheduled court hidden so a leftover slot court
+    is not treated as the court players should report to.
+    """
+    if _public_show_court_info(tournament):
+        return True
+    slot = _slot_for_match(match, assignment_map, slot_map)
+    if slot is None:
+        return False
+    has_court = bool(getattr(slot, "court_label", None) or getattr(slot, "court_number", None))
+    if not has_court:
+        return False
+    return is_preassigned(event, getattr(slot, "day_date", None))
+
+
 def _build_match_box(
     match: Match,
     team_map: Dict[int, Team],
@@ -296,7 +327,7 @@ def _build_match_box(
     return MatchBox(
         match_id=match.id,
         match_number=match.id,
-        court_label=court_label,
+        court_label=court_label if show_court_info else None,
         start_time_local=start_time_raw,
         status=status,
         score_display=score_display,
@@ -551,7 +582,6 @@ def public_waterfall(
         version = _get_public_version(session, tournament_id)
     if not version:
         return NotPublishedResponse()
-    show_court_info = _public_show_court_info(tournament)
 
     # Load all WF matches for this event + version
     wf_matches = session.exec(
@@ -692,7 +722,7 @@ def public_waterfall(
             slot_map,
             all_matches_by_id,
             is_center=True,
-            show_court_info=show_court_info,
+            show_court_info=_match_show_scheduled_court(tournament, event, r1, assignment_map, slot_map),
         )
 
         winner_match = r1_to_winner.get(r1.id)
@@ -704,7 +734,7 @@ def public_waterfall(
                 slot_map,
                 all_matches_by_id,
                 is_center=False,
-                show_court_info=show_court_info,
+                show_court_info=_match_show_scheduled_court(tournament, event, winner_match, assignment_map, slot_map),
             )
             if winner_match
             else None
@@ -719,7 +749,7 @@ def public_waterfall(
                 slot_map,
                 all_matches_by_id,
                 is_center=False,
-                show_court_info=show_court_info,
+                show_court_info=_match_show_scheduled_court(tournament, event, loser_match, assignment_map, slot_map),
             )
             if loser_match
             else None
@@ -771,12 +801,16 @@ def public_waterfall(
             )
         )
 
+    waterfall_matches = list(r1_matches) + list(r2_matches)
+    response_show_court = _public_show_court_info(tournament) or any(
+        _match_show_scheduled_court(tournament, event, match, assignment_map, slot_map) for match in waterfall_matches
+    )
     return WaterfallResponse(
         tournament_name=tournament.name,
         event_name=event.name,
         rows=rows,
         division_type=div_type,
-        show_court_info=show_court_info,
+        show_court_info=response_show_court,
     )
 
 
@@ -884,7 +918,7 @@ def _build_bracket_box(
         line2=line2,
         status=status,
         score_display=score_display,
-        court_label=court_display,
+        court_label=court_display if show_court_info else None,
         day_display=day_display,
         time_display=start_time_display,
         source_match_a_id=match.source_match_a_id,
@@ -989,13 +1023,16 @@ def public_bracket(
             assignment_map,
             slot_map,
             match_map,
-            show_court_info=show_court_info,
+            show_court_info=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
         )
         if (m.match_type or "").upper() == "CONSOLATION":
             consolation_matches.append(box)
         else:
             main_matches.append(box)
 
+    response_show_court = _public_show_court_info(tournament) or any(
+        box.court_label for box in [*main_matches, *consolation_matches]
+    )
     return BracketResponse(
         tournament_name=tournament.name,
         event_name=event.name,
@@ -1003,7 +1040,7 @@ def public_bracket(
         division_code=div_upper,
         main_matches=main_matches,
         consolation_matches=consolation_matches,
-        show_court_info=show_court_info,
+        show_court_info=response_show_court,
     )
 
 
@@ -1130,6 +1167,7 @@ def _build_rr_match_box(
     assignment_map: Dict[int, Any],
     slot_map: Dict[int, Any],
     display_round_index: int,
+    include_court: bool = True,
 ) -> RRMatchBox:
     import json
 
@@ -1191,7 +1229,7 @@ def _build_rr_match_box(
         line2=line2,
         status=status,
         score_display=score_display,
-        court_label=court_display,
+        court_label=court_display if include_court else None,
         day_display=day_display,
         time_display=time_display,
         winner_name=winner_name,
@@ -1379,7 +1417,16 @@ def _public_round_robin_impl(
                 m.round_index,
             )
             try:
-                boxes.append(_build_rr_match_box(m, team_map, assignment_map, slot_map, display_round_index))
+                boxes.append(
+                    _build_rr_match_box(
+                        m,
+                        team_map,
+                        assignment_map,
+                        slot_map,
+                        display_round_index,
+                        include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+                    )
+                )
             except Exception:
                 logger.exception(
                     "public_round_robin: failed to build RR box for match %s (%s)",
@@ -1509,6 +1556,7 @@ def _public_round_robin_impl(
                         assignment_map,
                         slot_map,
                         _safe_int_field(m.round_index, 1) or 1,
+                        include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
                     )
                 )
             except Exception:
@@ -1540,6 +1588,7 @@ def _public_round_robin_impl(
                         assignment_map,
                         slot_map,
                         _safe_int_field(m.round_index, 1) or 1,
+                        include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
                     )
                 )
             except Exception:
@@ -1556,12 +1605,15 @@ def _public_round_robin_impl(
             )
         )
 
+    response_show_court = _public_show_court_info(tournament) or any(
+        box.court_label for pool in pools for box in pool.matches
+    )
     return RoundRobinResponse(
         tournament_name=tournament.name,
         event_name=event.name,
         pools=pools,
         standings=standings_list,
-        show_court_info=show_court_info,
+        show_court_info=response_show_court,
     )
 
 
@@ -1834,7 +1886,7 @@ def public_schedule(
             )
             if court_name and court_name.lower().startswith("court court"):
                 court_name = court_name[6:]
-            if not show_court_info:
+            if not _match_show_scheduled_court(tournament, ev, m, assignment_map, slot_map):
                 court_name = None
         else:
             day_offset = 0
@@ -1910,6 +1962,7 @@ def public_schedule(
     # Sort by day, time (24h), court
     filtered.sort(key=lambda m: (m.day_index, m.sort_time or "", m.court_name or ""))
 
+    response_show_court = _public_show_court_info(tournament) or any(match.court_name for match in filtered)
     return PublicScheduleResponse(
         tournament_name=tournament.name,
         published_version_id=version.id,
@@ -1917,5 +1970,5 @@ def public_schedule(
         events=event_options,
         divisions=division_list,
         days=day_options,
-        show_court_info=show_court_info,
+        show_court_info=response_show_court,
     )

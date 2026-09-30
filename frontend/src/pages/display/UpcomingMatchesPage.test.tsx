@@ -46,15 +46,16 @@ describe('UpcomingMatchesPage', () => {
     expect(screen.getByTestId('upcoming-board')).not.toHaveTextContent("Women's B")
     expect(screen.getByTestId('upcoming-board')).not.toHaveTextContent('WF R1')
     expect(screen.getByTestId('upcoming-board')).not.toHaveTextContent('WF R2')
-    expect(screen.queryByTestId(/display-court-/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('display-court-14')).toHaveTextContent('Court 99')
+    expect(screen.queryByTestId('display-court-12')).not.toBeInTheDocument()
   })
 
-  it('never renders court, including assigned court leaked from the payload', () => {
+  it('shows a court on upcoming cards only when the payload includes one', () => {
     renderPage()
+    expect(screen.getByTestId('display-court-14')).toHaveTextContent('Court 99')
     expect(screen.queryByText('Court 7')).not.toBeInTheDocument()
-    expect(screen.queryByText('Court 99')).not.toBeInTheDocument()
     expect(screen.queryByText(/Court TBD/i)).not.toBeInTheDocument()
-    expect(screen.queryByTestId(/display-court-/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('display-court-12')).not.toBeInTheDocument()
   })
 
   it('uses the high-density upcoming grid under each time group', () => {
