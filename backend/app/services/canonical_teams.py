@@ -19,9 +19,6 @@ from app.services.team_rating import (
     parse_rating,
 )
 
-ACTIVE_REGISTRATION_STATUSES = frozenset({"confirmed", "paid", "invoiced"})
-# Payment has not cleared, but the team is registered. Same treatment as an unpaid invoice.
-PAYMENT_HOLD_ACTIVE_STATUSES = frozenset({"ach pending", "pending ach", "invoice unpaid", "unpaid invoice"})
 WAITLIST_REGISTRATION_STATUSES = frozenset({"waitlist", "waitlisted", "wait list", "wait-list"})
 EXCLUDED_REGISTRATION_STATUSES = frozenset(
     {
@@ -31,11 +28,6 @@ EXCLUDED_REGISTRATION_STATUSES = frozenset(
         "canceled",
         "cancel",
         "void",
-        "pending",
-        "incomplete",
-        "failed",
-        "declined",
-        "decline",
     }
 )
 
@@ -52,30 +44,20 @@ def normalize_registration_status(raw: Optional[str]) -> str:
     return " ".join((raw or "").strip().lower().replace("_", " ").replace("-", " ").split())
 
 
-def _is_payment_hold_active(status: str, compact: str) -> bool:
-    if status in PAYMENT_HOLD_ACTIVE_STATUSES:
+def _is_withdrawn_or_canceled(status: str, compact: str) -> bool:
+    if compact in EXCLUDED_REGISTRATION_STATUSES or status in EXCLUDED_REGISTRATION_STATUSES:
         return True
-    if "ach" in compact and "pending" in compact:
-        return True
-    return "invoice" in compact and "unpaid" in compact
+    return any(token in compact for token in ("void", "cancel", "withdraw"))
 
 
 def classify_registration_bucket(status_raw: Optional[str], draw_kind: Optional[str]) -> str:
     status = normalize_registration_status(status_raw)
     compact = status.replace(" ", "")
-    if compact in EXCLUDED_REGISTRATION_STATUSES or status in EXCLUDED_REGISTRATION_STATUSES:
-        return "excluded"
-    if _is_payment_hold_active(status, compact):
-        if is_waitlist_draw_kind(draw_kind):
-            return "waitlist"
-        return "active"
-    if any(token in compact for token in ("void", "cancel", "withdraw", "pending", "incomplete", "failed", "declin")):
+    if _is_withdrawn_or_canceled(status, compact):
         return "excluded"
     if is_waitlist_draw_kind(draw_kind) or compact in {"waitlist", "waitlisted"} or "waitlist" in compact:
         return "waitlist"
-    if compact in ACTIVE_REGISTRATION_STATUSES:
-        return "active"
-    return "excluded"
+    return "active"
 
 
 EMPTY_PLACEHOLDERS = frozenset({"", "—", "-", "–", "n/a", "na", "none", "unassigned"})

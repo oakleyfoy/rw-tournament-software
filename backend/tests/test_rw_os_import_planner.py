@@ -98,8 +98,10 @@ def test_e_waitlist_separated(client: TestClient):
     assert classify_registration_bucket("WaitList", "womens") == "waitlist"
     assert classify_registration_bucket("Confirmed", "womens_waitlist") == "waitlist"
     assert classify_registration_bucket("ACH PENDING", "womens") == "active"
+    assert classify_registration_bucket("Pending", "womens") == "active"
     assert classify_registration_bucket("Invoice Unpaid", "mixed") == "active"
-    assert classify_registration_bucket("Pending", "womens") == "excluded"
+    assert classify_registration_bucket("Cancelled", "womens") == "excluded"
+    assert classify_registration_bucket("Withdrawn", "womens") == "excluded"
     assert classify_registration_bucket("ACH PENDING", "womens_waitlist") == "waitlist"
 
 
