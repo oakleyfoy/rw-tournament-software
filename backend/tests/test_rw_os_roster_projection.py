@@ -1371,6 +1371,52 @@ def test_refresh_replaces_withdrawn_team_with_torrie_nancy_before_play(client: T
     assert all(edge.team_id_a != old.id and edge.team_id_b != old.id for edge in replay_edges)
 
 
+def test_later_refresh_places_replacement_into_slot_left_open(client: TestClient, session: Session):
+    teams = _womens_field(8)
+    imported = _import_payload(session, 942, teams)
+    _approve(client, imported.id, {"womens": "8"})
+    session.expire_all()
+    live = _teams_by_key(session, imported.tournament_id)
+    withdrawn = live[teams[0].team_key]
+    partner = live[teams[1].team_key]
+    event = session.get(Event, withdrawn.event_id)
+    match = _assign_unplayed_wf_slot(session, imported.tournament_id, event, withdrawn, partner)
+
+    remaining = [SnapshotTeam.from_dict(team.to_dict()) for team in teams[1:]]
+    first = persist_snapshot(
+        session,
+        _payload(942, remaining, version="withdrawn-only"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    opened = getattr(first, "_last_roster_projection", None) or {}
+    assert opened["reconciled"]["withdrawnTeams"] == 1
+    assert opened["reconciled"]["drawSlotsReplaced"] == 0
+    session.refresh(match)
+    assert match.team_a_id is None
+    assert match.placeholder_side_a == "TBD"
+    assert match.team_b_id == partner.id
+
+    replacement = _torrie_nancy()
+    replacement.player2.towel_color = None
+    second = persist_snapshot(
+        session,
+        _payload(942, remaining + [replacement], version="replacement-later"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    placed = getattr(second, "_last_roster_projection", None) or {}
+    assert placed["created"]["teams"] == 1
+    assert placed["reconciled"]["drawSlotsReplaced"] == 1
+    assert not any(item["code"] == "roster_draw_placement_unresolved" for item in placed["conflicts"])
+    assert any(item["code"] == "missing_towel_color" for item in placed["warnings"])
+
+    session.expire_all()
+    new_team = _teams_by_key(session, imported.tournament_id)[replacement.team_key]
+    session.refresh(match)
+    assert match.team_a_id == new_team.id
+    assert match.team_b_id == partner.id
+    assert match.placeholder_side_a == new_team.name
+
+
 def test_refresh_does_not_rewrite_started_match_and_reports_conflict(client: TestClient, session: Session):
     teams = _womens_field(8)
     imported = _import_payload(session, 941, teams)
