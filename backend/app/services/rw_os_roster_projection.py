@@ -523,6 +523,53 @@ def _team_occupies_match(session: Session, team: Team) -> bool:
     return row is not None
 
 
+def _prior_open_entry_slots(session: Session, event_id: int) -> list[_VacatedDrawSlot]:
+    """Entry slots already left TBD by an earlier withdrawal.
+
+    A replacement that arrives on a later refresh has no slot vacated in this run.
+    Those open spots are still the right place for the new team. Bye matches stay untouched.
+    """
+    defaulted = session.exec(
+        select(Team).where(
+            Team.event_id == event_id,
+            Team.is_defaulted == True,  # noqa: E712
+            Team.source_team_key.is_not(None),
+        )
+    ).all()
+    open_withdrawals = [team for team in defaulted if team.id is not None and not _team_occupies_match(session, team)]
+    if not open_withdrawals:
+        return []
+    matches = session.exec(select(Match).where(Match.event_id == event_id)).all()
+    slots: list[_VacatedDrawSlot] = []
+    for match in matches:
+        if match.id is None or match_locked_for_participant_edit(session, match):
+            continue
+        if "_BYE" in (match.match_code or "").upper():
+            continue
+        sides = (
+            ("A", match.team_a_id, match.source_match_a_id, match.placeholder_side_a, 0),
+            ("B", match.team_b_id, match.source_match_b_id, match.placeholder_side_b, 1),
+        )
+        for side, team_id, source_id, placeholder, side_order in sides:
+            if team_id is not None or source_id is not None:
+                continue
+            if (placeholder or "").strip().upper() != EMPTY_DRAW_SLOT:
+                continue
+            slots.append(
+                _VacatedDrawSlot(
+                    match_id=match.id,
+                    event_id=event_id,
+                    side=side,
+                    seed=None,
+                    sort_key=(match.round_index or 0, match.sequence_in_round or 0, side_order, match.id),
+                    withdrawn_key=f"open:{match.id}:{side}",
+                    withdrawn_label=EMPTY_DRAW_SLOT,
+                )
+            )
+    slots.sort(key=lambda slot: slot.sort_key)
+    return slots[: len(open_withdrawals)]
+
+
 def _withdraw_absent_source_teams(
     session: Session,
     import_row: TournamentImport,
@@ -686,6 +733,14 @@ def _place_replacements_in_vacated_slots(
             continue
         candidates_by_event.setdefault(team.event_id, []).append(team)
 
+    claimed = {(slot.match_id, slot.side) for slot in vacated}
+    for event_id in candidates_by_event:
+        for slot in _prior_open_entry_slots(session, event_id):
+            if (slot.match_id, slot.side) in claimed:
+                continue
+            claimed.add((slot.match_id, slot.side))
+            slots_by_event.setdefault(event_id, []).append(slot)
+
     for event_id, slots in slots_by_event.items():
         grouped: dict[str, list[_VacatedDrawSlot]] = {}
         for slot in slots:
@@ -774,8 +829,8 @@ def _place_replacements_in_vacated_slots(
             _conflict(
                 CONFLICT_DRAW_PLACEMENT_UNRESOLVED,
                 (
-                    f"{event_name}: {names} added from RW-OS, but no safe unplayed draw slot was open. "
-                    "The team is on the active roster and must be placed by staff."
+                    f"{event_name}: {names} was added to the team list, but no open unplayed draw slot was available. "
+                    "Staff must place this team into the draw."
                 ),
                 eventId=event_id,
                 eventName=event_name,
