@@ -32,7 +32,7 @@ export default function DrawQrBoardPage() {
     }
   }, [tournamentId])
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (format: 'poster' | 'letter') => {
     if (!data || data.items.length === 0) return
     setGenerating(true)
     setError(null)
@@ -40,6 +40,7 @@ export default function DrawQrBoardPage() {
       const pdf = await buildDrawQrBoardPdf(data.items, {
         tournamentName: data.tournament_name,
         filenameSlug: data.filename_slug,
+        format,
       })
       const url = URL.createObjectURL(pdf.blob)
       const link = document.createElement('a')
@@ -87,15 +88,26 @@ export default function DrawQrBoardPage() {
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            className="btn btn-primary"
-            data-testid="draw-qr-generate"
-            onClick={() => void handleGenerate()}
-            disabled={generating}
-          >
-            {generating ? 'Generating…' : 'Generate 32 × 24 PDF'}
-          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="draw-qr-generate"
+              onClick={() => void handleGenerate('poster')}
+              disabled={generating}
+            >
+              {generating ? 'Generating…' : 'Generate 32 × 24 PDF'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              data-testid="draw-qr-generate-letter"
+              onClick={() => void handleGenerate('letter')}
+              disabled={generating}
+            >
+              {generating ? 'Generating…' : 'Generate 8½ × 11 PDF'}
+            </button>
+          </div>
         </div>
       )}
     </div>

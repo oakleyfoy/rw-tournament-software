@@ -89,6 +89,7 @@ describe('DrawQrBoardPage', () => {
     expect(screen.getByText('Mixed A — Bracket')).toBeInTheDocument()
     expect(screen.getByTestId('draw-qr-item-list').querySelectorAll('li')).toHaveLength(3)
     expect(screen.getByTestId('draw-qr-generate')).toHaveTextContent('Generate 32 × 24 PDF')
+    expect(screen.getByTestId('draw-qr-generate-letter')).toHaveTextContent('Generate 8½ × 11 PDF')
   })
 
   it('renders the Amelia Island event-then-draw-type order without re-sorting labels', async () => {
@@ -133,6 +134,22 @@ describe('DrawQrBoardPage', () => {
       expect.objectContaining({
         tournamentName: 'Racquet War Destin',
         filenameSlug: 'racquet-war-destin',
+        format: 'poster',
+      })
+    )
+  })
+
+  it('offers the letter printout with the same draws', async () => {
+    renderPage()
+    const button = await screen.findByTestId('draw-qr-generate-letter')
+    button.click()
+    await waitFor(() => expect(generatePdf).toHaveBeenCalled())
+    expect(generatePdf).toHaveBeenCalledWith(
+      apiState.data.items,
+      expect.objectContaining({
+        tournamentName: 'Racquet War Destin',
+        filenameSlug: 'racquet-war-destin',
+        format: 'letter',
       })
     )
   })
@@ -144,6 +161,7 @@ describe('DrawQrBoardPage', () => {
       'No published draws are currently available for this tournament.'
     )
     expect(screen.queryByTestId('draw-qr-generate')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draw-qr-generate-letter')).not.toBeInTheDocument()
   })
 })
 
