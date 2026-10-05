@@ -5,6 +5,14 @@ export const QR_BOARD_WIDTH_PT = QR_BOARD_WIDTH_IN * QR_BOARD_POINTS_PER_INCH
 export const QR_BOARD_HEIGHT_PT = QR_BOARD_HEIGHT_IN * QR_BOARD_POINTS_PER_INCH
 export const QR_BOARD_MARGIN_PT = 0.6 * QR_BOARD_POINTS_PER_INCH
 
+export const QR_BOARD_LETTER_WIDTH_IN = 8.5
+export const QR_BOARD_LETTER_HEIGHT_IN = 11
+export const QR_BOARD_LETTER_WIDTH_PT = QR_BOARD_LETTER_WIDTH_IN * QR_BOARD_POINTS_PER_INCH
+export const QR_BOARD_LETTER_HEIGHT_PT = QR_BOARD_LETTER_HEIGHT_IN * QR_BOARD_POINTS_PER_INCH
+export const QR_BOARD_LETTER_MARGIN_PT = 0.45 * QR_BOARD_POINTS_PER_INCH
+
+export type QrBoardFormat = 'poster' | 'letter'
+
 export function qrBoardGrid(count: number): { cols: number; rows: number } {
   if (count <= 0) return { cols: 0, rows: 0 }
   if (count <= 4) return { cols: 2, rows: 2 }
@@ -18,10 +26,26 @@ export function qrBoardGrid(count: number): { cols: number; rows: number } {
   return { cols, rows: Math.ceil(count / cols) }
 }
 
-export function drawQrFilename(slug: string | number): string {
+export function drawQrSheetHeading(tournamentName: string): string {
+  const name = tournamentName.trim()
+  if (!name) return 'Draws'
+  if (/draws$/i.test(name)) return name
+  return `${name} Draws`
+}
+
+/** Letter sheets hold up to six codes. Extra draws continue on the next page. */
+export function letterQrBoardGrid(count: number): { cols: number; rows: number; perPage: number } {
+  if (count <= 1) return { cols: 1, rows: 1, perPage: 1 }
+  if (count === 2) return { cols: 2, rows: 1, perPage: 2 }
+  if (count <= 4) return { cols: 2, rows: 2, perPage: 4 }
+  return { cols: 2, rows: 3, perPage: 6 }
+}
+
+export function drawQrFilename(slug: string | number, format: QrBoardFormat = 'poster'): string {
   const safe = String(slug || 'tournament')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-  return `draw-qr-board-${safe || 'tournament'}.pdf`
+  const size = format === 'letter' ? '-letter' : ''
+  return `draw-qr-board-${safe || 'tournament'}${size}.pdf`
 }
