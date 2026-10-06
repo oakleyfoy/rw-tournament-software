@@ -69,7 +69,8 @@ describe('DeskRwOsRefresh', () => {
       rosterProjection: projection({
         conflicts: [{
           code: 'roster_reconciliation_incomplete',
-          message: 'Mixed: RW-OS active teams: 24. Tournament active teams: 20. Draw participants: 20. Missing teams: [M21 (540/541)].',
+          stage: 'event',
+          message: 'Mixed — Event roster could not be reconciled\nRW-OS: 24\nTournament teams: 19\nMissing:\nLauri / Marc (12884/15825)',
         }],
       }),
     } as never)
@@ -78,7 +79,8 @@ describe('DeskRwOsRefresh', () => {
     expect(await screen.findByRole('heading', { name: 'RW-OS Roster Was Not Reconciled' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'RW-OS Roster Reconciled' })).not.toBeInTheDocument()
     expect(screen.queryByText('No player or team changes were found.')).not.toBeInTheDocument()
-    expect(screen.getByText(/RW-OS active teams: 24/)).toBeInTheDocument()
+    expect(screen.getByText(/Event roster could not be reconciled/)).toBeInTheDocument()
+    expect(screen.getByText(/Lauri \/ Marc \(12884\/15825\)/)).toBeInTheDocument()
   })
 
   it('says the roster is current without applying', async () => {

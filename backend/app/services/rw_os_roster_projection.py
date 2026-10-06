@@ -38,7 +38,7 @@ CONFLICT_ROSTER_RECONCILIATION_BLOCKED = "roster_reconciliation_blocked"
 CONFLICT_DRAW_PLACEMENT_UNRESOLVED = "roster_draw_placement_unresolved"
 CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE = "roster_reconciliation_incomplete"
 EMPTY_DRAW_SLOT = "TBD"
-_FEEDER_PLACEHOLDER = re.compile(r"^(?:W\(|L\(|WINNER:|LOSER:|TBD:)", re.IGNORECASE)
+_FEEDER_PLACEHOLDER = re.compile(r"^(?:W\(|L\(|WINNER:|LOSER:|TBD:|WFSEED:)", re.IGNORECASE)
 _SEED_PLACEHOLDER = re.compile(r"^SEED[_ ](\d+)$", re.IGNORECASE)
 
 
@@ -216,10 +216,83 @@ def _release_projected_seeds(session: Session, tournament_id: int) -> None:
         session.flush()
 
 
+def _source_key_aliases(source_team_key: str) -> set[str]:
+    """Canonical key plus the swapped partner order. Player ids are text either way."""
+    key = (source_team_key or "").strip()
+    aliases = {key} if key else set()
+    left, separator, right = key.partition("/")
+    if separator and left and right:
+        aliases.add(f"{right}/{left}")
+    return aliases
+
+
 def _find_projected_team(session: Session, tournament_id: int, source_team_key: str) -> Optional[Team]:
-    return session.exec(
-        select(Team).join(Event).where(Event.tournament_id == tournament_id, Team.source_team_key == source_team_key)
-    ).first()
+    aliases = _source_key_aliases(source_team_key)
+    if not aliases:
+        return None
+    rows = session.exec(
+        select(Team).join(Event).where(Event.tournament_id == tournament_id, Team.source_team_key.in_(aliases))
+    ).all()
+    exact = [team for team in rows if team.source_team_key == source_team_key]
+    return (exact or rows or [None])[0]
+
+
+def _category_events(events: list[Event], draw_kind: str) -> list[Event]:
+    category = event_category_for_draw_kind(draw_kind)
+    if category is None:
+        return []
+    matched: list[Event] = []
+    for event in events:
+        event_category = event.category.value if isinstance(event.category, EventCategory) else str(event.category)
+        if event_category == category.value:
+            matched.append(event)
+    return matched
+
+
+def _sole_category_event(events: list[Event], draw_kind: str) -> Optional[Event]:
+    matched = _category_events(events, draw_kind)
+    if len(matched) == 1:
+        return matched[0]
+    return None
+
+
+def _resolve_roster_event(events: list[Event], draw_kind: str, label: str) -> Optional[Event]:
+    """Label match first. One event in the category still receives the current roster."""
+    found = _event_by_route(events, draw_kind, label)
+    if found is not None:
+        return found
+    return _sole_category_event(events, draw_kind)
+
+
+def _operational_brackets(
+    brackets: list[dict[str, Any]],
+    draw_teams: list[SnapshotTeam],
+    events: list[Event],
+    draw_kind: str,
+) -> list[dict[str, Any]]:
+    """Current teams fill the approved capacity. A stale rankEnd does not drop them.
+
+    A single Mixed event of 24 is the whole Mixed field, even when the stored rank
+    window is still 1–19 or the bracket label no longer matches the event name.
+    Several events of the same category keep their own rank windows.
+    """
+    if not draw_teams:
+        return brackets
+    sole = _sole_category_event(events, draw_kind)
+    capacity = int(sole.team_count or 0) if sole is not None else 0
+    if sole is None or capacity < len(draw_teams):
+        return brackets
+    overlay = dict(brackets[0] if brackets else {})
+    for bracket in brackets:
+        label = str(bracket.get("label") or "").strip()
+        if _event_by_route(events, draw_kind, label) is sole:
+            overlay = dict(bracket)
+            break
+    overlay["label"] = sole.name
+    overlay["rankStart"] = 1
+    overlay["rankEnd"] = len(draw_teams)
+    overlay["size"] = max(int(overlay.get("size") or 0), capacity, len(draw_teams))
+    return [overlay]
 
 
 def _event_by_route(events: list[Event], draw_kind: str, label: str) -> Optional[Event]:
@@ -744,6 +817,7 @@ def _place_replacements_in_vacated_slots(
     blocked: list[_BlockedWithdrawal],
     candidates: list[Team],
     result: RosterProjectionResult,
+    skip_event_ids: Optional[set[int]] = None,
 ) -> None:
     """Put newly active teams into vacated or still-empty entry slots. Do not rebuild the draw."""
     explained_unplaced: set[int] = set()
@@ -764,7 +838,10 @@ def _place_replacements_in_vacated_slots(
             claimed.add((slot.match_id, slot.side))
             slots_by_event.setdefault(event_id, []).append(slot)
 
+    skipped = skip_event_ids or set()
     for event_id, slots in slots_by_event.items():
+        if event_id in skipped:
+            continue
         grouped: dict[str, list[_VacatedDrawSlot]] = {}
         for slot in slots:
             grouped.setdefault(slot.withdrawn_key, []).append(slot)
@@ -840,6 +917,8 @@ def _place_replacements_in_vacated_slots(
         )
 
     for event_id, teams in candidates_by_event.items():
+        if event_id in skipped:
+            continue
         unplaced = [
             team for team in teams if team.id not in explained_unplaced and not _team_occupies_match(session, team)
         ]
@@ -869,6 +948,7 @@ def _place_existing_teams_in_open_capacity(
     active_keys: set[str],
     vacated: list[_VacatedDrawSlot],
     result: RosterProjectionResult,
+    skip_event_ids: Optional[set[int]] = None,
 ) -> None:
     """Put active source teams that never reached the draw into sides that were already empty.
 
@@ -887,7 +967,10 @@ def _place_existing_teams_in_open_capacity(
         if _team_occupies_match(session, team):
             continue
         pending.setdefault(team.event_id, []).append(team)
+    skipped = skip_event_ids or set()
     for event_id, teams in pending.items():
+        if event_id in skipped:
+            continue
         slots = [
             slot for slot in _open_capacity_entry_slots(session, event_id) if (slot.match_id, slot.side) not in reserved
         ]
@@ -1010,87 +1093,173 @@ def operational_roster_drift(
     }
 
 
-def _record_incomplete_reconciliation(
+def _identity_line(team: SnapshotTeam) -> str:
+    name = team.display_name or team.full_name or team.team_key
+    return f"{name} ({team.team_key})"
+
+
+def _desired_teams_by_event(
+    plans: list[TournamentDrawPlan],
+    teams: list[SnapshotTeam],
+    events: list[Event],
+    *,
+    operational_only: bool,
+) -> tuple[dict[int, list[SnapshotTeam]], list[SnapshotTeam]]:
+    """Teams that belong on each event after capacity routing, plus teams with no event at all."""
+    desired: dict[int, list[SnapshotTeam]] = {}
+    untargeted: list[SnapshotTeam] = []
+    for plan in plans:
+        draw_teams = [team for team in teams if team.draw_kind == plan.draw_kind]
+        brackets = _brackets_from_plan(plan)
+        if operational_only:
+            brackets = _operational_brackets(brackets, draw_teams, events, plan.draw_kind)
+        routed = route_snapshot_teams(draw_teams, brackets)
+        assigned: set[str] = set()
+        for snapshot_team, bracket, _rank in routed:
+            label = str(bracket.get("label") or "").strip()
+            event = _event_by_route(events, plan.draw_kind, label)
+            if (event is None or event.id is None) and operational_only:
+                event = _resolve_roster_event(events, plan.draw_kind, label)
+            if event is None or event.id is None:
+                continue
+            desired.setdefault(event.id, []).append(snapshot_team)
+            assigned.add(snapshot_team.team_key)
+        fallback: Optional[Event] = None
+        if operational_only:
+            last = brackets[-1] if brackets else None
+            last_label = str((last or {}).get("label") or "").strip()
+            fallback = _resolve_roster_event(events, plan.draw_kind, last_label)
+        for snapshot_team in draw_teams:
+            if snapshot_team.team_key in assigned:
+                continue
+            if fallback is not None and fallback.id is not None:
+                desired.setdefault(fallback.id, []).append(snapshot_team)
+            else:
+                untargeted.append(snapshot_team)
+    return desired, untargeted
+
+
+def _append_roster_conflict(
+    result: RosterProjectionResult,
+    message: str,
+    *,
+    stage: str,
+    missing: list[SnapshotTeam],
+) -> None:
+    result.conflicts.append(
+        _conflict(
+            CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE,
+            message,
+            stage=stage,
+            missingTeams=[_identity_line(team) for team in missing],
+        )
+    )
+
+
+def _record_event_roster_failure(
     session: Session,
     import_row: TournamentImport,
+    plans: list[TournamentDrawPlan],
     teams: list[SnapshotTeam],
     result: RosterProjectionResult,
-) -> None:
-    """Success is the resulting roster, not the fact that projection ran."""
-    drift = operational_roster_drift(session, import_row, [team.to_dict() for team in teams])
-    if not drift["reconciliationNeeded"]:
-        return
+) -> set[int]:
+    """Stop before draw placement when the event roster is not the desired RW-OS set.
+
+    A Team row somewhere else in the tournament is not membership in this event.
+    """
+    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
     live = session.exec(
         select(Team)
         .join(Event)
         .where(Event.tournament_id == import_row.tournament_id, Team.source_team_key.is_not(None))
     ).all()
-    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
-    events_with_matches = {
-        event.id for event in events if event.id is not None and _event_has_matches(session, event.id)
-    }
-    draw_keys = {
-        team.source_team_key
-        for team in live
-        if team.source_team_key and team.event_id in events_with_matches and _team_occupies_match(session, team)
-    }
-    active_keys = {team.source_team_key for team in live if team.source_team_key and team_is_active(team)}
-    by_kind: dict[str, list[SnapshotTeam]] = {}
-    for team in teams:
-        by_kind.setdefault(team.draw_kind, []).append(team)
-    lines: list[str] = []
-    missing_names: list[str] = []
-    for kind, group in by_kind.items():
+    desired, untargeted = _desired_teams_by_event(plans, teams, events, operational_only=True)
+    failed: set[int] = set()
+    for event_id, group in desired.items():
         keys = {team.team_key for team in group}
-        event_ids = {team.event_id for team in live if team.source_team_key in keys}
-        active_count = len([team for team in live if team.event_id in event_ids and team_is_active(team)])
-        draw_count = len(
-            {team.source_team_key for team in live if team.event_id in event_ids and team.source_team_key in draw_keys}
-        )
-        draw_expected = bool(event_ids & events_with_matches)
-        missing = [
-            team
-            for team in group
-            if team.team_key not in active_keys or (draw_expected and team.team_key not in draw_keys)
+        active = [team for team in live if team.event_id == event_id and team.source_team_key and team_is_active(team)]
+        active_keys = {team.source_team_key for team in active if team.source_team_key}
+        missing = [team for team in group if team.team_key not in active_keys]
+        extra = sorted(key for key in active_keys if key not in keys)
+        if not missing and not extra:
+            continue
+        failed.add(event_id)
+        label = group[0].draw_label or group[0].draw_kind
+        lines = [
+            f"{label} — Event roster could not be reconciled",
+            f"RW-OS: {len(keys)}",
+            f"Tournament teams: {len(active)}",
         ]
-        extra = [
+        if missing:
+            lines.append("Missing:")
+            lines.extend(_identity_line(team) for team in missing)
+        if extra:
+            lines.append("Still active locally but absent from RW-OS:")
+            lines.extend(extra)
+        _append_roster_conflict(result, "\n".join(lines), stage="event", missing=missing)
+    if untargeted:
+        by_kind: dict[str, list[SnapshotTeam]] = {}
+        for team in untargeted:
+            by_kind.setdefault(team.draw_kind, []).append(team)
+        for group in by_kind.values():
+            label = group[0].draw_label or group[0].draw_kind
+            lines = [
+                f"{label} — Event roster could not be reconciled",
+                f"RW-OS: {len(group)}",
+                "Tournament teams: 0",
+                "Missing:",
+                *[_identity_line(team) for team in group],
+            ]
+            _append_roster_conflict(result, "\n".join(lines), stage="event", missing=group)
+    return failed
+
+
+def _record_draw_reconciliation_failure(
+    session: Session,
+    import_row: TournamentImport,
+    plans: list[TournamentDrawPlan],
+    teams: list[SnapshotTeam],
+    result: RosterProjectionResult,
+    failed_event_ids: set[int],
+) -> None:
+    """Draw membership is checked only after the event roster already matches."""
+    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    live = session.exec(
+        select(Team)
+        .join(Event)
+        .where(Event.tournament_id == import_row.tournament_id, Team.source_team_key.is_not(None))
+    ).all()
+    desired, _untargeted = _desired_teams_by_event(plans, teams, events, operational_only=True)
+    for event_id, group in desired.items():
+        if event_id in failed_event_ids or not _event_has_matches(session, event_id):
+            continue
+        keys = {team.team_key for team in group}
+        occupants = {
             team.source_team_key
             for team in live
-            if team.event_id in event_ids and team_is_active(team) and team.source_team_key not in keys
-        ]
-        stale_draw = sorted(
-            key
-            for key in draw_keys
-            if key not in keys and any(row.event_id in event_ids and row.source_team_key == key for row in live)
-        )
-        if not missing and not extra and not stale_draw:
+            if team.event_id == event_id and team.source_team_key and _team_occupies_match(session, team)
+        }
+        missing = [team for team in group if team.team_key not in occupants]
+        stale = sorted(key for key in occupants if key not in keys)
+        if not missing and not stale:
             continue
-        label = group[0].draw_label or kind
-        rendered = []
-        for team in missing:
-            name = team.display_name or team.full_name or team.team_key
-            rendered.append(f"{name} ({team.team_key})")
-            missing_names.append(f"{name} ({team.team_key})")
-        lines.append(
-            f"{label}: RW-OS active teams: {len(keys)}. Tournament active teams: {active_count}. "
-            f"Draw participants: {draw_count}. Missing teams: {rendered or ['none']}."
+        active_count = len(
+            [team for team in live if team.event_id == event_id and team.source_team_key and team_is_active(team)]
         )
-        if extra or stale_draw:
-            still_local = sorted(set(extra) | set(stale_draw))
-            lines.append(f"{label} teams still active locally but absent from RW-OS: {still_local}.")
-    if not lines:
-        lines.append("Active RW-OS teams still do not match Tournament Software event or draw membership.")
-    result.conflicts.append(
-        _conflict(
-            CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE,
-            " ".join(lines),
-            missingFromEvent=drift["missingFromEvent"],
-            extraInEvent=drift["extraInEvent"],
-            missingFromDraw=drift["missingFromDraw"],
-            extraInDraw=drift["extraInDraw"],
-            missingTeams=missing_names,
-        )
-    )
+        draw_count = len(occupants & keys)
+        label = group[0].draw_label or group[0].draw_kind
+        lines = [
+            f"{label} — Draw could not be reconciled",
+            f"Tournament teams: {active_count}",
+            f"Draw participants: {draw_count}",
+        ]
+        if missing:
+            lines.append("Missing from draw:")
+            lines.extend(_identity_line(team) for team in missing)
+        if stale:
+            lines.append("Still in the draw but absent from RW-OS:")
+            lines.extend(stale)
+        _append_roster_conflict(result, "\n".join(lines), stage="draw", missing=missing)
 
 
 def project_approved_roster(
@@ -1130,7 +1299,10 @@ def project_approved_roster(
 
     for plan in plans:
         draw_teams = [team for team in teams if team.draw_kind == plan.draw_kind]
-        routed = route_snapshot_teams(draw_teams, _brackets_from_plan(plan))
+        brackets = _brackets_from_plan(plan)
+        if operational_only:
+            brackets = _operational_brackets(brackets, draw_teams, events, plan.draw_kind)
+        routed = route_snapshot_teams(draw_teams, brackets)
         assigned_keys = {team.team_key for team, _bracket, _rank in routed}
         for team in draw_teams:
             if team.team_key not in assigned_keys:
@@ -1146,7 +1318,11 @@ def project_approved_roster(
                     brackets = _brackets_from_plan(plan)
                     last = brackets[-1] if brackets else None
                     last_label = str((last or {}).get("label") or "").strip()
-                    fallback_event = _event_by_route(events, plan.draw_kind, last_label) if last_label else None
+                    fallback_event = (
+                        _resolve_roster_event(events, plan.draw_kind, last_label)
+                        if last_label or operational_only
+                        else None
+                    )
                     existing_unassigned = _find_projected_team(session, import_row.tournament_id, team.team_key)
                     if existing_unassigned is None:
                         if fallback_event is not None and fallback_event.id is not None:
@@ -1173,6 +1349,8 @@ def project_approved_roster(
             _collect_operational_warnings(snapshot_team, result.warnings)
             label = str(bracket.get("label") or "").strip()
             event = _event_by_route(events, plan.draw_kind, label)
+            if (event is None or event.id is None) and operational_only:
+                event = _resolve_roster_event(events, plan.draw_kind, label)
             if event is None or event.id is None:
                 result.conflicts.append(
                     _conflict(
@@ -1295,12 +1473,17 @@ def project_approved_roster(
             touched_teams.append(existing)
             _project_towels(session, import_row.tournament_id, snapshot_team, result)
 
+    failed_event_ids: set[int] = set()
+    if operational_only:
+        session.flush()
+        failed_event_ids = _record_event_roster_failure(session, import_row, plans, teams, result)
     _place_replacements_in_vacated_slots(
         session,
         vacated=vacated_slots,
         blocked=blocked_withdrawals,
         candidates=placement_candidates,
         result=result,
+        skip_event_ids=failed_event_ids,
     )
     if operational_only:
         _place_existing_teams_in_open_capacity(
@@ -1309,6 +1492,7 @@ def project_approved_roster(
             active_keys=active_keys,
             vacated=vacated_slots,
             result=result,
+            skip_event_ids=failed_event_ids,
         )
 
     for event_id, assignments in wkw_assignments.items():
@@ -1320,7 +1504,8 @@ def project_approved_roster(
 
     sync_players_from_team_slots_if_enabled(session, import_row.tournament_id, touched_teams)
     if operational_only:
-        _record_incomplete_reconciliation(session, import_row, teams, result)
+        session.flush()
+        _record_draw_reconciliation_failure(session, import_row, plans, teams, result, failed_event_ids)
     session.commit()
     return result
 
@@ -1338,6 +1523,9 @@ def _apply_operational_team_updates(
     name = _unique_team_name(session, team.event_id, full_name, snapshot_team.team_key, team.id)
     team_label = display_name or team.display_name or snapshot_team.team_key
     identity_changed = False
+    if team.source_team_key != snapshot_team.team_key:
+        team.source_team_key = snapshot_team.team_key
+        identity_changed = True
     if team.is_defaulted:
         _record_field_change(
             result,
