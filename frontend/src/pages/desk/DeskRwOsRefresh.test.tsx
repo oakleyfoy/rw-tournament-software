@@ -32,6 +32,31 @@ describe('DeskRwOsRefresh', () => {
     expect(screen.queryByRole('button', { name: 'Check RW-OS for Changes' })).not.toBeInTheDocument()
   })
 
+  it('shows a reconciliation result when the download matches but the local roster was stale', async () => {
+    const onApplied = vi.fn()
+    refresh.mockResolvedValue({
+      diff: {
+        changed: true,
+        addedTeams: [],
+        withdrawnTeams: [],
+        operationalDrift: { reconciliationNeeded: true, missingFromDraw: ['1/2', '3/4', '5/6', '7/8'] },
+      },
+      applied: true,
+      rosterProjection: projection({
+        reconciled: { withdrawnTeams: 0, drawSlotsReplaced: 4 },
+      }),
+    } as never)
+    render(<DeskRwOsRefresh importId={12} onApplied={onApplied} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check RW-OS for Changes' }))
+    expect(await screen.findByRole('heading', { name: 'RW-OS Roster Reconciled' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'RW-OS Roster Is Current' })).not.toBeInTheDocument()
+    expect(screen.queryByText('No player or team changes were found.')).not.toBeInTheDocument()
+    expect(screen.getByText(/event and draw membership was reconciled/)).toBeInTheDocument()
+    expect(screen.getByText('4 draw positions updated')).toBeInTheDocument()
+    expect(onApplied).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledWith(12, false)
+  })
+
   it('says the roster is current without applying', async () => {
     refresh.mockResolvedValue({
       diff: { changed: false, addedTeams: [], withdrawnTeams: [] },

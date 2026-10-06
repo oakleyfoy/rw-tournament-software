@@ -856,6 +856,154 @@ def _place_replacements_in_vacated_slots(
         )
 
 
+def _place_existing_teams_in_open_capacity(
+    session: Session,
+    *,
+    tournament_id: int,
+    active_keys: set[str],
+    vacated: list[_VacatedDrawSlot],
+    result: RosterProjectionResult,
+) -> None:
+    """Put active source teams that never reached the draw into sides that were already empty.
+
+    Slots cleared by a withdrawal in this same refresh stay reserved for a new or returning team.
+    Occupied sides are not moved.
+    """
+    reserved = {(slot.match_id, slot.side) for slot in vacated}
+    rows = session.exec(
+        select(Team).join(Event).where(Event.tournament_id == tournament_id, Team.source_team_key.is_not(None))
+    ).all()
+    pending: dict[int, list[Team]] = {}
+    for team in rows:
+        key = team.source_team_key or ""
+        if not key or key not in active_keys or not team_is_active(team) or team.id is None:
+            continue
+        if _team_occupies_match(session, team):
+            continue
+        pending.setdefault(team.event_id, []).append(team)
+    for event_id, teams in pending.items():
+        slots = [
+            slot for slot in _open_capacity_entry_slots(session, event_id) if (slot.match_id, slot.side) not in reserved
+        ]
+        ordered_teams = sorted(teams, key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+        for slot, team in zip(slots, ordered_teams):
+            match = session.get(Match, slot.match_id)
+            if match is None or not _assign_draw_slot(session, match, slot.side, team):
+                continue
+            if team.seed is None and slot.seed is not None and _seed_available(session, event_id, slot.seed, team.id):
+                team.seed = slot.seed
+                session.add(team)
+            result.draw_slots_replaced += 1
+            _record_field_change(
+                result,
+                team_key=team.source_team_key or "",
+                team_label=_team_label(team),
+                field="drawSlot",
+                label="Draw slot",
+                before=slot.withdrawn_label,
+                after=_team_label(team),
+            )
+
+
+def _approved_draw_plans(session: Session, import_row: TournamentImport) -> list[TournamentDrawPlan]:
+    return list(
+        session.exec(
+            select(TournamentDrawPlan).where(
+                TournamentDrawPlan.import_id == import_row.id,
+                TournamentDrawPlan.approved == True,  # noqa: E712
+            )
+        ).all()
+    )
+
+
+def _routed_event_ids(
+    teams: list[SnapshotTeam],
+    plans: list[TournamentDrawPlan],
+    events: list[Event],
+) -> dict[str, int]:
+    routed_ids: dict[str, int] = {}
+    for plan in plans:
+        draw_teams = [team for team in teams if team.draw_kind == plan.draw_kind]
+        brackets = _brackets_from_plan(plan)
+        assigned: set[str] = set()
+        for snapshot_team, bracket, _rank in route_snapshot_teams(draw_teams, brackets):
+            label = str(bracket.get("label") or "").strip()
+            event = _event_by_route(events, plan.draw_kind, label)
+            if event is not None and event.id is not None:
+                routed_ids[snapshot_team.team_key] = event.id
+                assigned.add(snapshot_team.team_key)
+        last = brackets[-1] if brackets else None
+        last_label = str((last or {}).get("label") or "").strip()
+        fallback = _event_by_route(events, plan.draw_kind, last_label) if last_label else None
+        if fallback is None or fallback.id is None:
+            continue
+        for team in draw_teams:
+            if team.team_key not in assigned and team.team_key not in routed_ids:
+                routed_ids[team.team_key] = fallback.id
+    return routed_ids
+
+
+def operational_roster_drift(
+    session: Session,
+    import_row: TournamentImport,
+    current_team_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare the current RW-OS active roster with event membership and draw participants.
+
+    The stored snapshot hash is not enough. A download that matches the last snapshot is still
+    stale when those teams are missing from the event or from a draw that already exists.
+    """
+    empty = {
+        "reconciliationNeeded": False,
+        "missingFromEvent": [],
+        "extraInEvent": [],
+        "missingFromDraw": [],
+        "extraInDraw": [],
+    }
+    if import_row.plan_status not in ("approved", "stale"):
+        return empty
+    plans = _approved_draw_plans(session, import_row)
+    if not plans:
+        return empty
+
+    snapshot_teams = parse_teams(current_team_rows)
+    rwos_keys = {team.team_key for team in snapshot_teams}
+    live = session.exec(
+        select(Team)
+        .join(Event)
+        .where(Event.tournament_id == import_row.tournament_id, Team.source_team_key.is_not(None))
+    ).all()
+    active_keys = {team.source_team_key for team in live if team.source_team_key and team_is_active(team)}
+    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    events_with_matches = {
+        event.id for event in events if event.id is not None and _event_has_matches(session, event.id)
+    }
+    draw_keys = {
+        team.source_team_key
+        for team in live
+        if team.source_team_key and team.event_id in events_with_matches and _team_occupies_match(session, team)
+    }
+    existing_event = {team.source_team_key: team.event_id for team in live if team.source_team_key}
+    routed = _routed_event_ids(snapshot_teams, plans, events)
+    expected_draw: set[str] = set()
+    for key in rwos_keys:
+        event_id = existing_event.get(key, routed.get(key))
+        if event_id in events_with_matches:
+            expected_draw.add(key)
+
+    missing_from_event = sorted(rwos_keys - active_keys)
+    extra_in_event = sorted(active_keys - rwos_keys)
+    missing_from_draw = sorted(expected_draw - draw_keys)
+    extra_in_draw = sorted(key for key in draw_keys if key not in rwos_keys)
+    return {
+        "reconciliationNeeded": bool(missing_from_event or extra_in_event or missing_from_draw or extra_in_draw),
+        "missingFromEvent": missing_from_event,
+        "extraInEvent": extra_in_event,
+        "missingFromDraw": missing_from_draw,
+        "extraInDraw": extra_in_draw,
+    }
+
+
 def project_approved_roster(
     session: Session,
     import_row: TournamentImport,
@@ -1056,6 +1204,14 @@ def project_approved_roster(
         candidates=placement_candidates,
         result=result,
     )
+    if operational_only:
+        _place_existing_teams_in_open_capacity(
+            session,
+            tournament_id=import_row.tournament_id,
+            active_keys=active_keys,
+            vacated=vacated_slots,
+            result=result,
+        )
 
     for event_id, assignments in wkw_assignments.items():
         group_map = group_map_from_avoid_groups(assignments)
