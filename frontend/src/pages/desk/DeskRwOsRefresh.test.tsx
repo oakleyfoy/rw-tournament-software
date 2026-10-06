@@ -57,6 +57,30 @@ describe('DeskRwOsRefresh', () => {
     expect(refresh).toHaveBeenCalledWith(12, false)
   })
 
+  it('does not call a failed roster repair reconciled', async () => {
+    refresh.mockResolvedValue({
+      diff: {
+        changed: true,
+        addedTeams: [],
+        withdrawnTeams: [],
+        operationalDrift: { reconciliationNeeded: true, missingFromEvent: ['a', 'b', 'c', 'd'] },
+      },
+      applied: true,
+      rosterProjection: projection({
+        conflicts: [{
+          code: 'roster_reconciliation_incomplete',
+          message: 'Mixed: RW-OS active teams: 24. Tournament active teams: 20. Draw participants: 20. Missing teams: [M21 (540/541)].',
+        }],
+      }),
+    } as never)
+    render(<DeskRwOsRefresh importId={12} onApplied={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check RW-OS for Changes' }))
+    expect(await screen.findByRole('heading', { name: 'RW-OS Roster Was Not Reconciled' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'RW-OS Roster Reconciled' })).not.toBeInTheDocument()
+    expect(screen.queryByText('No player or team changes were found.')).not.toBeInTheDocument()
+    expect(screen.getByText(/RW-OS active teams: 24/)).toBeInTheDocument()
+  })
+
   it('says the roster is current without applying', async () => {
     refresh.mockResolvedValue({
       diff: { changed: false, addedTeams: [], withdrawnTeams: [] },

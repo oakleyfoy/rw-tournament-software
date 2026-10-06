@@ -32,12 +32,14 @@ def apply_team_contact_fields(
         value = (incoming or "").strip() or None
         if only_if_present and not value:
             continue
+        shown = getattr(team, long_name) or getattr(team, short_name) or ""
+        shown = str(shown).strip() or None
+        if shown != value:
+            updated += 1
         if getattr(team, long_name) != value:
             setattr(team, long_name, value)
-            updated += 1
         if getattr(team, short_name) != value:
             setattr(team, short_name, value)
-            updated += 1
     return updated
 
 
