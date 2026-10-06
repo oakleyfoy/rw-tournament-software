@@ -567,10 +567,20 @@ def refresh_import(
     }
     current = client.refresh_event(import_row.source_tournament_id, previous)
     diff = compute_refresh_diff(previous, current)
+    from app.services.rw_os_roster_projection import operational_roster_drift
+
+    drift = operational_roster_drift(session, import_row, current.get("teams") or [])
+    diff["operationalDrift"] = drift
+    source_changed = bool(diff["changed"])
+    if drift["reconciliationNeeded"]:
+        diff["changed"] = True
     import_row.refresh_diff_json = json.dumps(diff)
     import_row.updated_at = datetime.utcnow()
+    # A matching download is not "current" when the event or draw is behind that roster.
+    # Repair that stale local state on the desk check. A real source change still waits for Apply.
+    reconcile = apply or (bool(drift["reconciliationNeeded"]) and not source_changed)
     roster_projection = None
-    if apply:
+    if reconcile:
         persist_snapshot(session, current, organization_slug=import_row.organization_slug, existing=import_row)
         roster_projection = getattr(import_row, "_last_roster_projection", None)
     else:
@@ -579,8 +589,8 @@ def refresh_import(
         session.refresh(import_row)
     return {
         "diff": diff,
-        "applied": apply,
-        "current": current if not apply else None,
+        "applied": reconcile,
+        "current": current if not reconcile else None,
         "import": serialize_import(import_row),
         "rosterProjection": roster_projection,
     }

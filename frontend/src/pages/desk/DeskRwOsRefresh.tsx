@@ -24,6 +24,14 @@ type FieldChange = {
   after?: string | null
 }
 
+type OperationalDrift = {
+  reconciliationNeeded?: boolean
+  missingFromEvent?: string[]
+  extraInEvent?: string[]
+  missingFromDraw?: string[]
+  extraInDraw?: string[]
+}
+
 type RefreshDiff = {
   changed?: boolean
   addedTeams?: SnapshotTeam[]
@@ -34,6 +42,21 @@ type RefreshDiff = {
   contactChanges?: FieldChange[]
   towelChanges?: FieldChange[]
   avoidGroupChanges?: FieldChange[]
+  operationalDrift?: OperationalDrift
+}
+
+function sourceRosterUnchanged(diff: RefreshDiff | undefined): boolean {
+  if (!diff) return false
+  return !(
+    (diff.addedTeams || []).length ||
+    (diff.withdrawnTeams || []).length ||
+    (diff.partnerChanges || []).length ||
+    (diff.drawChanges || []).length ||
+    (diff.ratingChanges || []).length ||
+    (diff.contactChanges || []).length ||
+    (diff.towelChanges || []).length ||
+    (diff.avoidGroupChanges || []).length
+  )
 }
 
 type RefreshResult = {
@@ -119,8 +142,16 @@ function PreviewBody({ diff }: { diff: RefreshDiff }) {
   const contacts = (diff.contactChanges || []).filter((change) => change.field !== 'name' || change.before !== change.after)
   const towels = diff.towelChanges || []
   const avoid = diff.avoidGroupChanges || []
+  const drift = diff.operationalDrift
   return (
     <div data-testid="rw-os-change-preview">
+      {drift?.reconciliationNeeded && (
+        <Section title="LOCAL ROSTER DRIFT">
+          <ChangeCard>
+            <div>Tournament Software event or draw membership does not match the current RW-OS roster.</div>
+          </ChangeCard>
+        </Section>
+      )}
       {added.length > 0 && (
         <Section title="NEW TEAM">
           {added.map((team) => (
@@ -252,8 +283,14 @@ export function DeskRwOsRefresh({
     setApplied(null)
     try {
       const result = (await refreshRwOsImport(importId, false)) as RefreshResult
-      setPreview(result)
-      setPhase('preview')
+      if (result.applied) {
+        setApplied(result)
+        setPhase('done')
+        await onApplied()
+      } else {
+        setPreview(result)
+        setPhase('preview')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not check RW-OS')
       setPhase('preview')
@@ -343,7 +380,14 @@ export function DeskRwOsRefresh({
             {phase === 'applying' && <p>Applying RW-OS Changes…</p>}
             {phase === 'done' && applied && (
               <>
-                <h2 style={{ marginTop: 0 }}>RW-OS Changes Applied</h2>
+                <h2 style={{ marginTop: 0 }}>
+                  {sourceRosterUnchanged(applied.diff) && applied.diff.operationalDrift?.reconciliationNeeded
+                    ? 'RW-OS Roster Reconciled'
+                    : 'RW-OS Changes Applied'}
+                </h2>
+                {sourceRosterUnchanged(applied.diff) && applied.diff.operationalDrift?.reconciliationNeeded && (
+                  <p>The RW-OS download had not changed. Tournament Software event and draw membership was reconciled to that roster.</p>
+                )}
                 <ul>
                   {appliedSummaryLines(applied).map((line) => (
                     <li key={line}>{line}</li>

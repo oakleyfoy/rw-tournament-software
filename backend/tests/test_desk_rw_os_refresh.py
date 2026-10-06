@@ -1,5 +1,6 @@
 """Desk check/apply uses the existing RW-OS refresh endpoint. Preview does not mutate play data."""
 
+import json
 from datetime import date, datetime
 from types import SimpleNamespace
 
@@ -8,19 +9,25 @@ from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
+from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
+from app.models.tournament_import import TournamentDrawPlan, TournamentImport
 from app.services.canonical_teams import SnapshotTeam
+from app.services.rw_os_import import snapshot_hash
 from tests.test_rw_os_roster_projection import (
     _approve,
     _assign_unplayed_wf_slot,
+    _draw_participant_ids,
     _import_payload,
+    _mixed_field,
     _payload,
     _schedule_match,
     _teams_by_key,
     _torrie_nancy,
+    _wf_r1_match,
     _womens_field,
 )
 
@@ -38,6 +45,45 @@ def _patch_refresh(monkeypatch, payloads: list[dict]):
     return calls
 
 
+def _place_remaining_round(
+    session: Session,
+    tournament_id: int,
+    event: Event,
+    anchor: Match,
+    placed_ids: set[int],
+) -> None:
+    """The desk 'current' check requires every active team to occupy the draw when a draw exists."""
+    remaining = [
+        team
+        for team in session.exec(select(Team).where(Team.event_id == event.id)).all()
+        if team.id not in placed_ids and not team.is_defaulted
+    ]
+    remaining.sort(key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+    sequence = 2
+    for index in range(0, len(remaining) - 1, 2):
+        left = remaining[index]
+        right = remaining[index + 1]
+        session.add(
+            Match(
+                tournament_id=tournament_id,
+                event_id=event.id,
+                schedule_version_id=anchor.schedule_version_id,
+                match_code=f"WF_R1_{sequence:02d}",
+                match_type="WF",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=sequence,
+                duration_minutes=60,
+                team_a_id=left.id,
+                team_b_id=right.id,
+                placeholder_side_a=left.name,
+                placeholder_side_b=right.name,
+            )
+        )
+        sequence += 1
+    session.commit()
+
+
 def _ready(client: TestClient, session: Session, source_id: int):
     teams = _womens_field(8)
     imported = _import_payload(session, source_id, teams)
@@ -48,6 +94,7 @@ def _ready(client: TestClient, session: Session, source_id: int):
     partner = live[teams[1].team_key]
     event = session.get(Event, withdrawn.event_id)
     match = _assign_unplayed_wf_slot(session, imported.tournament_id, event, withdrawn, partner)
+    _place_remaining_round(session, imported.tournament_id, event, match, {withdrawn.id, partner.id})
     tournament = session.get(Tournament, imported.tournament_id)
     _schedule_match(session, tournament, match)
     session.expire_all()
@@ -296,3 +343,241 @@ def test_tournament_without_an_rw_os_import_has_no_linked_source(client: TestCli
     found = client.get(f"/api/rw-os/tournaments/{ready.imported.tournament_id}/import")
     assert found.status_code == 200
     assert found.json()["import"]["id"] == ready.imported.id
+
+
+def _active_keys(session: Session, event_id: int) -> set[str]:
+    return {
+        team.source_team_key
+        for team in session.exec(select(Team).where(Team.event_id == event_id)).all()
+        if team.source_team_key and not team.is_defaulted
+    }
+
+
+def _mixed_draw(
+    client: TestClient,
+    session: Session,
+    source_id: int,
+    *,
+    roster_count: int,
+    placed_count: int,
+) -> SimpleNamespace:
+    """Approved Mixed roster with a 24-side draw. placed_count teams occupy entry sides."""
+    field = _mixed_field(roster_count)
+    imported = _import_payload(session, source_id, field)
+    _approve(client, imported.id, {"mixed": str(roster_count)})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    plan = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == imported.id)).one()
+    brackets = json.loads(plan.brackets_json)
+    brackets[0]["size"] = 24
+    brackets[0]["rankEnd"] = 24
+    plan.brackets_json = json.dumps(brackets)
+    event.team_count = 24
+    event.draw_status = "generated"
+    session.add(plan)
+    session.add(event)
+    session.commit()
+
+    live = _teams_by_key(session, imported.tournament_id)
+    ordered = sorted(live.values(), key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+    version = ScheduleVersion(tournament_id=imported.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    filled = []
+    for index in range(placed_count // 2):
+        filled.append(
+            _wf_r1_match(
+                session,
+                tournament_id=imported.tournament_id,
+                event=event,
+                version=version,
+                sequence=index + 1,
+                team_a=ordered[index * 2],
+                team_b=ordered[index * 2 + 1],
+            )
+        )
+    open_matches = []
+    for index in range(placed_count // 2, 12):
+        open_matches.append(
+            _wf_r1_match(
+                session,
+                tournament_id=imported.tournament_id,
+                event=event,
+                version=version,
+                sequence=index + 1,
+                team_a=None,
+                team_b=None,
+            )
+        )
+    return SimpleNamespace(
+        field=field,
+        imported=session.get(TournamentImport, imported.id),
+        event=session.get(Event, event.id),
+        ordered=ordered,
+        filled=filled,
+        open_matches=open_matches,
+    )
+
+
+def _store_snapshot(session: Session, imported: TournamentImport, source_id: int, teams: list[SnapshotTeam]) -> None:
+    payload = _payload(source_id, teams)
+    row = session.get(TournamentImport, imported.id)
+    row.snapshot_json = json.dumps(payload["teams"])
+    row.source_hash = snapshot_hash(payload)
+    row.source_team_count = len(payload["teams"])
+    row.source_version = payload["version"]
+    session.add(row)
+    session.commit()
+
+
+def test_case_a_stale_draw_reconciles_on_check_without_a_new_rw_os_change(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _mixed_draw(client, session, 960, roster_count=24, placed_count=20)
+    assert len(_active_keys(session, ready.event.id)) == 24
+    assert len(_draw_participant_ids(session, ready.event.id)) == 20
+    before_filled = {match.id: (match.team_a_id, match.team_b_id) for match in ready.filled}
+    _patch_refresh(monkeypatch, [_payload(960, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["diff"]["changed"] is True
+    assert result["diff"]["addedTeams"] == []
+    assert result["diff"]["withdrawnTeams"] == []
+    assert result["diff"]["operationalDrift"]["reconciliationNeeded"] is True
+    assert len(result["diff"]["operationalDrift"]["missingFromDraw"]) == 4
+    assert result["applied"] is True
+    assert result["rosterProjection"]["created"]["teams"] == 0
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 4
+    session.expire_all()
+    active = [team for team in _teams_by_key(session, ready.imported.tournament_id).values() if not team.is_defaulted]
+    assert len(active) == 24
+    assert _draw_participant_ids(session, ready.event.id) == {team.id for team in active}
+    for match in ready.filled:
+        session.refresh(match)
+        assert (match.team_a_id, match.team_b_id) == before_filled[match.id]
+
+
+def test_case_b_stale_event_and_draw_reconcile_on_check(client: TestClient, session: Session, monkeypatch):
+    ready = _mixed_draw(client, session, 961, roster_count=20, placed_count=20)
+    additions = _mixed_field(4, start_id=1900, start_rating=6.0)
+    current = [SnapshotTeam.from_dict(team.to_dict()) for team in ready.field] + additions
+    _store_snapshot(session, ready.imported, 961, current)
+    assert len(_active_keys(session, ready.event.id)) == 20
+    assert len(_draw_participant_ids(session, ready.event.id)) == 20
+    _patch_refresh(monkeypatch, [_payload(961, current)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["diff"]["changed"] is True
+    assert result["diff"]["addedTeams"] == []
+    assert result["applied"] is True
+    assert result["rosterProjection"]["created"]["teams"] == 4
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 4
+    session.expire_all()
+    active = [team for team in _teams_by_key(session, ready.imported.tournament_id).values() if not team.is_defaulted]
+    assert len(active) == 24
+    assert _draw_participant_ids(session, ready.event.id) == {team.id for team in active}
+    desk = client.get(f"/api/desk/tournaments/{ready.imported.tournament_id}/teams")
+    mixed = [row for row in desk.json() if row["event_id"] == ready.event.id]
+    assert len(mixed) == 24
+
+
+def test_case_c_withdrawn_team_still_in_the_draw_is_not_current(client: TestClient, session: Session, monkeypatch):
+    ready = _mixed_draw(client, session, 962, roster_count=24, placed_count=24)
+    withdrawn = ready.ordered[0]
+    remaining = [
+        SnapshotTeam.from_dict(team.to_dict()) for team in ready.field if team.team_key != withdrawn.source_team_key
+    ]
+    _store_snapshot(session, ready.imported, 962, remaining)
+    _patch_refresh(monkeypatch, [_payload(962, remaining)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["diff"]["changed"] is True
+    assert result["diff"]["withdrawnTeams"] == []
+    assert withdrawn.source_team_key in result["diff"]["operationalDrift"]["extraInDraw"]
+    assert result["applied"] is True
+    assert result["rosterProjection"]["reconciled"]["withdrawnTeams"] == 1
+    session.expire_all()
+    old = session.get(Team, withdrawn.id)
+    assert old.is_defaulted is True
+    assert old.id not in _draw_participant_ids(session, ready.event.id)
+    desk = client.get(f"/api/desk/tournaments/{ready.imported.tournament_id}/teams")
+    assert old.id not in {row["team_id"] for row in desk.json()}
+
+
+def test_case_c_protected_withdrawal_returns_a_conflict_instead_of_current(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _mixed_draw(client, session, 963, roster_count=24, placed_count=24)
+    withdrawn = ready.ordered[0]
+    match = next(item for item in ready.filled if item.team_a_id == withdrawn.id or item.team_b_id == withdrawn.id)
+    match.started_at = datetime.utcnow()
+    match.runtime_status = "FINAL"
+    match.score_json = {"display": "4-2"}
+    match.winner_team_id = withdrawn.id
+    session.add(match)
+    session.commit()
+    remaining = [
+        SnapshotTeam.from_dict(team.to_dict()) for team in ready.field if team.team_key != withdrawn.source_team_key
+    ]
+    _store_snapshot(session, ready.imported, 963, remaining)
+    _patch_refresh(monkeypatch, [_payload(963, remaining)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["diff"]["changed"] is True
+    assert result["applied"] is True
+    blocked = [
+        item for item in result["rosterProjection"]["conflicts"] if item["code"] == "roster_reconciliation_blocked"
+    ]
+    assert len(blocked) == 1
+    session.expire_all()
+    old = session.get(Team, withdrawn.id)
+    saved = session.get(Match, match.id)
+    assert old.is_defaulted is False
+    assert saved.winner_team_id == old.id
+    assert saved.score_json == {"display": "4-2"}
+
+
+def test_case_d_fully_reconciled_roster_is_current_and_does_not_write(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _mixed_draw(client, session, 964, roster_count=24, placed_count=24)
+    before = _fingerprint(session, ready.imported.tournament_id)
+    _patch_refresh(monkeypatch, [_payload(964, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["diff"]["changed"] is False
+    assert result["diff"]["operationalDrift"]["reconciliationNeeded"] is False
+    assert result["applied"] is False
+    assert result["rosterProjection"] is None
+    session.expire_all()
+    assert _fingerprint(session, ready.imported.tournament_id) == before
+
+
+def test_case_e_second_check_after_reconciliation_is_a_noop(client: TestClient, session: Session, monkeypatch):
+    ready = _mixed_draw(client, session, 965, roster_count=24, placed_count=20)
+    _patch_refresh(monkeypatch, [_payload(965, ready.field)])
+
+    first = _post_refresh(client, ready.imported.id, apply=False)
+    assert first["applied"] is True
+    assert first["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 4
+    session.expire_all()
+    after = _fingerprint(session, ready.imported.tournament_id)
+    participants = _draw_participant_ids(session, ready.event.id)
+    assert len(participants) == 24
+
+    second = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert second["diff"]["changed"] is False
+    assert second["applied"] is False
+    assert second["rosterProjection"] is None
+    session.expire_all()
+    assert _fingerprint(session, ready.imported.tournament_id) == after
+    assert _draw_participant_ids(session, ready.event.id) == participants
+    assert len(_teams_by_key(session, ready.imported.tournament_id)) == 24
