@@ -36,6 +36,7 @@ CONFLICT_TEAM_WOULD_MOVE = "projected_team_would_move_bracket"
 CONFLICT_DRAW_PROTECTION = "live_draw_protection_blocks_structural_change"
 CONFLICT_ROSTER_RECONCILIATION_BLOCKED = "roster_reconciliation_blocked"
 CONFLICT_DRAW_PLACEMENT_UNRESOLVED = "roster_draw_placement_unresolved"
+CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE = "roster_reconciliation_incomplete"
 EMPTY_DRAW_SLOT = "TBD"
 _FEEDER_PLACEHOLDER = re.compile(r"^(?:W\(|L\(|WINNER:|LOSER:|TBD:)", re.IGNORECASE)
 _SEED_PLACEHOLDER = re.compile(r"^SEED[_ ](\d+)$", re.IGNORECASE)
@@ -336,11 +337,16 @@ def _upsert_rwos_towel_row(
         before_color = existing.towel_color
         changed = False
         for name, value in fields.items():
+            if name == "updated_at":
+                continue
             if getattr(existing, name) != value:
                 setattr(existing, name, value)
                 changed = True
-        if changed:
-            session.add(existing)
+        if not changed:
+            return
+        existing.updated_at = fields["updated_at"]
+        session.add(existing)
+        if before_color != incoming_color:
             result.updated_towel_rows += 1
             _record_field_change(
                 result,
@@ -1004,6 +1010,89 @@ def operational_roster_drift(
     }
 
 
+def _record_incomplete_reconciliation(
+    session: Session,
+    import_row: TournamentImport,
+    teams: list[SnapshotTeam],
+    result: RosterProjectionResult,
+) -> None:
+    """Success is the resulting roster, not the fact that projection ran."""
+    drift = operational_roster_drift(session, import_row, [team.to_dict() for team in teams])
+    if not drift["reconciliationNeeded"]:
+        return
+    live = session.exec(
+        select(Team)
+        .join(Event)
+        .where(Event.tournament_id == import_row.tournament_id, Team.source_team_key.is_not(None))
+    ).all()
+    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    events_with_matches = {
+        event.id for event in events if event.id is not None and _event_has_matches(session, event.id)
+    }
+    draw_keys = {
+        team.source_team_key
+        for team in live
+        if team.source_team_key and team.event_id in events_with_matches and _team_occupies_match(session, team)
+    }
+    active_keys = {team.source_team_key for team in live if team.source_team_key and team_is_active(team)}
+    by_kind: dict[str, list[SnapshotTeam]] = {}
+    for team in teams:
+        by_kind.setdefault(team.draw_kind, []).append(team)
+    lines: list[str] = []
+    missing_names: list[str] = []
+    for kind, group in by_kind.items():
+        keys = {team.team_key for team in group}
+        event_ids = {team.event_id for team in live if team.source_team_key in keys}
+        active_count = len([team for team in live if team.event_id in event_ids and team_is_active(team)])
+        draw_count = len(
+            {team.source_team_key for team in live if team.event_id in event_ids and team.source_team_key in draw_keys}
+        )
+        draw_expected = bool(event_ids & events_with_matches)
+        missing = [
+            team
+            for team in group
+            if team.team_key not in active_keys or (draw_expected and team.team_key not in draw_keys)
+        ]
+        extra = [
+            team.source_team_key
+            for team in live
+            if team.event_id in event_ids and team_is_active(team) and team.source_team_key not in keys
+        ]
+        stale_draw = sorted(
+            key
+            for key in draw_keys
+            if key not in keys and any(row.event_id in event_ids and row.source_team_key == key for row in live)
+        )
+        if not missing and not extra and not stale_draw:
+            continue
+        label = group[0].draw_label or kind
+        rendered = []
+        for team in missing:
+            name = team.display_name or team.full_name or team.team_key
+            rendered.append(f"{name} ({team.team_key})")
+            missing_names.append(f"{name} ({team.team_key})")
+        lines.append(
+            f"{label}: RW-OS active teams: {len(keys)}. Tournament active teams: {active_count}. "
+            f"Draw participants: {draw_count}. Missing teams: {rendered or ['none']}."
+        )
+        if extra or stale_draw:
+            still_local = sorted(set(extra) | set(stale_draw))
+            lines.append(f"{label} teams still active locally but absent from RW-OS: {still_local}.")
+    if not lines:
+        lines.append("Active RW-OS teams still do not match Tournament Software event or draw membership.")
+    result.conflicts.append(
+        _conflict(
+            CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE,
+            " ".join(lines),
+            missingFromEvent=drift["missingFromEvent"],
+            extraInEvent=drift["extraInEvent"],
+            missingFromDraw=drift["missingFromDraw"],
+            extraInDraw=drift["extraInDraw"],
+            missingTeams=missing_names,
+        )
+    )
+
+
 def project_approved_roster(
     session: Session,
     import_row: TournamentImport,
@@ -1053,23 +1142,32 @@ def project_approved_roster(
                         drawKind=plan.draw_kind,
                     )
                 )
-                if operational_only and _find_projected_team(session, import_row.tournament_id, team.team_key) is None:
+                if operational_only:
                     brackets = _brackets_from_plan(plan)
                     last = brackets[-1] if brackets else None
                     last_label = str((last or {}).get("label") or "").strip()
                     fallback_event = _event_by_route(events, plan.draw_kind, last_label) if last_label else None
-                    if fallback_event is not None and fallback_event.id is not None:
-                        created = _create_source_team(
-                            session,
-                            event=fallback_event,
-                            snapshot_team=team,
-                            seed=None,
-                            result=result,
-                            wkw_assignments=wkw_assignments,
-                            tournament_id=import_row.tournament_id,
-                        )
-                        touched_teams.append(created)
-                        placement_candidates.append(created)
+                    existing_unassigned = _find_projected_team(session, import_row.tournament_id, team.team_key)
+                    if existing_unassigned is None:
+                        if fallback_event is not None and fallback_event.id is not None:
+                            created = _create_source_team(
+                                session,
+                                event=fallback_event,
+                                snapshot_team=team,
+                                seed=None,
+                                result=result,
+                                wkw_assignments=wkw_assignments,
+                                tournament_id=import_row.tournament_id,
+                            )
+                            touched_teams.append(created)
+                            placement_candidates.append(created)
+                    else:
+                        _apply_operational_team_updates(session, existing_unassigned, team, result, wkw_assignments)
+                        touched_teams.append(existing_unassigned)
+                        if team_is_active(existing_unassigned) and not _team_occupies_match(
+                            session, existing_unassigned
+                        ):
+                            placement_candidates.append(existing_unassigned)
 
         for snapshot_team, bracket, planner_rank in routed:
             _collect_operational_warnings(snapshot_team, result.warnings)
@@ -1221,6 +1319,8 @@ def project_approved_roster(
             result.warnings.append(_warning("wkw_edge_error", f"Error creating avoid edges: {exc}"))
 
     sync_players_from_team_slots_if_enabled(session, import_row.tournament_id, touched_teams)
+    if operational_only:
+        _record_incomplete_reconciliation(session, import_row, teams, result)
     session.commit()
     return result
 

@@ -71,10 +71,15 @@ const STAFF_WARNING_CODES = new Set([
   'draw_slot_left_open',
   'roster_draw_placement_unresolved',
   'roster_reconciliation_blocked',
+  'roster_reconciliation_incomplete',
   'team_would_move',
   'draw_protection',
   'live_draw_protection_blocks_structural_change',
 ])
+
+function reconciliationIncomplete(result: RefreshResult | null): boolean {
+  return (result?.rosterProjection?.conflicts || []).some((item) => item.code === 'roster_reconciliation_incomplete')
+}
 
 function teamLabel(team: SnapshotTeam): string {
   return team.displayName || team.display_name || team.fullName || team.full_name || team.teamKey || 'Team'
@@ -381,11 +386,18 @@ export function DeskRwOsRefresh({
             {phase === 'done' && applied && (
               <>
                 <h2 style={{ marginTop: 0 }}>
-                  {sourceRosterUnchanged(applied.diff) && applied.diff.operationalDrift?.reconciliationNeeded
-                    ? 'RW-OS Roster Reconciled'
-                    : 'RW-OS Changes Applied'}
+                  {reconciliationIncomplete(applied)
+                    ? 'RW-OS Roster Was Not Reconciled'
+                    : sourceRosterUnchanged(applied.diff) && applied.diff.operationalDrift?.reconciliationNeeded
+                      ? 'RW-OS Roster Reconciled'
+                      : 'RW-OS Changes Applied'}
                 </h2>
-                {sourceRosterUnchanged(applied.diff) && applied.diff.operationalDrift?.reconciliationNeeded && (
+                {reconciliationIncomplete(applied) && (
+                  <p>Tournament Software event or draw membership still does not match the current RW-OS roster.</p>
+                )}
+                {!reconciliationIncomplete(applied) &&
+                  sourceRosterUnchanged(applied.diff) &&
+                  applied.diff.operationalDrift?.reconciliationNeeded && (
                   <p>The RW-OS download had not changed. Tournament Software event and draw membership was reconciled to that roster.</p>
                 )}
                 <ul>

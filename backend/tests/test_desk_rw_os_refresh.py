@@ -581,3 +581,223 @@ def test_case_e_second_check_after_reconciliation_is_a_noop(client: TestClient, 
     assert _fingerprint(session, ready.imported.tournament_id) == after
     assert _draw_participant_ids(session, ready.event.id) == participants
     assert len(_teams_by_key(session, ready.imported.tournament_id)) == 24
+
+
+def _generate_wf24_draw(session: Session, event: Event, placed: list[Team]) -> list[Match]:
+    """Canonical 24-team Mixed waterfall: 12 entry matches, then winner/loser feeders."""
+    from app.services.draw_plan_engine import DrawPlanSpec, _generate_wf_to_brackets_8
+
+    event.team_count = 24
+    event.guarantee_selected = event.guarantee_selected or 5
+    event.draw_plan_json = json.dumps({"version": "1.0", "template_type": "WF_TO_BRACKETS_8", "wf_rounds": 2})
+    event.draw_status = "generated"
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    version = ScheduleVersion(tournament_id=event.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    category = event.category.value if hasattr(event.category, "value") else str(event.category)
+    spec = DrawPlanSpec(
+        event_id=event.id,
+        event_name=event.name,
+        division="Mixed",
+        team_count=24,
+        template_type="WF_TO_BRACKETS_8",
+        template_key="WF_TO_BRACKETS_8",
+        guarantee=5,
+        waterfall_rounds=2,
+        waterfall_minutes=60,
+        standard_minutes=105,
+        tournament_id=event.tournament_id,
+        event_category=category,
+    )
+    session._allow_match_generation = True
+    matches, _warnings = _generate_wf_to_brackets_8(session, version.id, spec, [team.id for team in placed])
+    session.add_all(matches)
+    session.commit()
+    return matches
+
+
+def _set_rank_end(session: Session, import_id: int, rank_end: int) -> None:
+    plan = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == import_id)).one()
+    brackets = json.loads(plan.brackets_json)
+    brackets[0]["size"] = rank_end
+    brackets[0]["rankEnd"] = rank_end
+    plan.brackets_json = json.dumps(brackets)
+    session.add(plan)
+    session.commit()
+
+
+def _incomplete(result: dict) -> list[dict]:
+    return [
+        item for item in result["rosterProjection"]["conflicts"] if item["code"] == "roster_reconciliation_incomplete"
+    ]
+
+
+def test_real_wf24_draw_materializes_four_missing_teams(client: TestClient, session: Session, monkeypatch):
+    """Production draw shape: WF R1 uses Seed N sides, later rounds are feeders. Snapshot has 24, rows have 20."""
+    field = _mixed_field(24)
+    present = field[:20]
+    missing = field[20:]
+    imported = _import_payload(session, 970, present)
+    _approve(client, imported.id, {"mixed": "20"})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    _set_rank_end(session, imported.id, 24)
+    ordered = sorted(
+        _teams_by_key(session, imported.tournament_id).values(),
+        key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+    )
+    matches = _generate_wf24_draw(session, event, ordered)
+    r1 = [match for match in matches if match.match_type == "WF" and (match.round_index or 0) == 1]
+    empty = []
+    for match in r1:
+        if match.team_a_id is None:
+            empty.append(match.placeholder_side_a)
+        if match.team_b_id is None:
+            empty.append(match.placeholder_side_b)
+    assert empty == ["Seed 21", "Seed 22", "Seed 23", "Seed 24"]
+    assert any(match.source_match_a_id is not None for match in matches)
+    assert len(_draw_participant_ids(session, event.id)) == 20
+    _store_snapshot(session, imported, 970, field)
+    _patch_refresh(monkeypatch, [_payload(970, field)])
+
+    result = _post_refresh(client, imported.id, apply=False)
+
+    assert result["applied"] is True
+    assert result["rosterProjection"]["created"]["teams"] == 4
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 4
+    assert result["rosterProjection"]["updated"]["towelRows"] == 0
+    assert result["rosterProjection"]["updated"]["contactFields"] == 0
+    assert _incomplete(result) == []
+    session.expire_all()
+    active = [team for team in _teams_by_key(session, imported.tournament_id).values() if not team.is_defaulted]
+    assert len(active) == 24
+    assert {team.source_team_key for team in active} >= {team.team_key for team in missing}
+    assert _draw_participant_ids(session, event.id) == {team.id for team in active}
+    desk = client.get(f"/api/desk/tournaments/{imported.tournament_id}/teams")
+    assert len([row for row in desk.json() if row["event_id"] == event.id]) == 24
+
+    again = _post_refresh(client, imported.id, apply=False)
+    assert again["diff"]["changed"] is False
+    assert again["applied"] is False
+    assert again["rosterProjection"] is None
+
+
+def test_defaulted_teams_outside_rank_are_reactivated_into_wf24_seed_sides(
+    client: TestClient, session: Session, monkeypatch
+):
+    field = _mixed_field(24)
+    imported = _import_payload(session, 971, field)
+    _approve(client, imported.id, {"mixed": "24"})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    live = _teams_by_key(session, imported.tournament_id)
+    ordered = sorted(live.values(), key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+    hidden = ordered[20:]
+    for team in hidden:
+        team.is_defaulted = True
+        team.seed = None
+        session.add(team)
+    session.commit()
+    _set_rank_end(session, imported.id, 20)
+    matches = _generate_wf24_draw(session, event, ordered[:20])
+    r1_empty = [
+        match.placeholder_side_a
+        for match in matches
+        if match.match_type == "WF" and (match.round_index or 0) == 1 and match.team_a_id is None
+    ]
+    r1_empty += [
+        match.placeholder_side_b
+        for match in matches
+        if match.match_type == "WF" and (match.round_index or 0) == 1 and match.team_b_id is None
+    ]
+    assert r1_empty == ["Seed 21", "Seed 22", "Seed 23", "Seed 24"]
+    assert len(_active_keys(session, event.id)) == 20
+    _patch_refresh(monkeypatch, [_payload(971, field)])
+
+    result = _post_refresh(client, imported.id, apply=False)
+
+    assert result["rosterProjection"]["created"]["teams"] == 0
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 4
+    assert _incomplete(result) == []
+    session.expire_all()
+    active = [team for team in _teams_by_key(session, imported.tournament_id).values() if not team.is_defaulted]
+    assert len(active) == 24
+    assert {team.source_team_key for team in hidden} <= {team.source_team_key for team in active}
+    assert _draw_participant_ids(session, event.id) == {team.id for team in active}
+
+
+def test_active_unplaced_teams_fill_real_wf24_seed_sides(client: TestClient, session: Session, monkeypatch):
+    field = _mixed_field(24)
+    imported = _import_payload(session, 972, field)
+    _approve(client, imported.id, {"mixed": "24"})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    ordered = sorted(
+        _teams_by_key(session, imported.tournament_id).values(),
+        key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+    )
+    for team in ordered[20:]:
+        team.seed = None
+        session.add(team)
+    session.commit()
+    _generate_wf24_draw(session, event, ordered[:20])
+    assert len(_active_keys(session, event.id)) == 24
+    assert len(_draw_participant_ids(session, event.id)) == 20
+    _patch_refresh(monkeypatch, [_payload(972, field)])
+
+    result = _post_refresh(client, imported.id, apply=False)
+
+    assert result["rosterProjection"]["created"]["teams"] == 0
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 4
+    assert _incomplete(result) == []
+    session.expire_all()
+    active = [team for team in _teams_by_key(session, imported.tournament_id).values() if not team.is_defaulted]
+    assert _draw_participant_ids(session, event.id) == {team.id for team in active}
+
+
+def test_full_wf24_draw_without_open_sides_does_not_claim_success(client: TestClient, session: Session, monkeypatch):
+    field = _mixed_field(24)
+    present = field[:20]
+    imported = _import_payload(session, 973, present)
+    _approve(client, imported.id, {"mixed": "20"})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    ordered = sorted(
+        _teams_by_key(session, imported.tournament_id).values(),
+        key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+    )
+    version = ScheduleVersion(tournament_id=imported.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    for index in range(10):
+        _wf_r1_match(
+            session,
+            tournament_id=imported.tournament_id,
+            event=event,
+            version=version,
+            sequence=index + 1,
+            team_a=ordered[index],
+            team_b=ordered[index + 10],
+        )
+    _store_snapshot(session, imported, 973, field)
+    assert len(_draw_participant_ids(session, event.id)) == 20
+    _patch_refresh(monkeypatch, [_payload(973, field)])
+
+    result = _post_refresh(client, imported.id, apply=False)
+
+    failed = _incomplete(result)
+    assert len(failed) == 1
+    assert "RW-OS active teams: 24" in failed[0]["message"]
+    assert "Draw participants: 20" in failed[0]["message"]
+    assert "M21" in failed[0]["message"]
+    session.expire_all()
+    assert len(_draw_participant_ids(session, event.id)) == 20
