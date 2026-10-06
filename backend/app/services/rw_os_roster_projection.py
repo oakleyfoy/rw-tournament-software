@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -36,6 +37,8 @@ CONFLICT_DRAW_PROTECTION = "live_draw_protection_blocks_structural_change"
 CONFLICT_ROSTER_RECONCILIATION_BLOCKED = "roster_reconciliation_blocked"
 CONFLICT_DRAW_PLACEMENT_UNRESOLVED = "roster_draw_placement_unresolved"
 EMPTY_DRAW_SLOT = "TBD"
+_FEEDER_PLACEHOLDER = re.compile(r"^(?:W\(|L\(|WINNER:|LOSER:|TBD:)", re.IGNORECASE)
+_SEED_PLACEHOLDER = re.compile(r"^SEED[_ ](\d+)$", re.IGNORECASE)
 
 
 @dataclass
@@ -523,28 +526,35 @@ def _team_occupies_match(session: Session, team: Team) -> bool:
     return row is not None
 
 
-def _prior_open_entry_slots(session: Session, event_id: int) -> list[_VacatedDrawSlot]:
-    """Entry slots already left TBD by an earlier withdrawal.
+def _placeholder_seed(placeholder: Optional[str]) -> Optional[int]:
+    match = _SEED_PLACEHOLDER.match((placeholder or "").strip())
+    if not match:
+        return None
+    return int(match.group(1))
 
-    A replacement that arrives on a later refresh has no slot vacated in this run.
-    Those open spots are still the right place for the new team. Bye matches stay untouched.
+
+def _is_direct_entry_side(match: Match, placeholder: Optional[str]) -> bool:
+    """True for a waterfall round-1 or round-robin side a team can occupy directly."""
+    if "_BYE" in (match.match_code or "").upper():
+        return False
+    if _FEEDER_PLACEHOLDER.match((placeholder or "").strip()):
+        return False
+    kind = (match.match_type or "").upper()
+    if kind == "WF":
+        return (match.round_index or match.round_number or 0) == 1
+    return kind in {"RR", "MAIN"}
+
+
+def _open_capacity_entry_slots(session: Session, event_id: int) -> list[_VacatedDrawSlot]:
+    """Unplayed entry sides that do not yet have a team.
+
+    A 24-team draw built while only 20 teams existed keeps those empty sides.
+    They are unused capacity, not a new bracket. Later feeder rounds and byes stay empty.
     """
-    defaulted = session.exec(
-        select(Team).where(
-            Team.event_id == event_id,
-            Team.is_defaulted == True,  # noqa: E712
-            Team.source_team_key.is_not(None),
-        )
-    ).all()
-    open_withdrawals = [team for team in defaulted if team.id is not None and not _team_occupies_match(session, team)]
-    if not open_withdrawals:
-        return []
     matches = session.exec(select(Match).where(Match.event_id == event_id)).all()
     slots: list[_VacatedDrawSlot] = []
     for match in matches:
         if match.id is None or match_locked_for_participant_edit(session, match):
-            continue
-        if "_BYE" in (match.match_code or "").upper():
             continue
         sides = (
             ("A", match.team_a_id, match.source_match_a_id, match.placeholder_side_a, 0),
@@ -553,21 +563,28 @@ def _prior_open_entry_slots(session: Session, event_id: int) -> list[_VacatedDra
         for side, team_id, source_id, placeholder, side_order in sides:
             if team_id is not None or source_id is not None:
                 continue
-            if (placeholder or "").strip().upper() != EMPTY_DRAW_SLOT:
+            if not _is_direct_entry_side(match, placeholder):
                 continue
+            seed = _placeholder_seed(placeholder)
             slots.append(
                 _VacatedDrawSlot(
                     match_id=match.id,
                     event_id=event_id,
                     side=side,
-                    seed=None,
-                    sort_key=(match.round_index or 0, match.sequence_in_round or 0, side_order, match.id),
+                    seed=seed,
+                    sort_key=(
+                        seed if seed is not None else 10_000,
+                        match.round_index or 0,
+                        match.sequence_in_round or 0,
+                        side_order,
+                        match.id,
+                    ),
                     withdrawn_key=f"open:{match.id}:{side}",
-                    withdrawn_label=EMPTY_DRAW_SLOT,
+                    withdrawn_label=(placeholder or "").strip() or EMPTY_DRAW_SLOT,
                 )
             )
     slots.sort(key=lambda slot: slot.sort_key)
-    return slots[: len(open_withdrawals)]
+    return slots
 
 
 def _withdraw_absent_source_teams(
@@ -722,7 +739,7 @@ def _place_replacements_in_vacated_slots(
     candidates: list[Team],
     result: RosterProjectionResult,
 ) -> None:
-    """Put newly active teams into slots vacated by a safe withdrawal. Do not rebuild the draw."""
+    """Put newly active teams into vacated or still-empty entry slots. Do not rebuild the draw."""
     explained_unplaced: set[int] = set()
     slots_by_event: dict[int, list[_VacatedDrawSlot]] = {}
     for slot in vacated:
@@ -735,7 +752,7 @@ def _place_replacements_in_vacated_slots(
 
     claimed = {(slot.match_id, slot.side) for slot in vacated}
     for event_id in candidates_by_event:
-        for slot in _prior_open_entry_slots(session, event_id):
+        for slot in _open_capacity_entry_slots(session, event_id):
             if (slot.match_id, slot.side) in claimed:
                 continue
             claimed.add((slot.match_id, slot.side))

@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, time
 
 import pytest
@@ -1614,3 +1615,310 @@ def test_staff_defaulted_team_leaves_active_lists_and_keeps_match_label(client: 
     assert finished_row["team1_defaulted"] is True
     assert finished_row["winner_team_id"] == opponent.id
     assert finished_row["score_display"]
+
+
+def _draw_participant_ids(session: Session, event_id: int) -> set[int]:
+    ids: set[int] = set()
+    for match in session.exec(select(Match).where(Match.event_id == event_id)).all():
+        if match.team_a_id is not None:
+            ids.add(match.team_a_id)
+        if match.team_b_id is not None:
+            ids.add(match.team_b_id)
+    return ids
+
+
+def _wf_r1_match(
+    session: Session,
+    *,
+    tournament_id: int,
+    event: Event,
+    version: ScheduleVersion,
+    sequence: int,
+    team_a: Team | None,
+    team_b: Team | None,
+    match_code: str | None = None,
+    round_index: int = 1,
+    match_type: str = "WF",
+) -> Match:
+    match = Match(
+        tournament_id=tournament_id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code=match_code or f"MX_WF_R1_{sequence:02d}",
+        match_type=match_type,
+        round_number=round_index,
+        round_index=round_index,
+        sequence_in_round=sequence,
+        duration_minutes=60,
+        team_a_id=team_a.id if team_a else None,
+        team_b_id=team_b.id if team_b else None,
+        placeholder_side_a=team_a.name if team_a else "TBD",
+        placeholder_side_b=team_b.name if team_b else "TBD",
+    )
+    session.add(match)
+    session.commit()
+    session.refresh(match)
+    return match
+
+
+def test_refresh_fills_existing_24_capacity_without_rebuilding_structure(client: TestClient, session: Session):
+    """20 teams were placed into an already-built 24-team Mixed draw. Four later registrations fill the open sides."""
+    initial = _mixed_field(20)
+    imported = _import_payload(session, 943, initial)
+    _approve(client, imported.id, {"mixed": "20"})
+    session.expire_all()
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    plan = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == imported.id)).one()
+    brackets = json.loads(plan.brackets_json)
+    brackets[0]["size"] = 24
+    brackets[0]["rankEnd"] = 24
+    plan.brackets_json = json.dumps(brackets)
+    event.team_count = 24
+    event.draw_status = "generated"
+    session.add(plan)
+    session.add(event)
+    session.commit()
+
+    live = _teams_by_key(session, imported.tournament_id)
+    ordered = sorted(live.values(), key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+    assert len(ordered) == 20
+    version = ScheduleVersion(tournament_id=imported.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    filled = []
+    for index in range(10):
+        filled.append(
+            _wf_r1_match(
+                session,
+                tournament_id=imported.tournament_id,
+                event=event,
+                version=version,
+                sequence=index + 1,
+                team_a=ordered[index * 2],
+                team_b=ordered[index * 2 + 1],
+            )
+        )
+    open_matches = [
+        _wf_r1_match(
+            session,
+            tournament_id=imported.tournament_id,
+            event=event,
+            version=version,
+            sequence=11,
+            team_a=None,
+            team_b=None,
+        ),
+        _wf_r1_match(
+            session,
+            tournament_id=imported.tournament_id,
+            event=event,
+            version=version,
+            sequence=12,
+            team_a=None,
+            team_b=None,
+        ),
+    ]
+    feeder = _wf_r1_match(
+        session,
+        tournament_id=imported.tournament_id,
+        event=event,
+        version=version,
+        sequence=1,
+        team_a=None,
+        team_b=None,
+        match_code="MX_WF_R2_01",
+        round_index=2,
+    )
+    bye = _wf_r1_match(
+        session,
+        tournament_id=imported.tournament_id,
+        event=event,
+        version=version,
+        sequence=13,
+        team_a=None,
+        team_b=None,
+        match_code="MX_WF_R1_13_BYE",
+    )
+    tournament = session.get(Tournament, imported.tournament_id)
+    _schedule_match(session, tournament, open_matches[0])
+    before_ids = {match.id for match in session.exec(select(Match).where(Match.event_id == event.id)).all()}
+    before_filled = {match.id: (match.team_a_id, match.team_b_id) for match in filled}
+    assert len(_draw_participant_ids(session, event.id)) == 20
+
+    additions = _mixed_field(4, start_id=1900, start_rating=6.0)
+    for team in additions:
+        team.avoid_group = "Q"
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in initial] + additions
+    persisted = persist_snapshot(
+        session,
+        _payload(943, refreshed, version="mixed-24"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    projection = getattr(persisted, "_last_roster_projection", None) or {}
+    assert projection["created"]["teams"] == 4
+    assert projection["reconciled"]["drawSlotsReplaced"] == 4
+    assert not any(item["code"] == "roster_draw_placement_unresolved" for item in projection["conflicts"])
+
+    session.expire_all()
+    event = session.get(Event, event.id)
+    plan = session.get(TournamentDrawPlan, plan.id)
+    assert event.team_count == 24
+    assert json.loads(plan.brackets_json)[0]["size"] == 24
+    assert json.loads(plan.brackets_json)[0]["rankEnd"] == 24
+    after = _teams_by_key(session, imported.tournament_id)
+    active = [team for team in after.values() if not team.is_defaulted]
+    assert len(active) == 24
+    assert len(after) == 24
+    assert {team.event_id for team in active} == {event.id}
+    assert _draw_participant_ids(session, event.id) == {team.id for team in active}
+    match_ids = {match.id for match in session.exec(select(Match).where(Match.event_id == event.id)).all()}
+    assert match_ids == before_ids
+    for match in filled:
+        session.refresh(match)
+        assert (match.team_a_id, match.team_b_id) == before_filled[match.id]
+    session.refresh(feeder)
+    session.refresh(bye)
+    assert feeder.team_a_id is None and feeder.team_b_id is None
+    assert bye.team_a_id is None and bye.team_b_id is None
+    new_ids = {after[team.team_key].id for team in additions}
+    open_ids = set()
+    for match in open_matches:
+        session.refresh(match)
+        open_ids.update(team_id for team_id in (match.team_a_id, match.team_b_id) if team_id is not None)
+    assert open_ids == new_ids
+
+    towels = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source == "rwos-import",
+        )
+    ).all()
+    towel_keys = {row.source_team_key for row in towels}
+    assert {team.team_key for team in additions} <= towel_keys
+    edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    edge_ids = {edge.team_id_a for edge in edges} | {edge.team_id_b for edge in edges}
+    assert new_ids <= edge_ids
+
+    desk = client.get(f"/api/desk/tournaments/{imported.tournament_id}/teams")
+    assert desk.status_code == 200, desk.text
+    assert new_ids <= {row["team_id"] for row in desk.json()}
+    checkin = client.get(
+        f"/api/desk/tournaments/{imported.tournament_id}/checkin/queue",
+        params={"version_id": version.id},
+    )
+    assert checkin.status_code == 200, checkin.text
+    checkin_ids = set()
+    for row in checkin.json()["checkin_matches"]:
+        checkin_ids.add(row["side_a"]["team_id"])
+        checkin_ids.add(row["side_b"]["team_id"])
+    assert new_ids & checkin_ids
+
+    again = persist_snapshot(
+        session,
+        _payload(943, refreshed, version="mixed-24"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    second = getattr(again, "_last_roster_projection", None) or {}
+    assert second["created"]["teams"] == 0
+    assert second["reconciled"]["drawSlotsReplaced"] == 0
+    assert not any(item["code"] == "roster_draw_placement_unresolved" for item in second["conflicts"])
+    session.expire_all()
+    assert len(_teams_by_key(session, imported.tournament_id)) == 24
+    assert _draw_participant_ids(session, event.id) == {team.id for team in active}
+
+
+def test_refresh_withdrawals_and_replacements_keep_24_team_capacity(client: TestClient, session: Session):
+    initial = _mixed_field(24)
+    imported = _import_payload(session, 944, initial)
+    _approve(client, imported.id, {"mixed": "24"})
+    session.expire_all()
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    assert event.team_count == 24
+    plan = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == imported.id)).one()
+    structure_before = plan.brackets_json
+    live = _teams_by_key(session, imported.tournament_id)
+    ordered = sorted(
+        (team for team in live.values() if not team.is_defaulted),
+        key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+    )
+    version = ScheduleVersion(tournament_id=imported.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    matches = []
+    for index in range(12):
+        matches.append(
+            _wf_r1_match(
+                session,
+                tournament_id=imported.tournament_id,
+                event=event,
+                version=version,
+                sequence=index + 1,
+                team_a=ordered[index],
+                team_b=ordered[index + 12],
+            )
+        )
+    before_ids = {match.id for match in matches}
+    unchanged = {match.id: (match.team_a_id, match.team_b_id) for match in matches[4:]}
+    withdrawn = [ordered[index] for index in range(4)]
+    partners = {match.team_b_id for match in matches[:4]}
+    kept_keys = {team.source_team_key for team in ordered[4:]}
+    additions = _mixed_field(4, start_id=2900, start_rating=5.5)
+    for team in additions:
+        team.avoid_group = "Q"
+    kept = [team for team in initial if team.team_key in kept_keys]
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in kept] + additions
+    persisted = persist_snapshot(
+        session,
+        _payload(944, refreshed, version="mixed-24-replaced"),
+        existing=session.get(TournamentImport, imported.id),
+    )
+    projection = getattr(persisted, "_last_roster_projection", None) or {}
+    assert projection["created"]["teams"] == 4
+    assert projection["reconciled"]["withdrawnTeams"] == 4
+    assert projection["reconciled"]["drawSlotsReplaced"] == 4
+    assert not any(
+        item["code"] in {"roster_reconciliation_blocked", "roster_draw_placement_unresolved"}
+        for item in projection["conflicts"]
+    )
+
+    session.expire_all()
+    event = session.get(Event, event.id)
+    plan = session.get(TournamentDrawPlan, plan.id)
+    assert event.team_count == 24
+    assert plan.brackets_json == structure_before
+    after = _teams_by_key(session, imported.tournament_id)
+    active = [team for team in after.values() if not team.is_defaulted]
+    assert len(active) == 24
+    assert len(after) == 28
+    new_ids = {after[team.team_key].id for team in additions}
+    assert _draw_participant_ids(session, event.id) == {team.id for team in active}
+    assert new_ids <= _draw_participant_ids(session, event.id)
+    match_ids = {match.id for match in session.exec(select(Match).where(Match.event_id == event.id)).all()}
+    assert match_ids == before_ids
+    for match in matches[4:]:
+        session.refresh(match)
+        assert (match.team_a_id, match.team_b_id) == unchanged[match.id]
+    for match in matches[:4]:
+        session.refresh(match)
+        assert match.team_a_id in new_ids
+        assert match.team_b_id in partners
+        assert match.team_a_id != match.team_b_id
+    for team in withdrawn:
+        row = session.get(Team, team.id)
+        assert row.is_defaulted is True
+        assert row.id not in _draw_participant_ids(session, event.id)
+
+    towels = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == imported.tournament_id,
+            TemporaryPlayerLookup.source == "rwos-import",
+        )
+    ).all()
+    assert {team.team_key for team in additions} <= {row.source_team_key for row in towels}
+    assert all(row.source_team_key not in {team.source_team_key for team in withdrawn} for row in towels)
+    edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id)).all()
+    edge_ids = {edge.team_id_a for edge in edges} | {edge.team_id_b for edge in edges}
+    assert new_ids <= edge_ids
+    assert all(team.id not in edge_ids for team in withdrawn)
