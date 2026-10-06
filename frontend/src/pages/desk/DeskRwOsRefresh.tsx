@@ -411,7 +411,7 @@ export function DeskRwOsRefresh({
                     <h3>{attention.length} items need staff attention</h3>
                     <p>Needs Staff Attention</p>
                     {attention.map((item, index) => (
-                      <p key={`${item.code}-${index}`}>{item.message}</p>
+                      <p key={`${item.code}-${index}`} style={{ whiteSpace: 'pre-line' }}>{item.message}</p>
                     ))}
                   </div>
                 )}

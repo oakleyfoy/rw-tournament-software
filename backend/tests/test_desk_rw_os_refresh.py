@@ -25,6 +25,7 @@ from tests.test_rw_os_roster_projection import (
     _mixed_field,
     _payload,
     _schedule_match,
+    _team,
     _teams_by_key,
     _torrie_nancy,
     _wf_r1_match,
@@ -796,8 +797,185 @@ def test_full_wf24_draw_without_open_sides_does_not_claim_success(client: TestCl
 
     failed = _incomplete(result)
     assert len(failed) == 1
-    assert "RW-OS active teams: 24" in failed[0]["message"]
+    assert failed[0]["stage"] == "draw"
+    assert "Draw could not be reconciled" in failed[0]["message"]
+    assert "Tournament teams: 24" in failed[0]["message"]
     assert "Draw participants: 20" in failed[0]["message"]
     assert "M21" in failed[0]["message"]
+    assert "Event roster could not be reconciled" not in failed[0]["message"]
     session.expire_all()
+    active = [team for team in _teams_by_key(session, imported.tournament_id).values() if not team.is_defaulted]
+    assert len(active) == 24
     assert len(_draw_participant_ids(session, event.id)) == 20
+
+
+PRODUCTION_MIXED = (
+    ("12884/15825", "Lauri / Marc"),
+    ("15875/15876", "Amy / Andre"),
+    ("13511/14084", "Darlene / Tony"),
+    ("14380/15874", "Min / Steven"),
+    ("15691/15692", "Geoff / Ana"),
+)
+
+
+def _production_mixed_field() -> list[SnapshotTeam]:
+    field = _mixed_field(19)
+    for index, (key, display) in enumerate(PRODUCTION_MIXED):
+        field.append(_team(key, round(1.0 - index * 0.01, 4), draw="mixed", display=display, full=display))
+    return field
+
+
+def _empty_entry_labels(matches: list[Match]) -> list[str]:
+    labels: list[str] = []
+    for match in matches:
+        if (match.match_type or "").upper() != "WF" or (match.round_index or 0) != 1:
+            continue
+        if match.team_a_id is None:
+            labels.append(match.placeholder_side_a or "")
+        if match.team_b_id is None:
+            labels.append(match.placeholder_side_b or "")
+    return labels
+
+
+def _production_nineteen_draw(
+    client: TestClient,
+    session: Session,
+    source_id: int,
+    *,
+    reverse_keys: bool = False,
+) -> SimpleNamespace:
+    """24-team Mixed structure, stale rank 1–19, event renamed off the bracket label, five identities absent.
+
+    The stored plan still says Mixed A ranks 1–19. The only Mixed event is named Mixed and already
+    has a 24-side waterfall. The five production keys are not active rows.
+    """
+    field = _production_mixed_field()
+    imported = _import_payload(session, source_id, field)
+    _approve(client, imported.id, {"mixed": "24"})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    assert event.name == "Mixed A"
+    live = _teams_by_key(session, imported.tournament_id)
+    for key, _display in PRODUCTION_MIXED:
+        team = live[key]
+        if reverse_keys:
+            left, right = key.split("/")
+            team.source_team_key = f"{right}/{left}"
+        else:
+            team.source_team_key = f"stale-{key}"
+        team.is_defaulted = True
+        team.seed = None
+        session.add(team)
+    session.commit()
+    _set_rank_end(session, imported.id, 19)
+    present = [
+        team for team in session.exec(select(Team).where(Team.event_id == event.id)).all() if not team.is_defaulted
+    ]
+    present.sort(key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+    matches = _generate_wf24_draw(session, event, present)
+    event = session.get(Event, event.id)
+    event.name = "Mixed"
+    session.add(event)
+    session.commit()
+    return SimpleNamespace(
+        field=field,
+        imported=session.get(TournamentImport, imported.id),
+        event=session.get(Event, event.id),
+        matches=matches,
+    )
+
+
+def test_production_mixed_identities_reconcile_onto_the_24_team_event(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _production_nineteen_draw(client, session, 980)
+    empty = _empty_entry_labels(ready.matches)
+    assert sorted(empty) == ["Seed 20", "Seed 21", "Seed 22", "Seed 23", "Seed 24"]
+    assert len(_active_keys(session, ready.event.id)) == 19
+    assert len(_draw_participant_ids(session, ready.event.id)) == 19
+    _patch_refresh(monkeypatch, [_payload(980, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    projection = result["rosterProjection"]
+    assert projection["created"]["teams"] == 5
+    assert projection["reconciled"]["withdrawnTeams"] == 0
+    assert projection["reconciled"]["drawSlotsReplaced"] == 5
+    assert _incomplete(result) == []
+    session.expire_all()
+    active = [team for team in _teams_by_key(session, ready.imported.tournament_id).values() if not team.is_defaulted]
+    assert {key for key, _display in PRODUCTION_MIXED} <= {team.source_team_key for team in active}
+    assert len([team for team in active if team.event_id == ready.event.id]) == 24
+    assert _draw_participant_ids(session, ready.event.id) == {
+        team.id for team in active if team.event_id == ready.event.id
+    }
+    assert _empty_entry_labels(session.exec(select(Match).where(Match.event_id == ready.event.id)).all()) == []
+
+    again = _post_refresh(client, ready.imported.id, apply=False)
+    assert again["diff"]["changed"] is False
+    assert again["applied"] is False
+    assert again["rosterProjection"] is None
+
+
+def test_production_mixed_identities_match_when_partner_order_is_reversed(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _production_nineteen_draw(client, session, 981, reverse_keys=True)
+    assert len(_active_keys(session, ready.event.id)) == 19
+    _patch_refresh(monkeypatch, [_payload(981, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    projection = result["rosterProjection"]
+    assert projection["created"]["teams"] == 0
+    assert projection["reconciled"]["drawSlotsReplaced"] == 5
+    assert _incomplete(result) == []
+    session.expire_all()
+    live = _teams_by_key(session, ready.imported.tournament_id)
+    for key, _display in PRODUCTION_MIXED:
+        left, right = key.split("/")
+        assert key in live
+        assert f"{right}/{left}" not in live
+        assert live[key].is_defaulted is False
+        assert live[key].event_id == ready.event.id
+    active = [team for team in live.values() if not team.is_defaulted and team.event_id == ready.event.id]
+    assert len(active) == 24
+    assert _draw_participant_ids(session, ready.event.id) == {team.id for team in active}
+
+
+def test_production_mixed_event_stays_complete_when_entry_sides_are_protected(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _production_nineteen_draw(client, session, 982)
+    for match in ready.matches:
+        if (match.match_type or "").upper() != "WF" or (match.round_index or 0) != 1:
+            continue
+        if match.team_a_id is None or match.team_b_id is None:
+            match.runtime_status = "FINAL"
+            match.started_at = datetime.utcnow()
+            session.add(match)
+    session.commit()
+    _patch_refresh(monkeypatch, [_payload(982, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["rosterProjection"]["created"]["teams"] == 5
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 0
+    failed = _incomplete(result)
+    assert len(failed) == 1
+    assert failed[0]["stage"] == "draw"
+    assert "Draw could not be reconciled" in failed[0]["message"]
+    assert "Tournament teams: 24" in failed[0]["message"]
+    assert "Draw participants: 19" in failed[0]["message"]
+    assert "Event roster could not be reconciled" not in failed[0]["message"]
+    for _key, display in PRODUCTION_MIXED:
+        assert display in failed[0]["message"]
+    session.expire_all()
+    active = [
+        team
+        for team in _teams_by_key(session, ready.imported.tournament_id).values()
+        if not team.is_defaulted and team.event_id == ready.event.id
+    ]
+    assert len(active) == 24
+    assert len(_draw_participant_ids(session, ready.event.id)) == 19
