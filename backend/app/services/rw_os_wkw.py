@@ -175,6 +175,63 @@ def resolve_connection_team_ids(
     return ordered_team_id_pair(left.id, right.id)
 
 
+@dataclass
+class EventWkwApplicability:
+    """Result of projecting tournament-wide snapshot edges onto one event."""
+
+    desired_pairs: set[tuple[int, int]]
+    skipped_non_applicable: int = 0
+    unresolved: list[dict[str, Any]] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.unresolved is None:
+            self.unresolved = []
+
+
+def applicable_rw_os_wkw_pairs_for_event(
+    connections: list[WhoKnowsWhoConnection],
+    locations: dict[str, TeamLocation],
+    *,
+    event_id: int,
+    draw_kind: str,
+) -> EventWkwApplicability:
+    """Select RW-OS WKW pairs that apply to one event from the tournament-wide graph.
+
+    - Both active endpoints in this event → desired event constraint.
+    - Both active endpoints elsewhere / different events → skip (cross-bracket / other event).
+    - Missing or inactive identity → genuine unresolved (caller should block rebuild).
+    """
+    desired: set[tuple[int, int]] = set()
+    unresolved: list[dict[str, Any]] = []
+    skipped = 0
+    for edge in connections:
+        if edge.draw_kind != draw_kind:
+            continue
+        loc_a = locations.get(edge.team_a_key)
+        loc_b = locations.get(edge.team_b_key)
+        if loc_a is None or loc_b is None or loc_a.is_defaulted or loc_b.is_defaulted:
+            unresolved.append(
+                {
+                    **edge.to_dict(),
+                    "reason": (
+                        "inactive_or_withdrawn"
+                        if (loc_a is not None and loc_a.is_defaulted) or (loc_b is not None and loc_b.is_defaulted)
+                        else "unresolved_identity"
+                    ),
+                }
+            )
+            continue
+        if loc_a.event_id != event_id or loc_b.event_id != event_id:
+            skipped += 1
+            continue
+        desired.add(ordered_team_id_pair(loc_a.team_id, loc_b.team_id))
+    return EventWkwApplicability(
+        desired_pairs=desired,
+        skipped_non_applicable=skipped,
+        unresolved=unresolved,
+    )
+
+
 def sync_rw_os_wkw_edges_for_event(
     session: Session,
     *,
