@@ -62,12 +62,12 @@ def test_critical_graph_is_not_a_clique(client: TestClient, session: Session):
         _team("1/2", 9.0, draw="mixed", display="A"),
         _team("3/4", 8.9, draw="mixed", display="B"),
         _team("5/6", 8.8, draw="mixed", display="C"),
-        *[_team(f"{100+i}/{200+i}", 8.0 - i * 0.01, draw="mixed", display=f"T{i}") for i in range(5)],
+        *[_team(f"{100 + i}/{200 + i}", 8.0 - i * 0.01, draw="mixed", display=f"T{i}") for i in range(5)],
     ]
     # Pad to 8 for approve structure.
     while len(teams) < 8:
         i = len(teams)
-        teams.append(_team(f"{300+i}/{400+i}", 7.5 - i * 0.01, draw="mixed", display=f"P{i}"))
+        teams.append(_team(f"{300 + i}/{400 + i}", 7.5 - i * 0.01, draw="mixed", display=f"P{i}"))
     connections = _connections_for_keys([("1/2", "3/4"), ("1/2", "5/6")])
     assert not any(row["teamAKey"] == "3/4" and row["teamBKey"] == "5/6" for row in connections)
 
@@ -92,7 +92,18 @@ def test_critical_graph_is_not_a_clique(client: TestClient, session: Session):
     avoid = pairs
     seeds = [
         TeamSeed(seed=i + 1, team_id=tid, rating=9.0 - i * 0.1)
-        for i, tid in enumerate([a, b, c, live[teams[3].team_key].id, live[teams[4].team_key].id, live[teams[5].team_key].id, live[teams[6].team_key].id, live[teams[7].team_key].id])
+        for i, tid in enumerate(
+            [
+                a,
+                b,
+                c,
+                live[teams[3].team_key].id,
+                live[teams[4].team_key].id,
+                live[teams[5].team_key].id,
+                live[teams[6].team_key].id,
+                live[teams[7].team_key].id,
+            ]
+        )
     ]
     # Direct conflict checks used by the generator.
     from app.services.wf_pairing import _pair_conflict_label
@@ -174,7 +185,9 @@ def test_withdrawal_drops_stale_edge(client: TestClient, session: Session, monke
     assert (
         len(
             session.exec(
-                select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event.id, TeamAvoidEdge.reason == RW_OS_WKW_REASON)
+                select(TeamAvoidEdge).where(
+                    TeamAvoidEdge.event_id == event.id, TeamAvoidEdge.reason == RW_OS_WKW_REASON
+                )
             ).all()
         )
         == 1
@@ -275,9 +288,7 @@ def test_production_shaped_mixed_10_connections(client: TestClient, session: Ses
     assert body["events"][0]["whoKnowsWhoConnections"] == 10
     assert "Who-Knows-Who" in body["events"][0]["detail"]
     session.expire_all()
-    rebuilt = {
-        m.id: m.match_code for m in session.exec(select(Match).where(Match.event_id == event.id)).all()
-    }
+    rebuilt = {m.id: m.match_code for m in session.exec(select(Match).where(Match.event_id == event.id)).all()}
     assert set(rebuilt) == set(before)
     assert {mid: code for mid, code in rebuilt.items()} == {mid: before[mid][2] for mid in before}
 

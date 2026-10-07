@@ -123,9 +123,7 @@ def load_snapshot_document(raw_json: str | None) -> dict[str, Any]:
         return {
             "teams": raw.get("teams") or [],
             "whoKnowsWhoConnections": (
-                canonicalize_who_knows_who_connections(connections)
-                if "whoKnowsWhoConnections" in raw
-                else None
+                canonicalize_who_knows_who_connections(connections) if "whoKnowsWhoConnections" in raw else None
             ),
         }
     return {"teams": [], "whoKnowsWhoConnections": None}

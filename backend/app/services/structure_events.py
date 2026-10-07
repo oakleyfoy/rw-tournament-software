@@ -91,7 +91,10 @@ def is_generated_play_plan(raw: Optional[str]) -> bool:
         return False
     if not isinstance(plan, dict):
         return False
-    return set(plan).issubset({"version", "template_type", "wf_rounds"}) and plan.get("template_type") == "WF_TO_BRACKETS_8"
+    return (
+        set(plan).issubset({"version", "template_type", "wf_rounds"})
+        and plan.get("template_type") == "WF_TO_BRACKETS_8"
+    )
 
 
 def _bracket_team_count(bracket: dict[str, Any]) -> Optional[int]:

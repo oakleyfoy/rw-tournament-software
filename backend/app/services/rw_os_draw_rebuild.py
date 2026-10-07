@@ -47,9 +47,7 @@ STRUCTURE_REVIEW_MESSAGE = "Bracket structure requires review before draws can b
 HEADING = "RW-OS Refreshed + Draws Rebuilt"
 SCHEDULE_NOTE = "Match numbers, dates, times, courts, and grid assignments were preserved."
 DRAW_DETAIL_WITH_WKW = "Draw rebuilt using current ratings, seeds, and Who-Knows-Who."
-DRAW_DETAIL_NO_WKW = (
-    "Draw rebuilt using current ratings and seeds. No Who-Knows-Who connections were available."
-)
+DRAW_DETAIL_NO_WKW = "Draw rebuilt using current ratings and seeds. No Who-Knows-Who connections were available."
 DRAW_DETAIL = DRAW_DETAIL_WITH_WKW
 
 _DRAW_FIELDS = (
