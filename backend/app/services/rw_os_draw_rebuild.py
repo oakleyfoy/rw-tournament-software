@@ -8,7 +8,9 @@ temporary version is deleted before commit. Live match ids, assignments, and slo
 from __future__ import annotations
 
 import json
+import logging
 import re
+from collections import Counter
 from typing import Optional
 
 from sqlmodel import Session, select
@@ -29,6 +31,8 @@ from app.services.draw_plan_engine import (
 )
 from app.services.post_draw_corrections import match_locked_for_participant_edit
 from app.services.rw_os_import import parse_teams
+
+logger = logging.getLogger(__name__)
 
 STRUCTURE_REVIEW_MESSAGE = "Bracket structure requires review before draws can be rebuilt."
 HEADING = "RW-OS Refreshed + Draws Rebuilt"
@@ -51,6 +55,13 @@ _DRAW_FIELDS = (
 )
 _STALE_ENTRY = re.compile(r"^(?:SEED[_ ]\d+|TBD)$", re.IGNORECASE)
 _NOT_ENTRY = re.compile(r"^(?:WFSEED:|W\(|L\(|WINNER:|LOSER:|TBD:)", re.IGNORECASE)
+_BRACKET_CODE = re.compile(r"^B(.+)_(M|C)(\d+)$")
+# Same staff order as the draw QR board: Women's, then Mixed, then event name.
+_CATEGORY_ORDER = {"womens": 0, "mixed": 1}
+_GUARANTEE_CODES = {
+    4: frozenset(f"M{number}" for number in range(1, 8)) | frozenset({"C1", "C2"}),
+    5: frozenset(f"M{number}" for number in range(1, 8)) | frozenset(f"C{number}" for number in range(1, 6)),
+}
 
 
 class DrawRebuildError(Exception):
@@ -61,12 +72,14 @@ class DrawRebuildError(Exception):
         code: str,
         event_name: Optional[str] = None,
         match_numbers: Optional[list[int]] = None,
+        details: Optional[dict] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.event_name = event_name
         self.match_numbers = match_numbers or []
+        self.details = details or {}
 
 
 def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> dict:
@@ -76,7 +89,9 @@ def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> 
     capacity, protected play, or match-code topology cannot be rebuilt safely.
     """
     live_version_id = _scheduled_version_id(session, import_row.tournament_id)
-    events = list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    events = _ordered_events(
+        list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
+    )
     rebuildable: list[tuple[Event, list[Match]]] = []
     for event in events:
         if event.id is None:
@@ -86,15 +101,20 @@ def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> 
             continue
         on_live = [match for match in matches if match.schedule_version_id == live_version_id]
         if len(on_live) != len(matches):
-            raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review", event_name=event.name)
+            raise _structure_error(
+                f"{event.name} matches are split across schedule versions.",
+                code="split_schedule_versions",
+                event_name=event.name,
+            )
         rebuildable.append((event, on_live))
     if not rebuildable:
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review")
+        raise _structure_error("No draws are available to rebuild.", code="structure_review")
 
     _reject_protected_play(session, rebuildable)
     for event, _matches in rebuildable:
         _require_capacity_and_seeds(session, import_row, event)
 
+    specs = {event.id: _spec_for_rebuild(event, live_matches) for event, live_matches in rebuildable}
     schedule_before = _schedule_fingerprint(session, live_version_id)
     temp_version = _temporary_version(session, import_row.tournament_id)
     generated_by_event: dict[int, list[Match]] = {}
@@ -102,7 +122,7 @@ def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> 
     session._allow_match_generation = True  # type: ignore[attr-defined]
     try:
         for event, _live_matches in rebuildable:
-            spec = build_spec_from_event(event)
+            spec = specs[event.id]
             linked_ids = _linked_team_ids(session, event)
             try:
                 generate_matches_for_event(session, temp_version.id, spec, linked_ids, existing_codes)
@@ -154,12 +174,18 @@ def _scheduled_version_id(session: Session, tournament_id: int) -> int:
     if len(assigned_versions) == 1:
         return next(iter(assigned_versions))
     if len(assigned_versions) > 1:
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review")
+        raise _structure_error(
+            "More than one schedule version has assigned matches.",
+            code="multiple_schedule_versions",
+        )
     match_versions = set(
         session.exec(select(Match.schedule_version_id).where(Match.tournament_id == tournament_id)).all()
     )
     if len(match_versions) != 1:
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review")
+        raise _structure_error(
+            "Matches are split across schedule versions.",
+            code="multiple_schedule_versions",
+        )
     return next(iter(match_versions))
 
 
@@ -187,13 +213,15 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
     active = _active_teams(session, event)
     expected = event.team_count or 0
     if len(active) != expected or expected < 2:
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review", event_name=event.name)
-    try:
-        seeds = sorted(team.seed for team in active)
-    except TypeError:
-        seeds = []
-    if seeds != list(range(1, expected + 1)):
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review", event_name=event.name)
+        raise DrawRebuildError(
+            f"{event.name} roster does not fit the approved structure.\n\n"
+            f"Active teams: {len(active)}\n"
+            f"Approved capacity: {expected}",
+            code="roster_count_mismatch",
+            event_name=event.name,
+            details={"activeTeams": len(active), "approvedCapacity": expected},
+        )
+    _require_seed_range(event, active, expected)
     snapshot_by_key = {team.team_key: team for team in parse_teams(json.loads(import_row.snapshot_json or "[]"))}
     for team in active:
         snapshot = snapshot_by_key.get(team.source_team_key or "")
@@ -209,6 +237,144 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
                 code="roster_reconciliation_incomplete",
                 event_name=event.name,
             )
+
+
+def _require_seed_range(event: Event, active: list[Team], expected: int) -> None:
+    numeric = [team.seed for team in active if isinstance(team.seed, int)]
+    unseeded = len(active) - len(numeric)
+    counts = Counter(numeric)
+    duplicates = sorted(seed for seed, count in counts.items() if count > 1)
+    present = set(numeric)
+    expected_seeds = set(range(1, expected + 1))
+    missing = sorted(expected_seeds - present)
+    unexpected = sorted(present - expected_seeds)
+    if not unseeded and not duplicates and not missing and not unexpected:
+        return
+    lines = [f"{event.name} seed metadata is incomplete.", "", f"Expected seeds: 1–{expected}"]
+    if missing:
+        lines.append("Missing: " + ", ".join(str(seed) for seed in missing))
+    if unexpected:
+        lines.append("Unexpected: " + ", ".join(str(seed) for seed in unexpected))
+    if duplicates:
+        lines.append("Duplicate: " + ", ".join(str(seed) for seed in duplicates))
+    if unseeded:
+        lines.append(f"Unseeded teams: {unseeded}")
+    raise DrawRebuildError(
+        "\n".join(lines),
+        code="seed_metadata_mismatch",
+        event_name=event.name,
+        details={
+            "expectedSeeds": f"1-{expected}",
+            "missingSeeds": missing,
+            "unexpectedSeeds": unexpected,
+            "duplicateSeeds": duplicates,
+            "unseededTeams": unseeded,
+        },
+    )
+
+
+def _spec_for_rebuild(event: Event, live_matches: list[Match]) -> DrawPlanSpec:
+    """Use a stored guarantee. Infer one from the live draw only when it is missing."""
+    spec = build_spec_from_event(event)
+    inferred = _infer_live_guarantee(spec, live_matches)
+    stored = event.guarantee_selected
+    if stored is not None:
+        if inferred is not None and int(stored) != inferred:
+            raise DrawRebuildError(
+                f"{event.name} draw structure does not match its stored guarantee.\n\n"
+                f"Stored guarantee: {int(stored)}\n"
+                f"Existing draw topology: guarantee {inferred}\n\n"
+                f"{STRUCTURE_REVIEW_MESSAGE}",
+                code="guarantee_conflict",
+                event_name=event.name,
+                details={"storedGuarantee": int(stored), "liveGuarantee": inferred},
+            )
+        spec.guarantee = int(stored)
+        return spec
+    if inferred is None:
+        raise _structure_error(
+            f"{event.name} draw topology does not establish a supported guarantee.",
+            code="structure_review",
+            event_name=event.name,
+        )
+    logger.info(
+        "draw rebuild inferred guarantee=%s for event=%s because guarantee_selected is null",
+        inferred,
+        event.name,
+    )
+    spec.guarantee = inferred
+    return spec
+
+
+def _infer_live_guarantee(spec: DrawPlanSpec, live_matches: list[Match]) -> Optional[int]:
+    """Return 4 or 5 when every bracket has that exact consolation set. Otherwise None."""
+    if resolve_event_family(spec) != "WF_TO_BRACKETS_8":
+        return None
+    labels = _expected_bracket_labels(spec.team_count)
+    if labels is None:
+        return None
+    by_label = {label: set() for label in labels}
+    prefix = spec.match_code_prefix
+    for match in live_matches:
+        code = match.match_code or ""
+        if not code.startswith(prefix):
+            continue
+        parsed = _BRACKET_CODE.match(code[len(prefix) :])
+        if parsed is None:
+            continue
+        label = parsed.group(1)
+        if label not in by_label:
+            return None
+        by_label[label].add(f"{parsed.group(2)}{int(parsed.group(3))}")
+    signatures = {frozenset(codes) for codes in by_label.values()}
+    if len(signatures) != 1:
+        return None
+    signature = next(iter(signatures))
+    for guarantee, codes in _GUARANTEE_CODES.items():
+        if signature == codes:
+            return guarantee
+    return None
+
+
+def _expected_bracket_labels(team_count: int) -> Optional[list[str]]:
+    """Bracket labels produced by the waterfall-to-brackets generator."""
+    if team_count == 24:
+        return ["1", "2", "3"]
+    if team_count == 8:
+        bracket_count = 1
+    elif team_count in (12, 16):
+        bracket_count = 2
+    elif team_count == 32:
+        bracket_count = 4
+    else:
+        return None
+    return ["WW", "WL", "LW", "LL"][:bracket_count]
+
+
+def _category_key(event: Event) -> str:
+    category = event.category
+    if hasattr(category, "value"):
+        return str(category.value)
+    return str(category)
+
+
+def _ordered_events(events: list[Event]) -> list[Event]:
+    return sorted(
+        events,
+        key=lambda event: (
+            _CATEGORY_ORDER.get(_category_key(event).strip().lower(), 99),
+            event.name or "",
+            event.id or 0,
+        ),
+    )
+
+
+def _structure_error(lead: str, *, code: str, event_name: Optional[str] = None) -> DrawRebuildError:
+    return DrawRebuildError(
+        f"{lead}\n\n{STRUCTURE_REVIEW_MESSAGE}",
+        code=code,
+        event_name=event_name,
+    )
 
 
 def _avoid_text(value: Optional[str]) -> Optional[str]:
@@ -248,12 +414,40 @@ def _temporary_version(session: Session, tournament_id: int) -> ScheduleVersion:
 
 
 def _require_same_match_codes(event: Event, live_matches: list[Match], generated: list[Match]) -> None:
-    live_codes = [match.match_code for match in live_matches]
-    generated_codes = [match.match_code for match in generated]
-    if len(live_codes) != len(set(live_codes)) or len(generated_codes) != len(set(generated_codes)):
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review", event_name=event.name)
-    if set(live_codes) != set(generated_codes):
-        raise DrawRebuildError(STRUCTURE_REVIEW_MESSAGE, code="structure_review", event_name=event.name)
+    live_codes = [match.match_code or "" for match in live_matches]
+    generated_codes = [match.match_code or "" for match in generated]
+    live_only = sorted(set(live_codes) - set(generated_codes))
+    generated_only = sorted(set(generated_codes) - set(live_codes))
+    duplicate = len(live_codes) != len(set(live_codes)) or len(generated_codes) != len(set(generated_codes))
+    if not duplicate and not live_only and not generated_only:
+        return
+    logger.warning(
+        "draw rebuild match-code mismatch event=%s existing=%s generated=%s live_only=%s generated_only=%s",
+        event.name,
+        len(live_codes),
+        len(generated_codes),
+        live_only,
+        generated_only,
+    )
+    if duplicate:
+        message = f"{event.name} draw has duplicate match codes.\n\n{STRUCTURE_REVIEW_MESSAGE}"
+    else:
+        message = (
+            f"{event.name} draw topology does not match the generated structure.\n\n"
+            f"Existing matches: {len(live_codes)}\n"
+            f"Generated matches: {len(generated_codes)}"
+        )
+    raise DrawRebuildError(
+        message,
+        code="match_code_mismatch",
+        event_name=event.name,
+        details={
+            "existingMatchCount": len(live_codes),
+            "generatedMatchCount": len(generated_codes),
+            "liveOnlyMatchCodes": live_only,
+            "generatedOnlyMatchCodes": generated_only,
+        },
+    )
 
 
 def _copy_draw_content(session: Session, event: Event, live_matches: list[Match], generated: list[Match]) -> None:
