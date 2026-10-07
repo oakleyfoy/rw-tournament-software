@@ -114,14 +114,24 @@ export function appliedSummaryLines(result: RefreshResult | null): string[] {
   const projection = result?.rosterProjection
   if (!projection) return []
   const towelUpdates = (projection.created?.towelRows ?? 0) + (projection.updated?.towelRows ?? 0)
+  const wkw = projection.whoKnowsWho
   const lines = [
     countLine(projection.created?.teams ?? 0, 'team added', 'teams added'),
     countLine(projection.reconciled?.withdrawnTeams ?? 0, 'team withdrawn', 'teams withdrawn'),
     countLine(projection.updated?.contactFields ?? 0, 'player/contact change', 'player/contact changes'),
     countLine(towelUpdates, 'towel update', 'towel updates'),
-    countLine(projection.created?.wkwEdges ?? 0, 'Who-Knows-Who update', 'Who-Knows-Who updates'),
-    countLine(projection.reconciled?.drawSlotsReplaced ?? 0, 'draw position updated', 'draw positions updated'),
   ]
+  if (wkw && typeof wkw.current === 'number') {
+    lines.push(
+      `Who Knows Who: ${wkw.current} current connection${wkw.current === 1 ? '' : 's'}` +
+        (wkw.added || wkw.removed
+          ? ` (${wkw.added ?? 0} added, ${wkw.removed ?? 0} removed)`
+          : ''),
+    )
+  } else {
+    lines.push(countLine(projection.created?.wkwEdges ?? 0, 'Who-Knows-Who update', 'Who-Knows-Who updates'))
+  }
+  lines.push(countLine(projection.reconciled?.drawSlotsReplaced ?? 0, 'draw position updated', 'draw positions updated'))
   const seedUpdates = projection.updated?.seeds ?? 0
   if (seedUpdates > 0) {
     lines.push(countLine(seedUpdates, 'seed/rank update', 'seed/rank updates'))

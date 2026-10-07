@@ -91,6 +91,9 @@ class TeamResponse(BaseModel):
     rating: Optional[float] = None
     avoid_group: Optional[str] = None
     display_name: Optional[str] = None
+    # Pairwise Who Knows Who neighbors (TeamAvoidEdge), not avoid-group letters.
+    avoid_neighbors: List[str] = []
+    avoid_neighbor_count: int = 0
     player1_cellphone: Optional[str] = None
     player1_email: Optional[str] = None
     player2_cellphone: Optional[str] = None
@@ -164,7 +167,36 @@ def get_teams(event_id: int, session: Session = Depends(get_session)):
 
     sorted_teams = sorted(teams, key=sort_key)
 
-    return sorted_teams
+    from app.services.rw_os_wkw import neighbor_display_names
+
+    responses: List[TeamResponse] = []
+    for team in sorted_teams:
+        neighbors = neighbor_display_names(session, event_id=event_id, team_id=team.id) if team.id else []
+        payload = TeamResponse.model_validate(team)
+        payload.avoid_neighbors = neighbors
+        payload.avoid_neighbor_count = len(neighbors)
+        responses.append(payload)
+    return responses
+
+
+@router.get("/events/{event_id}/who-knows-who-summary")
+def get_who_knows_who_summary(event_id: int, session: Session = Depends(get_session)):
+    """Event-level pairwise Who Knows Who connection count for Draw Builder."""
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    from app.models.team_avoid_edge import TeamAvoidEdge
+    from app.services.rw_os_wkw import count_rw_os_wkw_edges, is_group_reason
+
+    rw_os_count = count_rw_os_wkw_edges(session, event_id)
+    all_edges = session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == event_id)).all()
+    pairwise_count = len([edge for edge in all_edges if not is_group_reason(edge.reason)])
+    return {
+        "eventId": event_id,
+        "connections": rw_os_count if rw_os_count else pairwise_count,
+        "rwOsConnections": rw_os_count,
+        "pairwiseConnections": pairwise_count,
+    }
 
 
 @router.post("/events/{event_id}/teams", response_model=TeamResponse, status_code=201)

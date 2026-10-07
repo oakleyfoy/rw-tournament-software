@@ -28,6 +28,7 @@ import {
   importCombinedTeams,
   refreshRwOsImport,
   getEventTeams,
+  getEventWhoKnowsWhoSummary,
   getTournamentRwOsImport,
   ensureTournamentRwOsImport,
   RwOsRosterFieldChange,
@@ -176,10 +177,44 @@ function formatTeamRating(rating: number | null | undefined): string {
   return Number.isInteger(x) ? String(x) : x.toFixed(2).replace(/\.?0+$/, '')
 }
 
-/** Avoid-group / who-knows-who letters from roster import. */
-function formatAvoidGroup(raw: string | null | undefined): string {
-  if (raw == null || !String(raw).trim()) return '—'
-  return String(raw).trim().toUpperCase()
+/** Compact pairwise Who Knows Who cell for Draw Builder tables. */
+function AvoidNeighborsCell({ team }: { team: TeamListItem | null | undefined }) {
+  const [open, setOpen] = useState(false)
+  const neighbors = team?.avoid_neighbors ?? []
+  const count = team?.avoid_neighbor_count ?? neighbors.length
+  if (!team || count <= 0) {
+    return <span style={{ opacity: 0.55 }}>—</span>
+  }
+  return (
+    <div style={{ minWidth: 72 }}>
+      <div style={{ fontSize: 12, lineHeight: 1.3 }}>
+        {count} team{count === 1 ? '' : 's'}
+      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          marginTop: 2,
+          padding: 0,
+          border: 'none',
+          background: 'none',
+          color: 'var(--theme-primary-btn-bg, #1a237e)',
+          fontSize: 11,
+          cursor: 'pointer',
+          textDecoration: 'underline',
+        }}
+      >
+        {open ? 'Hide' : 'View'}
+      </button>
+      {open && (
+        <ul style={{ margin: '4px 0 0', paddingLeft: 14, fontSize: 11, lineHeight: 1.35 }}>
+          {neighbors.map((name) => (
+            <li key={name}>{name}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 type SwapPick = {
@@ -346,6 +381,7 @@ function DrawBuilder() {
   const [legacyImportText, setLegacyImportText] = useState('')
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
+  const [wkwConnectionCounts, setWkwConnectionCounts] = useState<Record<number, number>>({})
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
   /** ISO dates; order matches backend schedule policy day_index for the resolved schedule version. */
   const [schedulePolicyDayIsoDates, setSchedulePolicyDayIsoDates] = useState<string[]>([])
@@ -442,6 +478,17 @@ function DrawBuilder() {
         }),
       )
       setEventTeams(Object.fromEntries(teamEntries))
+      const wkwEntries = await Promise.all(
+        eventsData.map(async (event) => {
+          try {
+            const summary = await getEventWhoKnowsWhoSummary(event.id)
+            return [event.id, summary.connections] as const
+          } catch {
+            return [event.id, 0] as const
+          }
+        }),
+      )
+      setWkwConnectionCounts(Object.fromEntries(wkwEntries))
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to load data', 'error')
     } finally {
@@ -1494,7 +1541,10 @@ function DrawBuilder() {
           >
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}>WF round 1 pairings (before play)</label>
             <p style={{ margin: '0 0 10px', fontSize: '12px', color: 'var(--theme-text)', opacity: 0.75 }}>
-              Primary correction: select two teams (including across event cards), then click Swap Teams. Columns Rt / Avoid show combined pair rating and avoid-group letters when roster data exists. Uses the schedule version the calendar prefers (draft when available).
+              Primary correction: select two teams (including across event cards), then click Swap Teams. Columns Rt / Avoid show combined pair rating and pairwise Who Knows Who neighbors when roster data exists. Uses the schedule version the calendar prefers (draft when available).
+            </p>
+            <p style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: 600 }}>
+              Who Knows Who: {wkwConnectionCounts[event.id] ?? 0} connection{(wkwConnectionCounts[event.id] ?? 0) === 1 ? '' : 's'}
             </p>
             {calendarScheduleVersionId == null && (
               <div style={{ fontSize: '13px', color: '#856404' }}>No schedule version available yet — generate matches from Schedule first.</div>
@@ -1529,14 +1579,14 @@ function DrawBuilder() {
                             <th style={{ padding: '6px 8px', width: 56, textAlign: 'right' }} title="Combined doubles rating">
                               Rt
                             </th>
-                            <th style={{ padding: '6px 8px', width: 52 }} title="Avoid group (who-knows-who letters)">
+                            <th style={{ padding: '6px 8px', width: 88 }} title="Pairwise Who Knows Who neighbors">
                               Avoid
                             </th>
                             <th style={{ padding: '6px 8px' }}>Side B</th>
                             <th style={{ padding: '6px 8px', width: 56, textAlign: 'right' }} title="Combined doubles rating">
                               Rt
                             </th>
-                            <th style={{ padding: '6px 8px', width: 52 }} title="Avoid group (who-knows-who letters)">
+                            <th style={{ padding: '6px 8px', width: 88 }} title="Pairwise Who Knows Who neighbors">
                               Avoid
                             </th>
                             <th style={{ padding: '6px 8px' }}>Action</th>
@@ -1597,7 +1647,7 @@ function DrawBuilder() {
                                   </button>
                                 </td>
                                 <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(ta?.rating)}</td>
-                                <td style={metaCell}>{formatAvoidGroup(ta?.avoid_group)}</td>
+                                <td style={metaCell}><AvoidNeighborsCell team={ta} /></td>
                                 <td style={{ padding: '6px 8px' }}>
                                   <button
                                     type="button"
@@ -1617,7 +1667,7 @@ function DrawBuilder() {
                                   </button>
                                 </td>
                                 <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(tb?.rating)}</td>
-                                <td style={metaCell}>{formatAvoidGroup(tb?.avoid_group)}</td>
+                                <td style={metaCell}><AvoidNeighborsCell team={tb} /></td>
                                 <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
                                   <button
                                     type="button"
@@ -2278,7 +2328,7 @@ function DrawBuilder() {
                             {teams.filter((t) => isActiveTeam(t)).map((t) => (
                               <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '4px 8px', fontWeight: 600 }}>{t.seed ?? '—'}</td>
-                                <td style={{ padding: '4px 8px', fontFamily: 'monospace' }}>{t.avoid_group ?? '—'}</td>
+                                <td style={{ padding: '4px 8px' }}><AvoidNeighborsCell team={t} /></td>
                                 <td style={{ padding: '4px 8px' }}>{t.rating ?? '—'}</td>
                                 <td style={{ padding: '4px 8px' }}>{t.display_name ?? '—'}</td>
                                 <td style={{ padding: '4px 8px' }}>{t.name}</td>

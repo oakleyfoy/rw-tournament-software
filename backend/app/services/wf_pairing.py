@@ -1,6 +1,10 @@
 """
 WF Round 1 Pairing — half-split matchups in bracket-fold order,
-with Who Knows Who (avoid_group) conflict resolution.
+with Who Knows Who conflict resolution.
+
+Conflict source:
+- Pairwise mode: unordered team-id pairs from TeamAvoidEdge (RW-OS WKW + manual).
+- Legacy mode: shared avoid_group letters on TeamSeed.
 
 Pipeline (never reorder bracket slots; only swap bottom-half opponents):
 
@@ -9,7 +13,7 @@ Pipeline (never reorder bracket slots; only swap bottom-half opponents):
 2. Resolve WKWK on WF Round 1: swap bottoms with other bottoms at the same
    rating anywhere in the round until stable (clears direct opponent conflicts).
 3. WF Round 2 outlook (optional refinement): same-rating bottom swaps that keep
-   Round 1 clean but reduce WKKW letter clustering within each consecutive **pod of
+   Round 1 clean but reduce WKKW clustering within each consecutive **pod of
    four** R1 matches (slots 1–4, 5–8, … — two WF R2 feeder pairs per pod).
 
 Unknown ratings may swap only with each other.
@@ -20,6 +24,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
+
+AvoidPairSet = Set[Tuple[int, int]]
 
 
 @dataclass
@@ -112,7 +118,11 @@ def _wf_r1_top_half_fold_order(half: int) -> List[int]:
     return out
 
 
-# ── Avoid-group helpers ──────────────────────────────────────────────
+# ── Avoid helpers ─────────────────────────────────────────────────────
+
+
+def _ordered_ids(left: int, right: int) -> Tuple[int, int]:
+    return (left, right) if left < right else (right, left)
 
 
 def _groups_conflict(group_a: Optional[str], group_b: Optional[str]) -> Optional[str]:
@@ -129,6 +139,19 @@ def _groups_conflict(group_a: Optional[str], group_b: Optional[str]) -> Optional
     if overlap:
         return sorted(overlap)[0]
     return None
+
+
+def _pair_conflict_label(
+    a: TeamSeed,
+    b: TeamSeed,
+    avoid_pairs: Optional[AvoidPairSet],
+) -> Optional[str]:
+    """Return a conflict label when A and B should avoid each other."""
+    if avoid_pairs is not None:
+        if _ordered_ids(a.team_id, b.team_id) in avoid_pairs:
+            return "wkw"
+        return None
+    return _groups_conflict(a.avoid_group, b.avoid_group)
 
 
 def _same_level_rating(r_a: Optional[float], r_b: Optional[float]) -> bool:
@@ -153,13 +176,35 @@ def _pair_union_atoms(match: Tuple[TeamSeed, TeamSeed]) -> Set[str]:
     return _avoid_atoms(a) | _avoid_atoms(b)
 
 
-def _wf_r2_pod_of_four_penalty(pairs: List[Tuple[TeamSeed, TeamSeed]]) -> int:
-    """Penalty when WKKW atoms touch multiple R1 matches inside the same pod of four.
+def _match_team_ids(match: Tuple[TeamSeed, TeamSeed]) -> Set[int]:
+    return {match[0].team_id, match[1].team_id}
 
-    Pods are consecutive blocks of four R1 slots (1–4, 5–8, …), aligned with two
-    sequential WF R2 winners feeds per quad. For each block, sum pairwise overlap
-    counts ∑_{i<j in block} |atoms(match_i) ∩ atoms(match_j)| so spreading letters
-    across pods is preferred when swaps allow.
+
+def _crossing_edge_count(
+    match_a: Tuple[TeamSeed, TeamSeed],
+    match_b: Tuple[TeamSeed, TeamSeed],
+    avoid_pairs: AvoidPairSet,
+) -> int:
+    """Count WKW edges with one endpoint in each R1 match (faithful pairwise pod metric)."""
+    left = _match_team_ids(match_a)
+    right = _match_team_ids(match_b)
+    count = 0
+    for team_a in left:
+        for team_b in right:
+            if _ordered_ids(team_a, team_b) in avoid_pairs:
+                count += 1
+    return count
+
+
+def _wf_r2_pod_of_four_penalty(
+    pairs: List[Tuple[TeamSeed, TeamSeed]],
+    avoid_pairs: Optional[AvoidPairSet] = None,
+) -> int:
+    """Penalty when WKKW touches multiple R1 matches inside the same pod of four.
+
+    Letter mode: shared avoid-group atoms across matches in the pod.
+    Pairwise mode: count of effective edges that cross between distinct R1 matches
+    in the pod (does not invent clique/group semantics).
     """
     pen = 0
     n = len(pairs)
@@ -167,9 +212,12 @@ def _wf_r2_pod_of_four_penalty(pairs: List[Tuple[TeamSeed, TeamSeed]]) -> int:
         block_end = min(block_start + 4, n)
         for i in range(block_start, block_end):
             for j in range(i + 1, block_end):
-                ga = _pair_union_atoms(pairs[i])
-                gb = _pair_union_atoms(pairs[j])
-                pen += len(ga & gb)
+                if avoid_pairs is not None:
+                    pen += _crossing_edge_count(pairs[i], pairs[j], avoid_pairs)
+                else:
+                    ga = _pair_union_atoms(pairs[i])
+                    gb = _pair_union_atoms(pairs[j])
+                    pen += len(ga & gb)
     return pen
 
 
@@ -180,13 +228,19 @@ def _wf_r1_draw_ordered_pairs(by_seed: Dict[int, TeamSeed], half: int) -> List[T
     return [matchups_by_top_seed[s] for s in fold_order]
 
 
-def _pair_clean_opponents(match: Tuple[TeamSeed, TeamSeed]) -> bool:
+def _pair_clean_opponents(
+    match: Tuple[TeamSeed, TeamSeed],
+    avoid_pairs: Optional[AvoidPairSet] = None,
+) -> bool:
     a, b = match
-    return _groups_conflict(a.avoid_group, b.avoid_group) is None
+    return _pair_conflict_label(a, b, avoid_pairs) is None
 
 
 def _try_bottom_swap(
-    pairs: List[Tuple[TeamSeed, TeamSeed]], i: int, j: int
+    pairs: List[Tuple[TeamSeed, TeamSeed]],
+    i: int,
+    j: int,
+    avoid_pairs: Optional[AvoidPairSet] = None,
 ) -> Optional[List[Tuple[TeamSeed, TeamSeed]]]:
     """If swapping bottoms between slots i and j keeps both pairs WKWK-clean, return new list."""
     if i == j:
@@ -195,9 +249,9 @@ def _try_bottom_swap(
     a_j, b_j = pairs[j]
     if not _same_level_rating(b_i.rating, b_j.rating):
         return None
-    if _groups_conflict(a_i.avoid_group, b_j.avoid_group):
+    if _pair_conflict_label(a_i, b_j, avoid_pairs):
         return None
-    if _groups_conflict(a_j.avoid_group, b_i.avoid_group):
+    if _pair_conflict_label(a_j, b_i, avoid_pairs):
         return None
     out = list(pairs)
     out[i] = (a_i, b_j)
@@ -207,6 +261,7 @@ def _try_bottom_swap(
 
 def _resolve_wkk_r1_bottom_swaps(
     pairs: List[Tuple[TeamSeed, TeamSeed]],
+    avoid_pairs: Optional[AvoidPairSet] = None,
 ) -> List[Tuple[TeamSeed, TeamSeed]]:
     """Clear WF R1 opponent WKWK conflicts via same-rating bottom swaps (whole round)."""
     result = list(pairs)
@@ -215,10 +270,10 @@ def _resolve_wkk_r1_bottom_swaps(
     for _ in range(max_rounds):
         progressed = False
         for i in range(n):
-            if _pair_clean_opponents(result[i]):
+            if _pair_clean_opponents(result[i], avoid_pairs):
                 continue
             for j in range(n):
-                trial = _try_bottom_swap(result, i, j)
+                trial = _try_bottom_swap(result, i, j, avoid_pairs)
                 if trial is None:
                     continue
                 result = trial
@@ -233,8 +288,9 @@ def _resolve_wkk_r1_bottom_swaps(
 
 def _optimize_wf_r2_adjacency_swaps(
     pairs: List[Tuple[TeamSeed, TeamSeed]],
+    avoid_pairs: Optional[AvoidPairSet] = None,
 ) -> List[Tuple[TeamSeed, TeamSeed]]:
-    """Spread WKKW atoms across pods using same-rated bottom swaps when possible.
+    """Spread WKKW across pods using same-rated bottom swaps when possible.
 
     Minimizes ``_wf_r2_pod_of_four_penalty`` without introducing R1 opponent WKWK hits.
     """
@@ -242,17 +298,17 @@ def _optimize_wf_r2_adjacency_swaps(
     n = len(result)
     max_rounds = max(1, n * n * n)
     for _ in range(max_rounds):
-        base_pen = _wf_r2_pod_of_four_penalty(result)
+        base_pen = _wf_r2_pod_of_four_penalty(result, avoid_pairs)
         best: Optional[Tuple[int, int, int]] = None  # (penalty, i, j)
 
         for i in range(n):
             for j in range(n):
-                trial = _try_bottom_swap(result, i, j)
+                trial = _try_bottom_swap(result, i, j, avoid_pairs)
                 if trial is None:
                     continue
-                if not all(_pair_clean_opponents(trial[k]) for k in range(n)):
+                if not all(_pair_clean_opponents(trial[k], avoid_pairs) for k in range(n)):
                     continue
-                pen_trial = _wf_r2_pod_of_four_penalty(trial)
+                pen_trial = _wf_r2_pod_of_four_penalty(trial, avoid_pairs)
                 if pen_trial >= base_pen:
                     continue
                 cand = (pen_trial, i, j)
@@ -262,7 +318,7 @@ def _optimize_wf_r2_adjacency_swaps(
         if best is None:
             break
         _, bi, bj = best
-        trial = _try_bottom_swap(result, bi, bj)
+        trial = _try_bottom_swap(result, bi, bj, avoid_pairs)
         assert trial is not None
         result = trial
 
@@ -272,18 +328,23 @@ def _optimize_wf_r2_adjacency_swaps(
 # ── Main entry point ─────────────────────────────────────────────────
 
 
-def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
+def build_wf_r1_pairings(
+    teams: List[TeamSeed],
+    n: int,
+    *,
+    avoid_pairs: Optional[AvoidPairSet] = None,
+) -> PairingResult:
     """Build WF R1 pairings for *n* teams.
 
     Step 1 — Canonical draw: half-split, bracket-safe match order (tops fixed).
     Step 2 — WKKW on WF Round 1: swap bottoms with same-rated bottoms anywhere in the round.
-    Step 3 — WF Round 2 outlook: optional swaps that keep Round 1 clean but reduce WKKW letter
+    Step 3 — WF Round 2 outlook: optional swaps that keep Round 1 clean but reduce WKKW
              clustering within each consecutive pod of four R1 slots (1–4, 5–8, …).
 
     Step 4 — report any remaining (unavoidable) conflicts.
 
-    Multi-group support: avoid_group "A,B" conflicts with any team
-    in group A or group B.
+    When *avoid_pairs* is provided, conflict(A,B) is true iff the unordered team-id pair
+    is in that set (pairwise RW-OS WKW). Otherwise legacy avoid_group letter overlap is used.
     """
     assert n >= 2 and n % 2 == 0, f"n must be even >= 2, got {n}"
     assert len(teams) == n, f"Expected {n} teams, got {len(teams)}"
@@ -292,8 +353,8 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
     half = n // 2
 
     ordered_pairs = _wf_r1_draw_ordered_pairs(by_seed, half)
-    resolved_r1 = _resolve_wkk_r1_bottom_swaps(ordered_pairs)
-    resolved_pairs = _optimize_wf_r2_adjacency_swaps(resolved_r1)
+    resolved_r1 = _resolve_wkk_r1_bottom_swaps(ordered_pairs, avoid_pairs)
+    resolved_pairs = _optimize_wf_r2_adjacency_swaps(resolved_r1, avoid_pairs)
 
     # Step 4: Build result with remaining (unavoidable) conflicts
     seed_pairs: List[Tuple[int, int]] = []
@@ -308,14 +369,18 @@ def build_wf_r1_pairings(teams: List[TeamSeed], n: int) -> PairingResult:
         name_pairs.append((a.name or "", b.name or ""))
         display_name_pairs.append((a.display_name, b.display_name))
 
-        shared = _groups_conflict(a.avoid_group, b.avoid_group)
+        shared = _pair_conflict_label(a, b, avoid_pairs)
         if shared:
+            if avoid_pairs is not None:
+                reason = f"Unavoidable conflict: seed {a.seed} and seed {b.seed} are connected by Who Knows Who"
+            else:
+                reason = f"Unavoidable conflict: seed {a.seed} and seed {b.seed} share avoid group '{shared}'"
             conflicts.append(
                 PairingConflict(
                     seed_a=a.seed,
                     seed_b=b.seed,
                     group=shared,
-                    reason=(f"Unavoidable conflict: seed {a.seed} and seed {b.seed} share avoid group '{shared}'"),
+                    reason=reason,
                 )
             )
 

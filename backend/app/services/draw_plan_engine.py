@@ -99,7 +99,9 @@ def _get_wf_r1_pairing(
     if [t.seed for t in seed_teams] != list(range(1, n + 1)):
         return None
 
-    return build_wf_r1_pairings(seed_teams, n)
+    from app.services.rw_os_wkw import avoid_pairs_for_generator
+
+    return build_wf_r1_pairings(seed_teams, n, avoid_pairs=avoid_pairs_for_generator(session, event_id))
 
 
 def _load_teams_by_seed(session, event_id: int) -> dict:

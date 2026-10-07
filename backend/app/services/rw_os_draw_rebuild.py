@@ -13,7 +13,6 @@ schedule-version filter, so it can still see a historical clone. Do not copy tha
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections import Counter
@@ -27,6 +26,7 @@ from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentImport
 from app.services.active_roster import team_is_active
@@ -39,13 +39,18 @@ from app.services.draw_plan_engine import (
 )
 from app.services.post_draw_corrections import match_locked_for_participant_edit
 from app.services.rw_os_import import parse_teams
+from app.services.rw_os_wkw import count_rw_os_wkw_edges
 
 logger = logging.getLogger(__name__)
 
 STRUCTURE_REVIEW_MESSAGE = "Bracket structure requires review before draws can be rebuilt."
 HEADING = "RW-OS Refreshed + Draws Rebuilt"
 SCHEDULE_NOTE = "Match numbers, dates, times, courts, and grid assignments were preserved."
-DRAW_DETAIL = "Draw rebuilt using current ratings, seeds, and Who-Knows-Who"
+DRAW_DETAIL_WITH_WKW = "Draw rebuilt using current ratings, seeds, and Who-Knows-Who."
+DRAW_DETAIL_NO_WKW = (
+    "Draw rebuilt using current ratings and seeds. No Who-Knows-Who connections were available."
+)
+DRAW_DETAIL = DRAW_DETAIL_WITH_WKW
 
 _DRAW_FIELDS = (
     "team_a_id",
@@ -354,7 +359,14 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
             details={"activeTeams": len(active), "approvedCapacity": expected},
         )
     _require_seed_range(event, active, expected)
-    snapshot_by_key = {team.team_key: team for team in parse_teams(json.loads(import_row.snapshot_json or "[]"))}
+    from app.services.rw_os_import import import_snapshot_teams
+    from app.services.rw_os_wkw import (
+        RW_OS_WKW_REASON,
+        load_snapshot_connections,
+        resolve_connection_team_ids,
+    )
+
+    snapshot_by_key = {team.team_key: team for team in parse_teams(import_snapshot_teams(import_row))}
     for team in active:
         snapshot = snapshot_by_key.get(team.source_team_key or "")
         if snapshot is None:
@@ -363,12 +375,62 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
                 code="roster_reconciliation_incomplete",
                 event_name=event.name,
             )
-        if _avoid_text(team.avoid_group) != _avoid_text(snapshot.avoid_group):
+    connections = load_snapshot_connections(import_row)
+    if connections is None:
+        for team in active:
+            snapshot = snapshot_by_key.get(team.source_team_key or "")
+            if snapshot is None:
+                continue
+            if _avoid_text(team.avoid_group) != _avoid_text(snapshot.avoid_group):
+                raise DrawRebuildError(
+                    "Who-Knows-Who could not be reconciled before draws were rebuilt.",
+                    code="roster_reconciliation_incomplete",
+                    event_name=event.name,
+                )
+        return
+    # Pairwise mode: verify RW-OS-owned edges match the snapshot graph for this draw.
+    from app.models.event import EventCategory
+    from app.services.structure_events import event_category_for_draw_kind
+
+    category = event.category.value if isinstance(event.category, EventCategory) else str(event.category)
+    draw_kind = None
+    for kind in ("mixed", "womens"):
+        mapped = event_category_for_draw_kind(kind)
+        if mapped is not None and mapped.value == category:
+            draw_kind = kind
+            break
+    if draw_kind is None:
+        return
+    desired: set[tuple[int, int]] = set()
+    for edge in connections:
+        if edge.draw_kind != draw_kind:
+            continue
+        resolved = resolve_connection_team_ids(
+            session,
+            event_id=event.id,
+            team_a_key=edge.team_a_key,
+            team_b_key=edge.team_b_key,
+        )
+        if resolved is None:
             raise DrawRebuildError(
                 "Who-Knows-Who could not be reconciled before draws were rebuilt.",
                 code="roster_reconciliation_incomplete",
                 event_name=event.name,
             )
+        desired.add(resolved)
+    actual_edges = session.exec(
+        select(TeamAvoidEdge).where(
+            TeamAvoidEdge.event_id == event.id,
+            TeamAvoidEdge.reason == RW_OS_WKW_REASON,
+        )
+    ).all()
+    actual = {(edge.team_id_a, edge.team_id_b) for edge in actual_edges}
+    if actual != desired:
+        raise DrawRebuildError(
+            "Who-Knows-Who could not be reconciled before draws were rebuilt.",
+            code="roster_reconciliation_incomplete",
+            event_name=event.name,
+        )
 
 
 def _require_seed_range(event: Event, active: list[Team], expected: int) -> None:
@@ -735,13 +797,15 @@ def _success_payload(session: Session, rebuildable: list[tuple[Event, list[Match
     events = []
     for event, _matches in rebuildable:
         spec = build_spec_from_event(event)
+        wkw_count = count_rw_os_wkw_edges(session, event.id) if event.id is not None else 0
         events.append(
             {
                 "eventId": event.id,
                 "name": event.name,
                 "teamCount": len(_active_teams(session, event)),
                 "structure": _structure_label(spec),
-                "detail": DRAW_DETAIL,
+                "detail": DRAW_DETAIL_WITH_WKW if wkw_count > 0 else DRAW_DETAIL_NO_WKW,
+                "whoKnowsWhoConnections": wkw_count,
                 "schedulePreserved": True,
             }
         )

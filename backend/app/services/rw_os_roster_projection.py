@@ -26,7 +26,11 @@ from app.services.combined_roster_writes import (
     sync_players_from_team_slots_if_enabled,
 )
 from app.services.post_draw_corrections import match_locked_for_participant_edit
-from app.services.rw_os_import import parse_teams, snapshot_hash
+from app.services.rw_os_import import import_payload_from_row, import_snapshot_teams, parse_teams, snapshot_hash
+from app.services.rw_os_wkw import (
+    load_snapshot_connections,
+    sync_rw_os_wkw_edges_for_event,
+)
 from app.services.structure_events import event_category_for_draw_kind, event_protection_reason
 
 RWOS_LOOKUP_SOURCE = "rwos-import"
@@ -49,6 +53,8 @@ class RosterProjectionResult:
     created_teams: int = 0
     created_towel_rows: int = 0
     created_wkw_edges: int = 0
+    removed_wkw_edges: int = 0
+    current_wkw_edges: int = 0
     updated_teams: int = 0
     updated_contact_fields: int = 0
     updated_towel_rows: int = 0
@@ -58,6 +64,7 @@ class RosterProjectionResult:
     field_changes: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
+    pairwise_wkw: bool = False
 
     @property
     def ok(self) -> bool:
@@ -70,6 +77,7 @@ class RosterProjectionResult:
                 "events": self.created_events,
                 "teams": self.created_teams,
                 "towelRows": self.created_towel_rows,
+                # Legacy counter kept for older UI; pairwise mode prefers whoKnowsWho below.
                 "wkwEdges": self.created_wkw_edges,
             },
             "updated": {
@@ -81,6 +89,12 @@ class RosterProjectionResult:
             "reconciled": {
                 "withdrawnTeams": self.withdrawn_teams,
                 "drawSlotsReplaced": self.draw_slots_replaced,
+            },
+            "whoKnowsWho": {
+                "pairwise": self.pairwise_wkw,
+                "current": self.current_wkw_edges,
+                "added": self.created_wkw_edges,
+                "removed": self.removed_wkw_edges,
             },
             "fieldChanges": list(self.field_changes),
             "warnings": list(self.warnings),
@@ -131,15 +145,7 @@ def _record_field_change(
 
 
 def current_snapshot_hash(import_row: TournamentImport) -> str:
-    return snapshot_hash(
-        {
-            "tournamentId": import_row.source_tournament_id,
-            "updatedAt": import_row.source_updated_at,
-            "version": import_row.source_version,
-            "teams": json.loads(import_row.snapshot_json or "[]"),
-            "waitlistTeams": json.loads(import_row.waitlist_json or "[]"),
-        }
-    )
+    return snapshot_hash(import_payload_from_row(import_row))
 
 
 def _warning(code: str, message: str, **extra: Any) -> dict[str, Any]:
@@ -1430,7 +1436,9 @@ def project_approved_roster(
     commit: bool = True,
 ) -> RosterProjectionResult:
     result = RosterProjectionResult(created_events=events_created)
-    teams = parse_teams(json.loads(import_row.snapshot_json or "[]"))
+    teams = parse_teams(import_snapshot_teams(import_row))
+    pairwise_connections = load_snapshot_connections(import_row)
+    result.pairwise_wkw = pairwise_connections is not None
     current_hash = current_snapshot_hash(import_row)
     approved_hash = import_row.approved_source_hash
     structural_mismatch = bool(approved_hash and current_hash != approved_hash)
@@ -1655,12 +1663,49 @@ def project_approved_roster(
         _drop_resolved_withdrawal_warnings(session, result)
         _reconcile_active_seeds(session, plans, teams, result, failed_event_ids)
 
-    for event_id, assignments in wkw_assignments.items():
-        group_map = group_map_from_avoid_groups(assignments)
-        try:
-            result.created_wkw_edges += add_missing_group_avoid_edges(session, event_id, group_map)
-        except Exception as exc:
-            result.warnings.append(_warning("wkw_edge_error", f"Error creating avoid edges: {exc}"))
+    if pairwise_connections is not None:
+        # Authoritative pairwise sync — do not synthesize clique edges from avoidGroup letters.
+        draw_kinds_by_event: dict[int, str] = {}
+        for plan in plans:
+            sole = _sole_category_event(events, plan.draw_kind)
+            if sole is not None and sole.id is not None:
+                draw_kinds_by_event[sole.id] = plan.draw_kind
+            for bracket in _brackets_from_plan(plan):
+                label = str(bracket.get("label") or "").strip()
+                routed = _resolve_roster_event(events, plan.draw_kind, label) if label else sole
+                if routed is not None and routed.id is not None:
+                    draw_kinds_by_event[routed.id] = plan.draw_kind
+        for event_id, draw_kind in sorted(draw_kinds_by_event.items()):
+            try:
+                sync = sync_rw_os_wkw_edges_for_event(
+                    session,
+                    event_id=event_id,
+                    draw_kind=draw_kind,
+                    connections=pairwise_connections,
+                )
+                result.created_wkw_edges += sync.added
+                result.removed_wkw_edges += sync.removed
+                result.current_wkw_edges += sync.current
+                for unresolved in sync.unresolved:
+                    result.warnings.append(
+                        _warning(
+                            "wkw_unresolved_connection",
+                            (
+                                "RW-OS Who Knows Who edge could not be resolved to current teams "
+                                f"({unresolved.get('teamAKey')}–{unresolved.get('teamBKey')})."
+                            ),
+                            **unresolved,
+                        )
+                    )
+            except Exception as exc:
+                result.warnings.append(_warning("wkw_edge_error", f"Error syncing pairwise avoid edges: {exc}"))
+    else:
+        for event_id, assignments in wkw_assignments.items():
+            group_map = group_map_from_avoid_groups(assignments)
+            try:
+                result.created_wkw_edges += add_missing_group_avoid_edges(session, event_id, group_map)
+            except Exception as exc:
+                result.warnings.append(_warning("wkw_edge_error", f"Error creating avoid edges: {exc}"))
 
     sync_players_from_team_slots_if_enabled(session, import_row.tournament_id, touched_teams)
     if operational_only:
@@ -1876,6 +1921,7 @@ def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[
     inactive_teams = [team for team in teams if not team_is_active(team)]
     rwos_towels = [row for row in towels if row.source == RWOS_LOOKUP_SOURCE]
     group_edges = [edge for edge in edges if (edge.reason or "").startswith("group:")]
+    rw_os_wkw_edges = [edge for edge in edges if (edge.reason or "") == "rw-os:wkw"]
 
     def _filled(attr: str) -> int:
         return sum(1 for team in source_teams if (getattr(team, attr) or "").strip())
@@ -1896,6 +1942,13 @@ def live_roster_summary(session: Session, import_row: TournamentImport) -> dict[
         "wkwEdges": {
             "total": len(edges),
             "groupReason": len(group_edges),
+            "rwOsWkw": len(rw_os_wkw_edges),
+        },
+        "whoKnowsWho": {
+            "pairwise": bool(load_snapshot_connections(import_row) is not None),
+            "current": len(rw_os_wkw_edges),
+            "added": 0,
+            "removed": 0,
         },
         "contacts": {
             "sourceTeams": len(source_teams),
@@ -1924,18 +1977,29 @@ def roster_projection_from_live(summary: dict[str, Any]) -> dict[str, Any]:
         int(contacts.get(name) or 0)
         for name in ("player1Cellphone", "player1Email", "player2Cellphone", "player2Email")
     )
+    who = summary.get("whoKnowsWho") or {}
     return {
         "ok": bool(summary.get("ok")),
         "created": {
             "events": 0,
             "teams": int((summary.get("teams") or {}).get("sourceBacked") or 0),
             "towelRows": int((summary.get("towels") or {}).get("rwosImport") or 0),
-            "wkwEdges": int((summary.get("wkwEdges") or {}).get("groupReason") or 0),
+            "wkwEdges": int(
+                (summary.get("wkwEdges") or {}).get("rwOsWkw")
+                or (summary.get("wkwEdges") or {}).get("groupReason")
+                or 0
+            ),
         },
         "updated": {
             "teams": 0,
             "contactFields": contact_fields,
             "towelRows": 0,
+        },
+        "whoKnowsWho": {
+            "pairwise": bool(who.get("pairwise")),
+            "current": int(who.get("current") or 0),
+            "added": int(who.get("added") or 0),
+            "removed": int(who.get("removed") or 0),
         },
         "fieldChanges": [],
         "warnings": list(summary.get("warnings") or []),
