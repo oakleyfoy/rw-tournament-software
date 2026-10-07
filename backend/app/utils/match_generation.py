@@ -351,6 +351,7 @@ def generate_wf_matches(
         # same semantics as draw_plan_engine / wf_pairing.build_wf_r1_pairings.
         # The legacy circle/Berger schedule paired seed i vs seed (n+1-i) in round 1,
         # which is wrong for waterfall draws (e.g. 1v32 instead of 1v17 when n=32).
+        from app.services.rw_os_wkw import avoid_pairs_for_generator
         from app.services.wf_pairing import TeamSeed, build_wf_r1_pairings
 
         seed_teams: List[TeamSeed] = []
@@ -371,7 +372,11 @@ def generate_wf_matches(
             )
         seed_teams.sort(key=lambda x: x.seed)
         if pairing_ok and [t.seed for t in seed_teams] == list(range(1, n_teams_binding + 1)):
-            pairing = build_wf_r1_pairings(seed_teams, n_teams_binding)
+            pairing = build_wf_r1_pairings(
+                seed_teams,
+                n_teams_binding,
+                avoid_pairs=avoid_pairs_for_generator(session, event.id),
+            )
             r1_pairs = [(team_by_id[ta_id], team_by_id[tb_id]) for ta_id, tb_id in pairing.team_id_pairs]
         else:
             # Deterministic order already seed-primary; pair top half vs bottom half by slot.

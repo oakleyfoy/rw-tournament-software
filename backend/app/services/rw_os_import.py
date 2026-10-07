@@ -23,6 +23,13 @@ from app.services.bracket_split_planner import (
 )
 from app.services.canonical_teams import SnapshotTeam, normalize_avoid_group, validate_import_snapshot
 from app.services.rw_os_client import RwOsClient
+from app.services.rw_os_wkw import (
+    connections_for_hash,
+    dump_snapshot_document,
+    load_snapshot_document,
+    load_snapshot_teams,
+    parse_who_knows_who_connections,
+)
 
 
 def _structural_player(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -47,19 +54,20 @@ def _structural_team(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def snapshot_hash(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(
-        {
-            "tournamentId": payload.get("tournamentId"),
-            "updatedAt": payload.get("updatedAt"),
-            "version": payload.get("version"),
-            "teams": [_structural_team(team) for team in payload.get("teams") or [] if isinstance(team, dict)],
-            "waitlistTeams": [
-                _structural_team(team) for team in payload.get("waitlistTeams") or [] if isinstance(team, dict)
-            ],
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    connections = parse_who_knows_who_connections(payload)
+    body: dict[str, Any] = {
+        "tournamentId": payload.get("tournamentId"),
+        "updatedAt": payload.get("updatedAt"),
+        "version": payload.get("version"),
+        "teams": [_structural_team(team) for team in payload.get("teams") or [] if isinstance(team, dict)],
+        "waitlistTeams": [
+            _structural_team(team) for team in payload.get("waitlistTeams") or [] if isinstance(team, dict)
+        ],
+    }
+    # Pairwise WKW graph is structural: a connections-only RW-OS change must change the hash.
+    if connections is not None:
+        body["whoKnowsWhoConnections"] = connections_for_hash(connections)
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -67,8 +75,30 @@ def parse_teams(rows: list[dict[str, Any]]) -> list[SnapshotTeam]:
     return [SnapshotTeam.from_dict(row) for row in rows]
 
 
+def import_snapshot_teams(import_row: TournamentImport) -> list[dict[str, Any]]:
+    return load_snapshot_teams(import_row)
+
+
+def import_payload_from_row(import_row: TournamentImport) -> dict[str, Any]:
+    document = load_snapshot_document(import_row.snapshot_json)
+    payload: dict[str, Any] = {
+        "tournamentId": import_row.source_tournament_id,
+        "updatedAt": import_row.source_updated_at,
+        "version": import_row.source_version,
+        "teams": document.get("teams") or [],
+        "waitlistTeams": json.loads(import_row.waitlist_json or "[]"),
+    }
+    connections = document.get("whoKnowsWhoConnections")
+    if connections is not None:
+        payload["whoKnowsWhoConnections"] = connections_for_hash(connections)
+    return payload
+
+
 def serialize_import(row: TournamentImport) -> dict[str, Any]:
-    return {
+    teams = import_snapshot_teams(row)
+    document = load_snapshot_document(row.snapshot_json)
+    connections = document.get("whoKnowsWhoConnections")
+    payload = {
         "id": row.id,
         "tournamentId": row.tournament_id,
         "organizationSlug": row.organization_slug,
@@ -85,11 +115,14 @@ def serialize_import(row: TournamentImport) -> dict[str, Any]:
         "refreshDiff": json.loads(row.refresh_diff_json) if row.refresh_diff_json else None,
         "planStatus": row.plan_status,
         "forecasts": load_forecasts(row),
-        "currentCounts": current_draw_counts(json.loads(row.snapshot_json or "[]")),
+        "currentCounts": current_draw_counts(teams),
         "approvedAt": row.approved_at.isoformat() if row.approved_at else None,
-        "teams": json.loads(row.snapshot_json or "[]"),
+        "teams": teams,
         "waitlistTeams": json.loads(row.waitlist_json or "[]"),
     }
+    if connections is not None:
+        payload["whoKnowsWhoConnections"] = connections_for_hash(connections)
+    return payload
 
 
 def serialize_draw_plan(row: TournamentDrawPlan) -> dict[str, Any]:
@@ -129,7 +162,7 @@ def current_draw_counts(teams: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def default_forecasts(import_row: TournamentImport) -> dict[str, int]:
-    return current_draw_counts(json.loads(import_row.snapshot_json or "[]"))
+    return current_draw_counts(import_snapshot_teams(import_row))
 
 
 def load_forecasts(import_row: TournamentImport) -> dict[str, int]:
@@ -179,7 +212,7 @@ def save_forecasts(session: Session, import_row: TournamentImport, forecasts: di
 
 
 def _planner_payload(import_row: TournamentImport) -> dict[str, Any]:
-    teams = parse_teams(json.loads(import_row.snapshot_json or "[]"))
+    teams = parse_teams(import_snapshot_teams(import_row))
     return plan_snapshot(teams, load_forecasts(import_row))
 
 
@@ -226,7 +259,7 @@ def build_import_response(session: Session, import_row: TournamentImport) -> dic
     from app.services.rw_os_roster_projection import live_roster_summary, roster_projection_from_live
 
     plans = session.exec(select(TournamentDrawPlan).where(TournamentDrawPlan.import_id == import_row.id)).all()
-    snapshot = json.loads(import_row.snapshot_json or "[]")
+    snapshot = import_snapshot_teams(import_row)
     waitlist = json.loads(import_row.waitlist_json or "[]")
     live = live_roster_summary(session, import_row)
     return {
@@ -292,6 +325,16 @@ def _project_operational_refresh(
     ).to_dict()
 
 
+def _snapshot_json_for_persist(
+    team_payload: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> str:
+    connections = parse_who_knows_who_connections(payload)
+    if connections is None:
+        return json.dumps(team_payload)
+    return dump_snapshot_document(team_payload, who_knows_who_connections=connections)
+
+
 def persist_snapshot(
     session: Session,
     payload: dict[str, Any],
@@ -308,6 +351,7 @@ def persist_snapshot(
     parsed_date = date.fromisoformat(event_date[:10])
     team_payload = [team.to_dict() for team in teams]
     waitlist_payload = [team.to_dict() for team in waitlist]
+    snapshot_json = _snapshot_json_for_persist(team_payload, payload)
     source_id = int(payload["tournamentId"])
     source_hash = snapshot_hash(payload)
 
@@ -330,7 +374,7 @@ def persist_snapshot(
             source_version=payload.get("version"),
             source_team_count=len(team_payload),
             source_hash=source_hash,
-            snapshot_json=json.dumps(team_payload),
+            snapshot_json=snapshot_json,
             waitlist_json=json.dumps(waitlist_payload),
             validation_status="needs_attention" if issues else "ok",
             validation_issues_json=json.dumps(issues),
@@ -367,7 +411,7 @@ def persist_snapshot(
             source_version=payload.get("version"),
             source_team_count=len(team_payload),
             source_hash=source_hash,
-            snapshot_json=json.dumps(team_payload),
+            snapshot_json=snapshot_json,
             waitlist_json=json.dumps(waitlist_payload),
             validation_status="needs_attention" if issues else "ok",
             validation_issues_json=json.dumps(issues),
@@ -384,7 +428,7 @@ def persist_snapshot(
     existing.source_team_count = len(team_payload)
     previous_hash = existing.source_hash
     existing.source_hash = source_hash
-    existing.snapshot_json = json.dumps(team_payload)
+    existing.snapshot_json = snapshot_json
     existing.waitlist_json = json.dumps(waitlist_payload)
     existing.validation_status = "needs_attention" if issues else "ok"
     existing.validation_issues_json = json.dumps(issues)
@@ -546,7 +590,13 @@ def compute_refresh_diff(previous: dict[str, Any], current: dict[str, Any]) -> d
                 before_value=_diff_towel(before_player),
                 after_value=_diff_towel(after_player),
             )
-    operational_changed = bool(contact_changes or towel_changes or avoid_group_changes)
+    previous_connections = connections_for_hash(parse_who_knows_who_connections(previous))
+    current_connections = connections_for_hash(parse_who_knows_who_connections(current))
+    # When either side carries the pairwise field, order-stable graph equality drives the diff.
+    connection_graph_changed = False
+    if "whoKnowsWhoConnections" in previous or "whoKnowsWhoConnections" in current:
+        connection_graph_changed = previous_connections != current_connections
+    operational_changed = bool(contact_changes or towel_changes or avoid_group_changes or connection_graph_changed)
     return {
         "addedTeams": added,
         "withdrawnTeams": removed,
@@ -556,9 +606,22 @@ def compute_refresh_diff(previous: dict[str, Any], current: dict[str, Any]) -> d
         "contactChanges": contact_changes,
         "towelChanges": towel_changes,
         "avoidGroupChanges": avoid_group_changes,
+        "whoKnowsWhoConnectionChanges": {
+            "changed": connection_graph_changed,
+            "previousCount": len(previous_connections),
+            "currentCount": len(current_connections),
+        },
         "addedCount": len(added),
         "withdrawnCount": len(removed),
-        "changed": bool(added or removed or partner_changes or draw_changes or rating_changes or operational_changed),
+        "changed": bool(
+            added
+            or removed
+            or partner_changes
+            or draw_changes
+            or rating_changes
+            or operational_changed
+            or connection_graph_changed
+        ),
         "previousHash": snapshot_hash(previous),
         "currentHash": snapshot_hash(current),
     }
@@ -572,13 +635,7 @@ def refresh_import(
     apply: bool = False,
 ) -> dict[str, Any]:
     client = client or RwOsClient()
-    previous = {
-        "tournamentId": import_row.source_tournament_id,
-        "updatedAt": import_row.source_updated_at,
-        "version": import_row.source_version,
-        "teams": json.loads(import_row.snapshot_json or "[]"),
-        "waitlistTeams": json.loads(import_row.waitlist_json or "[]"),
-    }
+    previous = import_payload_from_row(import_row)
     current = client.refresh_event(import_row.source_tournament_id, previous)
     diff = compute_refresh_diff(previous, current)
     from app.services.rw_os_roster_projection import operational_roster_drift
@@ -624,13 +681,7 @@ def refresh_and_rebuild_draws(
     from app.services.rw_os_roster_projection import operational_roster_drift
 
     client = client or RwOsClient()
-    previous = {
-        "tournamentId": import_row.source_tournament_id,
-        "updatedAt": import_row.source_updated_at,
-        "version": import_row.source_version,
-        "teams": json.loads(import_row.snapshot_json or "[]"),
-        "waitlistTeams": json.loads(import_row.waitlist_json or "[]"),
-    }
+    previous = import_payload_from_row(import_row)
     current = client.refresh_event(import_row.source_tournament_id, previous)
     diff = compute_refresh_diff(previous, current)
     drift = operational_roster_drift(session, import_row, current.get("teams") or [])
@@ -675,7 +726,7 @@ def refresh_and_rebuild_draws(
 
 
 def teams_for_draw(import_row: TournamentImport, draw_kind: str) -> list[SnapshotTeam]:
-    return [team for team in parse_teams(json.loads(import_row.snapshot_json or "[]")) if team.draw_kind == draw_kind]
+    return [team for team in parse_teams(import_snapshot_teams(import_row)) if team.draw_kind == draw_kind]
 
 
 def resolve_draw_option(

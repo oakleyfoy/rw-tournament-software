@@ -651,6 +651,7 @@ export interface RwOsImportResponse {
   }
   rosterProjection?: {
     ok: boolean
+    whoKnowsWho?: { pairwise: boolean; current: number; added: number; removed: number }
     created: { events: number; teams: number; towelRows: number; wkwEdges: number }
     updated: { teams: number; contactFields: number; towelRows: number; seeds?: number }
     reconciled?: { withdrawnTeams: number; drawSlotsReplaced: number }
@@ -2432,6 +2433,8 @@ export interface TeamListItem {
   seed: number | null
   rating: number | null
   avoid_group: string | null
+  avoid_neighbors?: string[]
+  avoid_neighbor_count?: number
   display_name: string | null
   created_at: string
   wf_group_index: number | null
@@ -2447,6 +2450,14 @@ export async function getEventTeams(
 ): Promise<TeamListItem[]> {
   return fetchJson<TeamListItem[]>(
     `${API_BASE_URL}/events/${eventId}/teams`
+  )
+}
+
+export async function getEventWhoKnowsWhoSummary(
+  eventId: number
+): Promise<{ eventId: number; connections: number; rwOsConnections: number; pairwiseConnections: number }> {
+  return fetchJson(
+    `${API_BASE_URL}/events/${eventId}/who-knows-who-summary`
   )
 }
 

@@ -195,6 +195,7 @@ describe('DeskRwOsRefresh', () => {
           created: { events: 0, teams: 1, towelRows: 2, wkwEdges: 2 },
           updated: { teams: 0, contactFields: 0, towelRows: 0 },
           reconciled: { withdrawnTeams: 1, drawSlotsReplaced: 1 },
+          whoKnowsWho: { pairwise: true, current: 10, added: 2, removed: 0 },
         }),
       } as never
     })
@@ -206,7 +207,7 @@ describe('DeskRwOsRefresh', () => {
     expect(screen.getByText('1 team added')).toBeInTheDocument()
     expect(screen.getByText('1 team withdrawn')).toBeInTheDocument()
     expect(screen.getByText('2 towel updates')).toBeInTheDocument()
-    expect(screen.getByText('2 Who-Knows-Who updates')).toBeInTheDocument()
+    expect(screen.getByText('Who Knows Who: 10 current connections (2 added, 0 removed)')).toBeInTheDocument()
     expect(screen.getByText('1 draw position updated')).toBeInTheDocument()
     expect(screen.getByText('Tournament Desk has been refreshed.')).toBeInTheDocument()
     expect(refresh).toHaveBeenLastCalledWith(12, true)
@@ -313,7 +314,7 @@ describe('DeskRwOsRefresh', () => {
           name: 'Mixed',
           teamCount: 24,
           structure: '24-team waterfall',
-          detail: 'Draw rebuilt using current ratings, seeds, and Who-Knows-Who',
+          detail: 'Draw rebuilt using current ratings, seeds, and Who-Knows-Who.',
           schedulePreserved: true,
         },
       ],

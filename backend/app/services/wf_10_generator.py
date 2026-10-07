@@ -113,7 +113,13 @@ def generate_wf_10_matches(
                     rating=getattr(t, "rating", None),
                 )
             )
-        pairing = build_wf_r1_pairings(seed_teams, len(field))
+        from app.services.rw_os_wkw import avoid_pairs_for_generator
+
+        pairing = build_wf_r1_pairings(
+            seed_teams,
+            len(field),
+            avoid_pairs=avoid_pairs_for_generator(session, spec.event_id),
+        )
 
     team_by_seed = {idx: t for idx, t in enumerate(field, start=1)}
     for i in range(WF_R1_MATCHES):

@@ -156,7 +156,20 @@ def test_placement_seeds_one_through_twenty_four_by_tiebreakers(session):
             )
         )
 
-    for left, right in ((1, 13), (2, 14), (3, 15), (4, 16), (5, 17), (6, 18), (7, 19), (8, 20), (9, 21), (10, 22), (11, 23), (12, 24)):
+    for left, right in (
+        (1, 13),
+        (2, 14),
+        (3, 15),
+        (4, 16),
+        (5, 17),
+        (6, 18),
+        (7, 19),
+        (8, 20),
+        (9, 21),
+        (10, 22),
+        (11, 23),
+        (12, 24),
+    ):
         add_match(f"R1_{left}", 1, left, right, 6, 4)
     for index, (winner, loser) in enumerate(((1, 7), (2, 8), (3, 9), (4, 10), (5, 11), (6, 12)), start=1):
         add_match(f"R2W_{winner}", 2, winner, loser, 9 - index, 1)
