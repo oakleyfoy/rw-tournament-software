@@ -18,6 +18,7 @@ vi.mock('../api/client', async () => {
     getTournamentRwOsImport: vi.fn(),
     ensureTournamentRwOsImport: vi.fn(),
     getEventTeams: vi.fn(),
+    getEventAvoidEdges: vi.fn(),
     getEventWhoKnowsWhoSummary: vi.fn(),
     getTournamentWhoKnowsWhoSummary: vi.fn(),
     importCombinedTeams: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('../utils/toast', () => ({ showToast: vi.fn() }))
 
 import DrawBuilder from './DrawBuilder'
 import {
+  getEventAvoidEdges,
   getEventTeams,
   getEventWhoKnowsWhoSummary,
   getEvents,
@@ -84,6 +86,7 @@ function mockDrawBuilderApis(tournament: Tournament) {
   ])
   vi.mocked(getScheduleBuilder).mockResolvedValue({ tournament_id: 5, events: [] })
   vi.mocked(getEventTeams).mockResolvedValue([])
+  vi.mocked(getEventAvoidEdges).mockResolvedValue([])
   vi.mocked(getEventWhoKnowsWhoSummary).mockResolvedValue({
     eventId: finalizedEvent.id,
     connections: 0,

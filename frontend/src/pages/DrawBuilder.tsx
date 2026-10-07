@@ -28,6 +28,7 @@ import {
   importCombinedTeams,
   refreshRwOsImport,
   getEventTeams,
+  getEventAvoidEdges,
   getEventWhoKnowsWhoSummary,
   getTournamentWhoKnowsWhoSummary,
   type TournamentWhoKnowsWhoSummary,
@@ -51,6 +52,12 @@ import {
   Match,
   MoveDivisionResponse,
 } from '../api/client'
+import {
+  buildPairwiseNeighborMap,
+  wkwHighlightRole,
+  type WkwHighlightRole,
+  type WkwInspection,
+} from './draw-builder/wkwHighlight'
 import MoveDivisionModal from './draw-builder/MoveDivisionModal'
 import {
   formatRwOsRosterRefreshSummary,
@@ -179,22 +186,46 @@ function formatTeamRating(rating: number | null | undefined): string {
   return Number.isInteger(x) ? String(x) : x.toFixed(2).replace(/\.?0+$/, '')
 }
 
+const WKW_SELECTED_BG = '#bbdefb'
+const WKW_SELECTED_BORDER = '#1565c0'
+const WKW_CONNECTED_BG = '#fff59d'
+const WKW_CONNECTED_BORDER = '#f9a825'
+
 /** Compact pairwise Who Knows Who cell for Draw Builder tables. */
-function AvoidNeighborsCell({ team }: { team: TeamListItem | null | undefined }) {
-  const [open, setOpen] = useState(false)
+function AvoidNeighborsCell({
+  team,
+  eventId,
+  inspection,
+  onInspect,
+}: {
+  team: TeamListItem | null | undefined
+  eventId: number
+  inspection: WkwInspection
+  onInspect: (next: WkwInspection) => void
+}) {
   const neighbors = team?.avoid_neighbors ?? []
   const count = team?.avoid_neighbor_count ?? neighbors.length
+  const open = Boolean(team && inspection?.eventId === eventId && inspection.teamId === team.id)
   if (!team || count <= 0) {
     return <span style={{ opacity: 0.55 }}>—</span>
   }
   return (
-    <div style={{ minWidth: 72 }}>
+    <div style={{ minWidth: 72 }} data-testid={`avoid-cell-${team.id}`}>
       <div style={{ fontSize: 12, lineHeight: 1.3 }}>
         {count} team{count === 1 ? '' : 's'}
       </div>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label={
+          open
+            ? `Hide Who Knows Who for ${team.display_name || team.name}`
+            : `View Who Knows Who for ${team.display_name || team.name}`
+        }
+        onClick={() => {
+          if (open) onInspect(null)
+          else onInspect({ eventId, teamId: team.id })
+        }}
         style={{
           marginTop: 2,
           padding: 0,
@@ -217,6 +248,31 @@ function AvoidNeighborsCell({ team }: { team: TeamListItem | null | undefined })
       )}
     </div>
   )
+}
+
+function applyWkwTeamCardStyle(
+  base: CSSProperties,
+  role: WkwHighlightRole | null,
+): CSSProperties {
+  if (role === 'selected') {
+    return {
+      ...base,
+      backgroundColor: WKW_SELECTED_BG,
+      border: `2px solid ${WKW_SELECTED_BORDER}`,
+      boxShadow: '0 0 0 2px rgba(21, 101, 192, 0.28)',
+      color: '#0d1b2a',
+    }
+  }
+  if (role === 'connected') {
+    return {
+      ...base,
+      backgroundColor: WKW_CONNECTED_BG,
+      border: `2px solid ${WKW_CONNECTED_BORDER}`,
+      boxShadow: '0 0 0 2px rgba(249, 168, 37, 0.3)',
+      color: '#1a1a1a',
+    }
+  }
+  return base
 }
 
 type SwapPick = {
@@ -383,6 +439,9 @@ function DrawBuilder() {
   const [legacyImportText, setLegacyImportText] = useState('')
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
+  /** Pairwise WKW neighbor IDs by event (from avoid-edges; not display names). */
+  const [eventWkwNeighborMaps, setEventWkwNeighborMaps] = useState<Record<number, Map<number, number[]>>>({})
+  const [wkwInspection, setWkwInspection] = useState<WkwInspection>(null)
   const [wkwConnectionCounts, setWkwConnectionCounts] = useState<Record<number, number>>({})
   const [wkwTournamentSummary, setWkwTournamentSummary] = useState<TournamentWhoKnowsWhoSummary | null>(null)
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
@@ -404,6 +463,21 @@ function DrawBuilder() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
+
+  const loadEventWkwNeighbors = async (eventId: number) => {
+    try {
+      const edges = await getEventAvoidEdges(eventId)
+      setEventWkwNeighborMaps((prev) => ({
+        ...prev,
+        [eventId]: buildPairwiseNeighborMap(edges),
+      }))
+    } catch {
+      setEventWkwNeighborMaps((prev) => ({
+        ...prev,
+        [eventId]: prev[eventId] ?? new Map(),
+      }))
+    }
+  }
 
   useEffect(() => {
     if (tournamentId) {
@@ -474,7 +548,11 @@ function DrawBuilder() {
       const teamEntries = await Promise.all(
         eventsData.map(async (event) => {
           try {
-            return [event.id, await getEventTeams(event.id)] as const
+            const [teams] = await Promise.all([
+              getEventTeams(event.id),
+              loadEventWkwNeighbors(event.id),
+            ])
+            return [event.id, teams] as const
           } catch {
             return [event.id, [] as TeamListItem[]] as const
           }
@@ -547,6 +625,7 @@ function DrawBuilder() {
       const [rows, teams] = await Promise.all([
         getMatches(tournamentId, calendarScheduleVersionId, eventId),
         getEventTeams(eventId),
+        loadEventWkwNeighbors(eventId),
       ])
       const wfR1 = rows
         .filter((m) => m.match_type === 'WF' && (m.round_index ?? 0) === 1)
@@ -1156,7 +1235,7 @@ function DrawBuilder() {
   const handleLoadTeams = async (eventId: number) => {
     setLoadingTeamsFor(eventId)
     try {
-      const teams = await getEventTeams(eventId)
+      const [teams] = await Promise.all([getEventTeams(eventId), loadEventWkwNeighbors(eventId)])
       setEventTeams(prev => ({ ...prev, [eventId]: teams }))
     } catch {
       showToast('Failed to load teams', 'error')
@@ -1555,6 +1634,53 @@ function DrawBuilder() {
               Who Knows Who (this bracket): {wkwConnectionCounts[event.id] ?? 0} connection
               {(wkwConnectionCounts[event.id] ?? 0) === 1 ? '' : 's'}
             </p>
+            {wkwInspection?.eventId === event.id && (
+              <div
+                role="status"
+                aria-live="polite"
+                data-testid={`wkw-legend-${event.id}`}
+                style={{
+                  margin: '0 0 10px',
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--theme-input-border)',
+                  backgroundColor: 'var(--theme-table-row-hover)',
+                  fontSize: 12,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 12,
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>WKW highlight:</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 3,
+                      backgroundColor: WKW_SELECTED_BG,
+                      border: `2px solid ${WKW_SELECTED_BORDER}`,
+                    }}
+                  />
+                  Selected team
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 3,
+                      backgroundColor: WKW_CONNECTED_BG,
+                      border: `2px solid ${WKW_CONNECTED_BORDER}`,
+                    }}
+                  />
+                  Connected team
+                </span>
+              </div>
+            )}
             {calendarScheduleVersionId == null && (
               <div style={{ fontSize: '13px', color: '#856404' }}>No schedule version available yet — generate matches from Schedule first.</div>
             )}
@@ -1579,7 +1705,7 @@ function DrawBuilder() {
                     <div style={{ fontSize: '13px', opacity: 0.8 }}>Load rows after matches exist for this event.</div>
                   )}
                   {(wfR1MatchesByEvent[event.id]?.length ?? 0) > 0 && (
-                    <div style={{ overflowX: 'auto' }}>
+                    <div style={{ overflowX: 'auto' }} data-testid={`wf-r1-table-${event.id}`}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                         <thead>
                           <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--theme-input-border)' }}>
@@ -1610,6 +1736,9 @@ function DrawBuilder() {
                             const teamsRow = eventTeams[event.id]
                             const ta = wfR1LookupTeam(teamsRow, m.team_a_id)
                             const tb = wfR1LookupTeam(teamsRow, m.team_b_id)
+                            const neighborMap = eventWkwNeighborMaps[event.id]
+                            const roleA = wkwHighlightRole(m.team_a_id, wkwInspection, event.id, neighborMap)
+                            const roleB = wkwHighlightRole(m.team_b_id, wkwInspection, event.id, neighborMap)
                             const metaCell: CSSProperties = {
                               padding: '6px 8px',
                               fontSize: '12px',
@@ -1634,13 +1763,25 @@ function DrawBuilder() {
                               opacity: empty || defaulted ? 0.55 : 1,
                               boxShadow: picked ? '0 0 0 2px rgba(26, 35, 126, 0.25)' : undefined,
                             })
+                            const teamCardLabel = (
+                              role: WkwHighlightRole | null,
+                              teamLabel: string,
+                            ): string | undefined => {
+                              if (role === 'selected') return `${teamLabel} (selected Who Knows Who team)`
+                              if (role === 'connected') return `${teamLabel} (connected Who Knows Who team)`
+                              return undefined
+                            }
                             return (
                               <tr key={m.id} style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
                                 <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>{m.match_code}</td>
                                 <td style={{ padding: '6px 8px' }}>
                                   <button
                                     type="button"
+                                    data-team-id={m.team_a_id ?? undefined}
+                                    data-wkw-role={roleA ?? undefined}
+                                    data-event-id={event.id}
                                     disabled={m.team_a_id == null || !!ta?.is_defaulted}
+                                    aria-label={teamCardLabel(roleA, m.placeholder_side_a)}
                                     title={
                                       ta?.is_defaulted
                                         ? 'Defaulted teams cannot be selected for Swap Teams'
@@ -1649,18 +1790,42 @@ function DrawBuilder() {
                                           : 'Select this team for Swap Teams'
                                     }
                                     onClick={() => handleSelectTeamForSwap(event, m, 'A')}
-                                    style={sideButtonStyle(pickA, !!ta?.is_defaulted, m.team_a_id == null)}
+                                    style={applyWkwTeamCardStyle(
+                                      sideButtonStyle(pickA, !!ta?.is_defaulted, m.team_a_id == null),
+                                      roleA,
+                                    )}
                                   >
                                     {pickAIndex >= 0 ? `${pickAIndex + 1}. ` : ''}
                                     {m.placeholder_side_a}
+                                    {roleA === 'selected' && (
+                                      <span style={{ display: 'block', fontSize: 10, fontWeight: 700, marginTop: 2 }}>
+                                        Selected
+                                      </span>
+                                    )}
+                                    {roleA === 'connected' && (
+                                      <span style={{ display: 'block', fontSize: 10, fontWeight: 700, marginTop: 2 }}>
+                                        Connected
+                                      </span>
+                                    )}
                                   </button>
                                 </td>
                                 <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(ta?.rating)}</td>
-                                <td style={metaCell}><AvoidNeighborsCell team={ta} /></td>
+                                <td style={metaCell}>
+                                  <AvoidNeighborsCell
+                                    team={ta}
+                                    eventId={event.id}
+                                    inspection={wkwInspection}
+                                    onInspect={setWkwInspection}
+                                  />
+                                </td>
                                 <td style={{ padding: '6px 8px' }}>
                                   <button
                                     type="button"
+                                    data-team-id={m.team_b_id ?? undefined}
+                                    data-wkw-role={roleB ?? undefined}
+                                    data-event-id={event.id}
                                     disabled={m.team_b_id == null || !!tb?.is_defaulted}
+                                    aria-label={teamCardLabel(roleB, m.placeholder_side_b)}
                                     title={
                                       tb?.is_defaulted
                                         ? 'Defaulted teams cannot be selected for Swap Teams'
@@ -1669,14 +1834,34 @@ function DrawBuilder() {
                                           : 'Select this team for Swap Teams'
                                     }
                                     onClick={() => handleSelectTeamForSwap(event, m, 'B')}
-                                    style={sideButtonStyle(pickB, !!tb?.is_defaulted, m.team_b_id == null)}
+                                    style={applyWkwTeamCardStyle(
+                                      sideButtonStyle(pickB, !!tb?.is_defaulted, m.team_b_id == null),
+                                      roleB,
+                                    )}
                                   >
                                     {pickBIndex >= 0 ? `${pickBIndex + 1}. ` : ''}
                                     {m.placeholder_side_b}
+                                    {roleB === 'selected' && (
+                                      <span style={{ display: 'block', fontSize: 10, fontWeight: 700, marginTop: 2 }}>
+                                        Selected
+                                      </span>
+                                    )}
+                                    {roleB === 'connected' && (
+                                      <span style={{ display: 'block', fontSize: 10, fontWeight: 700, marginTop: 2 }}>
+                                        Connected
+                                      </span>
+                                    )}
                                   </button>
                                 </td>
                                 <td style={{ ...metaCell, textAlign: 'right' }}>{formatTeamRating(tb?.rating)}</td>
-                                <td style={metaCell}><AvoidNeighborsCell team={tb} /></td>
+                                <td style={metaCell}>
+                                  <AvoidNeighborsCell
+                                    team={tb}
+                                    eventId={event.id}
+                                    inspection={wkwInspection}
+                                    onInspect={setWkwInspection}
+                                  />
+                                </td>
                                 <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
                                   <button
                                     type="button"
@@ -2378,7 +2563,14 @@ function DrawBuilder() {
                             {teams.filter((t) => isActiveTeam(t)).map((t) => (
                               <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '4px 8px', fontWeight: 600 }}>{t.seed ?? '—'}</td>
-                                <td style={{ padding: '4px 8px' }}><AvoidNeighborsCell team={t} /></td>
+                                <td style={{ padding: '4px 8px' }}>
+                                  <AvoidNeighborsCell
+                                    team={t}
+                                    eventId={ev.id}
+                                    inspection={wkwInspection}
+                                    onInspect={setWkwInspection}
+                                  />
+                                </td>
                                 <td style={{ padding: '4px 8px' }}>{t.rating ?? '—'}</td>
                                 <td style={{ padding: '4px 8px' }}>{t.display_name ?? '—'}</td>
                                 <td style={{ padding: '4px 8px' }}>{t.name}</td>
