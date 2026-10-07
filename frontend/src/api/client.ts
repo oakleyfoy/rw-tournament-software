@@ -652,7 +652,7 @@ export interface RwOsImportResponse {
   rosterProjection?: {
     ok: boolean
     created: { events: number; teams: number; towelRows: number; wkwEdges: number }
-    updated: { teams: number; contactFields: number; towelRows: number }
+    updated: { teams: number; contactFields: number; towelRows: number; seeds?: number }
     reconciled?: { withdrawnTeams: number; drawSlotsReplaced: number }
     fieldChanges?: RwOsRosterFieldChange[]
     warnings: Array<{ code: string; message: string }>

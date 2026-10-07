@@ -9,13 +9,14 @@ from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentDrawPlan, TournamentImport
-from app.services.canonical_teams import SnapshotTeam
+from app.services.canonical_teams import SnapshotTeam, sort_teams_for_planning
 from app.services.rw_os_import import snapshot_hash
 from tests.test_rw_os_roster_projection import (
     _approve,
@@ -213,6 +214,7 @@ def test_apply_reconciles_against_a_fresh_snapshot_and_ignores_client_diff(
     assert projection["reconciled"]["withdrawnTeams"] == 1
     assert projection["reconciled"]["drawSlotsReplaced"] == 1
     assert not any(item["code"] == "roster_reconciliation_blocked" for item in projection["conflicts"])
+    assert not any(item["code"] == "draw_slot_left_open" for item in projection["warnings"])
 
     session.expire_all()
     after = _teams_by_key(session, ready.imported.tournament_id)
@@ -293,7 +295,11 @@ def test_apply_warns_when_a_withdrawal_has_no_replacement(client: TestClient, se
 
     applied = _post_refresh(client, ready.imported.id, apply=True)
     warnings = applied["rosterProjection"]["warnings"]
-    assert any(item["code"] == "draw_slot_left_open" for item in warnings)
+    open_slots = [item for item in warnings if item["code"] == "draw_slot_left_open"]
+    assert len(open_slots) == 1
+    assert "W1" in open_slots[0]["message"]
+    assert "Seed " not in open_slots[0]["message"]
+    assert "TBD" not in open_slots[0]["message"]
     session.expire_all()
     match = session.get(Match, ready.match.id)
     old = session.get(Team, ready.withdrawn.id)
@@ -907,6 +913,9 @@ def test_production_mixed_identities_reconcile_onto_the_24_team_event(
     active = [team for team in _teams_by_key(session, ready.imported.tournament_id).values() if not team.is_defaulted]
     assert {key for key, _display in PRODUCTION_MIXED} <= {team.source_team_key for team in active}
     assert len([team for team in active if team.event_id == ready.event.id]) == 24
+    expected_seeds = {team.team_key: index for index, team in enumerate(sort_teams_for_planning(ready.field), start=1)}
+    assert {team.seed for team in active if team.event_id == ready.event.id} == set(range(1, 25))
+    assert _teams_by_key(session, ready.imported.tournament_id)["13511/14084"].seed == expected_seeds["13511/14084"]
     assert _draw_participant_ids(session, ready.event.id) == {
         team.id for team in active if team.event_id == ready.event.id
     }
@@ -979,3 +988,161 @@ def test_production_mixed_event_stays_complete_when_entry_sides_are_protected(
     ]
     assert len(active) == 24
     assert len(_draw_participant_ids(session, ready.event.id)) == 19
+
+
+def _match_sides(session: Session, event_id: int) -> list[tuple]:
+    matches = session.exec(select(Match).where(Match.event_id == event_id)).all()
+    return sorted(
+        (
+            match.id,
+            match.match_code,
+            match.team_a_id,
+            match.team_b_id,
+            match.placeholder_side_a,
+            match.placeholder_side_b,
+        )
+        for match in matches
+    )
+
+
+def _assignment_ids(session: Session, tournament_id: int) -> list[int]:
+    rows = session.exec(select(MatchAssignment).join(Match).where(Match.tournament_id == tournament_id)).all()
+    return sorted(row.id for row in rows if row.id is not None)
+
+
+def _full_mixed_draw(client: TestClient, session: Session, source_id: int) -> SimpleNamespace:
+    field = _production_mixed_field()
+    imported = _import_payload(session, source_id, field)
+    _approve(client, imported.id, {"mixed": "24"})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    placed = sorted(
+        [team for team in _teams_by_key(session, imported.tournament_id).values() if not team.is_defaulted],
+        key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+    )
+    _generate_wf24_draw(session, event, placed)
+    return SimpleNamespace(
+        field=field,
+        imported=session.get(TournamentImport, imported.id),
+        event=session.get(Event, event.id),
+    )
+
+
+def test_refresh_repairs_darlene_seed_without_moving_the_draw(client: TestClient, session: Session, monkeypatch):
+    ready = _full_mixed_draw(client, session, 983)
+    live = _teams_by_key(session, ready.imported.tournament_id)
+    darlene = live["13511/14084"]
+    others = sorted(
+        (team for team in live.values() if team.id != darlene.id and not team.is_defaulted),
+        key=lambda team: team.id or 0,
+    )
+    stale = list(range(1, 13)) + list(range(14, 25))
+    for team in list(others) + [darlene]:
+        team.seed = None
+        session.add(team)
+    session.commit()
+    for team, seed in zip(others, stale):
+        team.seed = seed
+        session.add(team)
+    session.commit()
+    expected = {team.team_key: index for index, team in enumerate(sort_teams_for_planning(ready.field), start=1)}
+    assert expected["13511/14084"] != 13
+    before_sides = _match_sides(session, ready.event.id)
+    before_assignments = _assignment_ids(session, ready.imported.tournament_id)
+    _patch_refresh(monkeypatch, [_payload(983, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    projection = result["rosterProjection"]
+    assert projection["created"]["teams"] == 0
+    assert projection["reconciled"]["withdrawnTeams"] == 0
+    assert projection["reconciled"]["drawSlotsReplaced"] == 0
+    assert projection["updated"]["seeds"] >= 1
+    assert _incomplete(result) == []
+    session.expire_all()
+    repaired = _teams_by_key(session, ready.imported.tournament_id)
+    assert repaired["13511/14084"].seed == expected["13511/14084"]
+    active = [team for team in repaired.values() if not team.is_defaulted]
+    assert {team.seed for team in active} == set(range(1, 25))
+    assert {team.source_team_key: team.seed for team in active} == expected
+    assert _match_sides(session, ready.event.id) == before_sides
+    assert _assignment_ids(session, ready.imported.tournament_id) == before_assignments
+
+    again = _post_refresh(client, ready.imported.id, apply=False)
+    assert again["diff"]["changed"] is False
+    assert again["applied"] is False
+    assert again["rosterProjection"] is None
+
+
+def test_refresh_reorders_seeds_without_moving_draw_positions(client: TestClient, session: Session, monkeypatch):
+    ready = _full_mixed_draw(client, session, 984)
+    active = [team for team in _teams_by_key(session, ready.imported.tournament_id).values() if not team.is_defaulted]
+    by_seed = sorted(active, key=lambda team: (team.seed is None, team.seed or 0, team.id or 0))
+    for team in by_seed:
+        team.seed = None
+        session.add(team)
+    session.commit()
+    for team, seed in zip(by_seed, range(len(by_seed), 0, -1)):
+        team.seed = seed
+        session.add(team)
+    session.commit()
+    before_sides = _match_sides(session, ready.event.id)
+    _patch_refresh(monkeypatch, [_payload(984, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["rosterProjection"]["created"]["teams"] == 0
+    assert result["rosterProjection"]["reconciled"]["drawSlotsReplaced"] == 0
+    assert result["rosterProjection"]["updated"]["seeds"] == 24
+    expected = {team.team_key: index for index, team in enumerate(sort_teams_for_planning(ready.field), start=1)}
+    session.expire_all()
+    repaired = [team for team in _teams_by_key(session, ready.imported.tournament_id).values() if not team.is_defaulted]
+    assert {team.source_team_key: team.seed for team in repaired} == expected
+    assert _match_sides(session, ready.event.id) == before_sides
+
+    again = _post_refresh(client, ready.imported.id, apply=False)
+    assert again["diff"]["changed"] is False
+    assert again["rosterProjection"] is None
+
+
+def test_structural_placeholders_are_not_withdrawal_warnings(client: TestClient, session: Session, monkeypatch):
+    ready = _ready(client, session, 985)
+    for sequence, left, right in (
+        (40, "Seed 23", "Seed 24"),
+        (41, "TBD", "W(R1_01)"),
+        (42, "WFSEED:01", "L(R1_02)"),
+    ):
+        session.add(
+            Match(
+                tournament_id=ready.imported.tournament_id,
+                event_id=ready.event.id,
+                schedule_version_id=ready.match.schedule_version_id,
+                match_code=f"WF_R1_{sequence:02d}",
+                match_type="WF",
+                round_number=1,
+                round_index=1,
+                sequence_in_round=sequence,
+                duration_minutes=60,
+                placeholder_side_a=left,
+                placeholder_side_b=right,
+            )
+        )
+    session.commit()
+    replacement = _torrie_nancy()
+    refreshed = [SnapshotTeam.from_dict(team.to_dict()) for team in ready.teams[1:]]
+    refreshed.append(replacement)
+    _store_snapshot(session, ready.imported, 985, refreshed)
+    _patch_refresh(monkeypatch, [_payload(985, refreshed)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    warnings = result["rosterProjection"]["warnings"]
+    messages = " ".join(item["message"] for item in warnings)
+    assert not any(item["code"] == "draw_slot_left_open" for item in warnings)
+    for label in ("Seed 23", "Seed 24", "TBD", "WFSEED:", "W(", "L("):
+        assert label not in messages
+    session.expire_all()
+    match = session.get(Match, ready.match.id)
+    assert match.team_a_id == _teams_by_key(session, ready.imported.tournament_id)[replacement.team_key].id
+    assert match.match_code == "WF_R1_01"

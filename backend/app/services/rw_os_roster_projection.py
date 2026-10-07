@@ -40,6 +40,7 @@ CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE = "roster_reconciliation_incomplete"
 EMPTY_DRAW_SLOT = "TBD"
 _FEEDER_PLACEHOLDER = re.compile(r"^(?:W\(|L\(|WINNER:|LOSER:|TBD:|WFSEED:)", re.IGNORECASE)
 _SEED_PLACEHOLDER = re.compile(r"^SEED[_ ](\d+)$", re.IGNORECASE)
+_STRUCTURAL_SLOT = re.compile(r"^(?:SEED[_ ]\d+|TBD|BYE|WFSEED:\S*|W\(.+|L\(.+|WINNER:\S*|LOSER:\S*)$", re.IGNORECASE)
 
 
 @dataclass
@@ -51,6 +52,7 @@ class RosterProjectionResult:
     updated_teams: int = 0
     updated_contact_fields: int = 0
     updated_towel_rows: int = 0
+    updated_seeds: int = 0
     withdrawn_teams: int = 0
     draw_slots_replaced: int = 0
     field_changes: list[dict[str, Any]] = field(default_factory=list)
@@ -74,6 +76,7 @@ class RosterProjectionResult:
                 "teams": self.updated_teams,
                 "contactFields": self.updated_contact_fields,
                 "towelRows": self.updated_towel_rows,
+                "seeds": self.updated_seeds,
             },
             "reconciled": {
                 "withdrawnTeams": self.withdrawn_teams,
@@ -605,6 +608,35 @@ def _team_occupies_match(session: Session, team: Team) -> bool:
     return row is not None
 
 
+def _is_structural_draw_label(label: Optional[str]) -> bool:
+    """Seed N, TBD, and feeder text are draw structure, not teams."""
+    text = (label or "").strip()
+    if not text or text == EMPTY_DRAW_SLOT:
+        return True
+    return _STRUCTURAL_SLOT.match(text) is not None or _FEEDER_PLACEHOLDER.match(text) is not None
+
+
+def _drop_resolved_withdrawal_warnings(session: Session, result: RosterProjectionResult) -> None:
+    """A placeholder is not a withdrawal, and a slot filled later in this run is not still open."""
+    kept: list[dict[str, Any]] = []
+    for warning in result.warnings:
+        if warning.get("code") != "draw_slot_left_open":
+            kept.append(warning)
+            continue
+        if _is_structural_draw_label(str(warning.get("slotLabel") or "")) or str(
+            warning.get("teamKey") or ""
+        ).startswith("open:"):
+            continue
+        match = session.get(Match, warning.get("matchId"))
+        side = warning.get("side")
+        if match is not None and (
+            (side == "A" and match.team_a_id is not None) or (side == "B" and match.team_b_id is not None)
+        ):
+            continue
+        kept.append(warning)
+    result.warnings = kept
+
+
 def _placeholder_seed(placeholder: Optional[str]) -> Optional[int]:
     match = _SEED_PLACEHOLDER.match((placeholder or "").strip())
     if not match:
@@ -875,6 +907,8 @@ def _place_replacements_in_vacated_slots(
         if len(ordered_groups) > len(ordered_teams):
             for group in ordered_groups[len(ordered_teams) :]:
                 slot = group[0]
+                if _is_structural_draw_label(slot.withdrawn_label) or slot.withdrawn_key.startswith("open:"):
+                    continue
                 result.warnings.append(
                     _warning(
                         "draw_slot_left_open",
@@ -884,6 +918,9 @@ def _place_replacements_in_vacated_slots(
                         ),
                         teamKey=slot.withdrawn_key,
                         eventId=event_id,
+                        matchId=slot.match_id,
+                        side=slot.side,
+                        slotLabel=slot.withdrawn_label,
                     )
                 )
 
@@ -1048,6 +1085,7 @@ def operational_roster_drift(
         "extraInEvent": [],
         "missingFromDraw": [],
         "extraInDraw": [],
+        "seedMismatches": [],
     }
     if import_row.plan_status not in ("approved", "stale"):
         return empty
@@ -1084,12 +1122,16 @@ def operational_roster_drift(
     extra_in_event = sorted(active_keys - rwos_keys)
     missing_from_draw = sorted(expected_draw - draw_keys)
     extra_in_draw = sorted(key for key in draw_keys if key not in rwos_keys)
+    seed_mismatches = _seed_mismatches(snapshot_teams, plans, events, live)
     return {
-        "reconciliationNeeded": bool(missing_from_event or extra_in_event or missing_from_draw or extra_in_draw),
+        "reconciliationNeeded": bool(
+            missing_from_event or extra_in_event or missing_from_draw or extra_in_draw or seed_mismatches
+        ),
         "missingFromEvent": missing_from_event,
         "extraInEvent": extra_in_event,
         "missingFromDraw": missing_from_draw,
         "extraInDraw": extra_in_draw,
+        "seedMismatches": seed_mismatches,
     }
 
 
@@ -1137,6 +1179,121 @@ def _desired_teams_by_event(
             else:
                 untargeted.append(snapshot_team)
     return desired, untargeted
+
+
+def _canonical_seeds_by_event(
+    plans: list[TournamentDrawPlan],
+    teams: list[SnapshotTeam],
+    events: list[Event],
+) -> dict[int, dict[str, int]]:
+    """Current seed is rating order within the event, then source key. It is not a draw slot."""
+    desired, _untargeted = _desired_teams_by_event(plans, teams, events, operational_only=True)
+    seeds: dict[int, dict[str, int]] = {}
+    for event_id, group in desired.items():
+        ordered = sort_teams_for_planning(group)
+        seeds[event_id] = {team.team_key: index for index, team in enumerate(ordered, start=1)}
+    return seeds
+
+
+def _seed_mismatches(
+    teams: list[SnapshotTeam],
+    plans: list[TournamentDrawPlan],
+    events: list[Event],
+    live: list[Team],
+) -> list[dict[str, Any]]:
+    mismatches: list[dict[str, Any]] = []
+    canonical = _canonical_seeds_by_event(plans, teams, events)
+    live_by_key = {team.source_team_key: team for team in live if team.source_team_key}
+    for event_id, key_seeds in canonical.items():
+        for key, expected in key_seeds.items():
+            team = live_by_key.get(key)
+            if team is None or team.event_id != event_id or not team_is_active(team):
+                continue
+            if team.seed != expected:
+                mismatches.append({"teamKey": key, "actual": team.seed, "expected": expected})
+        for team in live:
+            if team.event_id != event_id or not team.source_team_key or team_is_active(team) or team.seed is None:
+                continue
+            mismatches.append({"teamKey": team.source_team_key, "actual": team.seed, "expected": None})
+    return mismatches
+
+
+def _reconcile_active_seeds(
+    session: Session,
+    plans: list[TournamentDrawPlan],
+    teams: list[SnapshotTeam],
+    result: RosterProjectionResult,
+    failed_event_ids: set[int],
+) -> None:
+    """Write current ranking onto Team.seed. Do not move match sides."""
+    events = (
+        list(session.exec(select(Event).where(Event.tournament_id == plans[0].tournament_id)).all()) if plans else []
+    )
+    if not events and plans:
+        return
+    canonical = _canonical_seeds_by_event(plans, teams, events)
+    for event_id, key_seeds in canonical.items():
+        if event_id in failed_event_ids:
+            continue
+        rows = session.exec(select(Team).where(Team.event_id == event_id)).all()
+        active = [
+            team for team in rows if team.source_team_key and team_is_active(team) and team.source_team_key in key_seeds
+        ]
+        if {team.source_team_key for team in active} != set(key_seeds):
+            continue
+        before = {team.id: team.seed for team in active}
+        active_ids = set(before)
+        for team in rows:
+            if team.seed is None:
+                continue
+            if team.id not in active_ids:
+                result.updated_seeds += 1
+                _record_field_change(
+                    result,
+                    team_key=team.source_team_key or "",
+                    team_label=_team_label(team),
+                    field="seed",
+                    label="Seed",
+                    before=team.seed,
+                    after=None,
+                )
+            team.seed = None
+            session.add(team)
+        session.flush()
+        for team in active:
+            desired = key_seeds[team.source_team_key or ""]
+            team.seed = desired
+            session.add(team)
+            if before.get(team.id) == desired:
+                continue
+            result.updated_seeds += 1
+            _record_field_change(
+                result,
+                team_key=team.source_team_key or "",
+                team_label=_team_label(team),
+                field="seed",
+                label="Seed",
+                before=before.get(team.id),
+                after=desired,
+            )
+        session.flush()
+        actual = {team.seed for team in active}
+        expected = set(key_seeds.values())
+        if actual != expected or len(actual) != len(active):
+            label = teams[0].draw_label if teams else "Event"
+            group_label = next((team.draw_label for team in teams if team.team_key in key_seeds), label)
+            _append_roster_conflict(
+                result,
+                "\n".join(
+                    [
+                        f"{group_label} — Seed metadata could not be reconciled",
+                        f"Expected seeds: {sorted(expected)}",
+                        f"Actual seeds: {sorted(seed for seed in actual if seed is not None)}",
+                    ]
+                ),
+                stage="seed",
+                missing=[],
+            )
 
 
 def _append_roster_conflict(
@@ -1494,6 +1651,8 @@ def project_approved_roster(
             result=result,
             skip_event_ids=failed_event_ids,
         )
+        _drop_resolved_withdrawal_warnings(session, result)
+        _reconcile_active_seeds(session, plans, teams, result, failed_event_ids)
 
     for event_id, assignments in wkw_assignments.items():
         group_map = group_map_from_avoid_groups(assignments)
