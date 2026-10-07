@@ -3,6 +3,12 @@
 The canonical generator has to insert rows so it can wire feeder ids. Those rows go on a
 temporary schedule version. Draw content is then copied onto the live match rows, and the
 temporary version is deleted before commit. Live match ids, assignments, and slots stay put.
+
+Only the authoritative operational schedule version is rebuilt. A cloned schedule keeps its
+assignments; that historical copy is not a second current schedule.
+
+Follow-up: normal Check / Refresh still loads draw matches by event and team, with no
+schedule-version filter, so it can still see a historical clone. Do not copy that here.
 """
 
 from __future__ import annotations
@@ -21,8 +27,10 @@ from app.models.match_assignment import MatchAssignment
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
+from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentImport
 from app.services.active_roster import team_is_active
+from app.services.display_board import DESK_DRAFT_TAG
 from app.services.draw_plan_engine import (
     DrawPlanSpec,
     build_spec_from_event,
@@ -88,7 +96,7 @@ def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> 
     Raises DrawRebuildError before any live row is modified when the roster, seeds,
     capacity, protected play, or match-code topology cannot be rebuilt safely.
     """
-    live_version_id = _scheduled_version_id(session, import_row.tournament_id)
+    live_version_id = _authoritative_version_id(session, import_row.tournament_id)
     events = _ordered_events(
         list(session.exec(select(Event).where(Event.tournament_id == import_row.tournament_id)).all())
     )
@@ -96,17 +104,17 @@ def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> 
     for event in events:
         if event.id is None:
             continue
-        matches = list(session.exec(select(Match).where(Match.event_id == event.id)).all())
+        matches = list(
+            session.exec(
+                select(Match).where(
+                    Match.event_id == event.id,
+                    Match.schedule_version_id == live_version_id,
+                )
+            ).all()
+        )
         if not matches:
             continue
-        on_live = [match for match in matches if match.schedule_version_id == live_version_id]
-        if len(on_live) != len(matches):
-            raise _structure_error(
-                f"{event.name} matches are split across schedule versions.",
-                code="split_schedule_versions",
-                event_name=event.name,
-            )
-        rebuildable.append((event, on_live))
+        rebuildable.append((event, matches))
     if not rebuildable:
         raise _structure_error("No draws are available to rebuild.", code="structure_review")
 
@@ -163,37 +171,161 @@ def rebuild_tournament_draws(session: Session, import_row: TournamentImport) -> 
     return _success_payload(session, rebuildable)
 
 
-def _scheduled_version_id(session: Session, tournament_id: int) -> int:
-    assigned_versions = set(
+def _authoritative_version_id(session: Session, tournament_id: int) -> int:
+    """The schedule Tournament Desk is operating, not every version that still has assignments.
+
+    Desk draft, then the published pointer, then the latest final by version number.
+    Those are the same signals as the desk and display-board resolvers. A second assigned
+    version is a historical clone unless it is itself the other current pointer.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if tournament is None:
+        raise _ambiguous_schedule_error(desk_ids=[], published_id=None, mismatch=False)
+
+    desk_drafts = list(
         session.exec(
-            select(MatchAssignment.schedule_version_id)
-            .join(Match, Match.id == MatchAssignment.match_id)
-            .where(Match.tournament_id == tournament_id)
+            select(ScheduleVersion)
+            .where(
+                ScheduleVersion.tournament_id == tournament_id,
+                ScheduleVersion.status == "draft",
+                ScheduleVersion.notes == DESK_DRAFT_TAG,
+            )
+            .order_by(ScheduleVersion.version_number.desc())
         ).all()
     )
-    if len(assigned_versions) == 1:
-        return next(iter(assigned_versions))
-    if len(assigned_versions) > 1:
-        raise _structure_error(
-            "More than one schedule version has assigned matches.",
-            code="multiple_schedule_versions",
+    published = _published_version(session, tournament)
+    published_id = None if published is None else published.id
+
+    if len(desk_drafts) > 1:
+        raise _ambiguous_schedule_error(
+            desk_ids=[version.id for version in desk_drafts if version.id is not None],
+            published_id=published_id,
+            mismatch=False,
         )
-    match_versions = set(
-        session.exec(select(Match.schedule_version_id).where(Match.tournament_id == tournament_id)).all()
+
+    desk = desk_drafts[0] if desk_drafts else None
+    if desk is not None and published is not None and desk.id != published.id:
+        if _version_has_assignments(session, desk.id) and _version_has_assignments(session, published.id):
+            raise _ambiguous_schedule_error(desk_ids=[desk.id], published_id=published.id, mismatch=True)
+        if _version_has_assignments(session, desk.id) or not _version_has_assignments(session, published.id):
+            logger.info(
+                "draw rebuild authoritative schedule_version_id=%s tournament_id=%s",
+                desk.id,
+                tournament_id,
+            )
+            return desk.id
+        logger.info(
+            "draw rebuild authoritative schedule_version_id=%s tournament_id=%s",
+            published.id,
+            tournament_id,
+        )
+        return published.id
+
+    if desk is not None and desk.id is not None:
+        logger.info(
+            "draw rebuild authoritative schedule_version_id=%s tournament_id=%s",
+            desk.id,
+            tournament_id,
+        )
+        return desk.id
+    if published is not None and published.id is not None:
+        logger.info(
+            "draw rebuild authoritative schedule_version_id=%s tournament_id=%s",
+            published.id,
+            tournament_id,
+        )
+        return published.id
+
+    finals = list(
+        session.exec(
+            select(ScheduleVersion)
+            .where(
+                ScheduleVersion.tournament_id == tournament_id,
+                ScheduleVersion.status == "final",
+            )
+            .order_by(ScheduleVersion.version_number.desc())
+        ).all()
     )
-    if len(match_versions) != 1:
-        raise _structure_error(
-            "Matches are split across schedule versions.",
-            code="multiple_schedule_versions",
+    if finals:
+        leaders = [version for version in finals if version.version_number == finals[0].version_number]
+        if len(leaders) != 1 or leaders[0].id is None:
+            raise _ambiguous_schedule_error(desk_ids=[], published_id=None, mismatch=False)
+        logger.info(
+            "draw rebuild authoritative schedule_version_id=%s tournament_id=%s",
+            leaders[0].id,
+            tournament_id,
         )
-    return next(iter(match_versions))
+        return leaders[0].id
+
+    only = list(session.exec(select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament_id)).all())
+    if len(only) == 1 and only[0].id is not None:
+        logger.info(
+            "draw rebuild authoritative schedule_version_id=%s tournament_id=%s",
+            only[0].id,
+            tournament_id,
+        )
+        return only[0].id
+    raise _ambiguous_schedule_error(desk_ids=[], published_id=published_id, mismatch=False)
+
+
+def _published_version(session: Session, tournament: Tournament) -> Optional[ScheduleVersion]:
+    if not tournament.public_schedule_version_id:
+        return None
+    published = session.get(ScheduleVersion, tournament.public_schedule_version_id)
+    if published is None or published.tournament_id != tournament.id:
+        return None
+    return published
+
+
+def _version_has_assignments(session: Session, version_id: Optional[int]) -> bool:
+    if version_id is None:
+        return False
+    return (
+        session.exec(
+            select(MatchAssignment.id)
+            .join(Match, Match.id == MatchAssignment.match_id)
+            .where(Match.schedule_version_id == version_id)
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
+def _ambiguous_schedule_error(
+    *,
+    desk_ids: list[int],
+    published_id: Optional[int],
+    mismatch: bool,
+) -> DrawRebuildError:
+    desk_text = ", ".join(str(version_id) for version_id in desk_ids) if desk_ids else "none"
+    published_text = str(published_id) if published_id is not None else "none"
+    if mismatch:
+        lead = (
+            "The current Desk schedule and published schedule do not match.\n\n"
+            f"Desk version: {desk_text}\n"
+            f"Published version: {published_text}"
+        )
+    else:
+        lead = (
+            "The current operational schedule could not be determined safely.\n\n"
+            f"Desk schedule: {desk_text}\n"
+            f"Published schedule: {published_text}"
+        )
+    return DrawRebuildError(
+        f"{lead}\n\nSelect/publish the intended schedule before rebuilding draws.",
+        code="schedule_version_ambiguous",
+        details={"deskVersionIds": desk_ids, "publishedVersionId": published_id},
+    )
 
 
 def _reject_protected_play(session: Session, rebuildable: list[tuple[Event, list[Match]]]) -> None:
     blocked: list[tuple[str, list[int]]] = []
     for event, matches in rebuildable:
         numbers = sorted(
-            match.id for match in matches if match.id is not None and match_locked_for_participant_edit(session, match)
+            match.id
+            for match in matches
+            if match.id is not None
+            and match_locked_for_participant_edit(session, match, schedule_version_id=match.schedule_version_id)
         )
         if numbers:
             blocked.append((event.name, numbers))

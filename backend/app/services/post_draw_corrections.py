@@ -313,12 +313,18 @@ def _score_present(match: Match) -> bool:
     return True
 
 
-def _downstream_advanced(session: Session, match: Match) -> bool:
+def _downstream_advanced(
+    session: Session,
+    match: Match,
+    *,
+    schedule_version_id: Optional[int] = None,
+) -> bool:
     if match.id is None:
         return False
-    downstream = session.exec(
-        select(Match).where(or_(Match.source_match_a_id == match.id, Match.source_match_b_id == match.id))
-    ).all()
+    statement = select(Match).where(or_(Match.source_match_a_id == match.id, Match.source_match_b_id == match.id))
+    if schedule_version_id is not None:
+        statement = statement.where(Match.schedule_version_id == schedule_version_id)
+    downstream = session.exec(statement).all()
     for child in downstream:
         if child.source_match_a_id == match.id and child.team_a_id is not None:
             return True
@@ -327,7 +333,12 @@ def _downstream_advanced(session: Session, match: Match) -> bool:
     return False
 
 
-def match_locked_for_participant_edit(session: Session, match: Match) -> Optional[str]:
+def match_locked_for_participant_edit(
+    session: Session,
+    match: Match,
+    *,
+    schedule_version_id: Optional[int] = None,
+) -> Optional[str]:
     runtime = (match.runtime_status or "").upper()
     status = (match.status or "").lower()
     if match.winner_team_id is not None:
@@ -340,7 +351,7 @@ def match_locked_for_participant_edit(session: Session, match: Match) -> Optiona
         return COMPLETED_MATCH_WARNING
     if match.started_at is not None or match.completed_at is not None:
         return COMPLETED_MATCH_WARNING
-    if _downstream_advanced(session, match):
+    if _downstream_advanced(session, match, schedule_version_id=schedule_version_id):
         return COMPLETED_MATCH_WARNING
     return None
 

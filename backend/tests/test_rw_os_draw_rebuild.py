@@ -21,6 +21,7 @@ from app.services.wf_pairing import TeamSeed, build_wf_r1_pairings
 from tests.test_desk_rw_os_refresh import _generate_wf24_draw, _patch_refresh
 from tests.test_rw_os_roster_projection import (
     _approve,
+    _approve_amelia,
     _import_payload,
     _mixed_field,
     _payload,
@@ -29,6 +30,7 @@ from tests.test_rw_os_roster_projection import (
 )
 
 ANCHOR_ID = 5612
+HISTORICAL_ANCHOR_ID = 5357
 
 
 def _post_rebuild(client: TestClient, import_id: int):
@@ -763,3 +765,578 @@ def test_rebuild_reports_womens_events_before_mixed():
         ]
     )
     assert [event.name for event in ordered] == ["Women's A", "Women's B", "Women's C", "Mixed"]
+
+
+def _version_snapshot(session: Session, version_id: int) -> list[tuple]:
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
+    rows = []
+    for match in matches:
+        assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == match.id)).one()
+        slot = session.get(ScheduleSlot, assignment.slot_id)
+        assert slot is not None
+        rows.append(
+            (
+                match.id,
+                match.match_code,
+                match.team_a_id,
+                match.team_b_id,
+                match.placeholder_side_a,
+                match.placeholder_side_b,
+                match.source_match_a_id,
+                match.source_match_b_id,
+                match.source_a_role,
+                match.source_b_role,
+                match.schedule_version_id,
+                assignment.id,
+                assignment.slot_id,
+                assignment.locked,
+                assignment.schedule_version_id,
+                slot.id,
+                slot.schedule_version_id,
+                slot.day_date.isoformat(),
+                slot.start_time.isoformat(),
+                slot.end_time.isoformat(),
+                slot.court_number,
+                slot.court_label,
+            )
+        )
+    return sorted(rows)
+
+
+def _wf_r1_matches(session: Session, event_id: int, version_id: int) -> list[Match]:
+    return sorted(
+        (
+            match
+            for match in session.exec(
+                select(Match).where(Match.event_id == event_id, Match.schedule_version_id == version_id)
+            ).all()
+            if match.match_type == "WF" and match.round_index == 1
+        ),
+        key=lambda match: match.sequence_in_round,
+    )
+
+
+def _r1_pairs_on_version(session: Session, event_id: int, version_id: int) -> list[tuple[int, int]]:
+    return [(match.team_a_id, match.team_b_id) for match in _wf_r1_matches(session, event_id, version_id)]
+
+
+def _schedule_version_matches(session: Session, tournament: Tournament, matches: list[Match]) -> None:
+    tournament.court_names = [f"Court {number}" for number in range(1, 9)]
+    session.add(tournament)
+    ordered = sorted(matches, key=lambda match: (match.match_code or "", match.id or 0))
+    special = next(
+        match
+        for match in ordered
+        if match.match_type == "WF" and match.round_index == 1 and match.sequence_in_round == 2
+    )
+    pending = []
+    for index, match in enumerate(ordered):
+        if match.id in {ANCHOR_ID, HISTORICAL_ANCHOR_ID}:
+            day = date(2026, 11, 6)
+            start = time(11, 0)
+            end = time(12, 0)
+            court_number = 1
+            court_label = "Court 1"
+            manual = False
+        elif match.id == special.id:
+            day = date(2026, 11, 7)
+            start = time(7, 15)
+            end = time(8, 15)
+            court_number = 8
+            court_label = "Court 8"
+            manual = True
+        else:
+            start_at = datetime(2026, 11, 8, 8, 0) + timedelta(minutes=index * 5)
+            day = date(2026, 11, 8)
+            start = start_at.time()
+            end = (start_at + timedelta(minutes=45)).time()
+            court_number = 3
+            court_label = "Court 3"
+            manual = False
+        slot = ScheduleSlot(
+            tournament_id=tournament.id,
+            schedule_version_id=match.schedule_version_id,
+            day_date=day,
+            start_time=start,
+            end_time=end,
+            court_number=court_number,
+            court_label=court_label,
+            block_minutes=60,
+            is_manual_only=manual,
+        )
+        session.add(slot)
+        pending.append((match, slot, manual))
+    session.flush()
+    for match, slot, manual in pending:
+        session.add(
+            MatchAssignment(
+                schedule_version_id=match.schedule_version_id,
+                match_id=match.id,
+                slot_id=slot.id,
+                assigned_by="DESK",
+                locked=manual,
+            )
+        )
+    session.commit()
+
+
+def _point_public(session: Session, tournament: Tournament, version: ScheduleVersion) -> None:
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+
+def _mark_desk_draft(session: Session, tournament: Tournament, version: ScheduleVersion) -> None:
+    version.status = "draft"
+    version.notes = "Desk Draft"
+    session.add(version)
+    _point_public(session, tournament, version)
+
+
+def _assigned_clone(client: TestClient, session: Session, source_id: int) -> dict:
+    from app.routes.schedule import _clone_final_to_draft
+
+    ready = _scheduled_mixed(client, session, source_id)
+    historical = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == ready["tournament"].id)
+    ).one()
+    historical.status = "final"
+    session.add(historical)
+    session.commit()
+    current = _clone_final_to_draft(ready["tournament"].id, historical.id, session)
+    session.expire_all()
+    ready["historical"] = session.get(ScheduleVersion, historical.id)
+    ready["current"] = session.get(ScheduleVersion, current.id)
+    ready["tournament"] = session.get(Tournament, ready["tournament"].id)
+    return ready
+
+
+def _generate_g4_on_version(session: Session, event: Event, version: ScheduleVersion, placed: list[Team]) -> None:
+    from app.services.draw_plan_engine import DrawPlanSpec, _generate_wf_to_brackets_8
+
+    event.guarantee_selected = None
+    event.draw_plan_json = json.dumps({"version": "1.0", "template_type": "WF_TO_BRACKETS_8", "wf_rounds": 2})
+    event.draw_status = "generated"
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    category = event.category.value if hasattr(event.category, "value") else str(event.category)
+    spec = DrawPlanSpec(
+        event_id=event.id,
+        event_name=event.name,
+        division="Mixed" if category == "mixed" else "Women's",
+        team_count=event.team_count,
+        template_type="WF_TO_BRACKETS_8",
+        template_key="WF_TO_BRACKETS_8",
+        guarantee=4,
+        waterfall_rounds=2,
+        waterfall_minutes=60,
+        standard_minutes=105,
+        tournament_id=event.tournament_id,
+        event_category=category,
+    )
+    session._allow_match_generation = True
+    try:
+        matches, _warnings = _generate_wf_to_brackets_8(
+            session, version.id, spec, [team.id for team in placed if team.id is not None]
+        )
+    finally:
+        session._allow_match_generation = False
+    session.add_all(matches)
+    session.commit()
+    event.guarantee_selected = None
+    session.add(event)
+    session.commit()
+
+
+def _wild_dunes_clone(client: TestClient, session: Session, source_id: int) -> dict:
+    """Two complete assigned copies: historical source, and the desk draft that is also published."""
+    from app.routes.schedule import _clone_final_to_draft
+
+    womens = _womens_field(96)
+    mixed = _mixed_field(24)
+    imported = _import_payload(session, source_id, womens + mixed)
+    _approve_amelia(client, imported.id, womens=[32, 32, 32], mixed=[24])
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    tournament = session.get(Tournament, imported.tournament_id)
+    events = list(session.exec(select(Event).where(Event.tournament_id == tournament.id)).all())
+    historical = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(historical)
+    session.commit()
+    session.refresh(historical)
+    for event in events:
+        placed = sorted(
+            (
+                team
+                for team in session.exec(select(Team).where(Team.event_id == event.id)).all()
+                if not team.is_defaulted
+            ),
+            key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+        )
+        assert len(placed) == event.team_count
+        _generate_g4_on_version(session, event, historical, placed)
+    session.expire_all()
+    mixed_event = next(
+        event
+        for event in session.exec(select(Event).where(Event.tournament_id == tournament.id)).all()
+        if (event.category.value if hasattr(event.category, "value") else str(event.category)) == "mixed"
+    )
+    historical_r1 = _wf_r1_matches(session, mixed_event.id, historical.id)
+    anchor = next(match for match in historical_r1 if (match.match_code or "").endswith("WF_R1_01"))
+    _pin_match_id(session, anchor, HISTORICAL_ANCHOR_ID)
+    historical = session.get(ScheduleVersion, historical.id)
+    historical.status = "final"
+    session.add(historical)
+    session.commit()
+    current = _clone_final_to_draft(tournament.id, historical.id, session)
+    session.expire_all()
+    historical_anchor = session.get(Match, HISTORICAL_ANCHOR_ID)
+    current_anchor = session.exec(
+        select(Match).where(
+            Match.schedule_version_id == current.id,
+            Match.match_code == historical_anchor.match_code,
+        )
+    ).one()
+    _pin_match_id(session, current_anchor, ANCHOR_ID)
+    tournament = session.get(Tournament, tournament.id)
+    for version_id in (historical.id, current.id):
+        matches = list(session.exec(select(Match).where(Match.schedule_version_id == version_id)).all())
+        _schedule_version_matches(session, tournament, matches)
+    session.expire_all()
+    historical_r1 = _wf_r1_matches(session, mixed_event.id, historical.id)
+    historical_r1[1].team_b_id, historical_r1[2].team_b_id = historical_r1[2].team_b_id, historical_r1[1].team_b_id
+    historical_r1[1].placeholder_side_b, historical_r1[2].placeholder_side_b = (
+        historical_r1[2].placeholder_side_b,
+        historical_r1[1].placeholder_side_b,
+    )
+    session.add(historical_r1[1])
+    session.add(historical_r1[2])
+    current_r1 = _wf_r1_matches(session, mixed_event.id, current.id)
+    current_anchor = next(match for match in current_r1 if match.id == ANCHOR_ID)
+    displaced = next(match for match in current_r1 if match.sequence_in_round == 2)
+    current_anchor.team_a_id = displaced.team_a_id
+    current_anchor.team_b_id = displaced.team_b_id
+    current_anchor.placeholder_side_a = "Old A"
+    current_anchor.placeholder_side_b = "Old B"
+    displaced.team_a_id = None
+    displaced.team_b_id = None
+    displaced.placeholder_side_a = "TBD"
+    displaced.placeholder_side_b = "Seed 23"
+    session.add(current_anchor)
+    session.add(displaced)
+    current = session.get(ScheduleVersion, current.id)
+    _mark_desk_draft(session, tournament, current)
+    session.expire_all()
+    return {
+        "field": womens + mixed,
+        "womens": womens,
+        "mixed": mixed,
+        "imported": session.get(TournamentImport, imported.id),
+        "tournament": session.get(Tournament, tournament.id),
+        "mixed_event": session.get(Event, mixed_event.id),
+        "historical": session.get(ScheduleVersion, historical.id),
+        "current": session.get(ScheduleVersion, current.id),
+    }
+
+
+def test_historical_assigned_clone_rebuilds_only_the_desk_draft(client: TestClient, session: Session, monkeypatch):
+    ready = _wild_dunes_clone(client, session, 1100)
+    historical = ready["historical"]
+    current = ready["current"]
+    assert historical.id < current.id
+    assert current.notes == "Desk Draft"
+    assert current.status == "draft"
+    assert ready["tournament"].public_schedule_version_id == current.id
+    historical_matches = list(session.exec(select(Match).where(Match.schedule_version_id == historical.id)).all())
+    current_matches = list(session.exec(select(Match).where(Match.schedule_version_id == current.id)).all())
+    assert len(historical_matches) == 255
+    assert len(current_matches) == 255
+    assert len({match.event_id for match in current_matches}) == 4
+    assert sum(1 for match in current_matches if match.event_id == ready["mixed_event"].id) == 51
+    assert (
+        len(session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == historical.id)).all())
+        == 255
+    )
+    assert (
+        len(session.exec(select(MatchAssignment).where(MatchAssignment.schedule_version_id == current.id)).all()) == 255
+    )
+    historical_before = _version_snapshot(session, historical.id)
+    current_before = _version_snapshot(session, current.id)
+    anchor = session.get(Match, ANCHOR_ID)
+    historical_anchor = session.get(Match, HISTORICAL_ANCHOR_ID)
+    anchor_assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == ANCHOR_ID)).one()
+    anchor_slot = session.get(ScheduleSlot, anchor_assignment.slot_id)
+    assert anchor.schedule_version_id == current.id
+    assert (anchor.match_code or "").endswith("WF_R1_01")
+    assert anchor.event_id == ready["mixed_event"].id
+    assert anchor_slot.day_date == date(2026, 11, 6)
+    assert anchor_slot.start_time == time(11, 0)
+    assert anchor_slot.court_number == 1
+    assert anchor_slot.court_label == "Court 1"
+    assert historical_anchor.schedule_version_id == historical.id
+    assert historical_anchor.match_code == anchor.match_code
+    stale_sides = (anchor.team_a_id, anchor.team_b_id)
+    assert all(
+        event.guarantee_selected is None
+        for event in session.exec(select(Event).where(Event.tournament_id == ready["tournament"].id))
+    )
+    _patch_refresh(
+        monkeypatch, [_payload(1100, ready["womens"] + _avoid_payload(ready["mixed"]), version="wild-dunes")]
+    )
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert _version_snapshot(session, historical.id) == historical_before
+    assert session.get(Match, HISTORICAL_ANCHOR_ID).team_a_id == historical_anchor.team_a_id
+    assert session.get(Match, HISTORICAL_ANCHOR_ID).team_b_id == historical_anchor.team_b_id
+    assert session.get(Match, HISTORICAL_ANCHOR_ID).schedule_version_id == historical.id
+    rebuilt_anchor = session.get(Match, ANCHOR_ID)
+    rebuilt_assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == ANCHOR_ID)).one()
+    rebuilt_slot = session.get(ScheduleSlot, rebuilt_assignment.slot_id)
+    assert rebuilt_anchor.schedule_version_id == current.id
+    assert rebuilt_anchor.match_code == anchor.match_code
+    assert rebuilt_assignment.id == anchor_assignment.id
+    assert rebuilt_assignment.slot_id == anchor_slot.id
+    assert rebuilt_slot.day_date == date(2026, 11, 6)
+    assert rebuilt_slot.start_time == time(11, 0)
+    assert rebuilt_slot.end_time == time(12, 0)
+    assert rebuilt_slot.court_number == 1
+    assert rebuilt_slot.court_label == "Court 1"
+    assert (rebuilt_anchor.team_a_id, rebuilt_anchor.team_b_id) != stale_sides
+    assert _r1_pairs_on_version(session, ready["mixed_event"].id, current.id) == _canonical_r1_pairs(
+        session, ready["mixed_event"].id
+    )
+    assert _r1_pairs_on_version(session, ready["mixed_event"].id, historical.id) != _canonical_r1_pairs(
+        session, ready["mixed_event"].id
+    )
+    current_after = list(session.exec(select(Match).where(Match.schedule_version_id == current.id)).all())
+    assert {match.id for match in current_after} == {match.id for match in current_matches}
+    assert len(current_after) == 255
+    assert sum(1 for match in current_after if match.event_id == ready["mixed_event"].id) == 51
+    assert all(
+        session.get(Event, event_id).guarantee_selected is None
+        for event_id in {match.event_id for match in current_after}
+    )
+    versions = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == ready["tournament"].id)
+    ).all()
+    assert {version.id for version in versions} == {historical.id, current.id}
+    assert all(version.notes != "rw-os-draw-rebuild-temp" for version in versions)
+    current_codes = {row[1] for row in _version_snapshot(session, current.id)}
+    historical_codes = {row[1] for row in historical_before}
+    assert current_codes == historical_codes
+    assert len(current_before) == 255
+
+
+def test_desk_draft_and_published_mismatch_blocks_both_versions(client: TestClient, session: Session, monkeypatch):
+    ready = _assigned_clone(client, session, 1101)
+    ready["current"].notes = "Desk Draft"
+    ready["current"].status = "draft"
+    session.add(ready["current"])
+    _point_public(session, ready["tournament"], ready["historical"])
+    session.expire_all()
+    historical_before = _version_snapshot(session, ready["historical"].id)
+    current_before = _version_snapshot(session, ready["current"].id)
+    _patch_refresh(monkeypatch, [_payload(1101, _avoid_payload(ready["field"]), version="ambiguous")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "schedule_version_ambiguous"
+    assert "do not match" in detail["message"]
+    assert f"Desk version: {ready['current'].id}" in detail["message"]
+    assert f"Published version: {ready['historical'].id}" in detail["message"]
+    assert "Select/publish the intended schedule" in detail["message"]
+    assert "More than one schedule version" not in detail["message"]
+    session.expire_all()
+    assert _version_snapshot(session, ready["historical"].id) == historical_before
+    assert _version_snapshot(session, ready["current"].id) == current_before
+
+
+def test_published_version_is_used_when_there_is_no_desk_draft(client: TestClient, session: Session, monkeypatch):
+    ready = _assigned_clone(client, session, 1102)
+    assert ready["current"].notes != "Desk Draft"
+    assert ready["historical"].status == "final"
+    assert ready["current"].id > ready["historical"].id
+    _point_public(session, ready["tournament"], ready["current"])
+    historical_before = _version_snapshot(session, ready["historical"].id)
+    _patch_refresh(monkeypatch, [_payload(1102, _avoid_payload(ready["field"]), version="published")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert _version_snapshot(session, ready["historical"].id) == historical_before
+    assert _r1_pairs_on_version(session, ready["event"].id, ready["current"].id) == _canonical_r1_pairs(
+        session, ready["event"].id
+    )
+
+
+def test_latest_final_is_used_when_desk_and_published_are_absent(client: TestClient, session: Session, monkeypatch):
+    ready = _assigned_clone(client, session, 1103)
+    assert ready["tournament"].public_schedule_version_id is None
+    assert ready["current"].notes != "Desk Draft"
+    assert ready["current"].version_number > ready["historical"].version_number
+    current_before = _version_snapshot(session, ready["current"].id)
+    _patch_refresh(monkeypatch, [_payload(1103, _avoid_payload(ready["field"]), version="final")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert _version_snapshot(session, ready["current"].id) == current_before
+    assert _r1_pairs_on_version(session, ready["event"].id, ready["historical"].id) == _canonical_r1_pairs(
+        session, ready["event"].id
+    )
+
+
+def test_tied_final_versions_block_instead_of_using_the_higher_id(client: TestClient, session: Session, monkeypatch):
+    ready = _assigned_clone(client, session, 1104)
+    ready["current"].status = "final"
+    ready["current"].notes = None
+    ready["current"].version_number = ready["historical"].version_number
+    session.add(ready["current"])
+    ready["tournament"].public_schedule_version_id = None
+    session.add(ready["tournament"])
+    session.commit()
+    historical_before = _version_snapshot(session, ready["historical"].id)
+    current_before = _version_snapshot(session, ready["current"].id)
+    _patch_refresh(monkeypatch, [_payload(1104, ready["field"], version="tied-finals")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "schedule_version_ambiguous"
+    assert "could not be determined safely" in detail["message"]
+    assert "Desk schedule: none" in detail["message"]
+    assert "Published schedule: none" in detail["message"]
+    session.expire_all()
+    assert _version_snapshot(session, ready["historical"].id) == historical_before
+    assert _version_snapshot(session, ready["current"].id) == current_before
+
+
+def test_lower_desk_draft_id_wins_over_a_newer_assigned_clone(client: TestClient, session: Session, monkeypatch):
+    ready = _assigned_clone(client, session, 1105)
+    assert ready["historical"].id < ready["current"].id
+    _mark_desk_draft(session, ready["tournament"], ready["historical"])
+    current_before = _version_snapshot(session, ready["current"].id)
+    _patch_refresh(monkeypatch, [_payload(1105, _avoid_payload(ready["field"]), version="lower-id")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert _version_snapshot(session, ready["current"].id) == current_before
+    assert _r1_pairs_on_version(session, ready["event"].id, ready["historical"].id) == _canonical_r1_pairs(
+        session, ready["event"].id
+    )
+
+
+def test_two_desk_drafts_are_ambiguous(client: TestClient, session: Session, monkeypatch):
+    ready = _assigned_clone(client, session, 1106)
+    ready["historical"].status = "draft"
+    ready["historical"].notes = "Desk Draft"
+    ready["current"].notes = "Desk Draft"
+    session.add(ready["historical"])
+    session.add(ready["current"])
+    _point_public(session, ready["tournament"], ready["current"])
+    historical_before = _version_snapshot(session, ready["historical"].id)
+    current_before = _version_snapshot(session, ready["current"].id)
+    _patch_refresh(monkeypatch, [_payload(1106, ready["field"], version="two-drafts")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "schedule_version_ambiguous"
+    assert "could not be determined safely" in detail["message"]
+    assert str(ready["historical"].id) in detail["message"]
+    assert str(ready["current"].id) in detail["message"]
+    session.expire_all()
+    assert _version_snapshot(session, ready["historical"].id) == historical_before
+    assert _version_snapshot(session, ready["current"].id) == current_before
+
+
+def test_guarantee_and_match_codes_ignore_the_historical_version(client: TestClient, session: Session, monkeypatch):
+    from app.routes.schedule import _clone_final_to_draft
+
+    ready = _scheduled_brackets(client, session, 1107, draw="mixed", count=24, guarantee=4, stored_guarantee=None)
+    historical = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == ready["tournament"].id)
+    ).one()
+    historical.status = "final"
+    session.add(historical)
+    session.commit()
+    current = _clone_final_to_draft(ready["tournament"].id, historical.id, session)
+    session.expire_all()
+    consolation = next(
+        match
+        for match in session.exec(select(Match).where(Match.schedule_version_id == historical.id)).all()
+        if (match.match_code or "").endswith("B1_C2")
+    )
+    consolation.match_code = consolation.match_code.replace("B1_C2", "B1_C9")
+    session.add(consolation)
+    _mark_desk_draft(session, ready["tournament"], current)
+    historical_before = _version_snapshot(session, historical.id)
+    _patch_refresh(monkeypatch, [_payload(1107, ready["field"], version="historical-code")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert _version_snapshot(session, historical.id) == historical_before
+    assert session.get(Match, consolation.id).match_code.endswith("B1_C9")
+    current_matches = list(session.exec(select(Match).where(Match.schedule_version_id == current.id)).all())
+    assert len(current_matches) == 51
+    assert not any((match.match_code or "").endswith("B1_C9") for match in current_matches)
+    assert any((match.match_code or "").endswith("B1_C2") for match in current_matches)
+    assert session.get(Event, ready["event"].id).guarantee_selected is None
+
+
+def test_protected_play_ignores_historical_runtime_and_still_blocks_the_current_version(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _assigned_clone(client, session, 1108)
+    _mark_desk_draft(session, ready["tournament"], ready["current"])
+    historical_matches = list(
+        session.exec(select(Match).where(Match.schedule_version_id == ready["historical"].id)).all()
+    )
+    started = next(match for match in historical_matches if match.match_type == "WF" and match.round_index == 1)
+    started.started_at = datetime(2026, 11, 6, 11, 5)
+    session.add(started)
+    current_r1 = _wf_r1_matches(session, ready["event"].id, ready["current"].id)
+    feeder = next(match for match in historical_matches if match.match_type == "WF" and match.round_index == 2)
+    feeder.source_match_a_id = current_r1[0].id
+    feeder.team_a_id = started.team_a_id
+    session.add(feeder)
+    session.commit()
+    historical_before = _version_snapshot(session, ready["historical"].id)
+    _patch_refresh(monkeypatch, [_payload(1108, _avoid_payload(ready["field"]), version="historical-runtime")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert _version_snapshot(session, ready["historical"].id) == historical_before
+    assert session.get(Match, started.id).started_at is not None
+    current_r1 = _wf_r1_matches(session, ready["event"].id, ready["current"].id)
+    current_r1[0].started_at = datetime(2026, 11, 6, 11, 5)
+    session.add(current_r1[0])
+    session.commit()
+    current_before = _version_snapshot(session, ready["current"].id)
+    _patch_refresh(monkeypatch, [_payload(1108, _avoid_payload(ready["field"]), version="current-runtime")])
+
+    blocked = _post_rebuild(client, ready["imported"].id)
+
+    assert blocked.status_code == 409
+    detail = blocked.json()["detail"]
+    assert detail["code"] == "protected_play"
+    assert current_r1[0].id in detail["matchNumbers"]
+    session.expire_all()
+    assert _version_snapshot(session, ready["current"].id) == current_before
+    assert _version_snapshot(session, ready["historical"].id) == historical_before
