@@ -29,6 +29,8 @@ import {
   refreshRwOsImport,
   getEventTeams,
   getEventWhoKnowsWhoSummary,
+  getTournamentWhoKnowsWhoSummary,
+  type TournamentWhoKnowsWhoSummary,
   getTournamentRwOsImport,
   ensureTournamentRwOsImport,
   RwOsRosterFieldChange,
@@ -382,6 +384,7 @@ function DrawBuilder() {
   const [legacyImportLoading, setLegacyImportLoading] = useState(false)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
   const [wkwConnectionCounts, setWkwConnectionCounts] = useState<Record<number, number>>({})
+  const [wkwTournamentSummary, setWkwTournamentSummary] = useState<TournamentWhoKnowsWhoSummary | null>(null)
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
   /** ISO dates; order matches backend schedule policy day_index for the resolved schedule version. */
   const [schedulePolicyDayIsoDates, setSchedulePolicyDayIsoDates] = useState<string[]>([])
@@ -489,6 +492,11 @@ function DrawBuilder() {
         }),
       )
       setWkwConnectionCounts(Object.fromEntries(wkwEntries))
+      try {
+        setWkwTournamentSummary(await getTournamentWhoKnowsWhoSummary(tournamentId))
+      } catch {
+        setWkwTournamentSummary(null)
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to load data', 'error')
     } finally {
@@ -1544,7 +1552,8 @@ function DrawBuilder() {
               Primary correction: select two teams (including across event cards), then click Swap Teams. Columns Rt / Avoid show combined pair rating and pairwise Who Knows Who neighbors when roster data exists. Uses the schedule version the calendar prefers (draft when available).
             </p>
             <p style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: 600 }}>
-              Who Knows Who: {wkwConnectionCounts[event.id] ?? 0} connection{(wkwConnectionCounts[event.id] ?? 0) === 1 ? '' : 's'}
+              Who Knows Who (this bracket): {wkwConnectionCounts[event.id] ?? 0} connection
+              {(wkwConnectionCounts[event.id] ?? 0) === 1 ? '' : 's'}
             </p>
             {calendarScheduleVersionId == null && (
               <div style={{ fontSize: '13px', color: '#856404' }}>No schedule version available yet — generate matches from Schedule first.</div>
@@ -2084,6 +2093,47 @@ function DrawBuilder() {
       {/* Event Cards */}
       <div>
         <h2 className="section-title">Events</h2>
+        {wkwTournamentSummary?.pairwise && wkwTournamentSummary.byDrawKind?.womens && (
+          <div
+            className="card"
+            style={{
+              marginBottom: 16,
+              padding: '12px 14px',
+              border: '1px solid var(--theme-input-border)',
+              backgroundColor: 'var(--theme-card-bg)',
+            }}
+            data-testid="womens-wkw-tournament-summary"
+          >
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Women&apos;s Who Knows Who</div>
+            <div style={{ fontSize: 13, lineHeight: 1.45 }}>
+              <div>
+                Total WKW connections:{' '}
+                <strong>{wkwTournamentSummary.byDrawKind.womens.total}</strong>
+              </div>
+              <div>
+                Within current brackets:{' '}
+                <strong>{wkwTournamentSummary.byDrawKind.womens.withinBracket}</strong>
+              </div>
+              <div>
+                Across brackets:{' '}
+                <strong>{wkwTournamentSummary.byDrawKind.womens.acrossBrackets}</strong>
+              </div>
+              {(wkwTournamentSummary.byDrawKind.womens.unresolved > 0 ||
+                wkwTournamentSummary.byDrawKind.womens.inactive > 0) && (
+                <div style={{ marginTop: 4, opacity: 0.85 }}>
+                  Unresolved: {wkwTournamentSummary.byDrawKind.womens.unresolved}
+                  {' · '}
+                  Inactive/withdrawn: {wkwTournamentSummary.byDrawKind.womens.inactive}
+                </div>
+              )}
+            </div>
+            <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.8, lineHeight: 1.4 }}>
+              Cross-bracket connections are retained from RW-OS but do not constrain the current
+              separate Women&apos;s A / B / C draws. Each event card below shows same-bracket
+              constraints used for that draw.
+            </p>
+          </div>
+        )}
         {events.length === 0 ? (
           <div className="card">
             <p>No events found. Add events in Tournament Setup first.</p>

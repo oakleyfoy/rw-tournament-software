@@ -18,6 +18,8 @@ vi.mock('../api/client', async () => {
     getTournamentRwOsImport: vi.fn(),
     ensureTournamentRwOsImport: vi.fn(),
     getEventTeams: vi.fn(),
+    getEventWhoKnowsWhoSummary: vi.fn(),
+    getTournamentWhoKnowsWhoSummary: vi.fn(),
     importCombinedTeams: vi.fn(),
     updateTournament: vi.fn(),
   }
@@ -26,7 +28,19 @@ vi.mock('../api/client', async () => {
 vi.mock('../utils/toast', () => ({ showToast: vi.fn() }))
 
 import DrawBuilder from './DrawBuilder'
-import { getEventTeams, getEvents, getPhase1Status, getPlanReport, getScheduleBuilder, getScheduleVersions, getTournament, getTournamentDays, getTournamentRwOsImport } from '../api/client'
+import {
+  getEventTeams,
+  getEventWhoKnowsWhoSummary,
+  getEvents,
+  getPhase1Status,
+  getPlanReport,
+  getScheduleBuilder,
+  getScheduleVersions,
+  getTournament,
+  getTournamentDays,
+  getTournamentRwOsImport,
+  getTournamentWhoKnowsWhoSummary,
+} from '../api/client'
 
 const tournamentBase: Tournament = {
   id: 5,
@@ -70,6 +84,18 @@ function mockDrawBuilderApis(tournament: Tournament) {
   ])
   vi.mocked(getScheduleBuilder).mockResolvedValue({ tournament_id: 5, events: [] })
   vi.mocked(getEventTeams).mockResolvedValue([])
+  vi.mocked(getEventWhoKnowsWhoSummary).mockResolvedValue({
+    eventId: finalizedEvent.id,
+    connections: 0,
+    rwOsConnections: 0,
+    pairwiseConnections: 0,
+  })
+  vi.mocked(getTournamentWhoKnowsWhoSummary).mockResolvedValue({
+    tournamentId: 5,
+    pairwise: false,
+    snapshotConnections: 0,
+    byDrawKind: {},
+  })
   vi.mocked(getTournamentRwOsImport).mockResolvedValue(null)
 }
 
