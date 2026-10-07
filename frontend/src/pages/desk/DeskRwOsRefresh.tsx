@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { refreshRwOsImport, type RwOsImportResponse } from '../../api/client'
+import { rebuildRwOsDraws, refreshRwOsImport, type RwOsDrawRebuildResult, type RwOsImportResponse } from '../../api/client'
 
 type SnapshotTeam = {
   teamKey?: string
@@ -271,6 +271,10 @@ export function DeskRwOsRefresh({
   const [preview, setPreview] = useState<RefreshResult | null>(null)
   const [applied, setApplied] = useState<RefreshResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [rebuildOpen, setRebuildOpen] = useState(false)
+  const [rebuildPhase, setRebuildPhase] = useState<'confirm' | 'running' | 'done' | 'error'>('confirm')
+  const [rebuildResult, setRebuildResult] = useState<RwOsDrawRebuildResult | null>(null)
+  const [rebuildError, setRebuildError] = useState<string | null>(null)
   const busy = useRef(false)
 
   if (importId == null) return null
@@ -329,26 +333,90 @@ export function DeskRwOsRefresh({
 
   const attention = staffAttentionItems(applied)
   const current = preview?.diff?.changed === false
+  const refreshBusy = phase === 'checking' || phase === 'applying' || rebuildPhase === 'running'
+
+  const openRebuild = () => {
+    if (busy.current || refreshBusy) return
+    setRebuildResult(null)
+    setRebuildError(null)
+    setRebuildPhase('confirm')
+    setRebuildOpen(true)
+  }
+
+  const closeRebuild = () => {
+    if (rebuildPhase === 'running') return
+    setRebuildOpen(false)
+    setRebuildPhase('confirm')
+    setRebuildResult(null)
+    setRebuildError(null)
+  }
+
+  const confirmRebuild = async () => {
+    if (busy.current) return
+    busy.current = true
+    setRebuildPhase('running')
+    setRebuildError(null)
+    try {
+      const result = await rebuildRwOsDraws(importId)
+      setRebuildResult(result)
+      setRebuildPhase('done')
+      await onApplied()
+    } catch (err) {
+      setRebuildError(err instanceof Error ? err.message : 'Could not rebuild draws')
+      setRebuildPhase('error')
+    } finally {
+      busy.current = false
+    }
+  }
 
   return (
     <>
-      <button
-        type="button"
-        onClick={check}
-        disabled={phase === 'checking' || phase === 'applying'}
-        style={{
-          padding: '6px 14px',
-          fontSize: 12,
-          fontWeight: 700,
-          backgroundColor: '#fff',
-          color: '#1a237e',
-          border: 'none',
-          borderRadius: 4,
-          cursor: phase === 'checking' || phase === 'applying' ? 'default' : 'pointer',
-        }}
-      >
-        {phase === 'checking' ? 'Checking RW-OS…' : phase === 'applying' ? 'Applying RW-OS Changes…' : 'Check RW-OS for Changes'}
-      </button>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: 240 }}>
+          <button
+            type="button"
+            onClick={check}
+            disabled={refreshBusy}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 700,
+              backgroundColor: '#fff',
+              color: '#1a237e',
+              border: 'none',
+              borderRadius: 4,
+              cursor: refreshBusy ? 'default' : 'pointer',
+            }}
+          >
+            {phase === 'checking' ? 'Checking RW-OS…' : phase === 'applying' ? 'Applying RW-OS Changes…' : 'Check RW-OS for Changes'}
+          </button>
+          <div style={{ fontSize: 11, lineHeight: 1.35, marginTop: 4, opacity: 0.9 }}>
+            Updates teams and information without rebuilding draws.
+          </div>
+        </div>
+        <div style={{ maxWidth: 280 }}>
+          <button
+            type="button"
+            onClick={openRebuild}
+            disabled={refreshBusy}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 700,
+              backgroundColor: '#fff',
+              color: '#1a237e',
+              border: 'none',
+              borderRadius: 4,
+              cursor: refreshBusy ? 'default' : 'pointer',
+            }}
+          >
+            Refresh RW-OS + Rebuild Draws
+          </button>
+          <div style={{ fontSize: 11, lineHeight: 1.35, marginTop: 4, opacity: 0.9 }}>
+            Updates current RW-OS data and creates fresh draws. Existing match numbers, dates, times, courts, and grid positions stay in place.
+          </div>
+        </div>
+      </div>
       {open && (
         <div
           role="dialog"
@@ -421,6 +489,71 @@ export function DeskRwOsRefresh({
                   </div>
                 )}
                 <button type="button" onClick={close}>Close</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {rebuildOpen && (
+        <div
+          role="dialog"
+          aria-label="Rebuild all draws"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            zIndex: 3100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div style={{ background: '#fff', color: '#222', borderRadius: 8, maxWidth: 560, width: '100%', padding: 20 }}>
+            {rebuildPhase === 'confirm' && (
+              <>
+                <h2 style={{ marginTop: 0 }}>REBUILD ALL DRAWS?</h2>
+                <p>
+                  This will refresh the latest teams, ratings, seeds, and Who-Knows-Who information from RW-OS and completely regenerate the tournament draws.
+                </p>
+                <p>
+                  Your existing match numbers, schedule grid, dates, times, and court assignments will remain in place.
+                </p>
+                <p>Team placement and matchups will change.</p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={closeRebuild}>Cancel</button>
+                  <button
+                    type="button"
+                    onClick={confirmRebuild}
+                    style={{ background: '#c62828', color: '#fff', fontWeight: 700, border: 'none', borderRadius: 4, padding: '8px 12px' }}
+                  >
+                    Refresh & Rebuild Draws
+                  </button>
+                </div>
+              </>
+            )}
+            {rebuildPhase === 'running' && <p>Refreshing RW-OS and rebuilding draws…</p>}
+            {rebuildPhase === 'error' && (
+              <>
+                <h2 style={{ marginTop: 0 }}>Draws were not rebuilt</h2>
+                <p style={{ color: '#b71c1c' }}>{rebuildError}</p>
+                <button type="button" onClick={closeRebuild}>Close</button>
+              </>
+            )}
+            {rebuildPhase === 'done' && rebuildResult && (
+              <>
+                <h2 style={{ marginTop: 0 }}>{rebuildResult.heading}</h2>
+                {rebuildResult.events.map((event) => (
+                  <div key={event.eventId}>
+                    <strong>{event.name}</strong>
+                    <div>{event.teamCount} teams</div>
+                    <div>{event.structure}</div>
+                    <div>{event.detail}</div>
+                    <div>Schedule preserved</div>
+                  </div>
+                ))}
+                <p>{rebuildResult.scheduleNote}</p>
+                <button type="button" onClick={closeRebuild}>Close</button>
               </>
             )}
           </div>

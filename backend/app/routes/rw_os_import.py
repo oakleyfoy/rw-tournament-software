@@ -18,6 +18,7 @@ from app.services.rw_os_import import (
     get_latest_import_for_tournament,
     list_importable_events,
     preview_custom_structure,
+    refresh_and_rebuild_draws,
     refresh_import,
     save_forecasts,
     select_draw_structure,
@@ -138,6 +139,27 @@ def refresh_rw_os_import(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     result["importResponse"] = build_import_response(session, row)
     return result
+
+
+@router.post("/imports/{import_id}/refresh-rebuild-draws")
+def refresh_rw_os_and_rebuild_draws(import_id: int, session: Session = Depends(get_session)):
+    from app.services.rw_os_draw_rebuild import DrawRebuildError
+
+    row = _get_import(session, import_id)
+    try:
+        return refresh_and_rebuild_draws(session, row)
+    except DrawRebuildError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "eventName": exc.event_name,
+                "matchNumbers": exc.match_numbers,
+            },
+        ) from exc
+    except RwOsClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.put("/imports/{import_id}/forecasts")

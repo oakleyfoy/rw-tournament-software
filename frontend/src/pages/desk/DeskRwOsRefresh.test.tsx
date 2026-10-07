@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../api/client', () => ({
   refreshRwOsImport: vi.fn(),
+  rebuildRwOsDraws: vi.fn(),
 }))
 
-import { refreshRwOsImport } from '../../api/client'
+import { rebuildRwOsDraws, refreshRwOsImport } from '../../api/client'
 import { DeskRwOsRefresh } from './DeskRwOsRefresh'
 
 const refresh = vi.mocked(refreshRwOsImport)
+const rebuild = vi.mocked(rebuildRwOsDraws)
 
 function projection(overrides: Record<string, unknown> = {}) {
   return {
@@ -25,6 +27,7 @@ function projection(overrides: Record<string, unknown> = {}) {
 describe('DeskRwOsRefresh', () => {
   beforeEach(() => {
     refresh.mockReset()
+    rebuild.mockReset()
   })
 
   it('hides the button when the tournament has no RW-OS import', () => {
@@ -297,5 +300,49 @@ describe('DeskRwOsRefresh', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
     release({ diff: { changed: false }, applied: false })
     await waitFor(() => expect(screen.getByRole('heading', { name: 'RW-OS Roster Is Current' })).toBeInTheDocument())
+  })
+
+  it('keeps rebuild behind a confirmation modal and does not call refresh', async () => {
+    const onApplied = vi.fn()
+    rebuild.mockResolvedValue({
+      ok: true,
+      heading: 'RW-OS Refreshed + Draws Rebuilt',
+      events: [
+        {
+          eventId: 4,
+          name: 'Mixed',
+          teamCount: 24,
+          structure: '24-team waterfall',
+          detail: 'Draw rebuilt using current ratings, seeds, and Who-Knows-Who',
+          schedulePreserved: true,
+        },
+      ],
+      scheduleNote: 'Match numbers, dates, times, courts, and grid assignments were preserved.',
+    })
+    render(<DeskRwOsRefresh importId={12} onApplied={onApplied} />)
+    expect(screen.getByText('Updates teams and information without rebuilding draws.')).toBeInTheDocument()
+    expect(screen.getByText(/Existing match numbers, dates, times, courts, and grid positions stay in place/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh RW-OS + Rebuild Draws' }))
+    expect(screen.getByRole('heading', { name: 'REBUILD ALL DRAWS?' })).toBeInTheDocument()
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('heading', { name: 'REBUILD ALL DRAWS?' })).not.toBeInTheDocument()
+    expect(rebuild).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh RW-OS + Rebuild Draws' }))
+    const confirm = screen.getByRole('button', { name: 'Refresh & Rebuild Draws' })
+    expect(confirm).toHaveStyle({ background: '#c62828' })
+    fireEvent.click(confirm)
+    expect(await screen.findByRole('heading', { name: 'RW-OS Refreshed + Draws Rebuilt' })).toBeInTheDocument()
+    expect(screen.getByText('Mixed')).toBeInTheDocument()
+    expect(screen.getByText('24-team waterfall')).toBeInTheDocument()
+    expect(screen.getByText('Match numbers, dates, times, courts, and grid assignments were preserved.')).toBeInTheDocument()
+    expect(rebuild).toHaveBeenCalledTimes(1)
+    expect(rebuild).toHaveBeenCalledWith(12)
+    expect(refresh).not.toHaveBeenCalled()
+    expect(onApplied).toHaveBeenCalledTimes(1)
   })
 })
