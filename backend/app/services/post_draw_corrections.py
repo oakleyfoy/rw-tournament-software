@@ -271,6 +271,11 @@ def _affected_match_info(match: Match) -> AffectedMatchInfo:
 
 
 def _delete_source_avoid_edges(session: Session, event_id: int, team_id: int) -> int:
+    """Remove avoid edges on this event that include the moved team.
+
+    Edges between other teams on the same event are never touched. After a move,
+    applicable ``rw-os:wkw`` edges are re-derived from the tournament snapshot.
+    """
     edges = session.exec(
         select(TeamAvoidEdge).where(
             TeamAvoidEdge.event_id == event_id,
@@ -750,12 +755,18 @@ def move_team_between_events(
         info.cleared_slots = cleared_slots
         cleared_details.append(info)
 
-    # L. Remove source event-scoped avoid edges.
+    # L. Remove source event-scoped avoid edges, then re-derive both events from the
+    # tournament-wide RW-OS snapshot graph so same-event constraints follow the move.
     avoid_edges_removed = _delete_source_avoid_edges(session, source_event_id, team.id)  # type: ignore[arg-type]
 
     session.flush()
     _refresh_event_team_count(session, source_event)
     _refresh_event_team_count(session, dest_event)
+    session.flush()
+
+    from app.services.rw_os_wkw import resync_rw_os_wkw_for_events
+
+    resync_rw_os_wkw_for_events(session, [source_event_id, dest_event_id])  # type: ignore[list-item]
     session.flush()
 
     warnings: list[str] = []
@@ -1184,6 +1195,13 @@ def swap_post_draw_teams(
         avoid_edges_removed = removed_a + removed_b
         if avoid_edges_removed:
             warnings.append(WHO_KNOWS_WHO_WARNING)
+        session.flush()
+        from app.services.rw_os_wkw import resync_rw_os_wkw_for_events
+
+        resync_rw_os_wkw_for_events(
+            session,
+            [old_event_a_id, old_event_b_id, team_a.event_id, team_b.event_id],  # type: ignore[list-item]
+        )
         session.flush()
 
     team_a_new_slot = _swap_slot_info(match_b, slot_b)

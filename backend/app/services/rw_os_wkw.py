@@ -313,3 +313,268 @@ def count_rw_os_wkw_edges(session: Session, event_id: int) -> int:
             )
         ).all()
     )
+
+
+@dataclass(frozen=True)
+class TeamLocation:
+    """Current tournament placement for a source team key."""
+
+    team_id: int
+    event_id: int
+    event_name: str
+    draw_kind: str
+    is_defaulted: bool = False
+
+
+@dataclass
+class ClassifiedConnection:
+    draw_kind: str
+    team_a_key: str
+    team_b_key: str
+    class_id: str
+    event_name_a: Optional[str] = None
+    event_name_b: Optional[str] = None
+    stored_event_id: Optional[int] = None
+
+
+@dataclass
+class DrawKindWkwReport:
+    draw_kind: str
+    total: int = 0
+    within_bracket: int = 0
+    across_brackets: int = 0
+    unresolved: int = 0
+    inactive: int = 0
+    other: int = 0
+    partition: dict[str, int] = None  # type: ignore[assignment]
+    event_constraints: dict[int, dict[str, Any]] = None  # type: ignore[assignment]
+    connections: list[ClassifiedConnection] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.partition is None:
+            self.partition = {}
+        if self.event_constraints is None:
+            self.event_constraints = {}
+        if self.connections is None:
+            self.connections = []
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "drawKind": self.draw_kind,
+            "total": self.total,
+            "withinBracket": self.within_bracket,
+            "acrossBrackets": self.across_brackets,
+            "unresolved": self.unresolved,
+            "inactive": self.inactive,
+            "other": self.other,
+            "partition": dict(sorted(self.partition.items())),
+            "eventConstraints": [self.event_constraints[event_id] for event_id in sorted(self.event_constraints)],
+        }
+
+
+def _bracket_pair_key(name_a: str, name_b: str) -> str:
+    left, right = sorted([name_a.strip(), name_b.strip()], key=lambda value: value.lower())
+    return f"{left} | {right}"
+
+
+def classify_snapshot_connections(
+    connections: list[WhoKnowsWhoConnection],
+    locations: dict[str, TeamLocation],
+    *,
+    draw_kind: Optional[str] = None,
+) -> dict[str, DrawKindWkwReport]:
+    """Classify tournament-wide snapshot edges against current team placements.
+
+    The snapshot remains the authoritative tournament-level graph. Event-scoped
+    TeamAvoidEdge rows are only expected for within-bracket (same event) pairs.
+    """
+    reports: dict[str, DrawKindWkwReport] = {}
+    for edge in connections:
+        if draw_kind and edge.draw_kind != draw_kind:
+            continue
+        report = reports.setdefault(edge.draw_kind, DrawKindWkwReport(draw_kind=edge.draw_kind))
+        report.total += 1
+        loc_a = locations.get(edge.team_a_key)
+        loc_b = locations.get(edge.team_b_key)
+        if loc_a is None or loc_b is None:
+            report.unresolved += 1
+            report.connections.append(
+                ClassifiedConnection(
+                    draw_kind=edge.draw_kind,
+                    team_a_key=edge.team_a_key,
+                    team_b_key=edge.team_b_key,
+                    class_id="unresolved",
+                )
+            )
+            continue
+        if loc_a.is_defaulted or loc_b.is_defaulted:
+            report.inactive += 1
+            report.connections.append(
+                ClassifiedConnection(
+                    draw_kind=edge.draw_kind,
+                    team_a_key=edge.team_a_key,
+                    team_b_key=edge.team_b_key,
+                    class_id="inactive",
+                    event_name_a=loc_a.event_name,
+                    event_name_b=loc_b.event_name,
+                )
+            )
+            continue
+        if loc_a.event_id == loc_b.event_id:
+            report.within_bracket += 1
+            pair_key = _bracket_pair_key(loc_a.event_name, loc_b.event_name)
+            report.partition[pair_key] = report.partition.get(pair_key, 0) + 1
+            report.connections.append(
+                ClassifiedConnection(
+                    draw_kind=edge.draw_kind,
+                    team_a_key=edge.team_a_key,
+                    team_b_key=edge.team_b_key,
+                    class_id="within_bracket",
+                    event_name_a=loc_a.event_name,
+                    event_name_b=loc_b.event_name,
+                    stored_event_id=loc_a.event_id,
+                )
+            )
+            continue
+        if loc_a.draw_kind == loc_b.draw_kind == edge.draw_kind:
+            report.across_brackets += 1
+            pair_key = _bracket_pair_key(loc_a.event_name, loc_b.event_name)
+            report.partition[pair_key] = report.partition.get(pair_key, 0) + 1
+            report.connections.append(
+                ClassifiedConnection(
+                    draw_kind=edge.draw_kind,
+                    team_a_key=edge.team_a_key,
+                    team_b_key=edge.team_b_key,
+                    class_id="across_brackets",
+                    event_name_a=loc_a.event_name,
+                    event_name_b=loc_b.event_name,
+                )
+            )
+            continue
+        report.other += 1
+        report.connections.append(
+            ClassifiedConnection(
+                draw_kind=edge.draw_kind,
+                team_a_key=edge.team_a_key,
+                team_b_key=edge.team_b_key,
+                class_id="other",
+                event_name_a=loc_a.event_name,
+                event_name_b=loc_b.event_name,
+            )
+        )
+    return reports
+
+
+def load_tournament_team_locations(session: Session, tournament_id: int) -> dict[str, TeamLocation]:
+    from app.models.event import Event
+
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    event_by_id = {event.id: event for event in events if event.id is not None}
+    if not event_by_id:
+        return {}
+    teams = session.exec(select(Team).where(Team.event_id.in_(list(event_by_id.keys())))).all()  # type: ignore[arg-type]
+    locations: dict[str, TeamLocation] = {}
+    for team in teams:
+        if not team.source_team_key or team.id is None:
+            continue
+        event = event_by_id.get(team.event_id)
+        if event is None:
+            continue
+        locations[team.source_team_key] = TeamLocation(
+            team_id=team.id,
+            event_id=team.event_id,
+            event_name=(event.name or f"Event {event.id}").strip(),
+            draw_kind=(event.category or "").strip(),
+            is_defaulted=bool(team.is_defaulted),
+        )
+    return locations
+
+
+def build_tournament_wkw_graph_report(session: Session, tournament_id: int) -> dict[str, Any]:
+    """Tournament-level WKW report sourced from the RW-OS snapshot graph."""
+    from app.models.event import Event
+    from app.services.rw_os_import import get_latest_import_for_tournament
+
+    import_row = get_latest_import_for_tournament(session, tournament_id)
+    if import_row is None:
+        return {
+            "tournamentId": tournament_id,
+            "pairwise": False,
+            "snapshotConnections": 0,
+            "byDrawKind": {},
+            "note": "No RW-OS import snapshot for this tournament.",
+        }
+    connections = load_snapshot_connections(import_row)
+    if connections is None:
+        return {
+            "tournamentId": tournament_id,
+            "pairwise": False,
+            "snapshotConnections": 0,
+            "byDrawKind": {},
+            "note": "Snapshot is in legacy letter mode (no whoKnowsWhoConnections field).",
+        }
+
+    locations = load_tournament_team_locations(session, tournament_id)
+    reports = classify_snapshot_connections(connections, locations)
+
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    for event in events:
+        if event.id is None:
+            continue
+        draw_kind = (event.category or "").strip()
+        report = reports.setdefault(draw_kind, DrawKindWkwReport(draw_kind=draw_kind))
+        stored = count_rw_os_wkw_edges(session, event.id)
+        report.event_constraints[event.id] = {
+            "eventId": event.id,
+            "eventName": (event.name or f"Event {event.id}").strip(),
+            "storedEdges": stored,
+        }
+
+    return {
+        "tournamentId": tournament_id,
+        "pairwise": True,
+        "snapshotConnections": len(connections),
+        "byDrawKind": {kind: report.to_dict() for kind, report in sorted(reports.items())},
+        "note": (
+            "Tournament-wide connections come from the RW-OS snapshot. "
+            "Only same-event pairs become TeamAvoidEdge draw constraints."
+        ),
+    }
+
+
+def resync_rw_os_wkw_for_events(session: Session, event_ids: Iterable[int]) -> list[WkwEdgeSyncResult]:
+    """Re-derive event-scoped rw-os:wkw edges from the tournament snapshot graph.
+
+    Used after bracket moves so same-event constraints follow current placements
+    without discarding cross-bracket snapshot relationships.
+    """
+    from app.models.event import Event
+    from app.services.rw_os_import import get_latest_import_for_tournament
+
+    results: list[WkwEdgeSyncResult] = []
+    seen: set[int] = set()
+    for event_id in event_ids:
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        event = session.get(Event, event_id)
+        if event is None:
+            continue
+        import_row = get_latest_import_for_tournament(session, event.tournament_id)
+        if import_row is None:
+            continue
+        connections = load_snapshot_connections(import_row)
+        if connections is None:
+            continue
+        draw_kind = (event.category or "").strip()
+        if not draw_kind:
+            continue
+        results.append(
+            sync_rw_os_wkw_edges_for_event(
+                session,
+                event_id=event_id,
+                draw_kind=draw_kind,
+                connections=connections,
+            )
+        )
+    return results

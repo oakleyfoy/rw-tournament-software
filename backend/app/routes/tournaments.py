@@ -913,6 +913,17 @@ def get_tournament(tournament_id: int, session: Session = Depends(get_session)):
     return _tournament_response(session, tournament)
 
 
+@router.get("/tournaments/{tournament_id}/who-knows-who-summary")
+def get_tournament_who_knows_who_summary(tournament_id: int, session: Session = Depends(get_session)):
+    """Tournament-wide RW-OS Who Knows Who graph vs current bracket placements."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    from app.services.rw_os_wkw import build_tournament_wkw_graph_report
+
+    return build_tournament_wkw_graph_report(session, tournament_id)
+
+
 @router.get("/tournaments/{tournament_id}/print-packet/{category}.pdf")
 def download_print_packet_pdf(
     tournament_id: int,

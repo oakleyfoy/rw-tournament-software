@@ -193,9 +193,13 @@ def get_who_knows_who_summary(event_id: int, session: Session = Depends(get_sess
     pairwise_count = len([edge for edge in all_edges if not is_group_reason(edge.reason)])
     return {
         "eventId": event_id,
+        "eventName": event.name,
+        "drawKind": event.category,
         "connections": rw_os_count if rw_os_count else pairwise_count,
         "rwOsConnections": rw_os_count,
         "pairwiseConnections": pairwise_count,
+        "constraintsOnly": True,
+        "note": "Event count is same-bracket TeamAvoidEdge constraints only; see tournament who-knows-who-summary for the full RW-OS graph.",
     }
 
 

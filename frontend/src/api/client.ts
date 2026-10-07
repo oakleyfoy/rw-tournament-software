@@ -2455,10 +2455,49 @@ export async function getEventTeams(
 
 export async function getEventWhoKnowsWhoSummary(
   eventId: number
-): Promise<{ eventId: number; connections: number; rwOsConnections: number; pairwiseConnections: number }> {
+): Promise<{
+  eventId: number
+  eventName?: string
+  drawKind?: string
+  connections: number
+  rwOsConnections: number
+  pairwiseConnections: number
+  constraintsOnly?: boolean
+  note?: string
+}> {
   return fetchJson(
     `${API_BASE_URL}/events/${eventId}/who-knows-who-summary`
   )
+}
+
+export type TournamentWhoKnowsWhoDrawSummary = {
+  drawKind: string
+  total: number
+  withinBracket: number
+  acrossBrackets: number
+  unresolved: number
+  inactive: number
+  other: number
+  partition: Record<string, number>
+  eventConstraints: Array<{
+    eventId: number
+    eventName: string
+    storedEdges: number
+  }>
+}
+
+export type TournamentWhoKnowsWhoSummary = {
+  tournamentId: number
+  pairwise: boolean
+  snapshotConnections: number
+  byDrawKind: Record<string, TournamentWhoKnowsWhoDrawSummary>
+  note?: string
+}
+
+export async function getTournamentWhoKnowsWhoSummary(
+  tournamentId: number
+): Promise<TournamentWhoKnowsWhoSummary> {
+  return fetchJson(`${API_BASE_URL}/tournaments/${tournamentId}/who-knows-who-summary`)
 }
 
 export interface AffectedSourceMatch {
