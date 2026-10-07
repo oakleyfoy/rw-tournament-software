@@ -114,7 +114,7 @@ export function appliedSummaryLines(result: RefreshResult | null): string[] {
   const projection = result?.rosterProjection
   if (!projection) return []
   const towelUpdates = (projection.created?.towelRows ?? 0) + (projection.updated?.towelRows ?? 0)
-  return [
+  const lines = [
     countLine(projection.created?.teams ?? 0, 'team added', 'teams added'),
     countLine(projection.reconciled?.withdrawnTeams ?? 0, 'team withdrawn', 'teams withdrawn'),
     countLine(projection.updated?.contactFields ?? 0, 'player/contact change', 'player/contact changes'),
@@ -122,6 +122,11 @@ export function appliedSummaryLines(result: RefreshResult | null): string[] {
     countLine(projection.created?.wkwEdges ?? 0, 'Who-Knows-Who update', 'Who-Knows-Who updates'),
     countLine(projection.reconciled?.drawSlotsReplaced ?? 0, 'draw position updated', 'draw positions updated'),
   ]
+  const seedUpdates = projection.updated?.seeds ?? 0
+  if (seedUpdates > 0) {
+    lines.push(countLine(seedUpdates, 'seed/rank update', 'seed/rank updates'))
+  }
+  return lines
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

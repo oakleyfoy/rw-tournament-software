@@ -53,8 +53,29 @@ describe('DeskRwOsRefresh', () => {
     expect(screen.queryByText('No player or team changes were found.')).not.toBeInTheDocument()
     expect(screen.getByText(/event and draw membership was reconciled/)).toBeInTheDocument()
     expect(screen.getByText('4 draw positions updated')).toBeInTheDocument()
+    expect(screen.queryByText(/seed\/rank update/)).not.toBeInTheDocument()
     expect(onApplied).toHaveBeenCalledTimes(1)
     expect(refresh).toHaveBeenCalledWith(12, false)
+  })
+
+  it('reports seed/rank metadata repairs on their own line', async () => {
+    refresh.mockResolvedValue({
+      diff: {
+        changed: true,
+        addedTeams: [],
+        withdrawnTeams: [],
+        operationalDrift: { reconciliationNeeded: true, seedMismatches: [{ teamKey: '13511/14084' }] },
+      },
+      applied: true,
+      rosterProjection: projection({
+        updated: { teams: 0, contactFields: 0, towelRows: 0, seeds: 5 },
+      }),
+    } as never)
+    render(<DeskRwOsRefresh importId={12} onApplied={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check RW-OS for Changes' }))
+    expect(await screen.findByText('5 seed/rank updates')).toBeInTheDocument()
+    expect(screen.queryByText(/player\/contact change/)).toBeInTheDocument()
+    expect(screen.getByText('0 player/contact changes')).toBeInTheDocument()
   })
 
   it('does not call a failed roster repair reconciled', async () => {
