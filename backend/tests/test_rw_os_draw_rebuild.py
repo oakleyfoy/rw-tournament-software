@@ -1,5 +1,6 @@
 """Refresh RW-OS + Rebuild Draws replaces draw content and leaves match numbers scheduled."""
 
+import json
 from datetime import date, datetime, time, timedelta
 
 from fastapi.testclient import TestClient
@@ -15,10 +16,17 @@ from app.models.team import Team
 from app.models.tournament import Tournament
 from app.models.tournament_import import TournamentImport
 from app.services.canonical_teams import SnapshotTeam, sort_teams_for_planning
-from app.services.rw_os_draw_rebuild import STRUCTURE_REVIEW_MESSAGE, DrawRebuildError
+from app.services.rw_os_draw_rebuild import DrawRebuildError, _ordered_events
 from app.services.wf_pairing import TeamSeed, build_wf_r1_pairings
 from tests.test_desk_rw_os_refresh import _generate_wf24_draw, _patch_refresh
-from tests.test_rw_os_roster_projection import _approve, _import_payload, _mixed_field, _payload, _teams_by_key
+from tests.test_rw_os_roster_projection import (
+    _approve,
+    _import_payload,
+    _mixed_field,
+    _payload,
+    _teams_by_key,
+    _womens_field,
+)
 
 ANCHOR_ID = 5612
 
@@ -386,7 +394,14 @@ def test_capacity_mismatch_blocks_rebuild(client: TestClient, session: Session, 
     response = _post_rebuild(client, ready["imported"].id)
 
     assert response.status_code == 409
-    assert response.json()["detail"]["message"] == STRUCTURE_REVIEW_MESSAGE
+    detail = response.json()["detail"]
+    assert detail["code"] == "roster_count_mismatch"
+    assert detail["eventName"] == ready["event"].name
+    assert "roster does not fit the approved structure" in detail["message"]
+    assert "Active teams: 24" in detail["message"]
+    assert "Approved capacity: 16" in detail["message"]
+    assert detail["activeTeams"] == 24
+    assert detail["approvedCapacity"] == 16
     _assert_unchanged(session, ready, draw_before, anchors_before)
     assert session.get(Event, ready["event"].id).team_count == 16
 
@@ -409,7 +424,11 @@ def test_invalid_seeds_block_rebuild(client: TestClient, session: Session, monke
     response = _post_rebuild(client, ready["imported"].id)
 
     assert response.status_code == 409
-    assert response.json()["detail"]["message"] == STRUCTURE_REVIEW_MESSAGE
+    detail = response.json()["detail"]
+    assert detail["code"] == "seed_metadata_mismatch"
+    assert "seed metadata is incomplete" in detail["message"]
+    assert "Expected seeds: 1–24" in detail["message"]
+    assert "Missing:" in detail["message"]
     _assert_unchanged(session, ready, draw_before, anchors_before)
     assert session.get(Team, team.id).seed is None
 
@@ -474,7 +493,13 @@ def test_match_code_mismatch_leaves_the_draw(client: TestClient, session: Sessio
     response = _post_rebuild(client, ready["imported"].id)
 
     assert response.status_code == 409
-    assert response.json()["detail"]["message"] == STRUCTURE_REVIEW_MESSAGE
+    detail = response.json()["detail"]
+    assert detail["code"] == "match_code_mismatch"
+    assert "does not match the generated structure" in detail["message"]
+    assert "Existing matches:" in detail["message"]
+    assert "Generated matches:" in detail["message"]
+    assert "NOT_A_CANONICAL_CODE" not in detail["message"]
+    assert "NOT_A_CANONICAL_CODE" in detail["liveOnlyMatchCodes"]
     _assert_unchanged(session, ready, draw_before, anchors_before)
     assert session.get(Match, ANCHOR_ID).match_code == "NOT_A_CANONICAL_CODE"
 
@@ -520,3 +545,221 @@ def test_validation_failure_leaves_the_draw(client: TestClient, session: Session
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "validation_failed"
     _assert_unchanged(session, ready, draw_before, anchors_before)
+
+
+def _generate_wf_brackets(
+    session: Session,
+    event: Event,
+    placed: list[Team],
+    *,
+    team_count: int,
+    guarantee: int,
+    stored_guarantee: int | None,
+) -> list[Match]:
+    from app.services.draw_plan_engine import DrawPlanSpec, _generate_wf_to_brackets_8
+
+    event.team_count = team_count
+    event.guarantee_selected = stored_guarantee
+    event.draw_plan_json = json.dumps({"version": "1.0", "template_type": "WF_TO_BRACKETS_8", "wf_rounds": 2})
+    event.draw_status = "generated"
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    version = ScheduleVersion(tournament_id=event.tournament_id, version_number=1, status="draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    category = event.category.value if hasattr(event.category, "value") else str(event.category)
+    spec = DrawPlanSpec(
+        event_id=event.id,
+        event_name=event.name,
+        division="Mixed" if category == "mixed" else "Women's",
+        team_count=team_count,
+        template_type="WF_TO_BRACKETS_8",
+        template_key="WF_TO_BRACKETS_8",
+        guarantee=guarantee,
+        waterfall_rounds=2,
+        waterfall_minutes=60,
+        standard_minutes=105,
+        tournament_id=event.tournament_id,
+        event_category=category,
+    )
+    session._allow_match_generation = True
+    try:
+        matches, _warnings = _generate_wf_to_brackets_8(session, version.id, spec, [team.id for team in placed])
+    finally:
+        session._allow_match_generation = False
+    session.add_all(matches)
+    session.commit()
+    event.guarantee_selected = stored_guarantee
+    session.add(event)
+    session.commit()
+    return matches
+
+
+def _scheduled_brackets(
+    client: TestClient,
+    session: Session,
+    source_id: int,
+    *,
+    draw: str,
+    count: int,
+    guarantee: int,
+    stored_guarantee: int | None,
+):
+    field = _mixed_field(count) if draw == "mixed" else _womens_field(count)
+    imported = _import_payload(session, source_id, field)
+    _approve(client, imported.id, {draw: str(count)})
+    session.expire_all()
+    imported = session.get(TournamentImport, imported.id)
+    event = session.exec(select(Event).where(Event.tournament_id == imported.tournament_id)).one()
+    placed = sorted(
+        [team for team in _teams_by_key(session, imported.tournament_id).values() if not team.is_defaulted],
+        key=lambda team: (team.seed is None, team.seed or 0, team.id or 0),
+    )
+    _generate_wf_brackets(
+        session,
+        event,
+        placed,
+        team_count=count,
+        guarantee=guarantee,
+        stored_guarantee=stored_guarantee,
+    )
+    session.expire_all()
+    matches = list(session.exec(select(Match).where(Match.event_id == event.id)).all())
+    tournament = session.get(Tournament, imported.tournament_id)
+    _schedule_draw(session, tournament, matches)
+    session.expire_all()
+    return {
+        "field": field,
+        "imported": session.get(TournamentImport, imported.id),
+        "event": session.get(Event, event.id),
+        "tournament": session.get(Tournament, imported.tournament_id),
+    }
+
+
+def test_null_guarantee_mixed_infers_4_and_rebuilds_51_matches(client: TestClient, session: Session, monkeypatch):
+    ready = _scheduled_brackets(client, session, 1001, draw="mixed", count=24, guarantee=4, stored_guarantee=None)
+    assert ready["event"].guarantee_selected is None
+    matches = list(session.exec(select(Match).where(Match.event_id == ready["event"].id)).all())
+    assert len(matches) == 51
+    assert not any((match.match_code or "").endswith("_C3") for match in matches)
+    before_anchors = _anchors(session, ready["tournament"].id)
+    before_ids = {match.id for match in matches}
+    _patch_refresh(monkeypatch, [_payload(1001, ready["field"], version="null-g4")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    rebuilt = list(session.exec(select(Match).where(Match.event_id == ready["event"].id)).all())
+    assert {match.id for match in rebuilt} == before_ids
+    assert len(rebuilt) == 51
+    assert {match.match_code for match in rebuilt} == {match.match_code for match in matches}
+    assert not any((match.match_code or "").endswith("_C3") for match in rebuilt)
+    assert _anchors(session, ready["tournament"].id) == before_anchors
+    assert session.get(Event, ready["event"].id).guarantee_selected is None
+    versions = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == ready["tournament"].id)
+    ).all()
+    assert len(versions) == 1
+
+
+def test_null_guarantee_womens_32_infers_4_and_rebuilds_68_matches(client: TestClient, session: Session, monkeypatch):
+    ready = _scheduled_brackets(client, session, 1002, draw="womens", count=32, guarantee=4, stored_guarantee=None)
+    assert ready["event"].guarantee_selected is None
+    matches = list(session.exec(select(Match).where(Match.event_id == ready["event"].id)).all())
+    assert len(matches) == 68
+    assert not any((match.match_code or "").endswith("_C3") for match in matches)
+    before_anchors = _anchors(session, ready["tournament"].id)
+    before_ids = {match.id for match in matches}
+    _patch_refresh(monkeypatch, [_payload(1002, ready["field"], version="womens-null-g4")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    rebuilt = list(session.exec(select(Match).where(Match.event_id == ready["event"].id)).all())
+    assert {match.id for match in rebuilt} == before_ids
+    assert len(rebuilt) == 68
+    assert {match.match_code for match in rebuilt} == {match.match_code for match in matches}
+    assert _anchors(session, ready["tournament"].id) == before_anchors
+    assert session.get(Event, ready["event"].id).guarantee_selected is None
+
+
+def test_explicit_guarantee_4_rebuilds(client: TestClient, session: Session, monkeypatch):
+    ready = _scheduled_brackets(client, session, 1003, draw="mixed", count=24, guarantee=4, stored_guarantee=4)
+    before_anchors = _anchors(session, ready["tournament"].id)
+    _patch_refresh(monkeypatch, [_payload(1003, ready["field"], version="explicit-4")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert session.get(Event, ready["event"].id).guarantee_selected == 4
+    assert len(session.exec(select(Match).where(Match.event_id == ready["event"].id)).all()) == 51
+    assert _anchors(session, ready["tournament"].id) == before_anchors
+
+
+def test_explicit_guarantee_5_does_not_override_live_guarantee_4(client: TestClient, session: Session, monkeypatch):
+    ready = _scheduled_brackets(client, session, 1004, draw="mixed", count=24, guarantee=4, stored_guarantee=5)
+    draw_before = _draw_rows(session, ready["event"].id)
+    anchors_before = _anchors(session, ready["tournament"].id)
+    _patch_refresh(monkeypatch, [_payload(1004, ready["field"], version="conflict-5")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "guarantee_conflict"
+    assert detail["eventName"] == ready["event"].name
+    assert "does not match its stored guarantee" in detail["message"]
+    assert "Stored guarantee: 5" in detail["message"]
+    assert "Existing draw topology: guarantee 4" in detail["message"]
+    assert "Bracket structure requires review" in detail["message"]
+    assert detail["storedGuarantee"] == 5
+    assert detail["liveGuarantee"] == 4
+    assert "B1_C3" not in detail["message"]
+    _assert_unchanged(session, ready, draw_before, anchors_before)
+    assert session.get(Event, ready["event"].id).guarantee_selected == 5
+
+
+def test_null_guarantee_with_ambiguous_topology_does_not_default_to_5(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _scheduled_brackets(client, session, 1005, draw="mixed", count=24, guarantee=4, stored_guarantee=None)
+    consolation = next(
+        match
+        for match in session.exec(select(Match).where(Match.event_id == ready["event"].id)).all()
+        if (match.match_code or "").endswith("B1_C2")
+    )
+    consolation.match_code = consolation.match_code.replace("B1_C2", "B1_C9")
+    session.add(consolation)
+    session.commit()
+    draw_before = _draw_rows(session, ready["event"].id)
+    anchors_before = _anchors(session, ready["tournament"].id)
+    _patch_refresh(monkeypatch, [_payload(1005, ready["field"], version="ambiguous")])
+
+    response = _post_rebuild(client, ready["imported"].id)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "structure_review"
+    assert "does not establish a supported guarantee" in detail["message"]
+    assert "Bracket structure requires review" in detail["message"]
+    assert "Generated matches" not in detail["message"]
+    assert detail.get("generatedMatchCount") is None
+    _assert_unchanged(session, ready, draw_before, anchors_before)
+    assert session.get(Event, ready["event"].id).guarantee_selected is None
+
+
+def test_rebuild_reports_womens_events_before_mixed():
+    ordered = _ordered_events(
+        [
+            Event(id=4, tournament_id=1, category="mixed", name="Mixed", team_count=24),
+            Event(id=3, tournament_id=1, category="womens", name="Women's C", team_count=32),
+            Event(id=1, tournament_id=1, category="womens", name="Women's A", team_count=32),
+            Event(id=2, tournament_id=1, category="womens", name="Women's B", team_count=32),
+        ]
+    )
+    assert [event.name for event in ordered] == ["Women's A", "Women's B", "Women's C", "Mixed"]

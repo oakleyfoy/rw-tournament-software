@@ -345,4 +345,20 @@ describe('DeskRwOsRefresh', () => {
     expect(refresh).not.toHaveBeenCalled()
     expect(onApplied).toHaveBeenCalledTimes(1)
   })
+
+  it('shows the rebuild failure reason under the blocked heading', async () => {
+    rebuild.mockRejectedValue(
+      new Error(
+        'Mixed draw structure does not match its stored guarantee.\n\nStored guarantee: 5\nExisting draw topology: guarantee 4\n\nBracket structure requires review before draws can be rebuilt.',
+      ),
+    )
+    render(<DeskRwOsRefresh importId={12} onApplied={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh RW-OS + Rebuild Draws' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh & Rebuild Draws' }))
+    expect(await screen.findByRole('heading', { name: 'Draws were not rebuilt' })).toBeInTheDocument()
+    expect(screen.getByText(/Mixed draw structure does not match its stored guarantee/)).toBeInTheDocument()
+    expect(screen.getByText(/Stored guarantee: 5/)).toBeInTheDocument()
+    expect(screen.getByText(/Existing draw topology: guarantee 4/)).toBeInTheDocument()
+    expect(screen.queryByText('NOT_A_CANONICAL_CODE')).not.toBeInTheDocument()
+  })
 })

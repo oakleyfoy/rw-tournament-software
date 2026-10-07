@@ -536,7 +536,7 @@ export function DeskRwOsRefresh({
             {rebuildPhase === 'error' && (
               <>
                 <h2 style={{ marginTop: 0 }}>Draws were not rebuilt</h2>
-                <p style={{ color: '#b71c1c' }}>{rebuildError}</p>
+                <p style={{ color: '#b71c1c', whiteSpace: 'pre-line' }}>{rebuildError}</p>
                 <button type="button" onClick={closeRebuild}>Close</button>
               </>
             )}

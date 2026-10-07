@@ -156,6 +156,7 @@ def refresh_rw_os_and_rebuild_draws(import_id: int, session: Session = Depends(g
                 "message": exc.message,
                 "eventName": exc.event_name,
                 "matchNumbers": exc.match_numbers,
+                **exc.details,
             },
         ) from exc
     except RwOsClientError as exc:
