@@ -704,6 +704,92 @@ def test_public_roundrobin_wf14_finalized_cons_scores_do_not_500(client, session
     assert "POOLC" in standings and "POOLD" in standings
 
 
+def test_public_draws_list_includes_mixed_brackets(client, session):
+    """Mixed events use B1/B2/B3 codes; public draws list must surface them
+    as Bracket 1/2/3 (same as staff Event Draws), not only Women's Div I–IV."""
+    tournament = Tournament(
+        name="Mixed Brackets Visible",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 4, 10),
+        end_date=date(2026, 4, 12),
+    )
+    session.add(tournament)
+    session.flush()
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+
+    mixed = Event(
+        tournament_id=tournament.id,
+        name="Mixed",
+        category="mixed",
+        team_count=24,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_24_MIXED","wf_rounds":2}',
+    )
+    womens = Event(
+        tournament_id=tournament.id,
+        name="Women's A",
+        category="womens",
+        team_count=32,
+        draw_status="final",
+        draw_plan_json='{"template_type":"WF_32","wf_rounds":2}',
+    )
+    session.add(mixed)
+    session.add(womens)
+    session.flush()
+
+    def _mk(event_id, code, mtype, rnd, seq):
+        session.add(
+            Match(
+                tournament_id=tournament.id,
+                event_id=event_id,
+                schedule_version_id=version.id,
+                match_code=code,
+                match_type=mtype,
+                round_number=rnd,
+                round_index=rnd,
+                sequence_in_round=seq,
+                duration_minutes=90,
+                placeholder_side_a="",
+                placeholder_side_b="",
+            )
+        )
+
+    _mk(mixed.id, "MIX_WF_R1_01", "WF", 1, 1)
+    _mk(mixed.id, "MIX_B1_QF_01", "MAIN", 1, 1)
+    _mk(mixed.id, "MIX_B2_QF_01", "MAIN", 1, 2)
+    _mk(mixed.id, "MIX_B3_QF_01", "MAIN", 1, 3)
+    _mk(womens.id, "WOMA_WF_R1_01", "WF", 1, 1)
+    _mk(womens.id, "WOMA_BWW_QF_01", "MAIN", 1, 1)
+    _mk(womens.id, "WOMA_BWL_QF_01", "MAIN", 1, 2)
+
+    tournament.public_schedule_version_id = version.id
+    session.add(tournament)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{tournament.id}/draws")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    by_id = {e["event_id"]: e for e in body["events"]}
+
+    mixed_ev = by_id[mixed.id]
+    assert mixed_ev["has_waterfall"] is True
+    assert mixed_ev["divisions"] == [
+        {"code": "B1", "label": "Bracket 1"},
+        {"code": "B2", "label": "Bracket 2"},
+        {"code": "B3", "label": "Bracket 3"},
+    ]
+
+    womens_ev = by_id[womens.id]
+    assert womens_ev["divisions"] == [
+        {"code": "BWW", "label": "Division I"},
+        {"code": "BWL", "label": "Division II"},
+    ]
+
+
 def test_public_draws_list_wf14_has_no_bracket_divisions(client, session):
     """A WF_14 (waterfall→pools) event must not expose Division I–IV bracket
     buttons — even if stale bracket-coded matches linger from an older draw."""

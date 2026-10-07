@@ -376,11 +376,15 @@ def _build_notes(match: Match) -> Optional[str]:
     return None
 
 
+_DIV_ORDER = ("BWW", "BWL", "BLW", "BLL", "B1", "B2", "B3")
 _DIV_LABELS = {
     "BWW": "Division I",
     "BWL": "Division II",
     "BLW": "Division III",
     "BLL": "Division IV",
+    "B1": "Bracket 1",
+    "B2": "Bracket 2",
+    "B3": "Bracket 3",
 }
 
 
@@ -500,14 +504,14 @@ def public_draws_list(
             "WF_10_SIX_FOUR",
         )
 
-        _DIV_ORDER = ["BWW", "BWL", "BLW", "BLL"]
         found = set()
         if not pools_only_format:
             for mc in bracket_codes:
                 if not mc:
                     continue
+                upper_code = mc.upper()
                 for dc in _DIV_ORDER:
-                    if f"_{dc}_" in mc:
+                    if f"_{dc}_" in upper_code:
                         found.add(dc)
         for dc in _DIV_ORDER:
             if dc in found:
@@ -816,15 +820,7 @@ def public_waterfall(
 
 # ── Public bracket ──────────────────────────────────────────────────────
 
-_CODE_TO_DIV = {
-    "BWW": "Division I",
-    "BWL": "Division II",
-    "BLW": "Division III",
-    "BLL": "Division IV",
-    "B1": "Bracket 1",
-    "B2": "Bracket 2",
-    "B3": "Bracket 3",
-}
+_CODE_TO_DIV = dict(_DIV_LABELS)
 
 _ROUND_LABELS = {1: "Quarterfinal", 2: "Semifinal", 3: "Final"}
 
