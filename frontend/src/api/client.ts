@@ -706,6 +706,29 @@ export async function refreshRwOsImport(importId: number, apply = false): Promis
   })
 }
 
+export type RwOsDrawRebuildEvent = {
+  eventId: number
+  name: string
+  teamCount: number
+  structure: string
+  detail: string
+  schedulePreserved: boolean
+}
+
+export type RwOsDrawRebuildResult = {
+  ok: boolean
+  heading: string
+  events: RwOsDrawRebuildEvent[]
+  scheduleNote: string
+  rosterProjection?: RwOsImportResponse['rosterProjection']
+}
+
+export async function rebuildRwOsDraws(importId: number): Promise<RwOsDrawRebuildResult> {
+  return fetchJson(`${API_BASE_URL}/rw-os/imports/${importId}/refresh-rebuild-draws`, {
+    method: 'POST',
+  })
+}
+
 export async function updateRwOsForecasts(
   importId: number,
   forecasts: Record<string, number>,

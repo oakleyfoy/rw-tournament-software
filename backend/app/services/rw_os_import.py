@@ -271,7 +271,12 @@ def _approved_plans(session: Session, import_row: TournamentImport) -> list[Tour
     )
 
 
-def _project_operational_refresh(session: Session, import_row: TournamentImport) -> Optional[dict[str, Any]]:
+def _project_operational_refresh(
+    session: Session,
+    import_row: TournamentImport,
+    *,
+    commit: bool = True,
+) -> Optional[dict[str, Any]]:
     from app.services.rw_os_roster_projection import project_approved_roster
 
     plans = _approved_plans(session, import_row)
@@ -283,6 +288,7 @@ def _project_operational_refresh(session: Session, import_row: TournamentImport)
         plans,
         operational_only=True,
         allow_structural_rebuild=False,
+        commit=commit,
     ).to_dict()
 
 
@@ -293,6 +299,7 @@ def persist_snapshot(
     organization_slug: str = "rw",
     existing: Optional[TournamentImport] = None,
     for_tournament: Optional[Tournament] = None,
+    commit: bool = True,
 ) -> TournamentImport:
     teams = parse_teams(payload.get("teams") or [])
     waitlist = parse_teams(payload.get("waitlistTeams") or [])
@@ -386,12 +393,19 @@ def persist_snapshot(
     if existing.plan_status == "approved" and structural_changed:
         existing.plan_status = "stale"
     session.add(existing)
-    session.commit()
-    session.refresh(existing)
+    if commit:
+        session.commit()
+        session.refresh(existing)
+    else:
+        session.flush()
     # Reconcile the live roster with the current RW-OS snapshot. Unplayed draw slots can
     # gain or lose teams. Started, scored, or advanced matches are left in place and reported.
     if existing.plan_status in ("approved", "stale"):
-        setattr(existing, "_last_roster_projection", _project_operational_refresh(session, existing))
+        setattr(
+            existing,
+            "_last_roster_projection",
+            _project_operational_refresh(session, existing, commit=commit),
+        )
     return existing
 
 
@@ -594,6 +608,70 @@ def refresh_import(
         "import": serialize_import(import_row),
         "rosterProjection": roster_projection,
     }
+
+
+def refresh_and_rebuild_draws(
+    session: Session,
+    import_row: TournamentImport,
+    *,
+    client: Optional[RwOsClient] = None,
+) -> dict[str, Any]:
+    """Download RW-OS, reconcile the roster, then rebuild draws onto the existing match numbers.
+
+    Nothing is committed until the rebuilt draw validates. Normal Check / Refresh does not call this.
+    """
+    from app.services.rw_os_draw_rebuild import DrawRebuildError, rebuild_tournament_draws
+    from app.services.rw_os_roster_projection import operational_roster_drift
+
+    client = client or RwOsClient()
+    previous = {
+        "tournamentId": import_row.source_tournament_id,
+        "updatedAt": import_row.source_updated_at,
+        "version": import_row.source_version,
+        "teams": json.loads(import_row.snapshot_json or "[]"),
+        "waitlistTeams": json.loads(import_row.waitlist_json or "[]"),
+    }
+    current = client.refresh_event(import_row.source_tournament_id, previous)
+    diff = compute_refresh_diff(previous, current)
+    drift = operational_roster_drift(session, import_row, current.get("teams") or [])
+    diff["operationalDrift"] = drift
+    if drift["reconciliationNeeded"]:
+        diff["changed"] = True
+    import_row.refresh_diff_json = json.dumps(diff)
+    import_row.updated_at = datetime.utcnow()
+    session.add(import_row)
+    try:
+        persist_snapshot(
+            session,
+            current,
+            organization_slug=import_row.organization_slug,
+            existing=import_row,
+            commit=False,
+        )
+        projection = getattr(import_row, "_last_roster_projection", None)
+        if not projection or projection.get("conflicts"):
+            conflicts = (projection or {}).get("conflicts") or []
+            message = "RW-OS roster could not be reconciled."
+            code = "roster_reconciliation_incomplete"
+            if conflicts:
+                if conflicts[0].get("message"):
+                    message = str(conflicts[0]["message"])
+                if conflicts[0].get("code"):
+                    code = str(conflicts[0]["code"])
+            raise DrawRebuildError(message, code=code)
+        summary = rebuild_tournament_draws(session, import_row)
+        session.commit()
+    except DrawRebuildError:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(import_row)
+    summary["rosterProjection"] = projection
+    summary["diff"] = diff
+    summary["applied"] = True
+    return summary
 
 
 def teams_for_draw(import_row: TournamentImport, draw_kind: str) -> list[SnapshotTeam]:

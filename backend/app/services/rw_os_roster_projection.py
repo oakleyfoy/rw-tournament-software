@@ -1427,6 +1427,7 @@ def project_approved_roster(
     events_created: int = 0,
     operational_only: bool = False,
     allow_structural_rebuild: bool = False,
+    commit: bool = True,
 ) -> RosterProjectionResult:
     result = RosterProjectionResult(created_events=events_created)
     teams = parse_teams(json.loads(import_row.snapshot_json or "[]"))
@@ -1665,7 +1666,12 @@ def project_approved_roster(
     if operational_only:
         session.flush()
         _record_draw_reconciliation_failure(session, import_row, plans, teams, result, failed_event_ids)
-    session.commit()
+    # Refresh + Rebuild Draws holds this commit so a later draw failure can roll the roster back.
+    # Normal Check / Refresh keeps the default and commits here.
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     return result
 
 
