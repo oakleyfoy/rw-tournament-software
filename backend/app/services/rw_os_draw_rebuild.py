@@ -357,12 +357,15 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
             details={"activeTeams": len(active), "approvedCapacity": expected},
         )
     _require_seed_range(event, active, expected)
+    from app.models.event import EventCategory
     from app.services.rw_os_import import import_snapshot_teams
     from app.services.rw_os_wkw import (
         RW_OS_WKW_REASON,
+        applicable_rw_os_wkw_pairs_for_event,
         load_snapshot_connections,
-        resolve_connection_team_ids,
+        load_tournament_team_locations,
     )
+    from app.services.structure_events import event_category_for_draw_kind
 
     snapshot_by_key = {team.team_key: team for team in parse_teams(import_snapshot_teams(import_row))}
     for team in active:
@@ -386,9 +389,9 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
                     event_name=event.name,
                 )
         return
-    # Pairwise mode: verify RW-OS-owned edges match the snapshot graph for this draw.
-    from app.models.event import EventCategory
-    from app.services.structure_events import event_category_for_draw_kind
+    # Pairwise mode: event constraints must match the same-event projection of the
+    # tournament-wide snapshot graph. Cross-bracket / other-event edges are retained
+    # in the snapshot but are not applicable to this event.
 
     category = event.category.value if isinstance(event.category, EventCategory) else str(event.category)
     draw_kind = None
@@ -399,23 +402,30 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
             break
     if draw_kind is None:
         return
-    desired: set[tuple[int, int]] = set()
-    for edge in connections:
-        if edge.draw_kind != draw_kind:
-            continue
-        resolved = resolve_connection_team_ids(
-            session,
-            event_id=event.id,
-            team_a_key=edge.team_a_key,
-            team_b_key=edge.team_b_key,
+    if event.id is None:
+        return
+    locations = load_tournament_team_locations(session, import_row.tournament_id)
+    applicability = applicable_rw_os_wkw_pairs_for_event(
+        connections,
+        locations,
+        event_id=event.id,
+        draw_kind=draw_kind,
+    )
+    if applicability.unresolved:
+        sample = applicability.unresolved[0]
+        raise DrawRebuildError(
+            "Who-Knows-Who could not be reconciled before draws were rebuilt.\n\n"
+            f"Unresolved connection: {sample.get('teamAKey')}–{sample.get('teamBKey')} "
+            f"({sample.get('reason')}).",
+            code="roster_reconciliation_incomplete",
+            event_name=event.name,
+            details={
+                "unresolvedCount": len(applicability.unresolved),
+                "unresolved": applicability.unresolved[:20],
+                "skippedNonApplicable": applicability.skipped_non_applicable,
+            },
         )
-        if resolved is None:
-            raise DrawRebuildError(
-                "Who-Knows-Who could not be reconciled before draws were rebuilt.",
-                code="roster_reconciliation_incomplete",
-                event_name=event.name,
-            )
-        desired.add(resolved)
+    desired = applicability.desired_pairs
     actual_edges = session.exec(
         select(TeamAvoidEdge).where(
             TeamAvoidEdge.event_id == event.id,
@@ -425,9 +435,18 @@ def _require_capacity_and_seeds(session: Session, import_row: TournamentImport, 
     actual = {(edge.team_id_a, edge.team_id_b) for edge in actual_edges}
     if actual != desired:
         raise DrawRebuildError(
-            "Who-Knows-Who could not be reconciled before draws were rebuilt.",
+            "Who-Knows-Who could not be reconciled before draws were rebuilt.\n\n"
+            f"Applicable event edges expected: {len(desired)}\n"
+            f"Stored RW-OS-owned edges: {len(actual)}",
             code="roster_reconciliation_incomplete",
             event_name=event.name,
+            details={
+                "expectedCount": len(desired),
+                "actualCount": len(actual),
+                "missingPairs": sorted(desired - actual),
+                "extraPairs": sorted(actual - desired),
+                "skippedNonApplicable": applicability.skipped_non_applicable,
+            },
         )
 
 
