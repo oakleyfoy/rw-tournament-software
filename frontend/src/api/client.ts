@@ -2453,6 +2453,20 @@ export async function getEventTeams(
   )
 }
 
+/** Pairwise / group avoid edges for an event (read-only Who Knows Who graph). */
+export interface TeamAvoidEdge {
+  id: number
+  event_id: number
+  team_id_a: number
+  team_id_b: number
+  reason?: string | null
+  created_at: string
+}
+
+export async function getEventAvoidEdges(eventId: number): Promise<TeamAvoidEdge[]> {
+  return fetchJson<TeamAvoidEdge[]>(`${API_BASE_URL}/events/${eventId}/avoid-edges`)
+}
+
 export async function getEventWhoKnowsWhoSummary(
   eventId: number
 ): Promise<{
