@@ -3477,6 +3477,22 @@ export async function deskCheckInTeam(
   )
 }
 
+export interface PreassignedAutomationReadiness {
+  ready: boolean
+  dialect: string
+  opening_slot_release_table: boolean
+  court_dispatch_lock_table: boolean
+  uq_opening_slot_release_version_day_slot: boolean
+  uq_court_dispatch_lock_version_day_court: boolean
+  errors: string[]
+}
+
+export async function getPreassignedAutomationReadiness(): Promise<PreassignedAutomationReadiness> {
+  return fetchJson<PreassignedAutomationReadiness>(
+    `${API_BASE_URL}/desk/preassigned-automation/readiness`
+  )
+}
+
 export async function previewOpeningRelease(
   tournamentId: number,
   params: { version_id: number; day_date: string; slot_key: string }

@@ -27,6 +27,7 @@ from app.db_schema_patch import (
     ensure_tournament_import_columns,
     ensure_tournament_sms_settings_columns,
     ensure_tournament_time_window_columns,
+    inspect_preassigned_automation_schema,
 )
 from app.routes import (
     auth,
@@ -230,8 +231,24 @@ def on_startup():
     ensure_team_columns(engine)
     ensure_sms_log_columns(engine)
     ensure_start_over_baseline_assignment_table(engine)
-    ensure_opening_slot_release_table(engine)
-    ensure_court_dispatch_lock_table(engine)
+    import logging as _logging
+
+    _startup_log = _logging.getLogger(__name__)
+    try:
+        ensure_opening_slot_release_table(engine)
+        ensure_court_dispatch_lock_table(engine)
+    except Exception:
+        _startup_log.exception(
+            "PREASSIGNED automation schema ensure failed; automation remains disabled until schema is ready"
+        )
+    _preassigned_schema = inspect_preassigned_automation_schema(engine)
+    if _preassigned_schema["ready"]:
+        _startup_log.info("PREASSIGNED automation schema ready (dialect=%s)", _preassigned_schema["dialect"])
+    else:
+        _startup_log.error(
+            "PREASSIGNED automation NOT READY: %s",
+            "; ".join(_preassigned_schema["errors"]),  # type: ignore[arg-type]
+        )
     ensure_tournament_sms_settings_columns(engine)
     ensure_temporary_player_lookup_columns(engine)
     ensure_sms_phone_list_columns(engine)

@@ -16,9 +16,10 @@ from datetime import date, datetime, time
 from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, select
 
+from app.db_schema_patch import is_preassigned_automation_schema_ready
 from app.models.court_dispatch_lock import CourtDispatchLock
 from app.models.court_state import TournamentCourtState
 from app.models.event import Event
@@ -52,11 +53,47 @@ OUTCOME_WAITING_PARTICIPANTS = "waiting_participants"
 OUTCOME_WAITING_PRIOR = "waiting_prior"
 OUTCOME_SKIP = "skip"
 
-_LOCK_ACQUIRE_ATTEMPTS = 8
+SCHEMA_NOT_READY = "preassigned_automation_schema_not_ready"
+COURT_LOCK_BUSY = "court_dispatch_lock_busy"
+
+_LOCK_ACQUIRE_ATTEMPTS = 12
 _LOCK_ACQUIRE_SLEEP_SEC = 0.05
+_DISPATCH_BUSY_ATTEMPTS = 8
+_DISPATCH_BUSY_SLEEP_SEC = 0.05
 # Reclaim committed orphan rows left by a crashed process. Uncommitted crash
 # rollbacks never leave a row; this covers the rare committed-orphan case.
 _LOCK_STALE_SECONDS = 30
+
+
+class PreassignedSchemaNotReady(RuntimeError):
+    """Raised when required PREASSIGNED automation tables/constraints are missing."""
+
+
+def _is_sqlite_locked(exc: BaseException) -> bool:
+    """True only for SQLite writer contention, not unrelated OperationalErrors."""
+    messages: List[str] = [str(exc).lower()]
+    orig = getattr(exc, "orig", None)
+    if orig is not None:
+        messages.append(str(orig).lower())
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None:
+        messages.append(str(cause).lower())
+    return any("database is locked" in msg or "database table is locked" in msg for msg in messages)
+
+
+def _require_schema_ready(session: Session) -> Optional[str]:
+    bind = session.get_bind()
+    if bind is None:
+        return SCHEMA_NOT_READY
+    # Prefer process cache; on miss inspect via this session's connection so we
+    # do not open a second SQLite connection during an active write txn.
+    if is_preassigned_automation_schema_ready(
+        bind,
+        connection=session.connection(),
+        use_cache=True,
+    ):
+        return None
+    return SCHEMA_NOT_READY
 
 
 @dataclass
@@ -386,8 +423,9 @@ def _try_acquire_court_lock(
     """Insert mutex row in a savepoint. Row stays in the outer transaction until commit.
 
     Concurrent acquirers hit the unique constraint (PostgreSQL blocks until the
-    holder commits/rolls back; SQLite reports IntegrityError). Crash before the
-    outer commit rolls the lock insert back — no durable stuck row.
+    holder commits/rolls back; SQLite reports IntegrityError or waits on the
+    busy timeout then may raise OperationalError database is locked). Crash
+    before the outer commit rolls the lock insert back — no durable stuck row.
     """
     nested = session.begin_nested()
     try:
@@ -428,6 +466,11 @@ def _try_acquire_court_lock(
                 court_number,
             )
         return False
+    except OperationalError as exc:
+        nested.rollback()
+        if _is_sqlite_locked(exc):
+            return False
+        raise
 
 
 def _release_court_lock(
@@ -465,23 +508,45 @@ def court_dispatch_lock(
     release (DELETE) → caller commits start+release together. SMS must run only
     after that commit. If release fails, the error propagates so the caller must
     not commit a durable orphan lock row.
+
+    On SQLite, writer contention surfaces as OperationalError("database is locked")
+    in addition to unique-constraint IntegrityError; both are treated as
+    non-acquired so the caller can retry after re-reading eligibility.
     """
     holder = f"dispatch-{uuid.uuid4().hex[:12]}"
     acquired = False
     for attempt in range(_LOCK_ACQUIRE_ATTEMPTS):
-        if _try_acquire_court_lock(
-            session,
-            version_id=version_id,
-            day_date=day_date,
-            court_number=court_number,
-            holder=holder,
-        ):
-            acquired = True
-            break
+        try:
+            if _try_acquire_court_lock(
+                session,
+                version_id=version_id,
+                day_date=day_date,
+                court_number=court_number,
+                holder=holder,
+            ):
+                acquired = True
+                break
+        except OperationalError as exc:
+            if not _is_sqlite_locked(exc):
+                raise
         time_module.sleep(_LOCK_ACQUIRE_SLEEP_SEC * (attempt + 1))
     release_error: Optional[BaseException] = None
     try:
         yield acquired
+    except Exception:
+        # Roll back lock insert + any partial IN_PROGRESS flush together.
+        if acquired:
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception(
+                    "rollback after court dispatch critical-section failure v=%s day=%s court=%s",
+                    version_id,
+                    day_date,
+                    court_number,
+                )
+            acquired = False
+        raise
     finally:
         if acquired:
             try:
@@ -492,6 +557,23 @@ def court_dispatch_lock(
                     court_number=court_number,
                     holder=holder,
                 )
+            except OperationalError as exc:
+                if _is_sqlite_locked(exc):
+                    release_error = exc
+                    logger.warning(
+                        "SQLite locked while releasing court dispatch lock v=%s day=%s court=%s",
+                        version_id,
+                        day_date,
+                        court_number,
+                    )
+                else:
+                    release_error = exc
+                    logger.exception(
+                        "Failed to release court dispatch lock v=%s day=%s court=%s",
+                        version_id,
+                        day_date,
+                        court_number,
+                    )
             except BaseException as exc:
                 release_error = exc
                 logger.exception(
@@ -501,6 +583,10 @@ def court_dispatch_lock(
                     court_number,
                 )
     if release_error is not None:
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("rollback after court dispatch lock release failure")
         # Prevent committing a durable orphan mutex row with a match start.
         raise RuntimeError(f"court dispatch lock release failed for court {court_number}") from release_error
 
@@ -747,6 +833,10 @@ def start_match_canonical(
     Serializes per court via CourtDispatchLock so two different matches cannot
     both observe the court as free and both become IN_PROGRESS.
     """
+    schema_err = _require_schema_ready(session)
+    if schema_err:
+        return False, schema_err
+
     session.refresh(match)
     previous = (match.runtime_status or "SCHEDULED").upper()
     if previous == "IN_PROGRESS":
@@ -761,6 +851,7 @@ def start_match_canonical(
         return False, "Assigned slot missing"
 
     def _perform_start() -> Tuple[bool, str]:
+        # Always re-read after the effective DB lock is held.
         session.refresh(match)
         prev = (match.runtime_status or "SCHEDULED").upper()
         if prev == "IN_PROGRESS":
@@ -778,38 +869,157 @@ def start_match_canonical(
         _apply_in_progress(session, match)
         return True, "started"
 
-    started = False
-    detail = "lock_not_acquired"
+    # Nested call under an already-held court lock: no acquire/retry here.
+    # Parent dispatch owns contention handling and the outer commit.
     if _court_lock_held:
         started, detail = _perform_start()
         if not started:
             return False, detail
+        if commit:
+            session.commit()
+            session.refresh(match)
+            if send_sms:
+                _send_start_sms(session, tournament, match, previous)
+        else:
+            session.flush()
         return True, "started"
 
-    with court_dispatch_lock(
-        session,
-        version_id=match.schedule_version_id,
-        day_date=slot.day_date,
-        court_number=slot.court_number,
-    ) as acquired:
-        if not acquired:
-            return False, "court_dispatch_lock_busy"
-        started, detail = _perform_start()
+    last_detail = COURT_LOCK_BUSY
+    for attempt in range(_DISPATCH_BUSY_ATTEMPTS):
+        started = False
+        detail = COURT_LOCK_BUSY
+        try:
+            with court_dispatch_lock(
+                session,
+                version_id=match.schedule_version_id,
+                day_date=slot.day_date,
+                court_number=slot.court_number,
+            ) as acquired:
+                if not acquired:
+                    last_detail = COURT_LOCK_BUSY
+                    time_module.sleep(_DISPATCH_BUSY_SLEEP_SEC * (attempt + 1))
+                    continue
+                started, detail = _perform_start()
 
-    # Persist start (if any) and lock-row deletion together.
-    if commit:
+            # Persist start (if any) and lock-row deletion together.
+            if commit:
+                session.commit()
+                if started:
+                    session.refresh(match)
+            elif started:
+                session.flush()
+
+            if not started:
+                return False, detail
+
+            if send_sms and commit:
+                _send_start_sms(session, tournament, match, previous)
+            return True, "started"
+        except OperationalError as exc:
+            if not _is_sqlite_locked(exc):
+                raise
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("rollback after SQLite lock during start_match_canonical")
+            last_detail = COURT_LOCK_BUSY
+            time_module.sleep(_DISPATCH_BUSY_SLEEP_SEC * (attempt + 1))
+        except Exception:
+            # Never leave a flushed-but-uncommitted IN_PROGRESS after failure.
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("rollback after start_match_canonical failure")
+            raise
+
+    return False, last_detail
+
+
+def _dispatch_court_once(
+    session: Session,
+    tournament: Tournament,
+    *,
+    version_id: int,
+    day_date: date,
+    court_number: int,
+) -> DispatchResult:
+    """Single attempt: acquire court mutex, re-evaluate order, start earliest ready."""
+    result = DispatchResult()
+    started_match: Optional[Match] = None
+    previous_status = "SCHEDULED"
+    try:
+        with court_dispatch_lock(
+            session,
+            version_id=version_id,
+            day_date=day_date,
+            court_number=court_number,
+        ) as acquired:
+            if not acquired:
+                result.errors.append(COURT_LOCK_BUSY)
+                return result
+
+            for match in _ordered_matches_for_court(
+                session,
+                version_id=version_id,
+                day_date=day_date,
+                court_number=court_number,
+            ):
+                session.refresh(match)
+                # Re-check mode / occupancy / reservation priority under the lock.
+                eligibility = evaluate_eligibility(session, tournament, match)
+                if eligibility.outcome == OUTCOME_READY_TO_START:
+                    previous_status = (match.runtime_status or "SCHEDULED").upper()
+                    started, detail = start_match_canonical(
+                        session,
+                        tournament,
+                        match,
+                        commit=False,
+                        send_sms=False,
+                        _court_lock_held=True,
+                    )
+                    if started and match.id is not None:
+                        result.started_match_ids.append(match.id)
+                        started_match = match
+                    else:
+                        result.errors.append(f"Match {match.id}: {detail}")
+                    break
+                if (
+                    eligibility.outcome
+                    in (
+                        OUTCOME_WAITING_COURT,
+                        OUTCOME_WAITING_PRIOR,
+                    )
+                    and match.id is not None
+                ):
+                    result.waiting_match_ids.append(match.id)
+                    result.skipped.append(eligibility)
+                    break
+                result.skipped.append(eligibility)
+                if eligibility.outcome in (
+                    OUTCOME_WAITING_CHECKIN,
+                    OUTCOME_WAITING_RELEASE,
+                    OUTCOME_WAITING_TIME,
+                    OUTCOME_WAITING_PARTICIPANTS,
+                ):
+                    if (match.runtime_status or "SCHEDULED").upper() == "SCHEDULED":
+                        break
+
+        # Persist start + lock release together after the mutex row is deleted.
         session.commit()
-        if started:
-            session.refresh(match)
-    elif started:
-        session.flush()
+    except OperationalError as exc:
+        if not _is_sqlite_locked(exc):
+            raise
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("rollback after SQLite lock in _dispatch_court_once")
+        result.errors.append(COURT_LOCK_BUSY)
+        return result
 
-    if not started:
-        return False, detail
-
-    if send_sms and commit:
-        _send_start_sms(session, tournament, match, previous)
-    return True, "started"
+    if started_match is not None:
+        session.refresh(started_match)
+        _send_start_sms(session, tournament, started_match, previous_status)
+    return result
 
 
 def dispatch_court(
@@ -822,68 +1032,40 @@ def dispatch_court(
 ) -> DispatchResult:
     """Start the earliest eligible PREASSIGNED match on this court, if any."""
     result = DispatchResult()
-    started_match: Optional[Match] = None
-    previous_status = "SCHEDULED"
-    with court_dispatch_lock(
-        session,
-        version_id=version_id,
-        day_date=day_date,
-        court_number=court_number,
-    ) as acquired:
-        if not acquired:
-            result.errors.append(f"Court {court_number} dispatch lock busy for {day_date.isoformat()}")
-            return result
+    schema_err = _require_schema_ready(session)
+    if schema_err:
+        result.errors.append(schema_err)
+        return result
 
-        for match in _ordered_matches_for_court(
-            session,
-            version_id=version_id,
-            day_date=day_date,
-            court_number=court_number,
-        ):
-            session.refresh(match)
-            eligibility = evaluate_eligibility(session, tournament, match)
-            if eligibility.outcome == OUTCOME_READY_TO_START:
-                previous_status = (match.runtime_status or "SCHEDULED").upper()
-                started, detail = start_match_canonical(
-                    session,
-                    tournament,
-                    match,
-                    commit=False,
-                    send_sms=False,
-                    _court_lock_held=True,
-                )
-                if started and match.id is not None:
-                    result.started_match_ids.append(match.id)
-                    started_match = match
-                else:
-                    result.errors.append(f"Match {match.id}: {detail}")
-                break
-            if (
-                eligibility.outcome
-                in (
-                    OUTCOME_WAITING_COURT,
-                    OUTCOME_WAITING_PRIOR,
-                )
-                and match.id is not None
-            ):
-                result.waiting_match_ids.append(match.id)
-                result.skipped.append(eligibility)
-                break
-            result.skipped.append(eligibility)
-            if eligibility.outcome in (
-                OUTCOME_WAITING_CHECKIN,
-                OUTCOME_WAITING_RELEASE,
-                OUTCOME_WAITING_TIME,
-                OUTCOME_WAITING_PARTICIPANTS,
-            ):
-                if (match.runtime_status or "SCHEDULED").upper() == "SCHEDULED":
-                    break
+    for attempt in range(_DISPATCH_BUSY_ATTEMPTS):
+        try:
+            once = _dispatch_court_once(
+                session,
+                tournament,
+                version_id=version_id,
+                day_date=day_date,
+                court_number=court_number,
+            )
+            if once.errors == [COURT_LOCK_BUSY] and not once.started_match_ids:
+                time_module.sleep(_DISPATCH_BUSY_SLEEP_SEC * (attempt + 1))
+                continue
+            return once
+        except OperationalError as exc:
+            if not _is_sqlite_locked(exc):
+                raise
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("rollback after SQLite lock during dispatch_court")
+            time_module.sleep(_DISPATCH_BUSY_SLEEP_SEC * (attempt + 1))
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("rollback after dispatch_court failure")
+            raise
 
-    # Persist start + lock release together after the mutex row is deleted.
-    session.commit()
-    if started_match is not None:
-        session.refresh(started_match)
-        _send_start_sms(session, tournament, started_match, previous_status)
+    result.errors.append(COURT_LOCK_BUSY)
     return result
 
 
@@ -1087,6 +1269,10 @@ def release_opening_slot(
     released_by: Optional[str] = None,
 ) -> Tuple[OpeningSlotRelease, DispatchResult]:
     """Persist release authorization (idempotent) and dispatch ready matches."""
+    schema_err = _require_schema_ready(session)
+    if schema_err:
+        raise PreassignedSchemaNotReady(schema_err)
+
     existing = session.exec(
         select(OpeningSlotRelease).where(
             OpeningSlotRelease.schedule_version_id == version.id,

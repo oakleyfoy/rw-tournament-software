@@ -196,14 +196,11 @@ def build_schedule_v1(
         result.failed_step = "GENERATE_SLOTS"
 
         # TEMP DEBUG: Log tournament mode and active windows/days
-        import logging
-
         from sqlmodel import func
 
         from app.models.tournament_day import TournamentDay
         from app.models.tournament_time_window import TournamentTimeWindow
 
-        logger = logging.getLogger(__name__)
         logger.error(
             "BUILD DEBUG: use_time_windows=%s clear_existing=%s tournament_id=%s",
             tournament.use_time_windows,

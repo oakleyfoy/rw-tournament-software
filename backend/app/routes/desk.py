@@ -17,6 +17,7 @@ from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.db_schema_patch import inspect_preassigned_automation_schema
 from app.models.court_state import TournamentCourtState
 from app.models.event import Event
 from app.models.match import Match
@@ -49,6 +50,7 @@ from app.services.preassigned_dispatch import (
     OUTCOME_WAITING_COURT,
     OUTCOME_WAITING_RELEASE,
     OUTCOME_WAITING_TIME,
+    PreassignedSchemaNotReady,
     dispatch_after_court_freed,
     dispatch_after_finalize,
     list_ready_assigned_matches,
@@ -677,6 +679,18 @@ class OpeningReleaseResponse(BaseModel):
     waiting_match_ids: List[int] = []
     errors: List[str] = []
     preview: OpeningReleasePreviewResponse
+
+
+class PreassignedAutomationReadinessResponse(BaseModel):
+    """Read-only operational check for PREASSIGNED automation schema."""
+
+    ready: bool
+    dialect: str
+    opening_slot_release_table: bool
+    court_dispatch_lock_table: bool
+    uq_opening_slot_release_version_day_slot: bool
+    uq_court_dispatch_lock_version_day_court: bool
+    errors: List[str] = []
 
 
 class AvailableCourtSlot(BaseModel):
@@ -2619,6 +2633,30 @@ def get_checkin_queue(
 
 
 @router.get(
+    "/desk/preassigned-automation/readiness",
+    response_model=PreassignedAutomationReadinessResponse,
+)
+def get_preassigned_automation_readiness(
+    session: Session = Depends(get_session),
+):
+    """Authenticated read-only check that automation tables/constraints exist.
+
+    Does not create tables, mutate data, or expose credentials/PII.
+    """
+    bind = session.get_bind()
+    status = inspect_preassigned_automation_schema(bind)
+    return PreassignedAutomationReadinessResponse(
+        ready=bool(status["ready"]),
+        dialect=str(status["dialect"]),
+        opening_slot_release_table=bool(status["opening_slot_release_table"]),
+        court_dispatch_lock_table=bool(status["court_dispatch_lock_table"]),
+        uq_opening_slot_release_version_day_slot=bool(status["uq_opening_slot_release_version_day_slot"]),
+        uq_court_dispatch_lock_version_day_court=bool(status["uq_court_dispatch_lock_version_day_court"]),
+        errors=list(status["errors"]),  # type: ignore[arg-type]
+    )
+
+
+@router.get(
     "/desk/tournaments/{tournament_id}/opening-release/preview",
     response_model=OpeningReleasePreviewResponse,
 )
@@ -2673,14 +2711,17 @@ def post_opening_release(
     already = preview_opening_release(
         session, tournament, version, day_date=parsed_day, slot_key=payload.slot_key
     ).already_released
-    release_row, dispatch_result = release_opening_slot(
-        session,
-        tournament,
-        version,
-        day_date=parsed_day,
-        slot_key=payload.slot_key,
-        released_by=payload.released_by,
-    )
+    try:
+        release_row, dispatch_result = release_opening_slot(
+            session,
+            tournament,
+            version,
+            day_date=parsed_day,
+            slot_key=payload.slot_key,
+            released_by=payload.released_by,
+        )
+    except PreassignedSchemaNotReady as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     preview = preview_opening_release(session, tournament, version, day_date=parsed_day, slot_key=payload.slot_key)
     return OpeningReleaseResponse(
         slot_key=release_row.slot_key,
