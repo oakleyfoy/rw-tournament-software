@@ -6,7 +6,7 @@ Now Playing / Up Next, score entry, auto-advancement, working draft management.
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from datetime import time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -43,6 +43,18 @@ from app.services.court_assignment_mode import (
     preassigned_court_block_reason,
     preassigned_reservations,
     resolve_court_assignment_mode,
+)
+from app.services.preassigned_dispatch import (
+    OUTCOME_READY_TO_START,
+    OUTCOME_WAITING_COURT,
+    OUTCOME_WAITING_RELEASE,
+    OUTCOME_WAITING_TIME,
+    dispatch_after_court_freed,
+    dispatch_after_finalize,
+    list_ready_assigned_matches,
+    preview_opening_release,
+    reevaluate_match,
+    release_opening_slot,
 )
 from app.services.reschedule_engine import (
     RebuildDayConfig as RebuildDayConfigDC,
@@ -580,6 +592,93 @@ class ReadyQueueItem(BaseModel):
     team2_display: str
 
 
+class ReadyAssignedItem(BaseModel):
+    """PREASSIGNED match waiting on release, time, or court (Ready To Go — Assigned Court)."""
+
+    match_id: int
+    match_number: int
+    match_code: str
+    event_name: str
+    day_label: str
+    scheduled_time: Optional[str] = None
+    court_name: Optional[str] = None
+    team1_display: str
+    team2_display: str
+    status_label: str
+    waiting_for_court: bool = False
+    slot_key: Optional[str] = None
+    is_opening: bool = False
+    dispatch_outcome: str
+
+
+class OpeningReleaseEventSummaryResponse(BaseModel):
+    event_id: int
+    event_name: str
+    ready_count: int
+    awaiting_checkin_count: int
+    match_ids: List[int] = []
+
+
+class OpeningReleasePreviewResponse(BaseModel):
+    slot_key: str
+    day_date: str
+    scheduled_time_label: str
+    scheduled_count: int
+    ready_count: int
+    awaiting_checkin_count: int
+    courts_available_count: int
+    courts_occupied_count: int
+    already_released: bool
+    ready_match_ids: List[int] = []
+    awaiting_checkin_match_ids: List[int] = []
+    events: List[OpeningReleaseEventSummaryResponse] = []
+    scope_note: str = ""
+
+
+def _opening_release_preview_response(preview) -> OpeningReleasePreviewResponse:
+    return OpeningReleasePreviewResponse(
+        slot_key=preview.slot_key,
+        day_date=preview.day_date.isoformat(),
+        scheduled_time_label=preview.scheduled_time_label,
+        scheduled_count=preview.scheduled_count,
+        ready_count=preview.ready_count,
+        awaiting_checkin_count=preview.awaiting_checkin_count,
+        courts_available_count=preview.courts_available_count,
+        courts_occupied_count=preview.courts_occupied_count,
+        already_released=preview.already_released,
+        ready_match_ids=preview.ready_match_ids,
+        awaiting_checkin_match_ids=preview.awaiting_checkin_match_ids,
+        events=[
+            OpeningReleaseEventSummaryResponse(
+                event_id=ev.event_id,
+                event_name=ev.event_name,
+                ready_count=ev.ready_count,
+                awaiting_checkin_count=ev.awaiting_checkin_count,
+                match_ids=ev.match_ids,
+            )
+            for ev in preview.events
+        ],
+        scope_note=preview.scope_note,
+    )
+
+
+class OpeningReleaseRequest(BaseModel):
+    version_id: int
+    day_date: str  # YYYY-MM-DD
+    slot_key: str
+    released_by: Optional[str] = None
+
+
+class OpeningReleaseResponse(BaseModel):
+    slot_key: str
+    day_date: str
+    already_released: bool
+    started_match_ids: List[int] = []
+    waiting_match_ids: List[int] = []
+    errors: List[str] = []
+    preview: OpeningReleasePreviewResponse
+
+
 class AvailableCourtSlot(BaseModel):
     slot_id: int
     court_name: str
@@ -625,6 +724,7 @@ class DeskSnapshotResponse(BaseModel):
     checkin_board_courts: List[str] = []
     active_checkin_slot_key: Optional[str] = None
     checkin_court_warnings: List[CheckInCourtWarning] = []
+    ready_assigned_queue: List[ReadyAssignedItem] = []
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -664,6 +764,7 @@ class ReadyQueueResponse(BaseModel):
     checkin_board_courts: List[str] = []
     active_checkin_slot_key: Optional[str] = None
     checkin_court_warnings: List[CheckInCourtWarning] = []
+    ready_assigned_queue: List[ReadyAssignedItem] = []
 
 
 class TemporaryPlayerLookupItem(BaseModel):
@@ -752,6 +853,7 @@ class FinalizeResponse(BaseModel):
     warnings: List[AdvancementWarning]
     auto_started: Optional[DeskMatchItem] = None
     sms_preview: Optional["FinalizeSmsPreviewResponse"] = None
+    dispatch_errors: List[str] = []
 
 
 class FinalizeSmsPreviewRecipient(BaseModel):
@@ -961,6 +1063,53 @@ def _slot_start_has_arrived(tournament: Tournament, slot: ScheduleSlot) -> bool:
     return slot_local <= now_local
 
 
+def _status_label_for_ready_assigned(outcome: str) -> str:
+    if outcome == OUTCOME_WAITING_COURT:
+        return "Waiting for Court"
+    if outcome == "waiting_prior":
+        return "Waiting for Court"
+    if outcome == OUTCOME_WAITING_RELEASE:
+        return "Waiting for Release"
+    if outcome == OUTCOME_WAITING_TIME:
+        return "Waiting for Scheduled Time"
+    if outcome == OUTCOME_READY_TO_START:
+        return "Ready — Assigned Court"
+    return "Ready — Assigned Court"
+
+
+def _build_ready_assigned_queue(
+    session: Session,
+    tournament: Tournament,
+    version: ScheduleVersion,
+    items: List[DeskMatchItem],
+) -> List[ReadyAssignedItem]:
+    desk_by_id = {m.match_id: m for m in items}
+    rows: List[ReadyAssignedItem] = []
+    for eligibility in list_ready_assigned_matches(session, tournament, version):
+        desk = desk_by_id.get(eligibility.match_id)
+        if desk is None:
+            continue
+        rows.append(
+            ReadyAssignedItem(
+                match_id=eligibility.match_id,
+                match_number=desk.match_number,
+                match_code=desk.match_code or "",
+                event_name=desk.event_name or "Match",
+                day_label=desk.day_label or "",
+                scheduled_time=eligibility.scheduled_time or desk.scheduled_time,
+                court_name=eligibility.court_name or desk.court_name,
+                team1_display=desk.team1_display or "TBD",
+                team2_display=desk.team2_display or "TBD",
+                status_label=_status_label_for_ready_assigned(eligibility.outcome),
+                waiting_for_court=eligibility.outcome == OUTCOME_WAITING_COURT,
+                slot_key=eligibility.slot_key,
+                is_opening=eligibility.is_opening,
+                dispatch_outcome=eligibility.outcome,
+            )
+        )
+    return rows
+
+
 def _build_checkin_snapshot(
     session: Session,
     tournament: Tournament,
@@ -976,6 +1125,7 @@ def _build_checkin_snapshot(
     List[str],
     Optional[str],
     List[CheckInCourtWarning],
+    List[ReadyAssignedItem],
 ]:
     # region agent log
     _agent_debug_log(
@@ -1542,6 +1692,8 @@ def _build_checkin_snapshot(
                 assignment.match_id,
                 (f"{court_name} has an in-progress match but is not available for the {time_label} schedule slot."),
             )
+    ready_assigned_queue = _build_ready_assigned_queue(session, tournament, version, items)
+
     # region agent log
     _agent_debug_log(
         "H5",
@@ -1550,6 +1702,7 @@ def _build_checkin_snapshot(
         {
             "checkinMatchesCount": len(checkin_matches),
             "readyQueueCount": len(ready_items),
+            "readyAssignedCount": len(ready_assigned_queue),
             "slotOptionsCount": len(checkin_slot_options),
             "slotRowsKeysCount": len(checkin_slot_rows.keys()),
             "slotOptionsPreview": [
@@ -1574,6 +1727,7 @@ def _build_checkin_snapshot(
         checkin_board_courts,
         active_slot_key,
         checkin_court_warnings,
+        ready_assigned_queue,
     )
 
 
@@ -2052,6 +2206,7 @@ def desk_snapshot(
     checkin_board_courts: List[str] = []
     active_checkin_slot_key: Optional[str] = None
     checkin_court_warnings: List[CheckInCourtWarning] = []
+    ready_assigned_queue: List[ReadyAssignedItem] = []
     if management_mode == MODE_CHECKIN_MANAGEMENT:
         (
             checkin_matches,
@@ -2063,6 +2218,7 @@ def desk_snapshot(
             checkin_board_courts,
             active_checkin_slot_key,
             checkin_court_warnings,
+            ready_assigned_queue,
         ) = _build_checkin_snapshot(session, tournament, version, items)
 
     # region agent log
@@ -2105,6 +2261,7 @@ def desk_snapshot(
         checkin_board_courts=checkin_board_courts,
         active_checkin_slot_key=active_checkin_slot_key,
         checkin_court_warnings=checkin_court_warnings,
+        ready_assigned_queue=ready_assigned_queue,
     )
 
 
@@ -2234,6 +2391,18 @@ def set_team_checkin(
     row.updated_at = datetime.utcnow()
     session.add(row)
     session.commit()
+    session.refresh(match)
+
+    # Late check-in after opening release: reevaluate without another Release click.
+    if payload.checked_in:
+        try:
+            reevaluate_match(session, tournament, match)
+        except Exception:
+            logger.exception(
+                "preassigned reevaluate after team check-in failed tournament=%s match=%s",
+                tournament_id,
+                match_id,
+            )
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
     (
@@ -2246,6 +2415,7 @@ def set_team_checkin(
         checkin_board_courts,
         active_checkin_slot_key,
         checkin_court_warnings,
+        ready_assigned_queue,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -2260,6 +2430,7 @@ def set_team_checkin(
         checkin_board_courts=checkin_board_courts,
         active_checkin_slot_key=active_checkin_slot_key,
         checkin_court_warnings=checkin_court_warnings,
+        ready_assigned_queue=ready_assigned_queue,
     )
 
 
@@ -2332,6 +2503,17 @@ def set_player_checkin(
     row.updated_at = datetime.utcnow()
     session.add(row)
     session.commit()
+    session.refresh(match)
+
+    if payload.checked_in:
+        try:
+            reevaluate_match(session, tournament, match)
+        except Exception:
+            logger.exception(
+                "preassigned reevaluate after player check-in failed tournament=%s match=%s",
+                tournament_id,
+                match_id,
+            )
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
     (
@@ -2344,6 +2526,7 @@ def set_player_checkin(
         checkin_board_courts,
         active_checkin_slot_key,
         checkin_court_warnings,
+        ready_assigned_queue,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -2358,6 +2541,7 @@ def set_player_checkin(
         checkin_board_courts=checkin_board_courts,
         active_checkin_slot_key=active_checkin_slot_key,
         checkin_court_warnings=checkin_court_warnings,
+        ready_assigned_queue=ready_assigned_queue,
     )
 
 
@@ -2400,6 +2584,7 @@ def get_checkin_queue(
         checkin_board_courts,
         active_checkin_slot_key,
         checkin_court_warnings,
+        ready_assigned_queue,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     # region agent log
     _agent_debug_log(
@@ -2429,6 +2614,82 @@ def get_checkin_queue(
         checkin_board_courts=checkin_board_courts,
         active_checkin_slot_key=active_checkin_slot_key,
         checkin_court_warnings=checkin_court_warnings,
+        ready_assigned_queue=ready_assigned_queue,
+    )
+
+
+@router.get(
+    "/desk/tournaments/{tournament_id}/opening-release/preview",
+    response_model=OpeningReleasePreviewResponse,
+)
+def get_opening_release_preview(
+    tournament_id: int,
+    version_id: int = Query(...),
+    day_date: str = Query(..., description="YYYY-MM-DD"),
+    slot_key: str = Query(..., description="YYYY-MM-DD|HH:MM"),
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    try:
+        parsed_day = date.fromisoformat(day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+    preview = preview_opening_release(session, tournament, version, day_date=parsed_day, slot_key=slot_key)
+    return _opening_release_preview_response(preview)
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/opening-release",
+    response_model=OpeningReleaseResponse,
+)
+def post_opening_release(
+    tournament_id: int,
+    payload: OpeningReleaseRequest,
+    session: Session = Depends(get_session),
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="Opening release is only allowed on DRAFT (operational) schedule versions",
+        )
+    if _normalize_management_mode(tournament.desk_management_mode) != MODE_CHECKIN_MANAGEMENT:
+        raise HTTPException(status_code=400, detail="Opening release requires checkin_management mode")
+    try:
+        parsed_day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+
+    already = preview_opening_release(
+        session, tournament, version, day_date=parsed_day, slot_key=payload.slot_key
+    ).already_released
+    release_row, dispatch_result = release_opening_slot(
+        session,
+        tournament,
+        version,
+        day_date=parsed_day,
+        slot_key=payload.slot_key,
+        released_by=payload.released_by,
+    )
+    preview = preview_opening_release(session, tournament, version, day_date=parsed_day, slot_key=payload.slot_key)
+    return OpeningReleaseResponse(
+        slot_key=release_row.slot_key,
+        day_date=release_row.day_date.isoformat(),
+        already_released=already,
+        started_match_ids=dispatch_result.started_match_ids,
+        waiting_match_ids=dispatch_result.waiting_match_ids,
+        errors=dispatch_result.errors,
+        preview=_opening_release_preview_response(preview),
     )
 
 
@@ -2690,6 +2951,7 @@ def assign_ready_match_to_slot(
         _checkin_board_courts,
         active_checkin_slot_key,
         _checkin_court_warnings,
+        _ready_assigned_queue,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     ready_ids = {r.match_id for r in ready_queue}
     if payload.match_id not in ready_ids:
@@ -3093,64 +3355,87 @@ def finalize_match(
 
     management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
 
-    # Auto-start next match on the same court (court-management only).
+    # Auto-start next match. PREASSIGNED uses shared dispatch (never rolls back score).
+    # Court-management DYNAMIC keeps the legacy same-court auto-start.
     auto_started_match_id = None
-    if management_mode != MODE_CHECKIN_MANAGEMENT:
-        finalized_assignment = session.exec(
-            select(MatchAssignment).where(
-                MatchAssignment.schedule_version_id == payload.version_id,
-                MatchAssignment.match_id == match.id,
-            )
-        ).first()
-        if finalized_assignment:
-            finalized_slot = session.get(ScheduleSlot, finalized_assignment.slot_id)
-            if finalized_slot:
-                court_num = finalized_slot.court_number
-                court_slots = session.exec(
-                    select(ScheduleSlot)
-                    .where(
-                        ScheduleSlot.schedule_version_id == payload.version_id,
-                        ScheduleSlot.court_number == court_num,
-                        ScheduleSlot.day_date == finalized_slot.day_date,
-                    )
-                    .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
-                ).all()
-                court_slot_ids = [s.id for s in court_slots]
-                if court_slot_ids:
-                    court_assignments = session.exec(
-                        select(MatchAssignment).where(
-                            MatchAssignment.schedule_version_id == payload.version_id,
-                            MatchAssignment.slot_id.in_(court_slot_ids),
-                        )
-                    ).all()
-                    slot_order = {sid: i for i, sid in enumerate(court_slot_ids)}
-                    court_assignments.sort(key=lambda a: slot_order.get(a.slot_id, 0))
+    dispatch_errors: List[str] = []
+    finalized_assignment = session.exec(
+        select(MatchAssignment).where(
+            MatchAssignment.schedule_version_id == payload.version_id,
+            MatchAssignment.match_id == match.id,
+        )
+    ).first()
+    finalized_slot = session.get(ScheduleSlot, finalized_assignment.slot_id) if finalized_assignment else None
+    finalized_event = session.get(Event, match.event_id) if match.event_id else None
+    preassigned_day = bool(finalized_slot is not None and is_preassigned(finalized_event, finalized_slot.day_date))
 
-                    finalized_order = slot_order.get(finalized_assignment.slot_id, -1)
-                    for ca in court_assignments:
-                        if slot_order.get(ca.slot_id, -1) <= finalized_order:
-                            continue
-                        next_slot = session.get(ScheduleSlot, ca.slot_id)
-                        if not next_slot or not _slot_start_has_arrived(tournament, next_slot):
-                            continue
-                        next_match = session.get(Match, ca.match_id)
-                        if (
-                            next_match
-                            and (next_match.runtime_status or "SCHEDULED").upper() == "SCHEDULED"
-                            and next_match.team_a_id is not None
-                            and next_match.team_b_id is not None
-                        ):
-                            next_match.runtime_status = "IN_PROGRESS"
-                            next_match.started_at = datetime.utcnow()
-                            session.add(next_match)
-                            session.commit()
-                            auto_started_match_id = next_match.id
-                            break
+    raw_updates = adv_result.get("downstream_updates", [])
+    downstream_match_ids = [u["match_id"] for u in raw_updates]
+
+    if preassigned_day:
+        try:
+            dispatch_result = dispatch_after_finalize(
+                session,
+                tournament,
+                match,
+                downstream_match_ids=downstream_match_ids,
+            )
+            if dispatch_result.started_match_ids:
+                auto_started_match_id = dispatch_result.started_match_ids[0]
+            dispatch_errors.extend(dispatch_result.errors)
+        except Exception as exc:
+            logger.exception(
+                "preassigned dispatch after finalize failed tournament=%s match=%s",
+                tournament_id,
+                match_id,
+            )
+            dispatch_errors.append(str(exc))
+    elif management_mode != MODE_CHECKIN_MANAGEMENT and finalized_assignment and finalized_slot:
+        court_num = finalized_slot.court_number
+        court_slots = session.exec(
+            select(ScheduleSlot)
+            .where(
+                ScheduleSlot.schedule_version_id == payload.version_id,
+                ScheduleSlot.court_number == court_num,
+                ScheduleSlot.day_date == finalized_slot.day_date,
+            )
+            .order_by(ScheduleSlot.day_date, ScheduleSlot.start_time)
+        ).all()
+        court_slot_ids = [s.id for s in court_slots]
+        if court_slot_ids:
+            court_assignments = session.exec(
+                select(MatchAssignment).where(
+                    MatchAssignment.schedule_version_id == payload.version_id,
+                    MatchAssignment.slot_id.in_(court_slot_ids),
+                )
+            ).all()
+            slot_order = {sid: i for i, sid in enumerate(court_slot_ids)}
+            court_assignments.sort(key=lambda a: slot_order.get(a.slot_id, 0))
+
+            finalized_order = slot_order.get(finalized_assignment.slot_id, -1)
+            for ca in court_assignments:
+                if slot_order.get(ca.slot_id, -1) <= finalized_order:
+                    continue
+                next_slot = session.get(ScheduleSlot, ca.slot_id)
+                if not next_slot or not _slot_start_has_arrived(tournament, next_slot):
+                    continue
+                next_match = session.get(Match, ca.match_id)
+                if (
+                    next_match
+                    and (next_match.runtime_status or "SCHEDULED").upper() == "SCHEDULED"
+                    and next_match.team_a_id is not None
+                    and next_match.team_b_id is not None
+                ):
+                    next_match.runtime_status = "IN_PROGRESS"
+                    next_match.started_at = datetime.utcnow()
+                    session.add(next_match)
+                    session.commit()
+                    auto_started_match_id = next_match.id
+                    break
 
     desk_item = _match_to_desk_item(match, session, tournament)
 
     # Enrich downstream updates with schedule info and opponent names
-    raw_updates = adv_result.get("downstream_updates", [])
 
     # Collect all IDs needed for bulk lookups
     down_match_ids = [u["match_id"] for u in raw_updates]
@@ -3289,7 +3574,8 @@ def finalize_match(
                     for row in list(preview_data.get("recipients") or [])
                 ],
             )
-        if started_match:
+        # PREASSIGNED starts already emitted status SMS via start_match_canonical.
+        if started_match and not preassigned_day:
             automation.handle_match_status_change(
                 started_match,
                 previous_status="SCHEDULED",
@@ -3308,6 +3594,7 @@ def finalize_match(
         warnings=warns,
         auto_started=auto_started_item,
         sms_preview=sms_preview,
+        dispatch_errors=dispatch_errors,
     )
 
 
@@ -5599,6 +5886,14 @@ def move_match(
             },
         )
 
+    reserved_reason = preassigned_court_block_reason(
+        target_slot,
+        preassigned_reservations(session, payload.version_id),
+        ignore_match_id=match_id,
+    )
+    if reserved_reason:
+        raise HTTPException(status_code=409, detail=reserved_reason)
+
     existing_assignment = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == payload.version_id,
@@ -5609,6 +5904,7 @@ def move_match(
     warnings: List[str] = []
 
     previous_slot_id = existing_assignment.slot_id if existing_assignment else None
+    previous_slot = session.get(ScheduleSlot, previous_slot_id) if previous_slot_id else None
 
     try:
         validate_assignment_ownership(
@@ -5656,6 +5952,35 @@ def move_match(
             match_id,
         )
 
+    # Staff override: reevaluate the moved match on its new court.
+    try:
+        reevaluate_match(session, tournament, match)
+    except Exception:
+        logger.exception(
+            "preassigned reevaluate after move failed tournament=%s match=%s",
+            tournament_id,
+            match_id,
+        )
+    # Also free the previous court for the next eligible reserved match.
+    if previous_slot is not None and (
+        previous_slot.court_number != target_slot.court_number or previous_slot.day_date != target_slot.day_date
+    ):
+        try:
+            dispatch_after_court_freed(
+                session,
+                tournament,
+                version_id=payload.version_id,
+                day_date=previous_slot.day_date,
+                court_number=previous_slot.court_number,
+            )
+        except Exception:
+            logger.exception(
+                "preassigned dispatch after move (previous court) failed tournament=%s match=%s",
+                tournament_id,
+                match_id,
+            )
+
+    session.refresh(match)
     item = _match_to_desk_item(match, session, tournament)
     return MoveMatchResponse(success=True, match=item, warnings=warnings)
 

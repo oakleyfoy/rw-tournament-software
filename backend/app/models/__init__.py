@@ -1,4 +1,5 @@
 from app.models.auth_session import AuthSession
+from app.models.court_dispatch_lock import CourtDispatchLock
 from app.models.court_state import TournamentCourtState
 from app.models.event import Event, EventCategory
 from app.models.match import Match
@@ -6,6 +7,7 @@ from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
 from app.models.match_player_checkin import MatchPlayerCheckIn
+from app.models.opening_slot_release import OpeningSlotRelease
 from app.models.player import Player
 from app.models.policy_run import PolicyRun
 from app.models.schedule_slot import ScheduleSlot
@@ -43,6 +45,8 @@ __all__ = [
     "MatchCheckIn",
     "MatchLock",
     "MatchPlayerCheckIn",
+    "OpeningSlotRelease",
+    "CourtDispatchLock",
     "SlotLock",
     "StartOverBaselineAssignment",
     "Team",

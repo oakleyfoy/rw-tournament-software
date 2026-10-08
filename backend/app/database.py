@@ -35,6 +35,7 @@ def init_db() -> None:
     """Initialize database - create all tables"""
     # Import all models to ensure they're registered with SQLModel metadata
     from app.models.auth_session import AuthSession  # noqa: F401
+    from app.models.court_dispatch_lock import CourtDispatchLock  # noqa: F401
     from app.models.court_state import TournamentCourtState  # noqa: F401
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401
@@ -42,6 +43,7 @@ def init_db() -> None:
     from app.models.match_checkin import MatchCheckIn  # noqa: F401
     from app.models.match_lock import MatchLock  # noqa: F401
     from app.models.match_player_checkin import MatchPlayerCheckIn  # noqa: F401
+    from app.models.opening_slot_release import OpeningSlotRelease  # noqa: F401
     from app.models.player import Player  # noqa: F401
     from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.schedule_slot import ScheduleSlot  # noqa: F401
