@@ -3129,6 +3129,57 @@ export interface ReadyQueueItem {
   team2_display: string
 }
 
+export interface ReadyAssignedItem {
+  match_id: number
+  match_number: number
+  match_code: string
+  event_name: string
+  day_label: string
+  scheduled_time: string | null
+  court_name: string | null
+  team1_display: string
+  team2_display: string
+  status_label: string
+  waiting_for_court: boolean
+  slot_key: string | null
+  is_opening: boolean
+  dispatch_outcome: string
+}
+
+export interface OpeningReleaseEventSummary {
+  event_id: number
+  event_name: string
+  ready_count: number
+  awaiting_checkin_count: number
+  match_ids: number[]
+}
+
+export interface OpeningReleasePreview {
+  slot_key: string
+  day_date: string
+  scheduled_time_label: string
+  scheduled_count: number
+  ready_count: number
+  awaiting_checkin_count: number
+  courts_available_count: number
+  courts_occupied_count: number
+  already_released: boolean
+  ready_match_ids: number[]
+  awaiting_checkin_match_ids: number[]
+  events: OpeningReleaseEventSummary[]
+  scope_note: string
+}
+
+export interface OpeningReleaseResponse {
+  slot_key: string
+  day_date: string
+  already_released: boolean
+  started_match_ids: number[]
+  waiting_match_ids: number[]
+  errors: string[]
+  preview: OpeningReleasePreview
+}
+
 export interface AvailableCourtSlot {
   slot_id: number
   court_name: string
@@ -3174,6 +3225,7 @@ export interface DeskSnapshotResponse {
   checkin_board_courts: string[]
   active_checkin_slot_key: string | null
   checkin_court_warnings: CheckInCourtWarning[]
+  ready_assigned_queue: ReadyAssignedItem[]
 }
 
 export interface TemporaryPlayerLookupItem {
@@ -3229,6 +3281,7 @@ export interface ReadyQueueResponse {
   checkin_board_courts: string[]
   active_checkin_slot_key: string | null
   checkin_court_warnings: CheckInCourtWarning[]
+  ready_assigned_queue: ReadyAssignedItem[]
 }
 
 export interface WorkingDraftResponse {
@@ -3263,6 +3316,7 @@ export interface FinalizeResponse {
   warnings: AdvancementWarning[]
   auto_started: DeskMatchItem | null
   sms_preview?: FinalizeSmsPreview | null
+  dispatch_errors?: string[]
 }
 
 export interface FinalizeSmsPreviewRecipient {
@@ -3420,6 +3474,30 @@ export async function deskCheckInTeam(
   return fetchJson<ReadyQueueResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/team`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function previewOpeningRelease(
+  tournamentId: number,
+  params: { version_id: number; day_date: string; slot_key: string }
+): Promise<OpeningReleasePreview> {
+  const qs = new URLSearchParams({
+    version_id: String(params.version_id),
+    day_date: params.day_date,
+    slot_key: params.slot_key,
+  })
+  return fetchJson<OpeningReleasePreview>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/opening-release/preview?${qs.toString()}`
+  )
+}
+
+export async function releaseOpeningSlot(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; slot_key: string; released_by?: string }
+): Promise<OpeningReleaseResponse> {
+  return fetchJson<OpeningReleaseResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/opening-release`,
+    { method: 'POST', body: JSON.stringify(payload) }
   )
 }
 

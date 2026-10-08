@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   buildPreassignedReadyEntries,
   mergeReadyQueueWithPreassigned,
+  preassignedEntryToReadyQueueItem,
 } from './preassignedReadyVisibility'
 import {
   getEvents,
@@ -31,6 +32,8 @@ import {
   deskRemapCourts,
   deskCheckInPlayer,
   deskCheckInTeam,
+  previewOpeningRelease,
+  releaseOpeningSlot,
   assignReadyMatchToSlot,
   bulkPauseInProgress,
   bulkDelayAfter,
@@ -51,6 +54,7 @@ import {
   CheckInMatchItem,
   ReadyQueueResponse,
   ReadyQueueItem,
+  OpeningReleasePreview,
   AvailableCourtSlot,
   MatchCheckInSideState,
   PlayerCheckInState,
@@ -9270,6 +9274,7 @@ function CheckInReadyQueueCard({
   nativeDragging,
   onPointerDragStart,
   allowDrag = true,
+  showReturnButton = true,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -9282,6 +9287,7 @@ function CheckInReadyQueueCard({
   nativeDragging: boolean
   onPointerDragStart: (event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => void
   allowDrag?: boolean
+  showReturnButton?: boolean
 }) {
   const tint = getSlotTint(slotTintIndex)
 
@@ -9323,42 +9329,44 @@ function CheckInReadyQueueCard({
           )}
         </div>
         {/* return-to-check-in button lives in header */}
-        <button
-          type="button"
-          draggable={false}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (!returning) onReturnToCheckIn()
-          }}
-          disabled={returning}
-          title="Return to check-in"
-          aria-label="Return to check-in"
-          style={{
-            flexShrink: 0,
-            width: 22,
-            height: 22,
-            borderRadius: 4,
-            border: '1px solid rgba(255,255,255,0.5)',
-            backgroundColor: 'rgba(255,255,255,0.15)',
-            color: '#fff',
-            cursor: returning ? 'wait' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 0,
-            opacity: returning ? 0.55 : 1,
-          }}
-        >
-          {returning ? (
-            <span style={{ fontSize: 10, fontWeight: 700 }}>...</span>
-          ) : (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
-              <path d="M9 14 4 9l5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-        </button>
+        {showReturnButton && (
+          <button
+            type="button"
+            draggable={false}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!returning) onReturnToCheckIn()
+            }}
+            disabled={returning}
+            title="Return to check-in"
+            aria-label="Return to check-in"
+            style={{
+              flexShrink: 0,
+              width: 22,
+              height: 22,
+              borderRadius: 4,
+              border: '1px solid rgba(255,255,255,0.5)',
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              color: '#fff',
+              cursor: returning ? 'wait' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              opacity: returning ? 0.55 : 1,
+            }}
+          >
+            {returning ? (
+              <span style={{ fontSize: 10, fontWeight: 700 }}>...</span>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
+                <path d="M9 14 4 9l5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+        )}
       </div>
       {/* body — same minHeight as court card so both card types are identical height */}
       <div style={{ backgroundColor: '#fff', padding: '5px 7px 6px', minHeight: 88, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -9433,6 +9441,9 @@ export default function TournamentDeskPage() {
     proceed: () => Promise<void>
   } | null>(null)
   const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
+  const [openingReleasePreview, setOpeningReleasePreview] = useState<OpeningReleasePreview | null>(null)
+  const [openingReleaseBusy, setOpeningReleaseBusy] = useState(false)
+  const [openingReleaseError, setOpeningReleaseError] = useState<string | null>(null)
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -9450,6 +9461,7 @@ export default function TournamentDeskPage() {
         checkin_board_courts: resp.checkin_board_courts,
         active_checkin_slot_key: resp.active_checkin_slot_key,
         checkin_court_warnings: resp.checkin_court_warnings,
+        ready_assigned_queue: resp.ready_assigned_queue || [],
       }
     })
   }, [])
@@ -10757,16 +10769,16 @@ export default function TournamentDeskPage() {
     }))
     .filter((group) => group.entries.length > 0)
 
-  // Fully checked-in PREASSIGNED matches are excluded from ready_queue by the
-  // backend. Fold them into Ready To Go and onto their assigned court cards.
+  // PREASSIGNED matches come from backend ready_assigned_queue (check-in + R2+).
   const preassignedReadyEntries = buildPreassignedReadyEntries({
     checkinMatches: data.checkin_matches || [],
     matches: data.matches || [],
     readyQueue: data.ready_queue || [],
+    readyAssignedQueue: data.ready_assigned_queue || [],
     nowPlayingByCourt: data.now_playing_by_court || {},
   }).filter((entry) => (
     effectiveSelectedCheckInSlotKey === 'all' ||
-    slotKeyByMatchId.get(entry.matchId) === effectiveSelectedCheckInSlotKey
+    (entry.slotKey || slotKeyByMatchId.get(entry.matchId)) === effectiveSelectedCheckInSlotKey
   ))
   const preassignedReadyByCourt = new Map<string, (typeof preassignedReadyEntries)[number]>()
   for (const entry of preassignedReadyEntries) {
@@ -10775,8 +10787,6 @@ export default function TournamentDeskPage() {
       preassignedReadyByCourt.set(entry.courtName, entry)
     }
   }
-  const preassignedReadyMatchIds = new Set(preassignedReadyEntries.map((entry) => entry.matchId))
-
   const filteredReadyQueue = mergeReadyQueueWithPreassigned(
     data.ready_queue || [],
     preassignedReadyEntries,
@@ -10784,6 +10794,56 @@ export default function TournamentDeskPage() {
     effectiveSelectedCheckInSlotKey === 'all' ||
     slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
   ))
+
+  const releaseSlotKey = data.active_checkin_slot_key || focusSlotKey || null
+  const releaseDayDate = releaseSlotKey ? releaseSlotKey.split('|')[0] : null
+  const releaseTimeLabel = releaseSlotKey
+    ? (slotLabelByKey.get(releaseSlotKey) || releaseSlotKey.split('|')[1] || '')
+    : ''
+
+  const handlePreviewOpeningRelease = async () => {
+    if (!tid || !data || !releaseSlotKey || !releaseDayDate) return
+    setOpeningReleaseError(null)
+    setOpeningReleaseBusy(true)
+    try {
+      const preview = await previewOpeningRelease(tid, {
+        version_id: data.version_id,
+        day_date: releaseDayDate,
+        slot_key: releaseSlotKey,
+      })
+      setOpeningReleasePreview(preview)
+    } catch (e) {
+      setOpeningReleaseError(e instanceof Error ? e.message : 'Failed to load release preview')
+    } finally {
+      setOpeningReleaseBusy(false)
+    }
+  }
+
+  const handleConfirmOpeningRelease = async () => {
+    if (!tid || !data || !releaseSlotKey || !releaseDayDate) return
+    setOpeningReleaseBusy(true)
+    setOpeningReleaseError(null)
+    try {
+      const result = await releaseOpeningSlot(tid, {
+        version_id: data.version_id,
+        day_date: releaseDayDate,
+        slot_key: releaseSlotKey,
+      })
+      setOpeningReleasePreview(null)
+      if (result.errors?.length) {
+        setBulkToast(`Released; ${result.started_match_ids.length} started. ${result.errors.join('; ')}`)
+      } else {
+        setBulkToast(
+          `Opening slot released — ${result.started_match_ids.length} started, ${result.waiting_match_ids.length} waiting for court`,
+        )
+      }
+      await loadSnapshot(data.version_id)
+    } catch (e) {
+      setOpeningReleaseError(e instanceof Error ? e.message : 'Release failed')
+    } finally {
+      setOpeningReleaseBusy(false)
+    }
+  }
 
   // Matches in the dynamic ready queue are waiting for court assignment; they
   // should not count as occupying a court on the board. Preassigned ready
@@ -11411,9 +11471,135 @@ export default function TournamentDeskPage() {
                       ))}
                     </div>
                   )}
+                  {releaseSlotKey && releaseDayDate && (
+                    <div style={{
+                      border: '1px solid #c5cae9',
+                      borderRadius: 8,
+                      backgroundColor: '#eef1ff',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 12,
+                      flexWrap: 'wrap',
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: '#283593' }}>
+                          Opening WF Round 1 — {releaseTimeLabel || releaseSlotKey}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#5c6bc0', marginTop: 2 }}>
+                          Release fully checked-in preassigned matches for this opening slot (authorizes early start).
+                        </div>
+                        {openingReleaseError && (
+                          <div style={{ fontSize: 12, color: '#c62828', marginTop: 4 }}>{openingReleaseError}</div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={openingReleaseBusy || !isDraft}
+                        onClick={() => void handlePreviewOpeningRelease()}
+                        style={{
+                          padding: '8px 14px',
+                          fontSize: 13,
+                          fontWeight: 700,
+                          borderRadius: 6,
+                          border: '1px solid #3949ab',
+                          backgroundColor: openingReleaseBusy || !isDraft ? '#c5cae9' : '#3949ab',
+                          color: '#fff',
+                          cursor: openingReleaseBusy || !isDraft ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {openingReleaseBusy ? 'Working…' : 'Release Opening Matches'}
+                      </button>
+                    </div>
+                  )}
+                  {openingReleasePreview && (
+                    <div style={{
+                      border: '1px solid #9fa8da',
+                      borderRadius: 8,
+                      backgroundColor: '#fff',
+                      padding: '12px 14px',
+                    }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: '#283593', marginBottom: 8 }}>
+                        Confirm Opening Release — {openingReleasePreview.scheduled_time_label || releaseTimeLabel}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#5c6bc0', marginBottom: 8 }}>
+                        {openingReleasePreview.scope_note ||
+                          'Releases all PREASSIGNED WF Round 1 matches in this time slot. DYNAMIC_CHECKIN events are excluded.'}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, marginBottom: 10 }}>
+                        {[
+                          ['Ready', openingReleasePreview.ready_count],
+                          ['Missing check-in', openingReleasePreview.awaiting_checkin_count],
+                          ['Courts available', openingReleasePreview.courts_available_count],
+                          ['Courts occupied', openingReleasePreview.courts_occupied_count],
+                        ].map(([label, value]) => (
+                          <div key={String(label)} style={{ border: '1px solid #e8eaf6', borderRadius: 6, padding: '8px 10px', background: '#f8f9ff' }}>
+                            <div style={{ fontSize: 11, color: '#7986cb', fontWeight: 700 }}>{label}</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: '#1a237e' }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {(openingReleasePreview.events || []).length > 0 && (
+                        <div style={{ marginBottom: 10, border: '1px solid #e8eaf6', borderRadius: 6, padding: '8px 10px', background: '#fafbff' }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: '#3949ab', marginBottom: 6 }}>
+                            Events included ({openingReleasePreview.events.length})
+                          </div>
+                          {openingReleasePreview.events.map((ev) => (
+                            <div key={ev.event_id} style={{ fontSize: 12, color: '#37474f', marginBottom: 4 }}>
+                              <strong>{ev.event_name}</strong>
+                              {` — ${ev.ready_count} ready, ${ev.awaiting_checkin_count} missing check-in`}
+                              {ev.match_ids?.length ? ` (matches ${ev.match_ids.join(', ')})` : ''}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {openingReleasePreview.already_released && (
+                        <div style={{ fontSize: 12, color: '#ef6c00', marginBottom: 8 }}>
+                          This slot was already released — confirming will re-dispatch eligible matches.
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          type="button"
+                          disabled={openingReleaseBusy}
+                          onClick={() => void handleConfirmOpeningRelease()}
+                          style={{
+                            padding: '8px 14px',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            borderRadius: 6,
+                            border: 'none',
+                            backgroundColor: '#2e7d32',
+                            color: '#fff',
+                            cursor: openingReleaseBusy ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          Confirm Release
+                        </button>
+                        <button
+                          type="button"
+                          disabled={openingReleaseBusy}
+                          onClick={() => setOpeningReleasePreview(null)}
+                          style={{
+                            padding: '8px 14px',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            borderRadius: 6,
+                            border: '1px solid #ccc',
+                            backgroundColor: '#f5f5f5',
+                            color: '#555',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
-                      Currently Playing
+                      On Court
                     </div>
                     <div style={{ padding: 12 }}>
                       {currentCourtRows.length === 0 ? (
@@ -11527,52 +11713,87 @@ export default function TournamentDeskPage() {
                       </div>
                     </div>
 
-                    <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                      <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
-                        Ready To Go
+                    <div style={{ display: 'grid', gap: 14 }}>
+                      <div style={{ border: '1px solid #d1c4e9', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 12px', borderBottom: '1px solid #ede7f6', fontSize: 14, fontWeight: 800, color: '#5e35b1', backgroundColor: '#faf5ff' }}>
+                          Ready To Go — Assigned Court
+                        </div>
+                        <div style={{ padding: 12 }}>
+                          {preassignedReadyEntries.length === 0 ? (
+                            <div style={{ fontSize: 12, color: '#90a4ae' }}>
+                              No preassigned matches waiting on release, time, or court.
+                            </div>
+                          ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                              {preassignedReadyEntries.map((entry) => {
+                                const rq = preassignedEntryToReadyQueueItem(entry)
+                                const rqSlotKey = entry.slotKey || slotKeyByMatchId.get(entry.matchId) || null
+                                const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
+                                const courtTimeLabel = `${entry.courtName.replace(/^Court\s+/i, 'Ct ')}${entry.scheduledTime ? ` · ${entry.scheduledTime}` : ''}`
+                                return (
+                                  <CheckInReadyQueueCard
+                                    key={entry.matchId}
+                                    rq={rq}
+                                    titleLabel={`#${entry.matchNumber} · ${entry.statusLabel}`}
+                                    headerRightTop={courtTimeLabel}
+                                    queueElapsedLabel={formatElapsedLabel(entry.checkinMatch?.ready_at || null, null)}
+                                    deskMatch={entry.deskMatch}
+                                    returning={false}
+                                    onReturnToCheckIn={() => undefined}
+                                    slotTintIndex={rqSlotIndex}
+                                    nativeDragging={false}
+                                    onPointerDragStart={() => undefined}
+                                    allowDrag={false}
+                                    showReturnButton={false}
+                                  />
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div style={{ padding: 12 }}>
-                        {filteredReadyQueue.length === 0 ? (
-                          <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting right now.</div>
-                        ) : (
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-                            {filteredReadyQueue.map((rq) => {
-                              const deskMatch = matchById.get(rq.match_id)
-                              const isPreassignedReady = preassignedReadyMatchIds.has(rq.match_id)
-                              const preassignedEntry = preassignedReadyEntries.find((e) => e.matchId === rq.match_id)
-                              const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
-                              const slotLabelResolved = rqSlotKey
-                                ? slotLabelByKey.get(rqSlotKey) || null
-                                : null
-                              const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
-                              const courtTimeLabel = isPreassignedReady && preassignedEntry
-                                ? `${preassignedEntry.courtName.replace(/^Court\s+/i, 'Ct ')}${preassignedEntry.scheduledTime ? ` · ${preassignedEntry.scheduledTime}` : ''}`
-                                : null
-                              const headerTop = (
-                                courtTimeLabel ||
-                                slotLabelResolved ||
-                                `${rq.day_label} ${rq.scheduled_time || ''}`.trim()
-                              ) || '—'
-                              const queueElapsedLabel = formatElapsedLabel(rq.ready_at, null)
-                              return (
-                                <CheckInReadyQueueCard
-                                  key={rq.match_id}
-                                  rq={rq}
-                                  titleLabel={formatReadyQueueLabel(rq)}
-                                  headerRightTop={headerTop}
-                                  queueElapsedLabel={queueElapsedLabel}
-                                  deskMatch={deskMatch}
-                                  returning={readyResettingIds.has(rq.match_id)}
-                                  onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
-                                  slotTintIndex={rqSlotIndex}
-                                  nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
-                                  onPointerDragStart={handlePointerDragStart}
-                                  allowDrag={!isPreassignedReady}
-                                />
-                              )
-                            })}
-                          </div>
-                        )}
+
+                      <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
+                          Dynamic Ready To Go
+                        </div>
+                        <div style={{ padding: 12 }}>
+                          {filteredReadyQueue.length === 0 ? (
+                            <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting for a court right now.</div>
+                          ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                              {filteredReadyQueue.map((rq) => {
+                                const deskMatch = matchById.get(rq.match_id)
+                                const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
+                                const slotLabelResolved = rqSlotKey
+                                  ? slotLabelByKey.get(rqSlotKey) || null
+                                  : null
+                                const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
+                                const headerTop = (
+                                  slotLabelResolved ||
+                                  `${rq.day_label} ${rq.scheduled_time || ''}`.trim()
+                                ) || '—'
+                                const queueElapsedLabel = formatElapsedLabel(rq.ready_at, null)
+                                return (
+                                  <CheckInReadyQueueCard
+                                    key={rq.match_id}
+                                    rq={rq}
+                                    titleLabel={formatReadyQueueLabel(rq)}
+                                    headerRightTop={headerTop}
+                                    queueElapsedLabel={queueElapsedLabel}
+                                    deskMatch={deskMatch}
+                                    returning={readyResettingIds.has(rq.match_id)}
+                                    onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
+                                    slotTintIndex={rqSlotIndex}
+                                    nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
+                                    onPointerDragStart={handlePointerDragStart}
+                                    allowDrag
+                                  />
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>

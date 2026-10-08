@@ -639,6 +639,40 @@ def ensure_start_over_baseline_assignment_table(engine: Engine) -> None:
         )
 
 
+def ensure_opening_slot_release_table(engine: Engine) -> None:
+    """Ensure openingslotrelease table exists. Safe to run at every startup."""
+    try:
+        from app.models.opening_slot_release import OpeningSlotRelease
+
+        table = OpeningSlotRelease.__table__
+        with engine.begin() as conn:
+            table.create(conn, checkfirst=True)
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure openingslotrelease table (this is OK if table doesn't exist yet): {e}"
+        )
+
+
+def ensure_court_dispatch_lock_table(engine: Engine) -> None:
+    """Ensure courtdispatchlock table exists. Safe to run at every startup."""
+    try:
+        from app.models.court_dispatch_lock import CourtDispatchLock
+
+        table = CourtDispatchLock.__table__
+        with engine.begin() as conn:
+            table.create(conn, checkfirst=True)
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"Failed to ensure courtdispatchlock table (this is OK if table doesn't exist yet): {e}"
+        )
+
+
 def ensure_tournament_time_window_columns(engine: Engine) -> None:
     """Idempotently adds required columns to the tournament time window table."""
     try:
