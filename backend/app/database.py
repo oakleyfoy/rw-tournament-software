@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Generator
 
 from dotenv import load_dotenv
+from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -11,7 +12,10 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tournament.db")
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
-_connect_args = {"check_same_thread": False} if _is_sqlite else {}
+# SQLite busy timeout (seconds): writers wait instead of failing immediately with
+# "database is locked" under concurrent desk dispatch.
+SQLITE_BUSY_TIMEOUT_SEC = float(os.getenv("SQLITE_BUSY_TIMEOUT_SEC", "30"))
+_connect_args = {"check_same_thread": False, "timeout": SQLITE_BUSY_TIMEOUT_SEC} if _is_sqlite else {}
 _echo = os.getenv("SQL_ECHO", "false").lower() in ("true", "1", "yes")
 
 if _is_sqlite:
@@ -23,6 +27,13 @@ engine: Engine = create_engine(
     echo=_echo,
     connect_args=_connect_args,
 )
+
+if _is_sqlite:
+
+    @event.listens_for(engine, "begin")
+    def _sqlite_begin_immediate(conn) -> None:  # type: ignore[no-untyped-def]
+        """Serialize writers at transaction start (SQLite has no row-level locks)."""
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def get_session() -> Generator[Session, None, None]:

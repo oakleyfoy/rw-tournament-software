@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 # Columns we must ensure exist in the "event" table.
 # (name, sqlite_type, postgres_type)
@@ -639,34 +639,295 @@ def ensure_start_over_baseline_assignment_table(engine: Engine) -> None:
         )
 
 
+OPENING_SLOT_RELEASE_TABLE = "openingslotrelease"
+COURT_DISPATCH_LOCK_TABLE = "courtdispatchlock"
+UQ_OPENING_SLOT_RELEASE = "uq_opening_slot_release_version_day_slot"
+UQ_COURT_DISPATCH_LOCK = "uq_court_dispatch_lock_version_day_court"
+
+# Process cache avoids opening a second SQLite connection during an active
+# write transaction (which can deadlock under the default journal mode).
+_preassigned_schema_ready_cache: Optional[bool] = None
+
+
+def invalidate_preassigned_schema_ready_cache() -> None:
+    global _preassigned_schema_ready_cache
+    _preassigned_schema_ready_cache = None
+
+
+def _set_preassigned_schema_ready_cache(ready: bool) -> None:
+    global _preassigned_schema_ready_cache
+    _preassigned_schema_ready_cache = ready
+
+
+def _sqlite_table_exists_conn(conn: Connection, table_name: str) -> bool:
+    row = conn.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+        {"table_name": table_name},
+    ).fetchone()
+    return row is not None
+
+
+def _postgres_table_exists_conn(conn: Connection, table_name: str) -> bool:
+    row = conn.execute(
+        text(
+            """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = :table_name
+            )
+            """
+        ),
+        {"table_name": table_name},
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def _sqlite_unique_index_covers_conn(
+    conn: Connection,
+    *,
+    table_name: str,
+    index_name: str,
+    columns: List[str],
+) -> bool:
+    """True when a UNIQUE index with the expected name (or equivalent columns) exists."""
+    indexes = conn.execute(text(f"PRAGMA index_list('{table_name}')")).fetchall()
+    # row: (seq, name, unique, origin, partial)
+    by_name = {str(r[1]): r for r in indexes if r[1]}
+    if index_name in by_name and int(by_name[index_name][2] or 0) == 1:
+        infos = conn.execute(text(f"PRAGMA index_info('{index_name}')")).fetchall()
+        covered = [str(r[2]) for r in sorted(infos, key=lambda r: int(r[0]))]
+        return covered == columns
+    for row in indexes:
+        if int(row[2] or 0) != 1:
+            continue
+        name = str(row[1])
+        infos = conn.execute(text(f"PRAGMA index_info('{name}')")).fetchall()
+        covered = [str(r[2]) for r in sorted(infos, key=lambda r: int(r[0]))]
+        if covered == columns:
+            return True
+    return False
+
+
+def _postgres_unique_constraint_exists_conn(conn: Connection, *, table_name: str, constraint_name: str) -> bool:
+    row = conn.execute(
+        text(
+            """
+            SELECT 1
+            FROM information_schema.table_constraints
+            WHERE table_schema = 'public'
+              AND table_name = :table_name
+              AND constraint_name = :constraint_name
+              AND constraint_type = 'UNIQUE'
+            """
+        ),
+        {"table_name": table_name, "constraint_name": constraint_name},
+    ).fetchone()
+    return row is not None
+
+
+def _ensure_sqlite_unique_index(
+    engine: Engine,
+    *,
+    table_name: str,
+    index_name: str,
+    columns: List[str],
+) -> None:
+    cols_sql = ", ".join(columns)
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table_name} ({cols_sql})"))
+
+
+def inspect_preassigned_automation_schema(
+    engine: Engine,
+    *,
+    connection: Optional[Connection] = None,
+) -> Dict[str, object]:
+    """Read-only schema readiness for PREASSIGNED automation. Never mutates.
+
+    Prefer passing ``connection=session.connection()`` when a session already
+    holds a SQLite write transaction so a second connection is not opened.
+    """
+    dialect = engine.dialect.name.lower()
+    errors: List[str] = []
+
+    def _inspect(conn: Connection) -> Dict[str, object]:
+        nonlocal errors
+        errors = []
+        if dialect == "sqlite":
+            opening_table = _sqlite_table_exists_conn(conn, OPENING_SLOT_RELEASE_TABLE)
+            lock_table = _sqlite_table_exists_conn(conn, COURT_DISPATCH_LOCK_TABLE)
+            opening_uq = (
+                _sqlite_unique_index_covers_conn(
+                    conn,
+                    table_name=OPENING_SLOT_RELEASE_TABLE,
+                    index_name=UQ_OPENING_SLOT_RELEASE,
+                    columns=["schedule_version_id", "day_date", "slot_key"],
+                )
+                if opening_table
+                else False
+            )
+            lock_uq = (
+                _sqlite_unique_index_covers_conn(
+                    conn,
+                    table_name=COURT_DISPATCH_LOCK_TABLE,
+                    index_name=UQ_COURT_DISPATCH_LOCK,
+                    columns=["schedule_version_id", "day_date", "court_number"],
+                )
+                if lock_table
+                else False
+            )
+        else:
+            opening_table = _postgres_table_exists_conn(conn, OPENING_SLOT_RELEASE_TABLE)
+            lock_table = _postgres_table_exists_conn(conn, COURT_DISPATCH_LOCK_TABLE)
+            opening_uq = (
+                _postgres_unique_constraint_exists_conn(
+                    conn, table_name=OPENING_SLOT_RELEASE_TABLE, constraint_name=UQ_OPENING_SLOT_RELEASE
+                )
+                if opening_table
+                else False
+            )
+            lock_uq = (
+                _postgres_unique_constraint_exists_conn(
+                    conn, table_name=COURT_DISPATCH_LOCK_TABLE, constraint_name=UQ_COURT_DISPATCH_LOCK
+                )
+                if lock_table
+                else False
+            )
+
+        if not opening_table:
+            errors.append(f"missing table {OPENING_SLOT_RELEASE_TABLE}")
+        if not lock_table:
+            errors.append(f"missing table {COURT_DISPATCH_LOCK_TABLE}")
+        if opening_table and not opening_uq:
+            errors.append(f"missing unique constraint {UQ_OPENING_SLOT_RELEASE}")
+        if lock_table and not lock_uq:
+            errors.append(f"missing unique constraint {UQ_COURT_DISPATCH_LOCK}")
+
+        ready = not errors
+        result = {
+            "ready": ready,
+            "dialect": dialect,
+            "opening_slot_release_table": opening_table,
+            "court_dispatch_lock_table": lock_table,
+            "uq_opening_slot_release_version_day_slot": opening_uq,
+            "uq_court_dispatch_lock_version_day_court": lock_uq,
+            "errors": errors,
+        }
+        _set_preassigned_schema_ready_cache(ready)
+        return result
+
+    if connection is not None:
+        return _inspect(connection)
+    with engine.connect() as conn:
+        return _inspect(conn)
+
+
+def is_preassigned_automation_schema_ready(
+    engine: Engine,
+    *,
+    connection: Optional[Connection] = None,
+    use_cache: bool = True,
+) -> bool:
+    if use_cache and _preassigned_schema_ready_cache is not None:
+        return _preassigned_schema_ready_cache
+    return bool(inspect_preassigned_automation_schema(engine, connection=connection)["ready"])
+
+
 def ensure_opening_slot_release_table(engine: Engine) -> None:
-    """Ensure openingslotrelease table exists. Safe to run at every startup."""
+    """Ensure openingslotrelease table + unique index exist.
+
+    Failures are logged as errors and re-raised so startup/ops cannot treat
+    PREASSIGNED automation as ready when schema initialization failed.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
     try:
         from app.models.opening_slot_release import OpeningSlotRelease
 
         table = OpeningSlotRelease.__table__
         with engine.begin() as conn:
             table.create(conn, checkfirst=True)
+        if _is_sqlite(engine):
+            _ensure_sqlite_unique_index(
+                engine,
+                table_name=OPENING_SLOT_RELEASE_TABLE,
+                index_name=UQ_OPENING_SLOT_RELEASE,
+                columns=["schedule_version_id", "day_date", "slot_key"],
+            )
+            with engine.connect() as conn:
+                table_ok = _sqlite_table_exists_conn(conn, OPENING_SLOT_RELEASE_TABLE)
+                uq_ok = _sqlite_unique_index_covers_conn(
+                    conn,
+                    table_name=OPENING_SLOT_RELEASE_TABLE,
+                    index_name=UQ_OPENING_SLOT_RELEASE,
+                    columns=["schedule_version_id", "day_date", "slot_key"],
+                )
+        else:
+            with engine.connect() as conn:
+                table_ok = _postgres_table_exists_conn(conn, OPENING_SLOT_RELEASE_TABLE)
+                uq_ok = _postgres_unique_constraint_exists_conn(
+                    conn,
+                    table_name=OPENING_SLOT_RELEASE_TABLE,
+                    constraint_name=UQ_OPENING_SLOT_RELEASE,
+                )
+        if not table_ok or not uq_ok:
+            invalidate_preassigned_schema_ready_cache()
+            raise RuntimeError(f"openingslotrelease schema not ready after ensure (table={table_ok}, unique={uq_ok})")
+        invalidate_preassigned_schema_ready_cache()
     except Exception as e:
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to ensure openingslotrelease table (this is OK if table doesn't exist yet): {e}")
+        invalidate_preassigned_schema_ready_cache()
+        logger.error("Failed to ensure openingslotrelease table/constraints: %s", e)
+        raise
 
 
 def ensure_court_dispatch_lock_table(engine: Engine) -> None:
-    """Ensure courtdispatchlock table exists. Safe to run at every startup."""
+    """Ensure courtdispatchlock table + unique index exist.
+
+    Failures are logged as errors and re-raised so startup/ops cannot treat
+    PREASSIGNED automation as ready when schema initialization failed.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
     try:
         from app.models.court_dispatch_lock import CourtDispatchLock
 
         table = CourtDispatchLock.__table__
         with engine.begin() as conn:
             table.create(conn, checkfirst=True)
+        if _is_sqlite(engine):
+            _ensure_sqlite_unique_index(
+                engine,
+                table_name=COURT_DISPATCH_LOCK_TABLE,
+                index_name=UQ_COURT_DISPATCH_LOCK,
+                columns=["schedule_version_id", "day_date", "court_number"],
+            )
+            with engine.connect() as conn:
+                table_ok = _sqlite_table_exists_conn(conn, COURT_DISPATCH_LOCK_TABLE)
+                uq_ok = _sqlite_unique_index_covers_conn(
+                    conn,
+                    table_name=COURT_DISPATCH_LOCK_TABLE,
+                    index_name=UQ_COURT_DISPATCH_LOCK,
+                    columns=["schedule_version_id", "day_date", "court_number"],
+                )
+        else:
+            with engine.connect() as conn:
+                table_ok = _postgres_table_exists_conn(conn, COURT_DISPATCH_LOCK_TABLE)
+                uq_ok = _postgres_unique_constraint_exists_conn(
+                    conn,
+                    table_name=COURT_DISPATCH_LOCK_TABLE,
+                    constraint_name=UQ_COURT_DISPATCH_LOCK,
+                )
+        if not table_ok or not uq_ok:
+            invalidate_preassigned_schema_ready_cache()
+            raise RuntimeError(f"courtdispatchlock schema not ready after ensure (table={table_ok}, unique={uq_ok})")
+        # Refresh cache after both ensures typically run; opening ensure cleared it.
+        inspect_preassigned_automation_schema(engine)
     except Exception as e:
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to ensure courtdispatchlock table (this is OK if table doesn't exist yet): {e}")
+        invalidate_preassigned_schema_ready_cache()
+        logger.error("Failed to ensure courtdispatchlock table/constraints: %s", e)
+        raise
 
 
 def ensure_tournament_time_window_columns(engine: Engine) -> None:
