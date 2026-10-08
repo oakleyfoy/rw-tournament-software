@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import or_, text
+from sqlalchemy import and_, or_, text
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -39,7 +39,13 @@ from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
-from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.models.tournament_sms_settings import (
+    SMS_DELIVERY_MODE_ALLOWLIST,
+    SMS_DELIVERY_MODE_LIVE,
+    SMS_DELIVERY_MODE_REDIRECT,
+    SMS_DELIVERY_MODES,
+    TournamentSmsSettings,
+)
 from app.services.sms_automation import (
     run_first_match_24h_for_tournament,
     run_rr_first_match_for_event,
@@ -68,8 +74,10 @@ class SmsSendResult(BaseModel):
     team_name: Optional[str] = None
     player_id: Optional[int] = None
     player_name: Optional[str] = None
-    status: str  # queued|sent|dry_run|failed
+    status: str  # queued|sent|dry_run|failed|sent_redirect|blocked_test_mode|blocked_consent|deduped
     error: Optional[str] = None
+    intended_phone: Optional[str] = None
+    delivery_phone: Optional[str] = None
 
 
 class SmsSendResponse(BaseModel):
@@ -82,6 +90,7 @@ class SmsSendResponse(BaseModel):
     skipped_consent: int = 0
     skipped_dedupe: int = 0
     skipped_test_mode: int = 0
+    redirected: int = 0
     message_type: str
     results: List[SmsSendResult]
 
@@ -172,6 +181,7 @@ class SmsLogResponse(BaseModel):
     tournament_id: int
     team_id: Optional[int] = None
     phone_number: str
+    intended_phone_number: Optional[str] = None
     message_body: str
     message_type: str
     twilio_sid: Optional[str] = None
@@ -198,8 +208,10 @@ class SmsSettingsResponse(BaseModel):
     auto_checkin_post_match_next: bool
     auto_checkin_court_assigned: bool
     texts_enabled: bool
+    delivery_mode: str
     test_mode: bool
     test_allowlist: Optional[str] = None
+    redirect_phone: Optional[str] = None
     player_contacts_only: bool
 
 
@@ -216,8 +228,10 @@ class SmsSettingsUpdate(BaseModel):
     auto_checkin_post_match_next: Optional[bool] = None
     auto_checkin_court_assigned: Optional[bool] = None
     texts_enabled: Optional[bool] = None
+    delivery_mode: Optional[str] = None
     test_mode: Optional[bool] = None
     test_allowlist: Optional[str] = None
+    redirect_phone: Optional[str] = None
     player_contacts_only: Optional[bool] = None
 
 
@@ -613,6 +627,19 @@ def _normalize_allowlist_text(raw: Optional[str]) -> str:
     return ",".join(normalized)
 
 
+def _normalize_single_phone(raw: Optional[str], *, field_name: str) -> Optional[str]:
+    """Normalize a single phone to E.164 or None if blank."""
+    if raw is None:
+        return None
+    stripped = str(raw).strip()
+    if not stripped:
+        return None
+    try:
+        return format_e164(stripped)
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid {field_name}: {exc}") from exc
+
+
 def _allowlist_set(raw: Optional[str]) -> set[str]:
     if not raw:
         return set()
@@ -627,6 +654,63 @@ def _allowlist_set(raw: Optional[str]) -> set[str]:
             # persisted in non-E.164 form.
             normalized.add(token)
     return normalized
+
+
+def _resolve_delivery_mode(settings: Optional[TournamentSmsSettings]) -> str:
+    """Resolve mutually exclusive delivery mode from settings (+ legacy test_mode)."""
+    if settings is None:
+        return SMS_DELIVERY_MODE_LIVE
+    raw = str(getattr(settings, "delivery_mode", "") or "").strip().lower()
+    # Redirect is explicit and never implied by legacy test_mode.
+    if raw == SMS_DELIVERY_MODE_REDIRECT:
+        return SMS_DELIVERY_MODE_REDIRECT
+    # Allowlist wins when either the new field or legacy flag says so.
+    # Covers unsynced rows where delivery_mode still defaults to live.
+    if raw == SMS_DELIVERY_MODE_ALLOWLIST or bool(getattr(settings, "test_mode", False)):
+        return SMS_DELIVERY_MODE_ALLOWLIST
+    if raw == SMS_DELIVERY_MODE_LIVE:
+        return SMS_DELIVERY_MODE_LIVE
+    return SMS_DELIVERY_MODE_LIVE
+
+
+def _sync_delivery_mode_flags(settings: TournamentSmsSettings) -> None:
+    """Keep delivery_mode and legacy test_mode mutually consistent."""
+    mode = _resolve_delivery_mode(settings)
+    settings.delivery_mode = mode
+    settings.test_mode = mode == SMS_DELIVERY_MODE_ALLOWLIST
+
+
+def _redirect_body(intended_phone: str, message: str) -> str:
+    """Prefix redirected bodies so the operator can identify the intended recipient."""
+    header = f"[TEST redirect — intended {intended_phone}]"
+    if not message:
+        return header
+    return f"{header}\n{message}"
+
+
+def _existing_dedupe_log(
+    session: Session,
+    *,
+    tournament_id: int,
+    intended_phone: str,
+    message_type: str,
+    dedupe_key: str,
+) -> Optional[int]:
+    """Find any prior log for this intended recipient + dedupe key (any status)."""
+    return session.exec(
+        select(SmsLog.id).where(
+            SmsLog.tournament_id == tournament_id,
+            SmsLog.message_type == message_type,
+            SmsLog.dedupe_key == dedupe_key,
+            or_(
+                SmsLog.intended_phone_number == intended_phone,
+                and_(
+                    SmsLog.intended_phone_number.is_(None),  # type: ignore[union-attr]
+                    SmsLog.phone_number == intended_phone,
+                ),
+            ),
+        )
+    ).first()
 
 
 _HTML_ANCHOR_RE = re.compile(r"(?is)<a\b[^>]*\bhref\s*=\s*(['\"])(.*?)\1[^>]*>(.*?)</a>")
@@ -942,10 +1026,13 @@ def _settings_to_response(
             auto_checkin_post_match_next=False,
             auto_checkin_court_assigned=False,
             texts_enabled=True,
+            delivery_mode=SMS_DELIVERY_MODE_LIVE,
             test_mode=False,
             test_allowlist=None,
+            redirect_phone=None,
             player_contacts_only=False,
         )
+    delivery_mode = _resolve_delivery_mode(settings)
     return SmsSettingsResponse(
         tournament_id=settings.tournament_id,
         auto_first_match=settings.auto_first_match,
@@ -958,8 +1045,10 @@ def _settings_to_response(
         auto_checkin_post_match_next=bool(getattr(settings, "auto_checkin_post_match_next", False)),
         auto_checkin_court_assigned=bool(getattr(settings, "auto_checkin_court_assigned", False)),
         texts_enabled=bool(getattr(settings, "texts_enabled", True)),
-        test_mode=bool(getattr(settings, "test_mode", False)),
+        delivery_mode=delivery_mode,
+        test_mode=delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST,
         test_allowlist=getattr(settings, "test_allowlist", None),
+        redirect_phone=getattr(settings, "redirect_phone", None),
         player_contacts_only=bool(getattr(settings, "player_contacts_only", False)),
     )
 
@@ -1426,7 +1515,7 @@ def _send_to_phone_targets(
     skipped_no_phone: int = 0,
     status_callback_base_url: Optional[str] = None,
 ) -> SmsSendResponse:
-    """Send to explicit phone targets with consent + dedupe protections."""
+    """Send to explicit phone targets with consent + dedupe + delivery-mode protections."""
     twilio = get_twilio_service()
     normalized_message = _normalize_sms_message(message)
     settings = session.exec(
@@ -1441,11 +1530,31 @@ def _send_to_phone_targets(
             skipped_consent=0,
             skipped_dedupe=0,
             skipped_test_mode=0,
+            redirected=0,
             message_type=message_type,
             results=[],
         )
-    test_mode_enabled = bool(settings and getattr(settings, "test_mode", False))
+
+    delivery_mode = _resolve_delivery_mode(settings)
     test_allowlist = _allowlist_set(getattr(settings, "test_allowlist", None) if settings else None)
+    redirect_phone = str(getattr(settings, "redirect_phone", None) or "").strip() or None
+
+    # Never silently fall back to live delivery when redirect is requested.
+    if delivery_mode == SMS_DELIVERY_MODE_REDIRECT:
+        if not redirect_phone:
+            raise HTTPException(
+                400,
+                "Redirect delivery mode requires a valid redirect_phone. "
+                "Set redirect_phone before sending, or switch delivery_mode.",
+            )
+        try:
+            redirect_phone = format_e164(redirect_phone)
+        except ValueError as exc:
+            raise HTTPException(
+                400,
+                f"Redirect delivery mode has an invalid redirect_phone: {exc}",
+            ) from exc
+
     status_callback_url = _status_callback_url_for_tournament(
         tournament_id,
         request_base_url=status_callback_base_url,
@@ -1456,10 +1565,14 @@ def _send_to_phone_targets(
             "Set SMS_STATUS_CALLBACK_BASE_URL to enable delivery updates."
         )
 
-    # For manual tournament-blast smoke tests, also include test allowlist
-    # phones even if they are not currently attached to tournament teams.
-    # This keeps test mode useful for admin verification.
-    if test_mode_enabled and trigger == "manual" and message_type == "tournament_blast" and test_allowlist:
+    # Allowlist-only: inject allowlist phones into manual tournament blasts for smoke tests.
+    # Redirect mode must NOT inject — every intended recipient becomes its own redirected send.
+    if (
+        delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST
+        and trigger == "manual"
+        and message_type == "tournament_blast"
+        and test_allowlist
+    ):
         existing_phones = {str(t.get("phone", "")).strip() for t in targets}
         for phone in sorted(test_allowlist):
             if phone not in existing_phones:
@@ -1479,6 +1592,7 @@ def _send_to_phone_targets(
     skipped_consent_count = 0
     skipped_dedupe_count = 0
     skipped_test_mode_count = 0
+    redirected_count = 0
 
     for target in targets:
         phone = target["phone"]
@@ -1488,14 +1602,13 @@ def _send_to_phone_targets(
         player_name = target.get("player_name")
 
         if dedupe_key:
-            existing = session.exec(
-                select(SmsLog.id).where(
-                    SmsLog.tournament_id == tournament_id,
-                    SmsLog.phone_number == phone,
-                    SmsLog.message_type == message_type,
-                    SmsLog.dedupe_key == dedupe_key,
-                )
-            ).first()
+            existing = _existing_dedupe_log(
+                session,
+                tournament_id=tournament_id,
+                intended_phone=phone,
+                message_type=message_type,
+                dedupe_key=dedupe_key,
+            )
             if existing:
                 skipped_dedupe_count += 1
                 results.append(
@@ -1507,18 +1620,21 @@ def _send_to_phone_targets(
                         player_name=player_name,
                         status="deduped",
                         error=f"Skipped duplicate send for dedupe_key={dedupe_key}",
+                        intended_phone=phone,
+                        delivery_phone=None,
                     )
                 )
                 continue
 
-        if test_mode_enabled and phone not in test_allowlist:
+        if delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST and phone not in test_allowlist:
             skipped_test_mode_count += 1
-            blocked_reason = "Test mode enabled: recipient not in test_allowlist"
+            blocked_reason = "Allowlist delivery mode: recipient not in test_allowlist"
             session.add(
                 SmsLog(
                     tournament_id=tournament_id,
                     team_id=team_id,
                     phone_number=phone,
+                    intended_phone_number=phone,
                     message_body=normalized_message,
                     message_type=message_type,
                     twilio_sid=None,
@@ -1538,6 +1654,8 @@ def _send_to_phone_targets(
                     player_name=player_name,
                     status="blocked_test_mode",
                     error=blocked_reason,
+                    intended_phone=phone,
+                    delivery_phone=None,
                 )
             )
             continue
@@ -1555,6 +1673,7 @@ def _send_to_phone_targets(
                     tournament_id=tournament_id,
                     team_id=team_id,
                     phone_number=phone,
+                    intended_phone_number=phone,
                     message_body=normalized_message,
                     message_type=message_type,
                     twilio_sid=None,
@@ -1574,27 +1693,40 @@ def _send_to_phone_targets(
                     player_name=player_name,
                     status="blocked_consent",
                     error=f"{blocked_reason} (state={consent_state})",
+                    intended_phone=phone,
+                    delivery_phone=None,
                 )
             )
             continue
 
+        is_redirect = delivery_mode == SMS_DELIVERY_MODE_REDIRECT
+        delivery_phone = redirect_phone if is_redirect else phone
+        outbound_body = _redirect_body(phone, normalized_message) if is_redirect else normalized_message
+
         send_result = twilio.send_sms(
-            phone,
-            normalized_message,
+            delivery_phone,
+            outbound_body,
             status_callback_url=status_callback_url,
         )
-        status = send_result.get("status", "failed")
-        if status in ("queued", "sent", "dry_run"):
+        provider_status = send_result.get("status", "failed")
+        if provider_status in ("queued", "sent", "dry_run"):
             sent_count += 1
+            if is_redirect:
+                redirected_count += 1
+                status = "sent_redirect"
+            else:
+                status = provider_status
         else:
             failed_count += 1
+            status = provider_status
 
         session.add(
             SmsLog(
                 tournament_id=tournament_id,
                 team_id=team_id,
-                phone_number=phone,
-                message_body=normalized_message,
+                phone_number=delivery_phone,
+                intended_phone_number=phone,
+                message_body=outbound_body,
                 message_type=message_type,
                 twilio_sid=send_result.get("sid"),
                 status=status,
@@ -1606,13 +1738,15 @@ def _send_to_phone_targets(
         )
         results.append(
             SmsSendResult(
-                phone=phone,
+                phone=delivery_phone if is_redirect else phone,
                 team_id=team_id,
                 team_name=team_name,
                 player_id=player_id,
                 player_name=player_name,
                 status=status,
                 error=send_result.get("error"),
+                intended_phone=phone,
+                delivery_phone=delivery_phone,
             )
         )
 
@@ -1634,6 +1768,7 @@ def _send_to_phone_targets(
         skipped_consent=skipped_consent_count,
         skipped_dedupe=skipped_dedupe_count,
         skipped_test_mode=skipped_test_mode_count,
+        redirected=redirected_count,
         message_type=message_type,
         results=results,
     )
@@ -3273,7 +3408,7 @@ def get_sms_rollout_metrics(
         .order_by(SmsLog.sent_at.desc())
     ).all()
 
-    sent_statuses = {"queued", "sent", "delivered", "dry_run"}
+    sent_statuses = {"queued", "sent", "delivered", "dry_run", "sent_redirect"}
     failed_statuses = {"failed", "undelivered"}
     blocked_test_status = "blocked_test_mode"
     blocked_consent_status = "blocked_consent"
@@ -3431,8 +3566,48 @@ def update_sms_settings(
     update_data = body.model_dump(exclude_unset=True)
     if "test_allowlist" in update_data:
         update_data["test_allowlist"] = _normalize_allowlist_text(update_data["test_allowlist"]) or None
+    if "redirect_phone" in update_data:
+        update_data["redirect_phone"] = _normalize_single_phone(
+            update_data["redirect_phone"],
+            field_name="redirect_phone",
+        )
+    if "delivery_mode" in update_data and update_data["delivery_mode"] is not None:
+        mode = str(update_data["delivery_mode"]).strip().lower()
+        if mode not in SMS_DELIVERY_MODES:
+            raise HTTPException(
+                400,
+                f"Invalid delivery_mode '{update_data['delivery_mode']}'. "
+                f"Expected one of: {', '.join(sorted(SMS_DELIVERY_MODES))}",
+            )
+        update_data["delivery_mode"] = mode
+
     for key, value in update_data.items():
         setattr(settings, key, value)
+
+    # Mutually exclusive delivery modes:
+    # - delivery_mode wins when provided
+    # - legacy test_mode alone still maps to allowlist/live when delivery_mode omitted
+    if "delivery_mode" in update_data:
+        _sync_delivery_mode_flags(settings)
+    elif "test_mode" in update_data:
+        settings.delivery_mode = (
+            SMS_DELIVERY_MODE_ALLOWLIST if bool(update_data["test_mode"]) else SMS_DELIVERY_MODE_LIVE
+        )
+        _sync_delivery_mode_flags(settings)
+    else:
+        _sync_delivery_mode_flags(settings)
+
+    if _resolve_delivery_mode(settings) == SMS_DELIVERY_MODE_REDIRECT:
+        redirect_phone = str(getattr(settings, "redirect_phone", None) or "").strip()
+        if not redirect_phone:
+            raise HTTPException(
+                400,
+                "delivery_mode=redirect requires a valid redirect_phone",
+            )
+        try:
+            settings.redirect_phone = format_e164(redirect_phone)
+        except ValueError as exc:
+            raise HTTPException(400, f"Invalid redirect_phone: {exc}") from exc
 
     now_player_contacts_only = bool(getattr(settings, "player_contacts_only", False))
     if not was_player_contacts_only and now_player_contacts_only:

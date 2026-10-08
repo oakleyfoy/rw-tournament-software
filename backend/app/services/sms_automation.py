@@ -20,7 +20,11 @@ from app.models.schedule_slot import ScheduleSlot
 from app.models.sms_template import DEFAULT_SMS_TEMPLATES, SmsTemplate
 from app.models.team import Team
 from app.models.tournament import Tournament
-from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.models.tournament_sms_settings import (
+    SMS_DELIVERY_MODE_ALLOWLIST,
+    SMS_DELIVERY_MODE_REDIRECT,
+    TournamentSmsSettings,
+)
 from app.services.court_assignment_mode import is_preassigned
 
 logger = logging.getLogger(__name__)
@@ -86,6 +90,7 @@ class SmsAutomationEngine:
         blocked_test_mode = 0
         blocked_consent = 0
         deduped = 0
+        redirected = 0
         for job in jobs:
             projection = self._project_team_send_outcomes(
                 team=job["team"],
@@ -96,6 +101,7 @@ class SmsAutomationEngine:
             blocked_test_mode += int(projection["blocked_test_mode"])
             blocked_consent += int(projection["blocked_consent"])
             deduped += int(projection["deduped"])
+            redirected += int(projection.get("redirected", 0))
             recipients.extend(
                 self._preview_template_to_phone_targets(
                     team=job["team"],
@@ -114,6 +120,7 @@ class SmsAutomationEngine:
             "blocked_test_mode": blocked_test_mode,
             "blocked_consent": blocked_consent,
             "deduped": deduped,
+            "redirected": redirected,
             "disabled_reason": plan["disabled_reason"],
         }
 
@@ -134,6 +141,7 @@ class SmsAutomationEngine:
             "skipped_consent": 0,
             "skipped_dedupe": 0,
             "skipped_test_mode": 0,
+            "redirected": 0,
             "message_type": message_type,
             "results": [],
         }
@@ -152,6 +160,7 @@ class SmsAutomationEngine:
             aggregate["skipped_consent"] += int(resp.skipped_consent)
             aggregate["skipped_dedupe"] += int(resp.skipped_dedupe)
             aggregate["skipped_test_mode"] += int(resp.skipped_test_mode)
+            aggregate["redirected"] += int(getattr(resp, "redirected", 0) or 0)
             aggregate["results"].extend(resp.results)
         return aggregate
 
@@ -793,11 +802,12 @@ class SmsAutomationEngine:
         dedupe_key: str,
     ) -> Dict[str, int]:
         """Estimate send outcomes for dry-run without logging or sending."""
-        from app.models.sms_log import SmsLog
         from app.routes.sms import (
             _allowlist_set,
+            _existing_dedupe_log,
             _is_phone_send_allowed,
             _player_contacts_only_enabled,
+            _resolve_delivery_mode,
             _team_sms_targets,
         )
 
@@ -816,7 +826,7 @@ class SmsAutomationEngine:
             team=team,
             player_contacts_only=player_contacts_only,
         )
-        test_mode_enabled = bool(self._settings and getattr(self._settings, "test_mode", False))
+        delivery_mode = _resolve_delivery_mode(self._settings)
         allowlist = _allowlist_set(getattr(self._settings, "test_allowlist", None) if self._settings else None)
 
         projected = {
@@ -824,6 +834,7 @@ class SmsAutomationEngine:
             "deduped": 0,
             "blocked_test_mode": 0,
             "blocked_consent": 0,
+            "redirected": 0,
             "no_phone": 0,
         }
         if not targets:
@@ -833,18 +844,17 @@ class SmsAutomationEngine:
             phone = str(target.get("phone") or "").strip()
             if not phone:
                 continue
-            existing = self.session.exec(
-                select(SmsLog.id).where(
-                    SmsLog.tournament_id == self.tournament.id,
-                    SmsLog.phone_number == phone,
-                    SmsLog.message_type == message_type,
-                    SmsLog.dedupe_key == dedupe_key,
-                )
-            ).first()
+            existing = _existing_dedupe_log(
+                self.session,
+                tournament_id=self.tournament.id,  # type: ignore[arg-type]
+                intended_phone=phone,
+                message_type=message_type,
+                dedupe_key=dedupe_key,
+            )
             if existing:
                 projected["deduped"] += 1
                 continue
-            if test_mode_enabled and phone not in allowlist:
+            if delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST and phone not in allowlist:
                 projected["blocked_test_mode"] += 1
                 continue
             is_allowed, _consent = _is_phone_send_allowed(
@@ -856,6 +866,8 @@ class SmsAutomationEngine:
                 projected["blocked_consent"] += 1
                 continue
             projected["sent"] += 1
+            if delivery_mode == SMS_DELIVERY_MODE_REDIRECT:
+                projected["redirected"] += 1
         return projected
 
     def _preview_template_to_phone_targets(
@@ -866,11 +878,13 @@ class SmsAutomationEngine:
         message_type: str,
         dedupe_key: str,
     ) -> list[dict[str, Any]]:
-        from app.models.sms_log import SmsLog
         from app.routes.sms import (
             _allowlist_set,
+            _existing_dedupe_log,
             _is_phone_send_allowed,
             _player_contacts_only_enabled,
+            _redirect_body,
+            _resolve_delivery_mode,
             _team_sms_targets,
         )
 
@@ -889,25 +903,25 @@ class SmsAutomationEngine:
             team=team,
             player_contacts_only=player_contacts_only,
         )
-        test_mode_enabled = bool(self._settings and getattr(self._settings, "test_mode", False))
+        delivery_mode = _resolve_delivery_mode(self._settings)
         allowlist = _allowlist_set(getattr(self._settings, "test_allowlist", None) if self._settings else None)
+        redirect_phone = str(getattr(self._settings, "redirect_phone", None) or "").strip() or None
 
         preview_rows: list[dict[str, Any]] = []
         for target in targets:
             phone = str(target.get("phone") or "").strip()
             if not phone:
                 continue
-            existing = self.session.exec(
-                select(SmsLog.id).where(
-                    SmsLog.tournament_id == self.tournament.id,
-                    SmsLog.phone_number == phone,
-                    SmsLog.message_type == message_type,
-                    SmsLog.dedupe_key == dedupe_key,
-                )
-            ).first()
+            existing = _existing_dedupe_log(
+                self.session,
+                tournament_id=self.tournament.id,  # type: ignore[arg-type]
+                intended_phone=phone,
+                message_type=message_type,
+                dedupe_key=dedupe_key,
+            )
             if existing:
                 continue
-            if test_mode_enabled and phone not in allowlist:
+            if delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST and phone not in allowlist:
                 continue
             is_allowed, _consent = _is_phone_send_allowed(
                 session=self.session,
@@ -916,14 +930,21 @@ class SmsAutomationEngine:
             )
             if not is_allowed:
                 continue
+            if delivery_mode == SMS_DELIVERY_MODE_REDIRECT and redirect_phone:
+                preview_phone = redirect_phone
+                preview_message = _redirect_body(phone, message)
+            else:
+                preview_phone = phone
+                preview_message = message
             preview_rows.append(
                 {
                     "team_id": target.get("team_id"),
                     "team_name": target.get("team_name"),
                     "player_id": target.get("player_id"),
                     "player_name": target.get("player_name"),
-                    "phone": phone,
-                    "message": message,
+                    "phone": preview_phone,
+                    "intended_phone": phone,
+                    "message": preview_message,
                 }
             )
         return preview_rows

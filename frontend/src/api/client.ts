@@ -3282,6 +3282,7 @@ export interface FinalizeSmsPreview {
   blocked_test_mode: number
   blocked_consent: number
   deduped: number
+  redirected?: number
   disabled_reason: string | null
 }
 
@@ -3293,6 +3294,8 @@ export interface FinalizeSmsSendResult {
   player_name: string | null
   status: string
   error: string | null
+  intended_phone?: string | null
+  delivery_phone?: string | null
 }
 
 export interface FinalizeSmsSendResponse {
@@ -3303,6 +3306,7 @@ export interface FinalizeSmsSendResponse {
   skipped_consent: number
   skipped_dedupe: number
   skipped_test_mode: number
+  redirected?: number
   message_type: string
   results: FinalizeSmsSendResult[]
 }
@@ -4287,6 +4291,8 @@ export interface SmsSendResult {
   player_name: string | null
   status: string
   error: string | null
+  intended_phone?: string | null
+  delivery_phone?: string | null
 }
 
 export interface SmsSendRequest {
@@ -4302,6 +4308,7 @@ export interface SmsSendResponse {
   skipped_consent: number
   skipped_dedupe: number
   skipped_test_mode: number
+  redirected?: number
   message_type: string
   results: SmsSendResult[]
 }
@@ -4322,11 +4329,14 @@ export interface SmsPreviewResponse {
   recipients: SmsPreviewRecipient[]
 }
 
+export type SmsDeliveryMode = 'live' | 'allowlist' | 'redirect'
+
 export interface SmsLogEntry {
   id: number
   tournament_id: number
   team_id: number | null
   phone_number: string
+  intended_phone_number?: string | null
   message_body: string
   message_type: string
   twilio_sid: string | null
@@ -4349,8 +4359,10 @@ export interface SmsSettingsResponse {
   auto_checkin_post_match_next: boolean
   auto_checkin_court_assigned: boolean
   texts_enabled: boolean
+  delivery_mode: SmsDeliveryMode
   test_mode: boolean
   test_allowlist: string | null
+  redirect_phone: string | null
   player_contacts_only: boolean
 }
 
@@ -4935,8 +4947,10 @@ export async function patchSmsSettings(
     'auto_checkin_post_match_next' |
     'auto_checkin_court_assigned' |
     'texts_enabled' |
+    'delivery_mode' |
     'test_mode' |
     'test_allowlist' |
+    'redirect_phone' |
     'player_contacts_only'
   >>
 ): Promise<SmsSettingsResponse> {

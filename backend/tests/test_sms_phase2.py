@@ -1226,8 +1226,10 @@ def test_settings_defaults(client, session, setup_tournament_with_teams):
     data = resp.json()
     assert data["auto_first_match"] is False
     assert data["auto_court_change"] is True  # Default ON
+    assert data["delivery_mode"] == "live"
     assert data["test_mode"] is False
     assert data["test_allowlist"] is None
+    assert data["redirect_phone"] is None
     assert data["player_contacts_only"] is False
 
 
@@ -1262,6 +1264,7 @@ def test_settings_update_test_mode_allowlist_normalizes(client, session, setup_t
     assert resp.status_code == 200
     data = resp.json()
     assert data["test_mode"] is True
+    assert data["delivery_mode"] == "allowlist"
     assert data["test_allowlist"] == "+19013593035,+19703092022"
 
 
