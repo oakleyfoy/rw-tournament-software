@@ -516,3 +516,16 @@ def test_ensure_functions_create_named_unique_indexes(tmp_path: Path):
     assert UQ_OPENING_SLOT_RELEASE in opening_names
     assert UQ_COURT_DISPATCH_LOCK in lock_names
     engine.dispose()
+
+
+def test_sqlite_begin_immediate_defaults_off_under_pytest():
+    """App engine must not force BEGIN IMMEDIATE during pytest (legacy shared file DB)."""
+    from app.database import SQLITE_BEGIN_IMMEDIATE
+
+    assert SQLITE_BEGIN_IMMEDIATE is False
+
+
+def test_sqlite_busy_timeout_default():
+    from app.database import SQLITE_BUSY_TIMEOUT_SEC
+
+    assert SQLITE_BUSY_TIMEOUT_SEC == 30.0
