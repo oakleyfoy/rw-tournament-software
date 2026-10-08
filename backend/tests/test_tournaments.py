@@ -20,6 +20,7 @@ from app.models.start_over_baseline_assignment import StartOverBaselineAssignmen
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
+from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
@@ -414,6 +415,81 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
     cloned_templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)).all()
     assert len(cloned_templates) == 1
     assert cloned_templates[0].template_body == "Custom on deck"
+
+
+def test_duplicate_tournament_copies_towel_lookup(client: TestClient, session: Session):
+    """Duplicate should copy desk towel rows and point them at the cloned players."""
+    source = Tournament(
+        name="Towel Source",
+        location="Nowhere",
+        timezone="America/Chicago",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 2),
+    )
+    session.add(source)
+    session.flush()
+
+    player = Player(
+        tournament_id=source.id,
+        full_name="Ada Player",
+        phone_e164="+19015550100",
+        sms_consent_status="unknown",
+    )
+    session.add(player)
+    session.flush()
+
+    session.add(
+        TemporaryPlayerLookup(
+            tournament_id=source.id,
+            player_id=player.id,
+            source_name="Ada Player",
+            normalized_name="ada player",
+            source_phone="9015550100",
+            normalized_phone="9015550100",
+            towel_color="Blue",
+            source="rw_os",
+            source_team_key="team-1",
+            lineup_slot=1,
+        )
+    )
+    session.add(
+        TemporaryPlayerLookup(
+            tournament_id=source.id,
+            player_id=None,
+            source_name="Manual Guest",
+            normalized_name="manual guest",
+            towel_color="Green",
+            report_url="https://example.test/report",
+        )
+    )
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201
+    duplicated_id = resp.json()["id"]
+
+    source_rows = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == source.id)
+    ).all()
+    assert len(source_rows) == 2
+
+    cloned_player = session.exec(select(Player).where(Player.tournament_id == duplicated_id)).one()
+    cloned_rows = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == duplicated_id)
+    ).all()
+    assert {(row.source_name, row.towel_color) for row in cloned_rows} == {
+        ("Ada Player", "Blue"),
+        ("Manual Guest", "Green"),
+    }
+    linked = next(row for row in cloned_rows if row.source_name == "Ada Player")
+    assert linked.player_id == cloned_player.id
+    assert linked.player_id != player.id
+    assert linked.source == "rw_os"
+    assert linked.source_team_key == "team-1"
+    assert linked.lineup_slot == 1
+    manual = next(row for row in cloned_rows if row.source_name == "Manual Guest")
+    assert manual.player_id is None
+    assert manual.report_url == "https://example.test/report"
 
 
 def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: TestClient, session: Session):

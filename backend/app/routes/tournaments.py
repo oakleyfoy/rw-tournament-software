@@ -28,6 +28,7 @@ from app.models.start_over_baseline_assignment import StartOverBaselineAssignmen
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_player import TeamPlayer
+from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_import import TournamentImport
@@ -1098,6 +1099,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
     - schedule versions + slots + matches + assignments
     - match/slot locks + policy runs
     - court state + SMS settings/templates
+    - towel lookup rows (desk towel list)
     """
     try:
         source_tournament = session.get(Tournament, tournament_id)
@@ -1157,6 +1159,9 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         )
 
         source_players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
+        source_towel_lookups = session.exec(
+            select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == tournament_id)
+        ).all()
         source_team_players = (
             session.exec(
                 select(TeamPlayer).where(TeamPlayer.team_id.in_(source_team_ids))  # type: ignore
@@ -1416,6 +1421,28 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                     is_primary_contact=link.is_primary_contact,
                     created_at=link.created_at,
                     updated_at=link.updated_at,
+                )
+            )
+
+        for lookup in source_towel_lookups:
+            mapped_player_id = player_id_map.get(lookup.player_id) if lookup.player_id else None
+            session.add(
+                TemporaryPlayerLookup(
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    player_id=mapped_player_id,
+                    source_name=lookup.source_name,
+                    normalized_name=lookup.normalized_name,
+                    source_phone=lookup.source_phone,
+                    normalized_phone=lookup.normalized_phone,
+                    source_email=lookup.source_email,
+                    normalized_email=lookup.normalized_email,
+                    towel_color=lookup.towel_color,
+                    report_url=lookup.report_url,
+                    source=lookup.source,
+                    source_team_key=lookup.source_team_key,
+                    lineup_slot=lookup.lineup_slot,
+                    created_at=lookup.created_at,
+                    updated_at=lookup.updated_at,
                 )
             )
 
