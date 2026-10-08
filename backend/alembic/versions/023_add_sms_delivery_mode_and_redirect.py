@@ -7,6 +7,7 @@ Migrates legacy test_mode=True rows to delivery_mode=allowlist.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "023_add_sms_delivery_mode_and_redirect"
