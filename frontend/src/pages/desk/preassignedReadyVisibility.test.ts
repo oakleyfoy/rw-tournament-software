@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { CheckInMatchItem, DeskMatchItem, ReadyQueueItem } from '../../api/client'
-import { buildPreassignedReadyEntries } from './preassignedReadyVisibility'
+import {
+  buildPreassignedReadyEntries,
+  mergeReadyQueueWithPreassigned,
+} from './preassignedReadyVisibility'
 
 function side(ready: boolean, label: string): CheckInMatchItem['side_a'] {
   return {
@@ -176,5 +179,27 @@ describe('buildPreassignedReadyEntries', () => {
       nowPlayingByCourt: {},
     })
     expect(entries).toHaveLength(0)
+  })
+
+  it('merges preassigned ready matches into Ready To Go after dynamic queue items', () => {
+    const readyQueue: ReadyQueueItem[] = [{
+      match_id: 201,
+      match_number: 201,
+      match_code: 'RR-1',
+      event_name: 'Mixed',
+      day_label: 'Friday, November 6',
+      scheduled_time: '10:00 AM',
+      ready_at: '2026-11-06T12:00:00',
+      team1_display: 'C',
+      team2_display: 'D',
+    }]
+    const entries = buildPreassignedReadyEntries({
+      checkinMatches: [checkin({ match_id: 101, match_ready: true })],
+      matches: [desk({ match_id: 101 })],
+      readyQueue,
+      nowPlayingByCourt: {},
+    })
+    const merged = mergeReadyQueueWithPreassigned(readyQueue, entries)
+    expect(merged.map((rq) => rq.match_id)).toEqual([201, 101])
   })
 })

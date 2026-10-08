@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { buildPreassignedReadyEntries } from './preassignedReadyVisibility'
+import {
+  buildPreassignedReadyEntries,
+  mergeReadyQueueWithPreassigned,
+} from './preassignedReadyVisibility'
 import {
   getEvents,
   getTournament,
@@ -9266,6 +9269,7 @@ function CheckInReadyQueueCard({
   slotTintIndex,
   nativeDragging,
   onPointerDragStart,
+  allowDrag = true,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -9277,6 +9281,7 @@ function CheckInReadyQueueCard({
   slotTintIndex: number | null
   nativeDragging: boolean
   onPointerDragStart: (event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => void
+  allowDrag?: boolean
 }) {
   const tint = getSlotTint(slotTintIndex)
 
@@ -9285,14 +9290,14 @@ function CheckInReadyQueueCard({
 
   return (
     <div
-      onPointerDown={(event) => onPointerDragStart(event, rq)}
+      onPointerDown={allowDrag ? ((event) => onPointerDragStart(event, rq)) : undefined}
       style={{
         border: `1px solid ${tint?.border || '#90caf9'}`,
         borderRadius: 8,
         overflow: 'hidden',
-        cursor: nativeDragging ? 'grabbing' : 'grab',
+        cursor: allowDrag ? (nativeDragging ? 'grabbing' : 'grab') : 'default',
         opacity: nativeDragging ? 0.25 : 1,
-        touchAction: 'none',
+        touchAction: allowDrag ? 'none' : 'auto',
         userSelect: 'none',
         boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       }}
@@ -10752,13 +10757,8 @@ export default function TournamentDeskPage() {
     }))
     .filter((group) => group.entries.length > 0)
 
-  const filteredReadyQueue = data.ready_queue.filter((rq) => (
-    effectiveSelectedCheckInSlotKey === 'all' ||
-    slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
-  ))
-
-  // Fully checked-in PREASSIGNED matches are excluded from Ready To Go by the
-  // backend. Surface them here so they do not vanish from the Check-In tab.
+  // Fully checked-in PREASSIGNED matches are excluded from ready_queue by the
+  // backend. Fold them into Ready To Go and onto their assigned court cards.
   const preassignedReadyEntries = buildPreassignedReadyEntries({
     checkinMatches: data.checkin_matches || [],
     matches: data.matches || [],
@@ -10768,10 +10768,26 @@ export default function TournamentDeskPage() {
     effectiveSelectedCheckInSlotKey === 'all' ||
     slotKeyByMatchId.get(entry.matchId) === effectiveSelectedCheckInSlotKey
   ))
+  const preassignedReadyByCourt = new Map<string, (typeof preassignedReadyEntries)[number]>()
+  for (const entry of preassignedReadyEntries) {
+    // Keep the earliest scheduled ready match per court on the board card.
+    if (!preassignedReadyByCourt.has(entry.courtName)) {
+      preassignedReadyByCourt.set(entry.courtName, entry)
+    }
+  }
+  const preassignedReadyMatchIds = new Set(preassignedReadyEntries.map((entry) => entry.matchId))
 
-  // Matches in the ready queue are waiting for court assignment; they should
-  // not count as occupying a court on the board (which would make that court
-  // appear "current" and then pop to "open" when dragged away).
+  const filteredReadyQueue = mergeReadyQueueWithPreassigned(
+    data.ready_queue || [],
+    preassignedReadyEntries,
+  ).filter((rq) => (
+    effectiveSelectedCheckInSlotKey === 'all' ||
+    slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
+  ))
+
+  // Matches in the dynamic ready queue are waiting for court assignment; they
+  // should not count as occupying a court on the board. Preassigned ready
+  // matches keep their reserved court card so staff can open/start them there.
   const readyMatchIds = new Set((data.ready_queue || []).map((rq) => rq.match_id))
 
   const courtBoardRows = checkInCandidateCourts.map((court) => {
@@ -10782,10 +10798,12 @@ export default function TournamentDeskPage() {
     const onDeck = onDeckRaw && !readyMatchIds.has(onDeckRaw.match_id) ? onDeckRaw : undefined
     const courtLabel = court.replace(/^Court\s+/i, '')
     const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
-    // In check-in management we only render a court card as occupied when the
-    // match is actively playing/paused. Scheduled up-next/on-deck matches should
-    // remain in waiting/ready lanes and not duplicate onto courts.
-    const displayMatch = now || null
+    const preassignedReady = preassignedReadyByCourt.get(court)
+    const preassignedDesk = preassignedReady && !preassignedReady.courtOccupied
+      ? preassignedReady.deskMatch
+      : null
+    // Live play wins; otherwise show the ready preassigned match on its court.
+    const displayMatch = now || preassignedDesk || null
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
     const availableSlotsForCourt = visibleReadyAssignSlots.filter(
@@ -10806,6 +10824,10 @@ export default function TournamentDeskPage() {
         slotStateLabel = 'Assigned'
         slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
       }
+    } else if (preassignedDesk) {
+      lane = 'current'
+      slotStateLabel = 'Assigned'
+      slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
     } else if (!isClosed && availableSlotsForCourt.length > 0) {
       slotStateLabel = 'Open'
       slotStateColor = { bg: '#e8f5e9', color: '#2e7d32' }
@@ -11437,95 +11459,6 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
 
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#6a1b9a', backgroundColor: '#faf5ff' }}>
-                      Ready — Assigned Court
-                    </div>
-                    <div style={{ padding: 12 }}>
-                      {preassignedReadyEntries.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#90a4ae' }}>
-                          No fully checked-in preassigned matches are waiting on their courts.
-                        </div>
-                      ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-                          {preassignedReadyEntries.map((entry) => (
-                            <div
-                              key={entry.matchId}
-                              style={{
-                                border: `1px solid ${entry.courtOccupied ? '#ffe0b2' : '#e1bee7'}`,
-                                borderRadius: 8,
-                                overflow: 'hidden',
-                                backgroundColor: '#fff',
-                                boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-                              }}
-                            >
-                              <div style={{
-                                backgroundColor: entry.courtOccupied ? '#ef6c00' : '#6a1b9a',
-                                color: '#fff',
-                                padding: '6px 8px',
-                                fontSize: 12,
-                                fontWeight: 700,
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                gap: 6,
-                              }}>
-                                <span>#{entry.matchNumber}</span>
-                                <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.95 }}>
-                                  {entry.courtName.replace(/^Court\s+/i, 'Ct ')}
-                                  {entry.scheduledTime ? ` · ${entry.scheduledTime}` : ''}
-                                </span>
-                              </div>
-                              <div style={{ padding: '8px 10px' }}>
-                                <div style={{
-                                  display: 'inline-block',
-                                  marginBottom: 6,
-                                  padding: '2px 6px',
-                                  borderRadius: 4,
-                                  fontSize: 10,
-                                  fontWeight: 800,
-                                  backgroundColor: entry.courtOccupied ? '#fff3e0' : '#f3e5f5',
-                                  color: entry.courtOccupied ? '#e65100' : '#6a1b9a',
-                                }}>
-                                  {entry.statusLabel}
-                                </div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.3 }}>
-                                  {entry.team1Display}
-                                </div>
-                                <div style={{ color: '#999', fontSize: 9, margin: '2px 0' }}>vs</div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.3 }}>
-                                  {entry.team2Display}
-                                </div>
-                                <div style={{ marginTop: 6, fontSize: 10, color: '#607d8b', fontWeight: 600 }}>
-                                  {entry.eventName}
-                                  {entry.dayLabel ? ` · ${entry.dayLabel}` : ''}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setDrawerMatch(entry.deskMatch)}
-                                  style={{
-                                    marginTop: 8,
-                                    width: '100%',
-                                    padding: '4px 8px',
-                                    border: 'none',
-                                    borderRadius: 4,
-                                    backgroundColor: entry.courtOccupied ? '#ef6c00' : '#6a1b9a',
-                                    color: '#fff',
-                                    fontSize: 11,
-                                    fontWeight: 800,
-                                    cursor: 'pointer',
-                                  }}
-                                >
-                                  Open Match
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
                   <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
                     <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                       <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#455a64', backgroundColor: '#fafcfe' }}>
@@ -11604,12 +11537,22 @@ export default function TournamentDeskPage() {
                         ) : (
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
                             {filteredReadyQueue.map((rq) => {
+                              const deskMatch = matchById.get(rq.match_id)
+                              const isPreassignedReady = preassignedReadyMatchIds.has(rq.match_id)
+                              const preassignedEntry = preassignedReadyEntries.find((e) => e.matchId === rq.match_id)
                               const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
                               const slotLabelResolved = rqSlotKey
                                 ? slotLabelByKey.get(rqSlotKey) || null
                                 : null
                               const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
-                              const headerTop = (slotLabelResolved || `${rq.day_label} ${rq.scheduled_time || ''}`.trim()) || '—'
+                              const courtTimeLabel = isPreassignedReady && preassignedEntry
+                                ? `${preassignedEntry.courtName.replace(/^Court\s+/i, 'Ct ')}${preassignedEntry.scheduledTime ? ` · ${preassignedEntry.scheduledTime}` : ''}`
+                                : null
+                              const headerTop = (
+                                courtTimeLabel ||
+                                slotLabelResolved ||
+                                `${rq.day_label} ${rq.scheduled_time || ''}`.trim()
+                              ) || '—'
                               const queueElapsedLabel = formatElapsedLabel(rq.ready_at, null)
                               return (
                                 <CheckInReadyQueueCard
@@ -11618,12 +11561,13 @@ export default function TournamentDeskPage() {
                                   titleLabel={formatReadyQueueLabel(rq)}
                                   headerRightTop={headerTop}
                                   queueElapsedLabel={queueElapsedLabel}
-                                  deskMatch={matchById.get(rq.match_id)}
+                                  deskMatch={deskMatch}
                                   returning={readyResettingIds.has(rq.match_id)}
                                   onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
                                   slotTintIndex={rqSlotIndex}
                                   nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
                                   onPointerDragStart={handlePointerDragStart}
+                                  allowDrag={!isPreassignedReady}
                                 />
                               )
                             })}
