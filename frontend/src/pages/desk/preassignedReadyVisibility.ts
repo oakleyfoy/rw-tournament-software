@@ -95,3 +95,32 @@ export function buildPreassignedReadyEntries(args: {
 
   return entries
 }
+
+export function preassignedEntryToReadyQueueItem(entry: PreassignedReadyEntry): ReadyQueueItem {
+  return {
+    match_id: entry.matchId,
+    match_number: entry.matchNumber,
+    match_code: entry.matchCode,
+    event_name: entry.eventName,
+    day_label: entry.dayLabel,
+    scheduled_time: entry.scheduledTime,
+    ready_at: entry.checkinMatch.ready_at,
+    team1_display: entry.team1Display,
+    team2_display: entry.team2Display,
+  }
+}
+
+/** Dynamic ready queue first, then preassigned ready matches (with court already set). */
+export function mergeReadyQueueWithPreassigned(
+  readyQueue: ReadyQueueItem[],
+  preassignedEntries: PreassignedReadyEntry[],
+): ReadyQueueItem[] {
+  const seen = new Set(readyQueue.map((rq) => rq.match_id))
+  const merged = [...readyQueue]
+  for (const entry of preassignedEntries) {
+    if (seen.has(entry.matchId)) continue
+    seen.add(entry.matchId)
+    merged.push(preassignedEntryToReadyQueueItem(entry))
+  }
+  return merged
+}
