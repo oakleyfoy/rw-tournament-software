@@ -7235,7 +7235,7 @@ function TextListTab({ tournamentId }: { tournamentId: number }) {
         {sendResult && (
           <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
             <div style={{ fontSize: 13, marginBottom: 6 }}>
-              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, test-blocked {sendResult.skipped_test_mode}, deduped {sendResult.skipped_dedupe}
+              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, test-blocked {sendResult.skipped_test_mode}, redirected {sendResult.redirected ?? 0}, deduped {sendResult.skipped_dedupe}
             </div>
             <div style={{ maxHeight: 180, overflowY: 'auto', fontSize: 12 }}>
               {sendResult.results.slice(0, 25).map((r, idx) => (
@@ -7348,6 +7348,7 @@ function SmsAdminTab({
   const [tournamentTimezone, setTournamentTimezone] = useState<string | null>(null)
 
   const [settingsDraft, setSettingsDraft] = useState<SmsSettingsResponse | null>(null)
+  const [savedDeliveryMode, setSavedDeliveryMode] = useState<'live' | 'allowlist' | 'redirect'>('live')
   const [savingSettings, setSavingSettings] = useState(false)
   const [syncingPlayerContacts, setSyncingPlayerContacts] = useState(false)
   const [playerAdminNotice, setPlayerAdminNotice] = useState<string | null>(null)
@@ -7396,6 +7397,9 @@ function SmsAdminTab({
     ])
     setStatus(statusResp)
     setSettingsDraft(settingsResp)
+    setSavedDeliveryMode(
+      settingsResp.delivery_mode || (settingsResp.test_mode ? 'allowlist' : 'live')
+    )
   }, [tournamentId])
 
   const loadTemplates = useCallback(async () => {
@@ -7962,6 +7966,10 @@ function SmsAdminTab({
     }
   }
 
+  const deliveryMode: 'live' | 'allowlist' | 'redirect' =
+    settingsDraft?.delivery_mode
+    || (settingsDraft?.test_mode ? 'allowlist' : 'live')
+
   const handleAddQuickTestPhone = async () => {
     const phone = quickTestPhone.trim()
     if (!phone) {
@@ -7971,18 +7979,28 @@ function SmsAdminTab({
     setSavingQuickTestPhone(true)
     setError(null)
     try {
-      const existing = settingsDraft?.test_allowlist || ''
-      const tokens = `${existing},${phone}`
-        .replace(/[;\n]+/g, ',')
-        .split(',')
-        .map(v => v.trim())
-        .filter(Boolean)
-      const deduped = Array.from(new Set(tokens))
-      const updated = await patchSmsSettings(tournamentId, {
-        test_mode: true,
-        test_allowlist: deduped.join(','),
-      })
-      setSettingsDraft(updated)
+      if (deliveryMode === 'redirect') {
+        const updated = await patchSmsSettings(tournamentId, {
+          delivery_mode: 'redirect',
+          redirect_phone: phone,
+        })
+        setSettingsDraft(updated)
+        setSavedDeliveryMode('redirect')
+      } else {
+        const existing = settingsDraft?.test_allowlist || ''
+        const tokens = `${existing},${phone}`
+          .replace(/[;\n]+/g, ',')
+          .split(',')
+          .map(v => v.trim())
+          .filter(Boolean)
+        const deduped = Array.from(new Set(tokens))
+        const updated = await patchSmsSettings(tournamentId, {
+          delivery_mode: 'allowlist',
+          test_allowlist: deduped.join(','),
+        })
+        setSettingsDraft(updated)
+        setSavedDeliveryMode('allowlist')
+      }
       setQuickTestPhone('')
     } catch (e: any) {
       setError(e?.message || 'Failed to add test phone')
@@ -7993,6 +8011,20 @@ function SmsAdminTab({
 
   const saveSettings = async () => {
     if (!settingsDraft) return
+    const nextMode = settingsDraft.delivery_mode
+      || (settingsDraft.test_mode ? 'allowlist' : 'live')
+    if (nextMode === 'live' && savedDeliveryMode !== 'live') {
+      const confirmed = window.confirm(
+        'Switch SMS delivery to LIVE?\n\n'
+        + 'Messages will go to real player phone numbers.\n'
+        + 'Only continue if you intend to send live tournament texts.'
+      )
+      if (!confirmed) return
+    }
+    if (nextMode === 'redirect' && !(settingsDraft.redirect_phone || '').trim()) {
+      setError('Redirect mode requires a valid redirect phone number')
+      return
+    }
     setSavingSettings(true)
     setError(null)
     try {
@@ -8007,11 +8039,15 @@ function SmsAdminTab({
         auto_checkin_post_match_next: settingsDraft.auto_checkin_post_match_next,
         auto_checkin_court_assigned: false,
         texts_enabled: settingsDraft.texts_enabled,
-        test_mode: settingsDraft.test_mode,
+        delivery_mode: nextMode,
         test_allowlist: settingsDraft.test_allowlist,
+        redirect_phone: settingsDraft.redirect_phone,
         player_contacts_only: settingsDraft.player_contacts_only,
       })
       setSettingsDraft(updated)
+      setSavedDeliveryMode(
+        updated.delivery_mode || (updated.test_mode ? 'allowlist' : 'live')
+      )
     } catch (e: any) {
       setError(e?.message || 'Failed to save settings')
     } finally {
@@ -8151,10 +8187,13 @@ function SmsAdminTab({
   }
   const checkinTemplateRows = templates.filter(row => activeCheckinTemplateTypes.has(row.message_type))
   const textsEnabled = settingsDraft?.texts_enabled ?? true
+  const activeDeliveryMode: 'live' | 'allowlist' | 'redirect' =
+    settingsDraft?.delivery_mode
+    || (settingsDraft?.test_mode ? 'allowlist' : 'live')
   const visibleLogs = logs.filter(l => {
     const status = String(l.status || '').trim().toLowerCase()
     if (status === 'blocked_test_mode') return false
-    if (status === 'sent' || status === 'delivered') return true
+    if (status === 'sent' || status === 'delivered' || status === 'sent_redirect' || status === 'dry_run') return true
     if (status.includes('fail') || status === 'undelivered') return true
     return Boolean((l.error_message || '').trim())
   })
@@ -8189,8 +8228,18 @@ function SmsAdminTab({
           <div style={{ border: `1px solid ${textsEnabled ? '#c8e6c9' : '#ffcdd2'}`, borderRadius: 8, padding: '8px 10px', backgroundColor: textsEnabled ? '#f1f8e9' : '#ffebee' }}>
             <strong>Texts:</strong> {textsEnabled ? 'ON' : 'OFF'}
           </div>
-          <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
-            <strong>Test mode:</strong> {settingsDraft?.test_mode ? 'ON (allowlist only)' : 'OFF'}
+          <div style={{
+            border: `1px solid ${activeDeliveryMode === 'live' ? '#e6e6e6' : activeDeliveryMode === 'redirect' ? '#ffcc80' : '#ffe0b2'}`,
+            borderRadius: 8,
+            padding: '8px 10px',
+            backgroundColor: activeDeliveryMode === 'live' ? undefined : activeDeliveryMode === 'redirect' ? '#fff3e0' : '#fff8e1',
+          }}>
+            <strong>Delivery:</strong>{' '}
+            {activeDeliveryMode === 'live'
+              ? 'LIVE'
+              : activeDeliveryMode === 'redirect'
+                ? 'REDIRECT ALL'
+                : 'ALLOWLIST ONLY'}
           </div>
           <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
             <strong>Contact mode:</strong> {settingsDraft?.player_contacts_only ? 'Player records only' : 'Legacy team fields'}
@@ -8205,7 +8254,7 @@ function SmsAdminTab({
         </div>
         <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
           Selected template set: <strong>Check-In Management</strong>.
-          {' '}First-match texts are manual only. TEST mode + allowlist is the active safety check.
+          {' '}First-match texts are manual only. Use Allowlist or Redirect All for safe testing.
         </div>
         {settingsDraft && (
           <div style={{ marginTop: 10, padding: 10, border: `1px solid ${textsEnabled ? '#dcedc8' : '#ffcdd2'}`, borderRadius: 6, backgroundColor: textsEnabled ? '#f9fff1' : '#fff5f5' }}>
@@ -8252,26 +8301,56 @@ function SmsAdminTab({
             </div>
           </div>
         )}
-        {settingsDraft?.test_mode && (
+        {activeDeliveryMode === 'allowlist' && (
           <div style={{ marginTop: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1', fontSize: 12, color: '#e65100', maxWidth: 820 }}>
-            TEST mode is ON. Sends are restricted to allowlisted numbers:
+            ALLOWLIST mode is ON. Sends are restricted to allowlisted numbers:
             <div style={{ marginTop: 4, color: '#6d4c41' }}>
-              {settingsDraft.test_allowlist || '(none configured — all recipients will be blocked)'}
+              {settingsDraft?.test_allowlist || '(none configured — all recipients will be blocked)'}
+            </div>
+          </div>
+        )}
+        {activeDeliveryMode === 'redirect' && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #ff9800', borderRadius: 6, backgroundColor: '#fff3e0', fontSize: 12, color: '#e65100', maxWidth: 820, fontWeight: 600 }}>
+            REDIRECT ALL is ON. Every tournament SMS is delivered only to:
+            <div style={{ marginTop: 4, color: '#bf360c' }}>
+              {settingsDraft?.redirect_phone || '(missing — saves/sends will be rejected)'}
+            </div>
+            <div style={{ marginTop: 4, fontWeight: 400, color: '#6d4c41' }}>
+              Original player numbers are never contacted. Each intended recipient still produces a separately logged test message.
             </div>
           </div>
         )}
         {settingsDraft && (
           <div style={{ marginTop: 10, padding: 10, border: '1px solid #ffe0b2', borderRadius: 6, backgroundColor: '#fff8e1' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-              <input
-                type="checkbox"
-                checked={Boolean(settingsDraft.test_mode)}
-                onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_mode: e.target.checked }) : prev)}
-              />
-              TEST mode (allowlist-only delivery)
-            </label>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
-              When enabled, SMS sends are blocked for everyone except the phone numbers listed below.
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>SMS delivery mode</div>
+            <div style={{ display: 'grid', gap: 6, marginBottom: 10, fontSize: 13 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="sms-delivery-mode"
+                  checked={deliveryMode === 'live'}
+                  onChange={() => setSettingsDraft(prev => prev ? ({ ...prev, delivery_mode: 'live', test_mode: false }) : prev)}
+                />
+                Live — send to real player numbers
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="sms-delivery-mode"
+                  checked={deliveryMode === 'allowlist'}
+                  onChange={() => setSettingsDraft(prev => prev ? ({ ...prev, delivery_mode: 'allowlist', test_mode: true }) : prev)}
+                />
+                Allowlist only — block everyone except listed numbers
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="sms-delivery-mode"
+                  checked={deliveryMode === 'redirect'}
+                  onChange={() => setSettingsDraft(prev => prev ? ({ ...prev, delivery_mode: 'redirect', test_mode: false }) : prev)}
+                />
+                Redirect all — every SMS goes to one test number
+              </label>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
               <button
@@ -8279,10 +8358,10 @@ function SmsAdminTab({
                 disabled={savingSettings}
                 style={{ padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}
               >
-                {savingSettings ? 'Saving…' : 'Save Test Mode'}
+                {savingSettings ? 'Saving…' : 'Save Delivery Mode'}
               </button>
               <span style={{ fontSize: 11, color: '#666' }}>
-                Save after turning test mode on or off so the change takes effect.
+                Save after changing mode. Switching to Live requires confirmation.
               </span>
             </div>
             <div style={{ width: '25%', minWidth: 240, maxWidth: 320 }}>
@@ -8291,7 +8370,7 @@ function SmsAdminTab({
                   type="text"
                   value={quickTestPhone}
                   onChange={e => setQuickTestPhone(e.target.value)}
-                      placeholder="Add my number (e.g. +19015551234)"
+                  placeholder="Add my number (e.g. +19015551234)"
                   style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
                 />
                 <button
@@ -8299,19 +8378,40 @@ function SmsAdminTab({
                   disabled={savingQuickTestPhone}
                   style={{ padding: '7px 12px', fontSize: 12, cursor: 'pointer', justifySelf: 'start' }}
                 >
-                  {savingQuickTestPhone ? 'Adding…' : 'Add My Number'}
+                  {savingQuickTestPhone
+                    ? 'Saving…'
+                    : deliveryMode === 'redirect'
+                      ? 'Set Redirect Number'
+                      : 'Add My Number'}
                 </button>
               </div>
-              <input
-                type="text"
-                value={settingsDraft.test_allowlist ?? ''}
-                onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_allowlist: e.target.value }) : prev)}
-                placeholder="+19013593035, +19703092022"
-                style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
-              />
-              <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
-                Use comma or newline-separated numbers. They are normalized to E.164 on save.
-              </div>
+              {deliveryMode === 'redirect' ? (
+                <>
+                  <input
+                    type="text"
+                    value={settingsDraft.redirect_phone ?? ''}
+                    onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, redirect_phone: e.target.value }) : prev)}
+                    placeholder="+19015551234"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+                  />
+                  <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
+                    Required for Redirect All. Normalized to E.164 on save. Invalid/missing numbers cannot activate redirect.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    value={settingsDraft.test_allowlist ?? ''}
+                    onChange={e => setSettingsDraft(prev => prev ? ({ ...prev, test_allowlist: e.target.value }) : prev)}
+                    placeholder="+19013593035, +19703092022"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: 7, borderRadius: 4, border: '1px solid #ccc' }}
+                  />
+                  <div style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
+                    Allowlist phones (comma or newline). Used only in Allowlist mode.
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -8721,7 +8821,7 @@ function SmsAdminTab({
         {sendResult && (
           <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0e0e0', borderRadius: 6, backgroundColor: '#fafafa' }}>
             <div style={{ fontSize: 13, marginBottom: 6 }}>
-              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, test-blocked {sendResult.skipped_test_mode}, deduped {sendResult.skipped_dedupe}
+              <strong>Send result:</strong> sent {sendResult.sent}, failed {sendResult.failed}, no-phone {sendResult.skipped_no_phone}, consent-blocked {sendResult.skipped_consent}, test-blocked {sendResult.skipped_test_mode}, redirected {sendResult.redirected ?? 0}, deduped {sendResult.skipped_dedupe}
             </div>
             <div style={{ maxHeight: 180, overflowY: 'auto', fontSize: 12 }}>
               {sendResult.results.slice(0, 25).map((r, idx) => (
@@ -8885,7 +8985,8 @@ function SmsAdminTab({
               <tr style={{ backgroundColor: '#fafafa' }}>
                 <th style={{ textAlign: 'left', padding: 6 }}>Time</th>
                 <th style={{ textAlign: 'left', padding: 6 }}>Type</th>
-                <th style={{ textAlign: 'left', padding: 6 }}>Phone</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Delivered to</th>
+                <th style={{ textAlign: 'left', padding: 6 }}>Intended</th>
                 <th style={{ textAlign: 'left', padding: 6 }}>Status</th>
                 <th style={{ textAlign: 'left', padding: 6 }}>Dedupe</th>
                 <th style={{ textAlign: 'left', padding: 6 }}>Error</th>
@@ -8893,18 +8994,31 @@ function SmsAdminTab({
             </thead>
             <tbody>
               {visibleLogs.map(l => (
-                <tr key={l.id} style={{ borderTop: '1px solid #f0f0f0' }}>
+                <tr
+                  key={l.id}
+                  style={{
+                    borderTop: '1px solid #f0f0f0',
+                    backgroundColor: l.status === 'sent_redirect' ? '#fff8e1' : undefined,
+                  }}
+                >
                   <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{formatLogTime(l.sent_at)}</td>
                   <td style={{ padding: 6 }}>{l.message_type}</td>
                   <td style={{ padding: 6 }}>{l.phone_number}</td>
-                  <td style={{ padding: 6 }}>{l.status}</td>
+                  <td style={{ padding: 6 }}>
+                    {l.intended_phone_number && l.intended_phone_number !== l.phone_number
+                      ? l.intended_phone_number
+                      : '—'}
+                  </td>
+                  <td style={{ padding: 6 }}>
+                    {l.status === 'sent_redirect' ? 'sent_redirect (test)' : l.status}
+                  </td>
                   <td style={{ padding: 6 }}>{l.dedupe_key || '—'}</td>
                   <td style={{ padding: 6, color: '#c62828' }}>{l.error_message || '—'}</td>
                 </tr>
               ))}
               {visibleLogs.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ padding: 10, color: '#888', fontStyle: 'italic' }}>
+                  <td colSpan={7} style={{ padding: 10, color: '#888', fontStyle: 'italic' }}>
                     No successful sends or true errors yet
                   </td>
                 </tr>

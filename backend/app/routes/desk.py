@@ -772,6 +772,7 @@ class FinalizeSmsPreviewResponse(BaseModel):
     blocked_test_mode: int = 0
     blocked_consent: int = 0
     deduped: int = 0
+    redirected: int = 0
     disabled_reason: Optional[str] = None
 
 
@@ -787,6 +788,8 @@ class FinalizeSmsSendResult(BaseModel):
     player_name: Optional[str] = None
     status: str
     error: Optional[str] = None
+    intended_phone: Optional[str] = None
+    delivery_phone: Optional[str] = None
 
 
 class FinalizeSmsSendResponse(BaseModel):
@@ -797,6 +800,7 @@ class FinalizeSmsSendResponse(BaseModel):
     skipped_consent: int = 0
     skipped_dedupe: int = 0
     skipped_test_mode: int = 0
+    redirected: int = 0
     message_type: str
     results: List[FinalizeSmsSendResult]
 
@@ -3267,6 +3271,7 @@ def finalize_match(
                 blocked_test_mode=int(preview_data.get("blocked_test_mode") or 0),
                 blocked_consent=int(preview_data.get("blocked_consent") or 0),
                 deduped=int(preview_data.get("deduped") or 0),
+                redirected=int(preview_data.get("redirected") or 0),
                 disabled_reason=(
                     str(preview_data.get("disabled_reason"))
                     if preview_data.get("disabled_reason") is not None
@@ -3354,6 +3359,7 @@ def send_finalize_match_sms(
         skipped_consent=int(send_data.get("skipped_consent") or 0),
         skipped_dedupe=int(send_data.get("skipped_dedupe") or 0),
         skipped_test_mode=int(send_data.get("skipped_test_mode") or 0),
+        redirected=int(send_data.get("redirected") or 0),
         message_type=str(send_data.get("message_type") or "post_match_next"),
         results=[
             FinalizeSmsSendResult(
@@ -3364,6 +3370,8 @@ def send_finalize_match_sms(
                 player_name=row.player_name,
                 status=row.status,
                 error=row.error,
+                intended_phone=getattr(row, "intended_phone", None),
+                delivery_phone=getattr(row, "delivery_phone", None),
             )
             for row in list(send_data.get("results") or [])
         ],

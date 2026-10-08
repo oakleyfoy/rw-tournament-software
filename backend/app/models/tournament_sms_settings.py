@@ -5,6 +5,18 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
+# Mutually exclusive outbound delivery modes.
+SMS_DELIVERY_MODE_LIVE = "live"
+SMS_DELIVERY_MODE_ALLOWLIST = "allowlist"
+SMS_DELIVERY_MODE_REDIRECT = "redirect"
+SMS_DELIVERY_MODES = frozenset(
+    {
+        SMS_DELIVERY_MODE_LIVE,
+        SMS_DELIVERY_MODE_ALLOWLIST,
+        SMS_DELIVERY_MODE_REDIRECT,
+    }
+)
+
 
 class TournamentSmsSettings(SQLModel, table=True):
     """Per-tournament settings controlling which auto-texts are enabled."""
@@ -26,11 +38,16 @@ class TournamentSmsSettings(SQLModel, table=True):
     auto_checkin_post_match_next: bool = Field(default=False)
     auto_checkin_court_assigned: bool = Field(default=False)
 
-    # Safety mode for live testing:
-    # if enabled, sends are restricted to numbers in test_allowlist.
+    # Master emergency switch — when False, no outbound tournament SMS is sent.
     texts_enabled: bool = Field(default=True)
+
+    # Delivery mode: live | allowlist | redirect (mutually exclusive).
+    # Legacy test_mode is kept in sync for older clients (True <=> allowlist).
+    delivery_mode: str = Field(default=SMS_DELIVERY_MODE_LIVE)
     test_mode: bool = Field(default=False)
     test_allowlist: Optional[str] = Field(default=None)
+    # Single E.164 destination used when delivery_mode == redirect.
+    redirect_phone: Optional[str] = Field(default=None)
 
     # Optional deprecation path:
     # when enabled, team/event/division/match texting resolves recipients from
