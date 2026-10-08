@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { buildPreassignedReadyEntries } from './preassignedReadyVisibility'
 import {
   getEvents,
   getTournament,
@@ -10642,6 +10643,18 @@ export default function TournamentDeskPage() {
     slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
   ))
 
+  // Fully checked-in PREASSIGNED matches are excluded from Ready To Go by the
+  // backend. Surface them here so they do not vanish from the Check-In tab.
+  const preassignedReadyEntries = buildPreassignedReadyEntries({
+    checkinMatches: data.checkin_matches || [],
+    matches: data.matches || [],
+    readyQueue: data.ready_queue || [],
+    nowPlayingByCourt: data.now_playing_by_court || {},
+  }).filter((entry) => (
+    effectiveSelectedCheckInSlotKey === 'all' ||
+    slotKeyByMatchId.get(entry.matchId) === effectiveSelectedCheckInSlotKey
+  ))
+
   // Matches in the ready queue are waiting for court assignment; they should
   // not count as occupying a court on the board (which would make that court
   // appear "current" and then pop to "open" when dragged away).
@@ -11304,6 +11317,95 @@ export default function TournamentDeskPage() {
                               slotTintIndex={null}
                               nativeDragOverCourt={nativeDragOverCourt}
                             />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#6a1b9a', backgroundColor: '#faf5ff' }}>
+                      Ready — Assigned Court
+                    </div>
+                    <div style={{ padding: 12 }}>
+                      {preassignedReadyEntries.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#90a4ae' }}>
+                          No fully checked-in preassigned matches are waiting on their courts.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+                          {preassignedReadyEntries.map((entry) => (
+                            <div
+                              key={entry.matchId}
+                              style={{
+                                border: `1px solid ${entry.courtOccupied ? '#ffe0b2' : '#e1bee7'}`,
+                                borderRadius: 8,
+                                overflow: 'hidden',
+                                backgroundColor: '#fff',
+                                boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+                              }}
+                            >
+                              <div style={{
+                                backgroundColor: entry.courtOccupied ? '#ef6c00' : '#6a1b9a',
+                                color: '#fff',
+                                padding: '6px 8px',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: 6,
+                              }}>
+                                <span>#{entry.matchNumber}</span>
+                                <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.95 }}>
+                                  {entry.courtName.replace(/^Court\s+/i, 'Ct ')}
+                                  {entry.scheduledTime ? ` · ${entry.scheduledTime}` : ''}
+                                </span>
+                              </div>
+                              <div style={{ padding: '8px 10px' }}>
+                                <div style={{
+                                  display: 'inline-block',
+                                  marginBottom: 6,
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  backgroundColor: entry.courtOccupied ? '#fff3e0' : '#f3e5f5',
+                                  color: entry.courtOccupied ? '#e65100' : '#6a1b9a',
+                                }}>
+                                  {entry.statusLabel}
+                                </div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.3 }}>
+                                  {entry.team1Display}
+                                </div>
+                                <div style={{ color: '#999', fontSize: 9, margin: '2px 0' }}>vs</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.3 }}>
+                                  {entry.team2Display}
+                                </div>
+                                <div style={{ marginTop: 6, fontSize: 10, color: '#607d8b', fontWeight: 600 }}>
+                                  {entry.eventName}
+                                  {entry.dayLabel ? ` · ${entry.dayLabel}` : ''}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setDrawerMatch(entry.deskMatch)}
+                                  style={{
+                                    marginTop: 8,
+                                    width: '100%',
+                                    padding: '4px 8px',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    backgroundColor: entry.courtOccupied ? '#ef6c00' : '#6a1b9a',
+                                    color: '#fff',
+                                    fontSize: 11,
+                                    fontWeight: 800,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Open Match
+                                </button>
+                              </div>
+                            </div>
                           ))}
                         </div>
                       )}

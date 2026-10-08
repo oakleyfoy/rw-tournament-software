@@ -3031,6 +3031,7 @@ export interface DeskMatchItem {
   scheduled_time: string | null
   sort_time: string | null
   court_name: string | null
+  court_assignment_mode?: string | null
   status: string
   team1_id: number | null
   team1_display: string
