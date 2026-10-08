@@ -2639,9 +2639,7 @@ def get_opening_release_preview(
         parsed_day = date.fromisoformat(day_date)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
-    preview = preview_opening_release(
-        session, tournament, version, day_date=parsed_day, slot_key=slot_key
-    )
+    preview = preview_opening_release(session, tournament, version, day_date=parsed_day, slot_key=slot_key)
     return _opening_release_preview_response(preview)
 
 
@@ -2683,9 +2681,7 @@ def post_opening_release(
         slot_key=payload.slot_key,
         released_by=payload.released_by,
     )
-    preview = preview_opening_release(
-        session, tournament, version, day_date=parsed_day, slot_key=payload.slot_key
-    )
+    preview = preview_opening_release(session, tournament, version, day_date=parsed_day, slot_key=payload.slot_key)
     return OpeningReleaseResponse(
         slot_key=release_row.slot_key,
         day_date=release_row.day_date.isoformat(),
@@ -3369,13 +3365,9 @@ def finalize_match(
             MatchAssignment.match_id == match.id,
         )
     ).first()
-    finalized_slot = (
-        session.get(ScheduleSlot, finalized_assignment.slot_id) if finalized_assignment else None
-    )
+    finalized_slot = session.get(ScheduleSlot, finalized_assignment.slot_id) if finalized_assignment else None
     finalized_event = session.get(Event, match.event_id) if match.event_id else None
-    preassigned_day = bool(
-        finalized_slot is not None and is_preassigned(finalized_event, finalized_slot.day_date)
-    )
+    preassigned_day = bool(finalized_slot is not None and is_preassigned(finalized_event, finalized_slot.day_date))
 
     raw_updates = adv_result.get("downstream_updates", [])
     downstream_match_ids = [u["match_id"] for u in raw_updates]
@@ -5971,8 +5963,7 @@ def move_match(
         )
     # Also free the previous court for the next eligible reserved match.
     if previous_slot is not None and (
-        previous_slot.court_number != target_slot.court_number
-        or previous_slot.day_date != target_slot.day_date
+        previous_slot.court_number != target_slot.court_number or previous_slot.day_date != target_slot.day_date
     ):
         try:
             dispatch_after_court_freed(

@@ -651,9 +651,7 @@ def ensure_opening_slot_release_table(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure openingslotrelease table (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure openingslotrelease table (this is OK if table doesn't exist yet): {e}")
 
 
 def ensure_court_dispatch_lock_table(engine: Engine) -> None:
@@ -668,9 +666,7 @@ def ensure_court_dispatch_lock_table(engine: Engine) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
-            f"Failed to ensure courtdispatchlock table (this is OK if table doesn't exist yet): {e}"
-        )
+        logger.warning(f"Failed to ensure courtdispatchlock table (this is OK if table doesn't exist yet): {e}")
 
 
 def ensure_tournament_time_window_columns(engine: Engine) -> None:
