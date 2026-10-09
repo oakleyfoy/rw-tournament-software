@@ -9283,6 +9283,7 @@ function CheckInReadyQueueCard({
   onPointerDragStart,
   allowDrag = true,
   showReturnButton = true,
+  compact = false,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -9296,18 +9297,26 @@ function CheckInReadyQueueCard({
   onPointerDragStart: (event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => void
   allowDrag?: boolean
   showReturnButton?: boolean
+  compact?: boolean
 }) {
   const tint = getSlotTint(slotTintIndex)
 
   const accentColor = tint?.accent || '#0d47a1'
   const footerBg = tint?.bg || '#eef4ff'
+  const headerPad = compact ? '2px 5px' : '3px 6px'
+  const headerFont = compact ? 10 : 11
+  const bodyPad = compact ? '3px 5px 3px' : '4px 6px 5px'
+  const metaFont = compact ? 8 : 9
+  const teamFont = compact ? 10 : 11
+  const btnSize = compact ? 18 : 20
+  const iconSize = compact ? 10 : 11
 
   return (
     <div
       onPointerDown={allowDrag ? ((event) => onPointerDragStart(event, rq)) : undefined}
       style={{
         border: `1px solid ${tint?.border || '#90caf9'}`,
-        borderRadius: 6,
+        borderRadius: compact ? 5 : 6,
         overflow: 'hidden',
         cursor: allowDrag ? (nativeDragging ? 'grabbing' : 'grab') : 'default',
         opacity: nativeDragging ? 0.25 : 1,
@@ -9321,16 +9330,17 @@ function CheckInReadyQueueCard({
       <div style={{
         backgroundColor: accentColor,
         color: '#fff',
-        padding: '3px 6px',
-        fontSize: 11,
+        padding: headerPad,
+        fontSize: headerFont,
         fontWeight: 700,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        gap: 4,
+        gap: 3,
         minWidth: 0,
+        lineHeight: 1.15,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', minWidth: 0 }}>
           <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{titleLabel}</span>
           <EventBadge name={rq.event_name} />
           {deskMatch && (
@@ -9352,9 +9362,9 @@ function CheckInReadyQueueCard({
             aria-label="Return to check-in"
             style={{
               flexShrink: 0,
-              width: 20,
-              height: 20,
-              borderRadius: 4,
+              width: btnSize,
+              height: btnSize,
+              borderRadius: 3,
               border: '1px solid rgba(255,255,255,0.5)',
               backgroundColor: 'rgba(255,255,255,0.15)',
               color: '#fff',
@@ -9367,9 +9377,9 @@ function CheckInReadyQueueCard({
             }}
           >
             {returning ? (
-              <span style={{ fontSize: 9, fontWeight: 700 }}>...</span>
+              <span style={{ fontSize: 8, fontWeight: 700 }}>...</span>
             ) : (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
+              <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: 'block' }}>
                 <path d="M9 14 4 9l5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -9377,27 +9387,54 @@ function CheckInReadyQueueCard({
           </button>
         )}
       </div>
-      <div style={{ backgroundColor: '#fff', padding: '4px 6px 5px' }}>
-        <div style={{ fontSize: 9, fontWeight: 700, color: '#607d8b', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 1, lineHeight: 1.2 }}>
+      <div style={{ backgroundColor: '#fff', padding: bodyPad }}>
+        <div style={{
+          fontSize: metaFont,
+          fontWeight: 700,
+          color: '#607d8b',
+          textTransform: 'uppercase',
+          letterSpacing: 0.2,
+          marginBottom: 0,
+          lineHeight: 1.15,
+        }}>
           {headerRightTop}
         </div>
         {queueElapsedLabel && (
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#455a64', marginBottom: 2, lineHeight: 1.2 }}>
+          <div style={{
+            fontSize: metaFont,
+            fontWeight: 700,
+            color: '#455a64',
+            marginBottom: 0,
+            lineHeight: 1.15,
+          }}>
             Queue: {queueElapsedLabel}
           </div>
         )}
-        <div style={{ color: '#1a1a1a', fontSize: 11, fontWeight: 700, lineHeight: 1.2, overflowWrap: 'anywhere' }}>
+        <div style={{
+          color: '#1a1a1a',
+          fontSize: teamFont,
+          fontWeight: 700,
+          lineHeight: 1.15,
+          overflowWrap: 'anywhere',
+          marginTop: compact ? 1 : 2,
+        }}>
           {rq.team1_display}
         </div>
-        <div style={{ color: '#999', fontSize: 8, margin: '0', lineHeight: 1.1 }}>vs</div>
-        <div style={{ color: '#1a1a1a', fontSize: 11, fontWeight: 700, lineHeight: 1.2, overflowWrap: 'anywhere' }}>
+        <div style={{ color: '#999', fontSize: compact ? 7 : 8, margin: 0, lineHeight: 1 }}>vs</div>
+        <div style={{
+          color: '#1a1a1a',
+          fontSize: teamFont,
+          fontWeight: 700,
+          lineHeight: 1.15,
+          overflowWrap: 'anywhere',
+        }}>
           {rq.team2_display}
         </div>
       </div>
       <div
         style={{
           backgroundColor: footerBg,
-          height: 3,
+          height: compact ? 2 : 3,
         }}
       />
     </div>
@@ -11730,86 +11767,89 @@ export default function TournamentDeskPage() {
                       </div>
                     </div>
 
-                    <div style={{ border: '1px solid #d1c4e9', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                      <div style={{ padding: '10px 12px', borderBottom: '1px solid #ede7f6', fontSize: 14, fontWeight: 800, color: '#5e35b1', backgroundColor: '#faf5ff' }}>
-                        Ready To Go — Assigned Court
-                      </div>
-                      <div style={{ padding: 12 }}>
-                        {preassignedReadyQueueEntries.length === 0 ? (
-                          <div style={{ fontSize: 12, color: '#90a4ae' }}>
-                            No preassigned matches waiting for a court or their scheduled time.
-                          </div>
-                        ) : (
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                            {preassignedReadyQueueEntries.map((entry) => {
-                              const rq = preassignedEntryToReadyQueueItem(entry)
-                              const rqSlotKey = entry.slotKey || slotKeyByMatchId.get(entry.matchId) || null
-                              const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
-                              const courtTimeLabel = `${entry.courtName.replace(/^Court\s+/i, 'Ct ')}${entry.scheduledTime ? ` · ${entry.scheduledTime}` : ''}`
-                              return (
-                                <CheckInReadyQueueCard
-                                  key={entry.matchId}
-                                  rq={rq}
-                                  titleLabel={`#${entry.matchNumber} · ${entry.statusLabel}`}
-                                  headerRightTop={courtTimeLabel}
-                                  queueElapsedLabel={formatElapsedLabel(entry.checkinMatch?.ready_at || null, null)}
-                                  deskMatch={entry.deskMatch}
-                                  returning={false}
-                                  onReturnToCheckIn={() => undefined}
-                                  slotTintIndex={rqSlotIndex}
-                                  nativeDragging={false}
-                                  onPointerDragStart={() => undefined}
-                                  allowDrag={false}
-                                  showReturnButton={false}
-                                />
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
-                      Dynamic Ready To Go
-                    </div>
-                    <div style={{ padding: 10 }}>
-                      {filteredReadyQueue.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting for a court right now.</div>
-                      ) : (
-                        <div className="checkin-dynamic-ready-grid">
-                          {filteredReadyQueue.map((rq) => {
-                            const deskMatch = matchById.get(rq.match_id)
-                            const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
-                            const slotLabelResolved = rqSlotKey
-                              ? slotLabelByKey.get(rqSlotKey) || null
-                              : null
-                            const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
-                            const headerTop = (
-                              slotLabelResolved ||
-                              `${rq.day_label} ${rq.scheduled_time || ''}`.trim()
-                            ) || '—'
-                            const queueElapsedLabel = formatElapsedLabel(rq.ready_at, null)
-                            return (
-                              <CheckInReadyQueueCard
-                                key={rq.match_id}
-                                rq={rq}
-                                titleLabel={formatReadyQueueLabel(rq)}
-                                headerRightTop={headerTop}
-                                queueElapsedLabel={queueElapsedLabel}
-                                deskMatch={deskMatch}
-                                returning={readyResettingIds.has(rq.match_id)}
-                                onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
-                                slotTintIndex={rqSlotIndex}
-                                nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
-                                onPointerDragStart={handlePointerDragStart}
-                                allowDrag
-                              />
-                            )
-                          })}
+                    <div style={{ display: 'grid', gap: 14 }}>
+                      <div style={{ border: '1px solid #d1c4e9', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 12px', borderBottom: '1px solid #ede7f6', fontSize: 14, fontWeight: 800, color: '#5e35b1', backgroundColor: '#faf5ff' }}>
+                          Ready To Go — Assigned Court
                         </div>
-                      )}
+                        <div style={{ padding: 12 }}>
+                          {preassignedReadyQueueEntries.length === 0 ? (
+                            <div style={{ fontSize: 12, color: '#90a4ae' }}>
+                              No preassigned matches waiting for a court or their scheduled time.
+                            </div>
+                          ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                              {preassignedReadyQueueEntries.map((entry) => {
+                                const rq = preassignedEntryToReadyQueueItem(entry)
+                                const rqSlotKey = entry.slotKey || slotKeyByMatchId.get(entry.matchId) || null
+                                const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
+                                const courtTimeLabel = `${entry.courtName.replace(/^Court\s+/i, 'Ct ')}${entry.scheduledTime ? ` · ${entry.scheduledTime}` : ''}`
+                                return (
+                                  <CheckInReadyQueueCard
+                                    key={entry.matchId}
+                                    rq={rq}
+                                    titleLabel={`#${entry.matchNumber} · ${entry.statusLabel}`}
+                                    headerRightTop={courtTimeLabel}
+                                    queueElapsedLabel={formatElapsedLabel(entry.checkinMatch?.ready_at || null, null)}
+                                    deskMatch={entry.deskMatch}
+                                    returning={false}
+                                    onReturnToCheckIn={() => undefined}
+                                    slotTintIndex={rqSlotIndex}
+                                    nativeDragging={false}
+                                    onPointerDragStart={() => undefined}
+                                    allowDrag={false}
+                                    showReturnButton={false}
+                                  />
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                        <div style={{ padding: '8px 10px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
+                          Dynamic Ready To Go
+                        </div>
+                        <div style={{ padding: 8 }}>
+                          {filteredReadyQueue.length === 0 ? (
+                            <div style={{ fontSize: 12, color: '#90a4ae' }}>No fully checked-in matches are waiting for a court right now.</div>
+                          ) : (
+                            <div className="checkin-dynamic-ready-grid">
+                              {filteredReadyQueue.map((rq) => {
+                                const deskMatch = matchById.get(rq.match_id)
+                                const rqSlotKey = slotKeyByMatchId.get(rq.match_id) || null
+                                const slotLabelResolved = rqSlotKey
+                                  ? slotLabelByKey.get(rqSlotKey) || null
+                                  : null
+                                const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
+                                const headerTop = (
+                                  slotLabelResolved ||
+                                  `${rq.day_label} ${rq.scheduled_time || ''}`.trim()
+                                ) || '—'
+                                const queueElapsedLabel = formatElapsedLabel(rq.ready_at, null)
+                                return (
+                                  <CheckInReadyQueueCard
+                                    key={rq.match_id}
+                                    rq={rq}
+                                    titleLabel={formatReadyQueueLabel(rq)}
+                                    headerRightTop={headerTop}
+                                    queueElapsedLabel={queueElapsedLabel}
+                                    deskMatch={deskMatch}
+                                    returning={readyResettingIds.has(rq.match_id)}
+                                    onReturnToCheckIn={() => handleResetReadyMatch(rq.match_id)}
+                                    slotTintIndex={rqSlotIndex}
+                                    nativeDragging={nativeDraggedReadyMatchId === rq.match_id}
+                                    onPointerDragStart={handlePointerDragStart}
+                                    allowDrag
+                                    compact
+                                  />
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

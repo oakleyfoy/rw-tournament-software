@@ -14,6 +14,20 @@ describe('Check-In Desk layout changes', () => {
     expect(css).toMatch(/@media \(min-width:\s*700px\)[\s\S]*repeat\(2/)
     expect(css).toMatch(/@media \(min-width:\s*1100px\)[\s\S]*repeat\(4/)
     expect(page).toContain('className="checkin-dynamic-ready-grid"')
+    expect(page).toMatch(/compact\b/)
+  })
+
+  it('places Dynamic Ready To Go immediately beneath Ready To Go — Assigned Court', () => {
+    const assignedIdx = page.indexOf('Ready To Go — Assigned Court')
+    const dynamicIdx = page.indexOf('Dynamic Ready To Go')
+    const waitingIdx = page.indexOf('Waiting For Check-In')
+    expect(assignedIdx).toBeGreaterThan(-1)
+    expect(dynamicIdx).toBeGreaterThan(assignedIdx)
+    // Dynamic Ready lives in the right-side stack with Assigned Court, not after Waiting alone.
+    expect(waitingIdx).toBeGreaterThan(-1)
+    expect(dynamicIdx).toBeGreaterThan(waitingIdx)
+    // No second Dynamic Ready section left at the bottom of the desk.
+    expect(page.match(/Dynamic Ready To Go/g)).toHaveLength(1)
   })
 
   it('places Release Opening Matches beside Waiting For Check-In and removes the opening banner', () => {

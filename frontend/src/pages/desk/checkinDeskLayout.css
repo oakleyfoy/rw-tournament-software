@@ -1,7 +1,7 @@
 /* Dynamic Ready To Go — compact responsive match-card grid */
 .checkin-dynamic-ready-grid {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   grid-template-columns: 1fr;
 }
 
