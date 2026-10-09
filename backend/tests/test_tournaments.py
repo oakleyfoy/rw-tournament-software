@@ -1,4 +1,4 @@
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
@@ -490,6 +490,86 @@ def test_duplicate_tournament_copies_towel_lookup(client: TestClient, session: S
     manual = next(row for row in cloned_rows if row.source_name == "Manual Guest")
     assert manual.player_id is None
     assert manual.report_url == "https://example.test/report"
+
+
+def test_duplicate_tournament_collapses_duplicate_rwos_towel_identities(client: TestClient, session: Session):
+    """Source tournaments can contain repeated RW-OS towel identities from before the unique index."""
+    source = Tournament(
+        name="Duplicate Towel Identity",
+        location="Nowhere",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 5),
+        end_date=date(2026, 11, 7),
+    )
+    session.add(source)
+    session.flush()
+    session.connection().exec_driver_sql("DROP INDEX IF EXISTS uq_rwos_lookup_source_identity")
+    older = TemporaryPlayerLookup(
+        tournament_id=source.id,
+        player_id=None,
+        source_name="Mike Arsenault",
+        normalized_name="mike arsenault",
+        towel_color="Blue",
+        source="rwos-import",
+        source_team_key="366/36/",
+        lineup_slot=1,
+        updated_at=datetime(2026, 9, 1, 12, 0, 0),
+    )
+    newer = TemporaryPlayerLookup(
+        tournament_id=source.id,
+        player_id=None,
+        source_name="Mike Arsenault",
+        normalized_name="mike arsenault",
+        towel_color="Orange",
+        source="rwos-import",
+        source_team_key="366/36/",
+        lineup_slot=1,
+        updated_at=datetime(2026, 10, 6, 23, 27, 29),
+    )
+    other_slot = TemporaryPlayerLookup(
+        tournament_id=source.id,
+        player_id=None,
+        source_name="Partner",
+        normalized_name="partner",
+        towel_color="Green",
+        source="rwos-import",
+        source_team_key="366/36/",
+        lineup_slot=2,
+    )
+    manual = TemporaryPlayerLookup(
+        tournament_id=source.id,
+        player_id=None,
+        source_name="Manual Guest",
+        normalized_name="manual guest",
+        towel_color="Pink",
+    )
+    session.add_all([older, newer, other_slot, manual])
+    session.commit()
+
+    try:
+        resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+        assert resp.status_code == 201, resp.text
+        duplicated_id = resp.json()["id"]
+        cloned_rows = session.exec(
+            select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == duplicated_id)
+        ).all()
+        by_name = {row.source_name: row for row in cloned_rows}
+        assert set(by_name) == {"Mike Arsenault", "Partner", "Manual Guest"}
+        assert by_name["Mike Arsenault"].towel_color == "Orange"
+        assert by_name["Mike Arsenault"].source_team_key == "366/36/"
+        assert by_name["Mike Arsenault"].lineup_slot == 1
+        assert by_name["Partner"].lineup_slot == 2
+        assert by_name["Manual Guest"].towel_color == "Pink"
+    finally:
+        for row in session.exec(select(TemporaryPlayerLookup)).all():
+            session.delete(row)
+        session.commit()
+        session.connection().exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_rwos_lookup_source_identity "
+            "ON temporary_player_lookup (tournament_id, source, source_team_key, lineup_slot) "
+            "WHERE source IS NOT NULL"
+        )
+        session.commit()
 
 
 def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: TestClient, session: Session):

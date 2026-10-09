@@ -1086,6 +1086,44 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
     return _tournament_response(session, tournament)
 
 
+def _towel_lookup_identity(lookup: TemporaryPlayerLookup) -> Optional[Tuple[str, str, int]]:
+    """Identity enforced by uq_rwos_lookup_source_identity.
+
+    SQLite treats NULL index columns as distinct, so rows missing source,
+    source_team_key, or lineup_slot are not collapsed.
+    """
+    if lookup.source is None or lookup.source_team_key is None or lookup.lineup_slot is None:
+        return None
+    return (lookup.source, lookup.source_team_key, int(lookup.lineup_slot))
+
+
+def _dedupe_towel_lookups_for_copy(lookups: List[TemporaryPlayerLookup]) -> List[TemporaryPlayerLookup]:
+    """Keep one row per RW-OS towel identity so duplicate does not hit the unique index."""
+    chosen: Dict[Tuple[str, str, int], TemporaryPlayerLookup] = {}
+    passthrough: List[TemporaryPlayerLookup] = []
+    for lookup in lookups:
+        identity = _towel_lookup_identity(lookup)
+        if identity is None:
+            passthrough.append(lookup)
+            continue
+        existing = chosen.get(identity)
+        if existing is None or _towel_lookup_is_newer(lookup, existing):
+            chosen[identity] = lookup
+    return passthrough + list(chosen.values())
+
+
+def _towel_lookup_is_newer(candidate: TemporaryPlayerLookup, existing: TemporaryPlayerLookup) -> bool:
+    def stamp(lookup: TemporaryPlayerLookup) -> datetime:
+        value = lookup.updated_at or lookup.created_at or datetime.min
+        if value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    candidate_key = (stamp(candidate), candidate.id or 0)
+    existing_key = (stamp(existing), existing.id or 0)
+    return candidate_key >= existing_key
+
+
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
 def duplicate_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """
@@ -1424,7 +1462,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 )
             )
 
-        for lookup in source_towel_lookups:
+        for lookup in _dedupe_towel_lookups_for_copy(list(source_towel_lookups)):
             mapped_player_id = player_id_map.get(lookup.player_id) if lookup.player_id else None
             session.add(
                 TemporaryPlayerLookup(
