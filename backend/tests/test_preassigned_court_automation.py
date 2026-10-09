@@ -467,6 +467,137 @@ def test_historical_final_version_cannot_release(client, session: Session):
     assert resp.status_code == 400
 
 
+def test_both_checked_in_free_court_stays_scheduled_until_release(client, session: Session):
+    """Check-in does not start the match. Opening release does, on a free court."""
+    ctx = _setup_automation(session)
+    t, v, m1, m2 = ctx["tournament"], ctx["version"], ctx["m1"], ctx["m2"]
+    _check_in(session, t.id, v.id, m1)
+    session.commit()
+
+    session.refresh(m1)
+    assert m1.runtime_status == "SCHEDULED"
+    assert evaluate_eligibility(session, t, session.get(Match, m1.id)).outcome == OUTCOME_WAITING_RELEASE
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    body = snap.json()
+    playing_ids = {row["match_id"] for row in body["now_playing_by_court"].values()}
+    assert m1.id not in playing_ids
+    checkin = {row["match_id"]: row for row in body["checkin_matches"]}
+    assert checkin[m1.id]["match_ready"] is True
+    assert checkin[m2.id]["match_ready"] is False
+    queue = {row["match_id"]: row for row in body["ready_assigned_queue"]}
+    assert queue[m1.id]["status_label"] == "Waiting for Release"
+    assert queue[m1.id]["court_name"]
+    assert m2.id not in queue
+    assert m1.id not in {row["match_id"] for row in body["ready_queue"]}
+
+    slot_key = slot_key_for_slot(ctx["slot_a"])
+    released = client.post(
+        f"/api/desk/tournaments/{t.id}/opening-release",
+        json={"version_id": v.id, "day_date": ctx["day"].isoformat(), "slot_key": slot_key},
+    )
+    assert released.status_code == 200
+    assert m1.id in released.json()["started_match_ids"]
+    assert m2.id not in released.json()["started_match_ids"]
+    session.refresh(m1)
+    assert m1.runtime_status == "IN_PROGRESS"
+    assert session.get(Match, m2.id).runtime_status == "SCHEDULED"
+
+
+def test_occupied_court_match_waits_then_starts_when_court_frees(client, session: Session):
+    """Checked-in match on an occupied court stays scheduled until dispatch can start it."""
+    ctx = _setup_automation(session)
+    t, v, m2 = ctx["tournament"], ctx["version"], ctx["m2"]
+    _check_in(session, t.id, v.id, m2)
+    session.commit()
+    slot_key = slot_key_for_slot(ctx["slot_b"])
+    started = client.post(
+        f"/api/desk/tournaments/{t.id}/opening-release",
+        json={"version_id": v.id, "day_date": ctx["day"].isoformat(), "slot_key": slot_key},
+    )
+    assert started.status_code == 200
+    assert m2.id in started.json()["started_match_ids"]
+    session.expire_all()
+    assert session.get(Match, m2.id).runtime_status == "IN_PROGRESS"
+
+    later_slot = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=ctx["day"],
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add(later_slot)
+    session.flush()
+    later = Match(
+        tournament_id=t.id,
+        event_id=ctx["event_pre"].id,
+        schedule_version_id=v.id,
+        match_code="WOM_WF_R1_03",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=ctx["teams"][4].id,
+        team_b_id=ctx["teams"][5].id,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="SCHEDULED",
+    )
+    session.add(later)
+    session.flush()
+    session.add(
+        MatchAssignment(
+            schedule_version_id=v.id,
+            match_id=later.id,
+            slot_id=later_slot.id,
+            assigned_by="MANUAL",
+        )
+    )
+    session.commit()
+    _check_in(session, t.id, v.id, later)
+    session.commit()
+
+    assert session.get(Match, later.id).runtime_status == "SCHEDULED"
+    assert evaluate_eligibility(session, t, session.get(Match, later.id)).outcome == OUTCOME_WAITING_RELEASE
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    body = snap.json()
+    assert body["now_playing_by_court"]["Court 2"]["match_id"] == m2.id
+    assert later.id not in {row["match_id"] for row in body["now_playing_by_court"].values()}
+    assert later.id in {row["match_id"] for row in body["ready_assigned_queue"]}
+
+    later_key = slot_key_for_slot(later_slot)
+    held = client.post(
+        f"/api/desk/tournaments/{t.id}/opening-release",
+        json={"version_id": v.id, "day_date": ctx["day"].isoformat(), "slot_key": later_key},
+    )
+    assert held.status_code == 200
+    assert later.id not in held.json()["started_match_ids"]
+    assert later.id in held.json()["waiting_match_ids"]
+    session.expire_all()
+    assert session.get(Match, later.id).runtime_status == "SCHEDULED"
+
+    fin = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m2.id}/finalize",
+        json={
+            "version_id": v.id,
+            "winner_team_id": m2.team_a_id,
+            "score": "8-4",
+            "send_automation_texts": False,
+        },
+    )
+    assert fin.status_code == 200
+    session.expire_all()
+    assert session.get(Match, m2.id).runtime_status == "FINAL"
+    assert session.get(Match, later.id).runtime_status == "IN_PROGRESS"
+
+
 def test_ready_assigned_queue_in_snapshot(client, session: Session):
     ctx = _setup_automation(session)
     t, v, m1 = ctx["tournament"], ctx["version"], ctx["m1"]

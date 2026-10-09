@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
+  belongsInWaitingForCheckIn,
   buildPreassignedReadyEntries,
   mergeReadyQueueWithPreassigned,
+  placePreassignedMatches,
   preassignedEntryToReadyQueueItem,
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
@@ -9083,6 +9085,7 @@ type CheckInCourtBoardRowData = {
   upNext?: DeskMatchItem
   onDeck?: DeskMatchItem
   displayMatch: DeskMatchItem | null
+  preassignedStatusLabel: string | null
   isClosed: boolean
   lane: 'current' | 'open'
   slotLabel: string | null
@@ -9204,6 +9207,11 @@ function CheckInCourtBoardCard({
         {match ? (
           <>
             <div>
+              {row.preassignedStatusLabel && (
+                <div style={{ fontSize: 9, fontWeight: 800, color: '#5e35b1', lineHeight: 1.25, marginBottom: 3 }}>
+                  #{match.match_number} · {row.preassignedStatusLabel}
+                </div>
+              )}
               <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
                 {match.team1_display}
               </div>
@@ -10768,6 +10776,7 @@ export default function TournamentDeskPage() {
     .filter((group) => group.entries.length > 0)
 
   // PREASSIGNED matches come from backend ready_assigned_queue (check-in + R2+).
+  // Each match is then placed in exactly one operational area.
   const preassignedReadyEntries = buildPreassignedReadyEntries({
     checkinMatches: data.checkin_matches || [],
     matches: data.matches || [],
@@ -10778,13 +10787,42 @@ export default function TournamentDeskPage() {
     effectiveSelectedCheckInSlotKey === 'all' ||
     (entry.slotKey || slotKeyByMatchId.get(entry.matchId)) === effectiveSelectedCheckInSlotKey
   ))
-  const preassignedReadyByCourt = new Map<string, (typeof preassignedReadyEntries)[number]>()
-  for (const entry of preassignedReadyEntries) {
-    // Keep the earliest scheduled ready match per court on the board card.
-    if (!preassignedReadyByCourt.has(entry.courtName)) {
-      preassignedReadyByCourt.set(entry.courtName, entry)
+  const preassignedPlacement = placePreassignedMatches(preassignedReadyEntries, data.matches || [])
+  const preassignedCourtByCourt = new Map<string, (typeof preassignedPlacement.courtCards)[number]>()
+  const preassignedCourtOverflow: typeof preassignedPlacement.courtCards = []
+  for (const entry of preassignedPlacement.courtCards) {
+    const occupant = (data.now_playing_by_court || {})[entry.courtName]
+    const liveBlocks = Boolean(
+      occupant &&
+      occupant.match_id !== entry.matchId &&
+      (occupant.status === 'IN_PROGRESS' || occupant.status === 'PAUSED'),
+    )
+    if (liveBlocks || preassignedCourtByCourt.has(entry.courtName)) {
+      preassignedCourtOverflow.push({
+        ...entry,
+        courtOccupied: true,
+        statusLabel: 'Waiting for Court',
+      })
+    } else {
+      preassignedCourtByCourt.set(entry.courtName, entry)
     }
   }
+  const preassignedReadyQueueEntries = [
+    ...preassignedPlacement.readyQueue,
+    ...preassignedCourtOverflow,
+  ]
+  const preassignedOperationalIds = new Set<number>([
+    ...Array.from(preassignedCourtByCourt.values()).map((entry) => entry.matchId),
+    ...preassignedReadyQueueEntries.map((entry) => entry.matchId),
+  ])
+  const visibleWaitingGroups = waitingBoardGroups
+    .map((group) => ({
+      ...group,
+      entries: group.entries.filter((entry) =>
+        belongsInWaitingForCheckIn(entry.match, preassignedOperationalIds),
+      ),
+    }))
+    .filter((group) => group.entries.length > 0)
   const filteredReadyQueue = mergeReadyQueueWithPreassigned(
     data.ready_queue || [],
     preassignedReadyEntries,
@@ -10843,9 +10881,8 @@ export default function TournamentDeskPage() {
     }
   }
 
-  // Matches in the dynamic ready queue are waiting for court assignment; they
-  // should not count as occupying a court on the board. Preassigned ready
-  // matches keep their reserved court card so staff can open/start them there.
+  // Dynamic ready-queue matches are waiting for assignment and do not occupy a court.
+  // A preassigned match is either the court card or Ready To Go, never both.
   const readyMatchIds = new Set((data.ready_queue || []).map((rq) => rq.match_id))
 
   const courtBoardRows = checkInCandidateCourts.map((court) => {
@@ -10856,12 +10893,10 @@ export default function TournamentDeskPage() {
     const onDeck = onDeckRaw && !readyMatchIds.has(onDeckRaw.match_id) ? onDeckRaw : undefined
     const courtLabel = court.replace(/^Court\s+/i, '')
     const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
-    const preassignedReady = preassignedReadyByCourt.get(court)
-    const preassignedDesk = preassignedReady && !preassignedReady.courtOccupied
-      ? preassignedReady.deskMatch
-      : null
-    // Live play wins; otherwise show the ready preassigned match on its court.
+    const staged = preassignedCourtByCourt.get(court)
+    const preassignedDesk = staged && !now ? staged.deskMatch : null
     const displayMatch = now || preassignedDesk || null
+    const preassignedStatusLabel = now ? null : (staged?.statusLabel || null)
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
     const availableSlotsForCourt = visibleReadyAssignSlots.filter(
@@ -10884,7 +10919,7 @@ export default function TournamentDeskPage() {
       }
     } else if (preassignedDesk) {
       lane = 'current'
-      slotStateLabel = 'Assigned'
+      slotStateLabel = preassignedStatusLabel || 'Assigned'
       slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
     } else if (!isClosed && availableSlotsForCourt.length > 0) {
       slotStateLabel = 'Open'
@@ -10897,6 +10932,7 @@ export default function TournamentDeskPage() {
       upNext,
       onDeck,
       displayMatch,
+      preassignedStatusLabel,
       isClosed,
       lane,
       slotKey: matchSlotKey,
@@ -11632,11 +11668,11 @@ export default function TournamentDeskPage() {
                         )}
                       </div>
                       <div style={{ padding: 12 }}>
-                        {waitingBoardGroups.length === 0 ? (
+                        {visibleWaitingGroups.length === 0 ? (
                           <div style={{ fontSize: 12, color: '#90a4ae' }}>Nothing is waiting for check-in in this view.</div>
                         ) : (
                           <div style={{ display: 'grid', gap: 12 }}>
-                            {waitingBoardGroups.map((group) => (
+                            {visibleWaitingGroups.map((group) => (
                               <div key={group.key} style={{
                                 border: '1px solid #d7dee5',
                                 borderRadius: 10,
@@ -11699,13 +11735,13 @@ export default function TournamentDeskPage() {
                         Ready To Go — Assigned Court
                       </div>
                       <div style={{ padding: 12 }}>
-                        {preassignedReadyEntries.length === 0 ? (
+                        {preassignedReadyQueueEntries.length === 0 ? (
                           <div style={{ fontSize: 12, color: '#90a4ae' }}>
-                            No preassigned matches waiting on release, time, or court.
+                            No preassigned matches waiting for a court or their scheduled time.
                           </div>
                         ) : (
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                            {preassignedReadyEntries.map((entry) => {
+                            {preassignedReadyQueueEntries.map((entry) => {
                               const rq = preassignedEntryToReadyQueueItem(entry)
                               const rqSlotKey = entry.slotKey || slotKeyByMatchId.get(entry.matchId) || null
                               const rqSlotIndex = rqSlotKey != null ? (slotOrderByKey.get(rqSlotKey) ?? null) : null
