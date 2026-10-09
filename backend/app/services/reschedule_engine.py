@@ -35,7 +35,6 @@ from app.services.court_assignment_mode import (
 from app.utils.courts import court_label_for_index
 
 DAILY_CAP = 2
-MIN_REST_MINUTES = 45
 
 SCORING_FORMATS = {
     "REGULAR": 105,
@@ -551,21 +550,6 @@ def compute_reschedule(
                     ok = False
                     break
 
-                # Rest time
-                for busy_start, busy_end in team_busy.get(tid, []):
-                    if busy_end <= slot_start:
-                        gap = (slot_start - busy_end).total_seconds() / 60
-                        if gap < MIN_REST_MINUTES:
-                            ok = False
-                            break
-                    if slot_end <= busy_start:
-                        gap = (busy_start - slot_end).total_seconds() / 60
-                        if gap < MIN_REST_MINUTES:
-                            ok = False
-                            break
-                if not ok:
-                    break
-
             if not ok:
                 continue
 
@@ -1033,8 +1017,6 @@ def compute_rebuild_preview(
     sim_slots.sort(key=lambda s: (s["day_date"], s["start_time"], s["court_number"]))
 
     # Build rest time per day
-    rest_by_date = {dc.day_date: SCORING_FORMATS.get(dc.format, 105) for dc in day_configs}
-
     # Seed team state from FINAL matches
     match_map: Dict[int, Match] = {m.id: m for m in all_matches}
     team_busy: Dict[int, List[Tuple[datetime, datetime]]] = {}
@@ -1105,21 +1087,6 @@ def compute_rebuild_preview(
                     if slot_start < busy_end and slot_end > busy_start:
                         ok = False
                         break
-                if not ok:
-                    break
-                # Rest time check (per-day)
-                slot_rest_minutes = rest_by_date.get(slot["day_date"], 105)
-                for busy_start, busy_end in team_busy.get(tid, []):
-                    if busy_end <= slot_start:
-                        gap = (slot_start - busy_end).total_seconds() / 60
-                        if gap < slot_rest_minutes:
-                            ok = False
-                            break
-                    if slot_end <= busy_start:
-                        gap = (busy_start - slot_end).total_seconds() / 60
-                        if gap < slot_rest_minutes:
-                            ok = False
-                            break
                 if not ok:
                     break
 
@@ -1323,7 +1290,6 @@ def apply_rebuild(
 
     # Build per-day format and rest time maps
     format_by_date = {dc.day_date: dc.format for dc in day_configs}
-    rest_by_date = {dc.day_date: SCORING_FORMATS.get(dc.format, 105) for dc in day_configs}
     duration_update_count = 0
 
     # Sort new slots chronologically
@@ -1402,21 +1368,6 @@ def apply_rebuild(
                     if slot_start < busy_end and slot_end > busy_start:
                         ok = False
                         break
-                if not ok:
-                    break
-                # Rest time check (per-day)
-                slot_rest_minutes = rest_by_date.get(slot.day_date, 105)
-                for busy_start, busy_end in team_busy.get(tid, []):
-                    if busy_end <= slot_start:
-                        gap = (slot_start - busy_end).total_seconds() / 60
-                        if gap < slot_rest_minutes:
-                            ok = False
-                            break
-                    if slot_end <= busy_start:
-                        gap = (busy_start - slot_end).total_seconds() / 60
-                        if gap < slot_rest_minutes:
-                            ok = False
-                            break
                 if not ok:
                     break
 

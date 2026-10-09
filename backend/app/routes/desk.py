@@ -985,8 +985,6 @@ class ImpactResponse(BaseModel):
 
 # ── Conflict models ──────────────────────────────────────────────────────
 
-MIN_REST_MINUTES = 45
-
 DAILY_MATCH_CAP = 2
 
 
@@ -998,7 +996,7 @@ class ConflictCheckRequest(BaseModel):
 
 
 class ConflictItem(BaseModel):
-    code: str  # TEAM_ALREADY_PLAYING | DAY_CAP_EXCEEDED | REST_TOO_SHORT
+    code: str  # TEAM_ALREADY_PLAYING | DAY_CAP_EXCEEDED
     severity: str = "WARN"
     team_display: str
     message: str
@@ -4478,16 +4476,6 @@ def check_conflicts(
         a = assignment_map.get(m.id)
         return slot_map.get(a.slot_id) if a else None
 
-    def _start_minutes(slot):
-        """Convert start_time to minutes since midnight for comparison."""
-        st = slot.start_time
-        if st is None:
-            return None
-        if isinstance(st, str):
-            parts = st.split(":")
-            return int(parts[0]) * 60 + (int(parts[1]) if len(parts) > 1 else 0)
-        return st.hour * 60 + st.minute
-
     conflicts: List[ConflictItem] = []
 
     for tid in team_ids:
@@ -4538,42 +4526,9 @@ def check_conflicts(
                     )
                 )
 
-        # ── 3) Rest time: insufficient gap from last match ───────────────
-        if this_slot:
-            this_start = _start_minutes(this_slot)
-            if this_start is not None:
-                # Find closest earlier match end for this team (use start_time + block_minutes as proxy)
-                closest_delta = None
-                closest_match_id = None
-                for om in team_matches:
-                    om_status = (om.runtime_status or "SCHEDULED").upper()
-                    if om_status not in ("FINAL", "IN_PROGRESS"):
-                        continue
-                    om_slot = _slot_for(om)
-                    if not om_slot or om_slot.day_date != this_day:
-                        continue
-                    om_start = _start_minutes(om_slot)
-                    if om_start is None:
-                        continue
-                    om_end = om_start + (om_slot.block_minutes or 60)
-                    delta = this_start - om_end
-                    if delta >= 0 and (closest_delta is None or delta < closest_delta):
-                        closest_delta = delta
-                        closest_match_id = om.id
-
-                if closest_delta is not None and closest_delta < MIN_REST_MINUTES:
-                    conflicts.append(
-                        ConflictItem(
-                            code="REST_TOO_SHORT",
-                            team_display=t_display,
-                            message=f"{t_display} rest time would be {closest_delta} min (< {MIN_REST_MINUTES} min).",
-                            details={
-                                "rest_minutes": closest_delta,
-                                "min_required": MIN_REST_MINUTES,
-                                "prior_match": closest_match_id,
-                            },
-                        )
-                    )
+        # Minimum rest-time gaps are intentionally not warned. Back-to-back
+        # matches are allowed; simultaneous play is still caught above via
+        # TEAM_ALREADY_PLAYING.
 
     return ConflictCheckResponse(conflicts=conflicts)
 

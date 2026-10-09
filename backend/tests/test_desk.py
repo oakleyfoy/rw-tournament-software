@@ -1350,8 +1350,8 @@ def test_conflict_day_cap_exceeded(client, session):
     assert cap_warning["details"]["count"] == 3
 
 
-def test_conflict_rest_too_short(client, session):
-    """If rest time between matches < MIN_REST_MINUTES, warn REST_TOO_SHORT."""
+def test_conflict_rest_too_short_no_longer_warned(client, session):
+    """Back-to-back / short rest gaps must not emit REST_TOO_SHORT warnings."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
 
     draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
@@ -1400,16 +1400,75 @@ def test_conflict_rest_too_short(client, session):
     session.add(MatchAssignment(schedule_version_id=draft_id, match_id=new_match.id, slot_id=new_slot.id))
     session.commit()
 
+    for action_type in ("SET_IN_PROGRESS", "FINALIZE"):
+        resp = client.post(
+            f"/api/desk/tournaments/{t.id}/conflicts/check",
+            json={"version_id": draft_id, "action_type": action_type, "match_id": new_match.id},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        codes = [c["code"] for c in body["conflicts"]]
+        assert "REST_TOO_SHORT" not in codes
+        assert all(c != "REST_TOO_SHORT" for c in codes)
+
+
+def test_conflict_zero_rest_gap_allowed(client, session):
+    """Teams may start the next match immediately after a prior match ends."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+    alpha_id = m1["team1_id"]
+
+    client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "8-4", "winner_team_id": alpha_id},
+    )
+
+    # Immediate next match at prior end time (0 minutes rest)
+    new_match = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=draft_id,
+        match_code="WOM_E1_ZERO_REST",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=99,
+        duration_minutes=60,
+        team_a_id=alpha_id,
+        placeholder_side_a="Alpha",
+        placeholder_side_b="TBD",
+    )
+    session.add(new_match)
+    session.flush()
+
+    new_slot = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=draft_id,
+        day_date=date(2026, 6, 5),
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        court_number=3,
+        court_label="3",
+        block_minutes=60,
+    )
+    session.add(new_slot)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=draft_id, match_id=new_match.id, slot_id=new_slot.id))
+    session.commit()
+
     resp = client.post(
         f"/api/desk/tournaments/{t.id}/conflicts/check",
         json={"version_id": draft_id, "action_type": "SET_IN_PROGRESS", "match_id": new_match.id},
     )
     assert resp.status_code == 200
-    body = resp.json()
-    codes = [c["code"] for c in body["conflicts"]]
-    assert "REST_TOO_SHORT" in codes
-    rest_warning = [c for c in body["conflicts"] if c["code"] == "REST_TOO_SHORT"][0]
-    assert rest_warning["details"]["rest_minutes"] == 15
+    codes = [c["code"] for c in resp.json()["conflicts"]]
+    assert "REST_TOO_SHORT" not in codes
+    assert "TEAM_ALREADY_PLAYING" not in codes
 
 
 # ── Timeline tests ──────────────────────────────────────────────────────

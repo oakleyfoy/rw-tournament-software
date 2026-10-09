@@ -47,8 +47,9 @@ from app.utils.auto_assign import (
 # V2-specific configuration
 # ============================================================================
 
-# Default minimum rest time between matches for the same team (in minutes)
-DEFAULT_MIN_REST_MINUTES = 90
+# Minimum rest between consecutive matches for the same team (minutes).
+# 0 = back-to-back allowed; overlapping team windows are still rejected.
+DEFAULT_MIN_REST_MINUTES = 0
 
 # Conflict reason codes
 CONFLICT_REST_VIOLATION = "REST_VIOLATION"

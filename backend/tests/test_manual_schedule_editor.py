@@ -666,12 +666,10 @@ def test_conflicts_recompute_path_is_shared(client: TestClient, session: Session
     assert conflicts_after_data["summary"]["assigned_matches"] == 1  # Still 1 (just moved)
 
 
-def test_manual_move_enforces_rest_constraints(client: TestClient, session: Session, manual_editor_setup):
+def test_manual_move_allows_back_to_back_matches(client: TestClient, session: Session, manual_editor_setup):
     """
-    Phase 3D.1 Task D(2): Verify manual moves cannot violate rest constraints.
-
-    Create two matches with same team, try to assign to slots < 90 minutes apart.
-    Should fail with clear error and no mutation.
+    Consecutive/back-to-back team matches are allowed (minimum rest disabled).
+    Overlapping team windows remain blocked separately.
     """
     from datetime import date, time
 
@@ -708,8 +706,7 @@ def test_manual_move_enforces_rest_constraints(client: TestClient, session: Sess
     ).all()
 
     if len(existing_slots) < 2:
-        # Create two new slots that are < 90 minutes apart (violates rest)
-        # Use different day to avoid conflicts with fixture slots
+        # Create two consecutive (back-to-back) slots — previously rejected for rest
         slot1 = ScheduleSlot(
             tournament_id=tournament_id,
             schedule_version_id=version_id,
@@ -724,7 +721,7 @@ def test_manual_move_enforces_rest_constraints(client: TestClient, session: Sess
             tournament_id=tournament_id,
             schedule_version_id=version_id,
             day_date=date(2026, 1, 16),
-            start_time=time(10, 0),  # Only 60 minutes after slot1 start (< 90 min rest)
+            start_time=time(10, 0),  # Immediate next match (0 min rest)
             end_time=time(11, 0),
             block_minutes=60,
             court_number=2,
@@ -771,23 +768,108 @@ def test_manual_move_enforces_rest_constraints(client: TestClient, session: Sess
     session.commit()
     session.refresh(assignment2)
 
-    # Record state before failed move
-    original_slot_id = assignment2.slot_id
-    original_locked = assignment2.locked
-    original_assigned_by = assignment2.assigned_by
-
-    # Try to move match2 to slot2 (would violate rest constraint)
+    # Back-to-back consecutive assignment must succeed (no rest warning / block)
     resp = client.patch(
         f"/api/tournaments/{tournament_id}/schedule/assignments/{assignment2.id}", json={"new_slot_id": slot2.id}
     )
 
-    # Should fail with 422 and clear rest violation message
-    assert resp.status_code == 422
-    assert "rest" in resp.text.lower() or "90" in resp.text or "minutes" in resp.text.lower()
-
-    # Verify NO mutation occurred (non-mutating validation failure)
+    assert resp.status_code == 200, resp.text
     session.expire_all()
     assignment2_after = session.get(MatchAssignment, assignment2.id)
-    assert assignment2_after.slot_id == original_slot_id  # Unchanged
-    assert assignment2_after.locked == original_locked  # Unchanged
-    assert assignment2_after.assigned_by == original_assigned_by  # Unchanged
+    assert assignment2_after.slot_id == slot2.id
+
+
+def test_manual_assignment_blocks_overlapping_team_windows(session: Session, manual_editor_setup):
+    """Simultaneous active team windows on different courts remain prohibited."""
+    from datetime import date, time
+
+    from app.models.team import Team
+    from app.utils.manual_assignment import validate_rest_constraints
+
+    tournament_id = manual_editor_setup["tournament"]["id"]
+    version_id = manual_editor_setup["version"]["id"]
+    event_id = manual_editor_setup["event"]["id"]
+
+    team = Team(event_id=event_id, name="Overlap Team", seed=2)
+    session.add(team)
+    session.commit()
+    session.refresh(team)
+
+    match1 = Match(
+        tournament_id=tournament_id,
+        event_id=event_id,
+        schedule_version_id=version_id,
+        match_code="OVERLAP_M1",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team.id,
+        placeholder_side_a="Overlap Team",
+        placeholder_side_b="Opp A",
+    )
+    match2 = Match(
+        tournament_id=tournament_id,
+        event_id=event_id,
+        schedule_version_id=version_id,
+        match_code="OVERLAP_M2",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=2,
+        duration_minutes=60,
+        team_a_id=team.id,
+        placeholder_side_a="Overlap Team",
+        placeholder_side_b="Opp B",
+    )
+    session.add(match1)
+    session.add(match2)
+    session.commit()
+    session.refresh(match1)
+    session.refresh(match2)
+
+    slot1 = ScheduleSlot(
+        tournament_id=tournament_id,
+        schedule_version_id=version_id,
+        day_date=date(2026, 1, 17),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        block_minutes=60,
+        court_number=11,
+        court_label="Court 11",
+    )
+    # Overlaps match1 window (9:30-10:30 vs 9:00-10:00)
+    slot2 = ScheduleSlot(
+        tournament_id=tournament_id,
+        schedule_version_id=version_id,
+        day_date=date(2026, 1, 17),
+        start_time=time(9, 30),
+        end_time=time(10, 30),
+        block_minutes=60,
+        court_number=12,
+        court_label="Court 12",
+    )
+    session.add(slot1)
+    session.add(slot2)
+    session.commit()
+    session.refresh(slot1)
+    session.refresh(slot2)
+
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version_id,
+            match_id=match1.id,
+            slot_id=slot1.id,
+            assigned_by="MANUAL",
+            locked=True,
+        )
+    )
+    session.commit()
+
+    ok, reason = validate_rest_constraints(
+        session, match2, slot2, version_id, min_rest_minutes=0
+    )
+    assert ok is False
+    assert reason is not None
+    assert "overlap" in reason.lower()

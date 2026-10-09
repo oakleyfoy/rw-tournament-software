@@ -139,20 +139,23 @@ def validate_duration_fit(match: Match, slot: ScheduleSlot) -> Tuple[bool, Optio
 
 
 def validate_rest_constraints(
-    session: Session, match: Match, slot: ScheduleSlot, schedule_version_id: int, min_rest_minutes: int = 90
+    session: Session, match: Match, slot: ScheduleSlot, schedule_version_id: int, min_rest_minutes: int = 0
 ) -> Tuple[bool, Optional[str]]:
     """
-    Validate that assigning this match doesn't violate rest constraints.
+    Validate team timing constraints for a proposed assignment.
 
     Uses same logic as Auto-Assign V2 for consistency.
-    Only enforces rest if match has teams assigned.
+    Only runs when the match has teams assigned.
+
+    With min_rest_minutes=0 (default), consecutive/back-to-back matches are
+    allowed; true overlapping team windows are still rejected.
 
     Args:
         session: Database session
         match: Match to assign
         slot: Target slot
         schedule_version_id: Schedule version
-        min_rest_minutes: Minimum rest time between matches (default: 90)
+        min_rest_minutes: Minimum rest time between matches (default: 0)
 
     Returns:
         (is_valid, error_message_if_not)
@@ -198,6 +201,8 @@ def validate_rest_constraints(
             team_ids, slot, match.duration_minutes, min_rest_minutes
         )
         if not rest_ok:
+            if min_rest_minutes <= 0:
+                return False, f"Team {violating_team} would have overlapping match times"
             return False, f"Team {violating_team} would have < {min_rest_minutes} minutes rest between matches"
 
     return True, None
@@ -461,9 +466,9 @@ def validate_manual_reassignment(
     if not valid_rounds:
         return False, reason
 
-    # 8. Check rest constraints (Phase 3D.1: parity with Auto-Assign V2)
-    # Only enforces rest if match has teams assigned
-    valid_rest, reason = validate_rest_constraints(session, match, slot, schedule_version_id, min_rest_minutes=90)
+    # 8. Team overlap only (min rest permanently disabled — back-to-back OK).
+    # min_rest_minutes=0 still rejects true overlapping team windows.
+    valid_rest, reason = validate_rest_constraints(session, match, slot, schedule_version_id, min_rest_minutes=0)
     if not valid_rest:
         return False, reason
 
