@@ -572,6 +572,104 @@ def test_duplicate_tournament_collapses_duplicate_rwos_towel_identities(client: 
         session.commit()
 
 
+def test_duplicate_tournament_skips_towel_rows_sqlite_still_rejects(
+    client: TestClient, session: Session, monkeypatch
+):
+    """Duplicate still finishes when two towel rows collide only at insert time."""
+
+    def distinct_identity(lookup: TemporaryPlayerLookup):
+        if lookup.source is None or lookup.source_team_key is None or lookup.lineup_slot is None:
+            return None
+        return (lookup.source, lookup.source_team_key, lookup.id)
+
+    monkeypatch.setattr("app.routes.tournaments._towel_lookup_identity", distinct_identity)
+    source = Tournament(
+        name="Duplicate Towel Conflict",
+        location="Wild Dunes Resort",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 5),
+        end_date=date(2026, 11, 7),
+    )
+    session.add(source)
+    session.flush()
+    session.connection().exec_driver_sql("DROP INDEX IF EXISTS uq_rwos_lookup_source_identity")
+    session.add_all(
+        [
+            TemporaryPlayerLookup(
+                tournament_id=source.id,
+                player_id=None,
+                source_name="Mike Arsenault",
+                normalized_name="mike arsenault",
+                source_phone="9192473337",
+                normalized_phone="9192473337",
+                source_email="2002mikeya@gmail.com",
+                normalized_email="2002mikeya@gmail.com",
+                towel_color="Blue",
+                source="rwos-import",
+                source_team_key="366/367",
+                lineup_slot=1,
+                updated_at=datetime(2026, 9, 1, 12, 0, 0),
+            ),
+            TemporaryPlayerLookup(
+                tournament_id=source.id,
+                player_id=None,
+                source_name="Mike Arsenault",
+                normalized_name="mike arsenault",
+                source_phone="9192473337",
+                normalized_phone="9192473337",
+                source_email="2002mikeya@gmail.com",
+                normalized_email="2002mikeya@gmail.com",
+                towel_color="Orange",
+                source="rwos-import",
+                source_team_key="366/367",
+                lineup_slot=1,
+                updated_at=datetime(2026, 10, 6, 23, 27, 29),
+            ),
+            TemporaryPlayerLookup(
+                tournament_id=source.id,
+                player_id=None,
+                source_name="Partner",
+                normalized_name="partner",
+                towel_color="Green",
+                source="rwos-import",
+                source_team_key="366/367",
+                lineup_slot=2,
+            ),
+        ]
+    )
+    session.commit()
+    session.connection().exec_driver_sql(
+        "CREATE UNIQUE INDEX uq_rwos_lookup_source_identity "
+        "ON temporary_player_lookup (tournament_id, source, source_team_key, lineup_slot) "
+        f"WHERE source IS NOT NULL AND tournament_id != {int(source.id)}"
+    )
+    session.commit()
+
+    try:
+        resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+        assert resp.status_code == 201, resp.text
+        duplicated_id = resp.json()["id"]
+        cloned_rows = session.exec(
+            select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == duplicated_id)
+        ).all()
+        by_slot = {row.lineup_slot: row for row in cloned_rows}
+        assert set(by_slot) == {1, 2}
+        assert by_slot[1].towel_color == "Orange"
+        assert by_slot[1].source_team_key == "366/367"
+        assert by_slot[2].source_name == "Partner"
+    finally:
+        for row in session.exec(select(TemporaryPlayerLookup)).all():
+            session.delete(row)
+        session.commit()
+        session.connection().exec_driver_sql("DROP INDEX IF EXISTS uq_rwos_lookup_source_identity")
+        session.connection().exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_rwos_lookup_source_identity "
+            "ON temporary_player_lookup (tournament_id, source, source_team_key, lineup_slot) "
+            "WHERE source IS NOT NULL"
+        )
+        session.commit()
+
+
 def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: TestClient, session: Session):
     source = Tournament(
         name="Dup Name Source",

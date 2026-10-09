@@ -1086,15 +1086,25 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
     return _tournament_response(session, tournament)
 
 
+def _towel_lookup_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
 def _towel_lookup_identity(lookup: TemporaryPlayerLookup) -> Optional[Tuple[str, str, int]]:
     """Identity enforced by uq_rwos_lookup_source_identity.
 
     SQLite treats NULL index columns as distinct, so rows missing source,
-    source_team_key, or lineup_slot are not collapsed.
+    source_team_key, or lineup_slot are not collapsed. Whitespace around the
+    source and team key is ignored because those rows are the same towel slot.
     """
-    if lookup.source is None or lookup.source_team_key is None or lookup.lineup_slot is None:
+    source = _towel_lookup_text(lookup.source)
+    source_team_key = _towel_lookup_text(lookup.source_team_key)
+    if source is None or source_team_key is None or lookup.lineup_slot is None:
         return None
-    return (lookup.source, lookup.source_team_key, int(lookup.lineup_slot))
+    return (source, source_team_key, int(lookup.lineup_slot))
 
 
 def _dedupe_towel_lookups_for_copy(lookups: List[TemporaryPlayerLookup]) -> List[TemporaryPlayerLookup]:
@@ -1112,16 +1122,20 @@ def _dedupe_towel_lookups_for_copy(lookups: List[TemporaryPlayerLookup]) -> List
     return passthrough + list(chosen.values())
 
 
-def _towel_lookup_is_newer(candidate: TemporaryPlayerLookup, existing: TemporaryPlayerLookup) -> bool:
-    def stamp(lookup: TemporaryPlayerLookup) -> datetime:
-        value = lookup.updated_at or lookup.created_at or datetime.min
-        if value.tzinfo is not None:
-            return value.replace(tzinfo=None)
-        return value
+def _towel_lookup_stamp(lookup: TemporaryPlayerLookup) -> Tuple[datetime, int]:
+    value = lookup.updated_at or lookup.created_at or datetime.min
+    if value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    return (value, lookup.id or 0)
 
-    candidate_key = (stamp(candidate), candidate.id or 0)
-    existing_key = (stamp(existing), existing.id or 0)
-    return candidate_key >= existing_key
+
+def _towel_lookup_is_newer(candidate: TemporaryPlayerLookup, existing: TemporaryPlayerLookup) -> bool:
+    return _towel_lookup_stamp(candidate) >= _towel_lookup_stamp(existing)
+
+
+def _is_towel_lookup_identity_conflict(exc: IntegrityError) -> bool:
+    message = str(exc).lower()
+    return "temporary_player_lookup" in message and "source_team_key" in message and "lineup_slot" in message
 
 
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
@@ -1462,27 +1476,39 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 )
             )
 
-        for lookup in _dedupe_towel_lookups_for_copy(list(source_towel_lookups)):
+        # Newest first, so a later unique-index collision keeps the latest towel.
+        towel_rows = sorted(
+            _dedupe_towel_lookups_for_copy(list(source_towel_lookups)),
+            key=_towel_lookup_stamp,
+            reverse=True,
+        )
+        for lookup in towel_rows:
             mapped_player_id = player_id_map.get(lookup.player_id) if lookup.player_id else None
-            session.add(
-                TemporaryPlayerLookup(
-                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                    player_id=mapped_player_id,
-                    source_name=lookup.source_name,
-                    normalized_name=lookup.normalized_name,
-                    source_phone=lookup.source_phone,
-                    normalized_phone=lookup.normalized_phone,
-                    source_email=lookup.source_email,
-                    normalized_email=lookup.normalized_email,
-                    towel_color=lookup.towel_color,
-                    report_url=lookup.report_url,
-                    source=lookup.source,
-                    source_team_key=lookup.source_team_key,
-                    lineup_slot=lookup.lineup_slot,
-                    created_at=lookup.created_at,
-                    updated_at=lookup.updated_at,
-                )
-            )
+            try:
+                with session.begin_nested():
+                    session.add(
+                        TemporaryPlayerLookup(
+                            tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                            player_id=mapped_player_id,
+                            source_name=lookup.source_name,
+                            normalized_name=lookup.normalized_name,
+                            source_phone=lookup.source_phone,
+                            normalized_phone=lookup.normalized_phone,
+                            source_email=lookup.source_email,
+                            normalized_email=lookup.normalized_email,
+                            towel_color=lookup.towel_color,
+                            report_url=lookup.report_url,
+                            source=lookup.source,
+                            source_team_key=lookup.source_team_key,
+                            lineup_slot=lookup.lineup_slot,
+                            created_at=lookup.created_at,
+                            updated_at=lookup.updated_at,
+                        )
+                    )
+                    session.flush()
+            except IntegrityError as exc:
+                if not _is_towel_lookup_identity_conflict(exc):
+                    raise
 
         # 5) Copy schedule graph (versions -> slots/matches -> assignments/locks).
         version_id_map: dict[int, int] = {}
