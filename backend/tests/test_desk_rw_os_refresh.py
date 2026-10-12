@@ -153,9 +153,7 @@ def test_preview_with_no_changes_does_not_mutate_operational_data(client: TestCl
     assert _fingerprint(session, ready.imported.tournament_id) == before
 
 
-def test_check_auto_adds_a_new_rw_os_team_without_rebuild(
-    client: TestClient, session: Session, monkeypatch
-):
+def test_check_auto_adds_a_new_rw_os_team_without_rebuild(client: TestClient, session: Session, monkeypatch):
     """Check should pull a team that exists in RW-OS but not locally — no Apply, no rebuild."""
     ready = _mixed_draw(client, session, 959, roster_count=20, placed_count=20)
     addition = _mixed_field(1, start_id=1800, start_rating=6.0)[0]

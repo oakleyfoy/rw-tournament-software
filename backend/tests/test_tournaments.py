@@ -572,9 +572,7 @@ def test_duplicate_tournament_collapses_duplicate_rwos_towel_identities(client: 
         session.commit()
 
 
-def test_duplicate_tournament_skips_towel_rows_sqlite_still_rejects(
-    client: TestClient, session: Session, monkeypatch
-):
+def test_duplicate_tournament_skips_towel_rows_sqlite_still_rejects(client: TestClient, session: Session, monkeypatch):
     """Duplicate still finishes when two towel rows collide only at insert time."""
 
     def distinct_identity(lookup: TemporaryPlayerLookup):

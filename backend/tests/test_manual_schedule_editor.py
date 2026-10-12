@@ -867,9 +867,7 @@ def test_manual_assignment_blocks_overlapping_team_windows(session: Session, man
     )
     session.commit()
 
-    ok, reason = validate_rest_constraints(
-        session, match2, slot2, version_id, min_rest_minutes=0
-    )
+    ok, reason = validate_rest_constraints(session, match2, slot2, version_id, min_rest_minutes=0)
     assert ok is False
     assert reason is not None
     assert "overlap" in reason.lower()
