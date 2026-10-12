@@ -637,19 +637,9 @@ def _normalize_rwos_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _is_destructive_source_diff(diff: dict[str, Any]) -> bool:
-    """Withdrawals and identity moves need an explicit Apply; missing teams do not."""
-    return bool(diff.get("withdrawnTeams") or diff.get("partnerChanges") or diff.get("drawChanges"))
-
-
-def _needs_additive_roster_repair(diff: dict[str, Any], drift: dict[str, Any]) -> bool:
-    """Local roster is behind the live RW-OS download (missing team rows or draw seats)."""
-    return bool(
-        diff.get("addedTeams")
-        or drift.get("missingFromEvent")
-        or drift.get("missingFromDraw")
-        or drift.get("seedMismatches")
-    )
+def _needs_roster_repair(diff: dict[str, Any], drift: dict[str, Any]) -> bool:
+    """Any RW-OS difference in teams, partners, contacts, ratings, or draw seats."""
+    return bool(diff.get("changed") or drift.get("reconciliationNeeded"))
 
 
 def refresh_import(
@@ -667,16 +657,13 @@ def refresh_import(
 
     drift = operational_roster_drift(session, import_row, current.get("teams") or [])
     diff["operationalDrift"] = drift
-    additive_repair = _needs_additive_roster_repair(diff, drift)
-    destructive = _is_destructive_source_diff(diff)
-    if drift["reconciliationNeeded"] or additive_repair:
+    if _needs_roster_repair(diff, drift):
         diff["changed"] = True
     import_row.refresh_diff_json = json.dumps(diff)
     import_row.updated_at = datetime.utcnow()
-    # Check compares the live RW-OS roster to Tournament Software and repairs gaps:
-    # missing teams, open TBD draw seats, extras still in the draw, and seed drift.
-    # Withdrawals / partner moves in the source diff still wait for Apply. No draw rebuild.
-    reconcile = apply or ((bool(drift["reconciliationNeeded"]) or additive_repair) and not destructive)
+    # Check copies RW-OS onto Tournament Software: teams, partners, names, emails,
+    # cellphones, ratings, towels, and open TBD seats. It does not rebuild draws.
+    reconcile = apply or _needs_roster_repair(diff, drift)
     roster_projection = None
     if reconcile:
         persist_snapshot(session, current, organization_slug=import_row.organization_slug, existing=import_row)
@@ -713,7 +700,7 @@ def refresh_and_rebuild_draws(
     diff = compute_refresh_diff(previous, current)
     drift = operational_roster_drift(session, import_row, current.get("teams") or [])
     diff["operationalDrift"] = drift
-    if drift["reconciliationNeeded"] or _needs_additive_roster_repair(diff, drift):
+    if _needs_roster_repair(diff, drift):
         diff["changed"] = True
     import_row.refresh_diff_json = json.dumps(diff)
     import_row.updated_at = datetime.utcnow()

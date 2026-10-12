@@ -401,7 +401,7 @@ export function DeskRwOsRefresh({
             {phase === 'checking' ? 'Checking RW-OS…' : phase === 'applying' ? 'Applying RW-OS Changes…' : 'Check RW-OS for Changes'}
           </button>
           <div style={{ fontSize: 11, lineHeight: 1.35, marginTop: 4, opacity: 0.9 }}>
-            Compares RW-OS to this tournament, adds missing teams, and fills open TBD slots. Does not rebuild draws.
+            Copies RW-OS teams, partners, names, emails, cellphones, and ratings onto this tournament. Fills open TBD slots. Does not rebuild draws.
           </div>
         </div>
         <div style={{ maxWidth: 280 }}>
