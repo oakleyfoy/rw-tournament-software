@@ -3322,7 +3322,9 @@ def auto_assign_with_rest_rules(
     version_id: int,
     clear_existing: bool = Query(True, description="Clear existing assignments before running"),
     v: int = Query(1, description="Algorithm version: 1 (default) or 2 (with enhanced constraints)", ge=1, le=2),
-    min_rest_minutes: int = Query(0, description="V2 only: Minimum rest minutes between matches for same team (0 = back-to-back allowed)", ge=0),
+    min_rest_minutes: int = Query(
+        0, description="V2 only: Minimum rest minutes between matches for same team (0 = back-to-back allowed)", ge=0
+    ),
     require_court_type_match: bool = Query(
         False, description="V2 only: Require court type compatibility (if courts have types)"
     ),

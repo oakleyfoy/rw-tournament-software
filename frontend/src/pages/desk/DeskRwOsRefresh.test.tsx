@@ -321,7 +321,11 @@ describe('DeskRwOsRefresh', () => {
       scheduleNote: 'Match numbers, dates, times, courts, and grid assignments were preserved.',
     })
     render(<DeskRwOsRefresh importId={12} onApplied={onApplied} />)
-    expect(screen.getByText('Updates teams and information without rebuilding draws.')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Compares RW-OS to this tournament, adds missing teams, and fills open TBD slots. Does not rebuild draws.',
+      ),
+    ).toBeInTheDocument()
     expect(screen.getByText(/Existing match numbers, dates, times, courts, and grid positions stay in place/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh RW-OS + Rebuild Draws' }))
