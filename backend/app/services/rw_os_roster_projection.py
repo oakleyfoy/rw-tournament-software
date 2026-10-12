@@ -1092,6 +1092,7 @@ def operational_roster_drift(
         "missingFromDraw": [],
         "extraInDraw": [],
         "seedMismatches": [],
+        "fieldMismatches": [],
     }
     if import_row.plan_status not in ("approved", "stale"):
         return empty
@@ -1129,16 +1130,59 @@ def operational_roster_drift(
     missing_from_draw = sorted(expected_draw - draw_keys)
     extra_in_draw = sorted(key for key in draw_keys if key not in rwos_keys)
     seed_mismatches = _seed_mismatches(snapshot_teams, plans, events, live)
+    field_mismatches = _roster_field_mismatches(snapshot_teams, live)
     return {
         "reconciliationNeeded": bool(
-            missing_from_event or extra_in_event or missing_from_draw or extra_in_draw or seed_mismatches
+            missing_from_event
+            or extra_in_event
+            or missing_from_draw
+            or extra_in_draw
+            or seed_mismatches
+            or field_mismatches
         ),
         "missingFromEvent": missing_from_event,
         "extraInEvent": extra_in_event,
         "missingFromDraw": missing_from_draw,
         "extraInDraw": extra_in_draw,
         "seedMismatches": seed_mismatches,
+        "fieldMismatches": field_mismatches,
     }
+
+
+def _roster_field_mismatches(snapshot_teams: list[SnapshotTeam], live: list[Team]) -> list[dict[str, Any]]:
+    """Names, ratings, emails, and cellphones on the live team that differ from RW-OS."""
+    live_by_key = {team.source_team_key: team for team in live if team.source_team_key and team_is_active(team)}
+    mismatches: list[dict[str, Any]] = []
+    for snapshot in snapshot_teams:
+        team = live_by_key.get(snapshot.team_key)
+        if team is None:
+            continue
+        fields: list[str] = []
+        full_name = _team_full_name(snapshot)
+        display_name = _team_display_name(snapshot, full_name)
+        if (team.display_name or "") != (display_name or ""):
+            fields.append("displayName")
+        if (team.name or "") != (full_name or "") and full_name:
+            # name may be suffixed for uniqueness; compare the RW-OS full name as a prefix.
+            if not str(team.name or "").startswith(full_name):
+                fields.append("fullName")
+        if not _values_equal(team.rating, _team_rating(snapshot)):
+            fields.append("rating")
+        contacts = (
+            ("player1Cellphone", snapshot.player1.cellphone, team.player1_cellphone or team.p1_cell),
+            ("player1Email", snapshot.player1.email, team.player1_email or team.p1_email),
+            ("player2Cellphone", snapshot.player2.cellphone, team.player2_cellphone or team.p2_cell),
+            ("player2Email", snapshot.player2.email, team.player2_email or team.p2_email),
+        )
+        for field_name, incoming, current in contacts:
+            incoming_value = _blank_text(incoming)
+            if incoming_value is None:
+                continue
+            if _blank_text(current) != incoming_value:
+                fields.append(field_name)
+        if fields:
+            mismatches.append({"teamKey": snapshot.team_key, "fields": fields})
+    return mismatches
 
 
 def _identity_line(team: SnapshotTeam) -> str:

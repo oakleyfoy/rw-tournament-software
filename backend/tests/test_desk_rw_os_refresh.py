@@ -153,6 +153,32 @@ def test_preview_with_no_changes_does_not_mutate_operational_data(client: TestCl
     assert _fingerprint(session, ready.imported.tournament_id) == before
 
 
+def test_check_repairs_local_rating_email_and_phone_when_the_snapshot_is_unchanged(
+    client: TestClient, session: Session, monkeypatch
+):
+    ready = _mixed_draw(client, session, 958, roster_count=20, placed_count=20)
+    team = ready.ordered[0]
+    team.rating = 1.0
+    team.player1_email = "stale@example.com"
+    team.player1_cellphone = "000"
+    session.add(team)
+    session.commit()
+    _patch_refresh(monkeypatch, [_payload(958, ready.field)])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["applied"] is True
+    assert result["diff"]["addedTeams"] == []
+    assert any(
+        item["teamKey"] == team.source_team_key for item in result["diff"]["operationalDrift"]["fieldMismatches"]
+    )
+    session.expire_all()
+    repaired = session.get(Team, team.id)
+    assert repaired.rating != 1.0
+    assert repaired.player1_email != "stale@example.com"
+    assert repaired.player1_cellphone != "000"
+
+
 def test_check_auto_adds_a_new_rw_os_team_without_rebuild(client: TestClient, session: Session, monkeypatch):
     """Check should pull a team that exists in RW-OS but not locally — no Apply, no rebuild."""
     ready = _mixed_draw(client, session, 959, roster_count=20, placed_count=20)
@@ -173,24 +199,23 @@ def test_check_auto_adds_a_new_rw_os_team_without_rebuild(client: TestClient, se
     assert new_team.id in {row["team_id"] for row in desk.json()}
 
 
-def test_preview_lists_new_team_withdrawal_and_field_changes_without_writing_them(
-    client: TestClient, session: Session, monkeypatch
-):
+def test_check_writes_new_team_withdrawal_contacts_and_ratings(client: TestClient, session: Session, monkeypatch):
     ready = _ready(client, session, 951)
-    before = _fingerprint(session, ready.imported.tournament_id)
     replacement = _torrie_nancy()
     survivor = SnapshotTeam.from_dict(ready.teams[1].to_dict())
     survivor.player1.cellphone = "9015552222"
     survivor.player1.name = "John Smith"
     survivor.player1.towel_color = "Pink"
     survivor.avoid_group = "C"
+    survivor.team_rating = 9.5
+    survivor.level = 9.5
     refreshed = [survivor] + [SnapshotTeam.from_dict(team.to_dict()) for team in ready.teams[2:]]
     refreshed.append(replacement)
     _patch_refresh(monkeypatch, [_payload(951, refreshed, version="preview")])
 
     result = _post_refresh(client, ready.imported.id, apply=False)
 
-    assert result["applied"] is False
+    assert result["applied"] is True
     diff = result["diff"]
     assert diff["changed"] is True
     assert {team["teamKey"] for team in diff["addedTeams"]} == {replacement.team_key}
@@ -200,8 +225,11 @@ def test_preview_lists_new_team_withdrawal_and_field_changes_without_writing_the
     assert any(change["field"] == "towel" and change["after"] == "Pink" for change in diff["towelChanges"])
     assert any(change["after"] == "C" for change in diff["avoidGroupChanges"])
     session.expire_all()
-    assert _fingerprint(session, ready.imported.tournament_id) == before
-    assert replacement.team_key not in _teams_by_key(session, ready.imported.tournament_id)
+    teams = _teams_by_key(session, ready.imported.tournament_id)
+    assert replacement.team_key in teams
+    assert teams[survivor.team_key].rating == 9.5
+    old = session.get(Team, ready.withdrawn.id)
+    assert old.is_defaulted is True
 
 
 def test_apply_reconciles_against_a_fresh_snapshot_and_ignores_client_diff(

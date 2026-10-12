@@ -323,7 +323,7 @@ describe('DeskRwOsRefresh', () => {
     render(<DeskRwOsRefresh importId={12} onApplied={onApplied} />)
     expect(
       screen.getByText(
-        'Compares RW-OS to this tournament, adds missing teams, and fills open TBD slots. Does not rebuild draws.',
+        'Copies RW-OS teams, partners, names, emails, cellphones, and ratings onto this tournament. Fills open TBD slots. Does not rebuild draws.',
       ),
     ).toBeInTheDocument()
     expect(screen.getByText(/Existing match numbers, dates, times, courts, and grid positions stay in place/)).toBeInTheDocument()
