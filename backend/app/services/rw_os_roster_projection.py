@@ -279,18 +279,18 @@ def _operational_brackets(
     events: list[Event],
     draw_kind: str,
 ) -> list[dict[str, Any]]:
-    """Current teams fill the approved capacity. A stale rankEnd does not drop them.
+    """Current teams fill the sole category event. A stale rankEnd does not drop them.
 
-    A single Mixed event of 24 is the whole Mixed field, even when the stored rank
-    window is still 1–19 or the bracket label no longer matches the event name.
-    Several events of the same category keep their own rank windows.
+    A single Women's/Mixed event is the whole field, even when Event.team_count or the
+    stored rank window is still 1–19 and RW-OS now has 20. Several events of the same
+    category keep their own rank windows.
     """
     if not draw_teams:
         return brackets
     sole = _sole_category_event(events, draw_kind)
-    capacity = int(sole.team_count or 0) if sole is not None else 0
-    if sole is None or capacity < len(draw_teams):
+    if sole is None:
         return brackets
+    capacity = int(sole.team_count or 0)
     overlay = dict(brackets[0] if brackets else {})
     for bracket in brackets:
         label = str(bracket.get("label") or "").strip()

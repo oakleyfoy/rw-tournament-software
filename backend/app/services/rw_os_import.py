@@ -627,6 +627,31 @@ def compute_refresh_diff(previous: dict[str, Any], current: dict[str, Any]) -> d
     }
 
 
+def _normalize_rwos_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Accept either `teams` or `activeTeams` from the live RW-OS event detail."""
+    teams = payload.get("teams") or payload.get("activeTeams") or []
+    if payload.get("teams") == teams:
+        return payload
+    normalized = dict(payload)
+    normalized["teams"] = list(teams)
+    return normalized
+
+
+def _is_destructive_source_diff(diff: dict[str, Any]) -> bool:
+    """Withdrawals and identity moves need an explicit Apply; missing teams do not."""
+    return bool(diff.get("withdrawnTeams") or diff.get("partnerChanges") or diff.get("drawChanges"))
+
+
+def _needs_additive_roster_repair(diff: dict[str, Any], drift: dict[str, Any]) -> bool:
+    """Local roster is behind the live RW-OS download (missing team rows or draw seats)."""
+    return bool(
+        diff.get("addedTeams")
+        or drift.get("missingFromEvent")
+        or drift.get("missingFromDraw")
+        or drift.get("seedMismatches")
+    )
+
+
 def refresh_import(
     session: Session,
     import_row: TournamentImport,
@@ -636,20 +661,22 @@ def refresh_import(
 ) -> dict[str, Any]:
     client = client or RwOsClient()
     previous = import_payload_from_row(import_row)
-    current = client.refresh_event(import_row.source_tournament_id, previous)
+    current = _normalize_rwos_event_payload(client.refresh_event(import_row.source_tournament_id, previous))
     diff = compute_refresh_diff(previous, current)
     from app.services.rw_os_roster_projection import operational_roster_drift
 
     drift = operational_roster_drift(session, import_row, current.get("teams") or [])
     diff["operationalDrift"] = drift
-    source_changed = bool(diff["changed"])
-    if drift["reconciliationNeeded"]:
+    additive_repair = _needs_additive_roster_repair(diff, drift)
+    destructive = _is_destructive_source_diff(diff)
+    if drift["reconciliationNeeded"] or additive_repair:
         diff["changed"] = True
     import_row.refresh_diff_json = json.dumps(diff)
     import_row.updated_at = datetime.utcnow()
-    # A matching download is not "current" when the event or draw is behind that roster.
-    # Repair that stale local state on the desk check. A real source change still waits for Apply.
-    reconcile = apply or (bool(drift["reconciliationNeeded"]) and not source_changed)
+    # Check compares the live RW-OS roster to Tournament Software and repairs gaps:
+    # missing teams, open TBD draw seats, extras still in the draw, and seed drift.
+    # Withdrawals / partner moves in the source diff still wait for Apply. No draw rebuild.
+    reconcile = apply or ((bool(drift["reconciliationNeeded"]) or additive_repair) and not destructive)
     roster_projection = None
     if reconcile:
         persist_snapshot(session, current, organization_slug=import_row.organization_slug, existing=import_row)
@@ -682,11 +709,11 @@ def refresh_and_rebuild_draws(
 
     client = client or RwOsClient()
     previous = import_payload_from_row(import_row)
-    current = client.refresh_event(import_row.source_tournament_id, previous)
+    current = _normalize_rwos_event_payload(client.refresh_event(import_row.source_tournament_id, previous))
     diff = compute_refresh_diff(previous, current)
     drift = operational_roster_drift(session, import_row, current.get("teams") or [])
     diff["operationalDrift"] = drift
-    if drift["reconciliationNeeded"]:
+    if drift["reconciliationNeeded"] or _needs_additive_roster_repair(diff, drift):
         diff["changed"] = True
     import_row.refresh_diff_json = json.dumps(diff)
     import_row.updated_at = datetime.utcnow()

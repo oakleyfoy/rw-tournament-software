@@ -153,6 +153,28 @@ def test_preview_with_no_changes_does_not_mutate_operational_data(client: TestCl
     assert _fingerprint(session, ready.imported.tournament_id) == before
 
 
+def test_check_auto_adds_a_new_rw_os_team_without_rebuild(
+    client: TestClient, session: Session, monkeypatch
+):
+    """Check should pull a team that exists in RW-OS but not locally — no Apply, no rebuild."""
+    ready = _mixed_draw(client, session, 959, roster_count=20, placed_count=20)
+    addition = _mixed_field(1, start_id=1800, start_rating=6.0)[0]
+    current = [SnapshotTeam.from_dict(team.to_dict()) for team in ready.field] + [addition]
+    assert addition.team_key not in _teams_by_key(session, ready.imported.tournament_id)
+    _patch_refresh(monkeypatch, [_payload(959, current, version="with-new-team")])
+
+    result = _post_refresh(client, ready.imported.id, apply=False)
+
+    assert result["applied"] is True
+    assert {team["teamKey"] for team in result["diff"]["addedTeams"]} == {addition.team_key}
+    assert result["rosterProjection"]["created"]["teams"] == 1
+    session.expire_all()
+    assert addition.team_key in _teams_by_key(session, ready.imported.tournament_id)
+    desk = client.get(f"/api/desk/tournaments/{ready.imported.tournament_id}/teams")
+    new_team = _teams_by_key(session, ready.imported.tournament_id)[addition.team_key]
+    assert new_team.id in {row["team_id"] for row in desk.json()}
+
+
 def test_preview_lists_new_team_withdrawal_and_field_changes_without_writing_them(
     client: TestClient, session: Session, monkeypatch
 ):
