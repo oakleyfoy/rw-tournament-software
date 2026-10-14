@@ -113,7 +113,7 @@ export function calculateMatches(
     case 'WF_TO_POOLS_DYNAMIC': {
       // WF_TO_POOLS_DYNAMIC: Phase 1 template for 8,12,16,20,24,28 teams
       // (10-team events use WF_10_SIX_FOUR)
-      // Pools: n/4 pools of 4; WF rounds: 1 for 8 teams, 2 for 12+
+      // Pools: n/4 pools of 4; WF rounds: default 2 (8 teams may also use 1)
       const wfMatchesDynamic = wfRoundMatches(teamCount) * wfRounds;
       const poolCount = teamCount / 4;
       const rrMatchesPerPool = (4 * 3) / 2; // 6 matches per pool of 4

@@ -85,6 +85,7 @@ import {
   PHASE1_SUPPORTED_TEAM_COUNTS_SORTED,
   isPhase1TeamCount,
   requiredWfRounds,
+  allowedWfRounds,
   getValidFamilyForTeamCount,
   isTeamCountValidForFamily,
   type TemplateFamily,
@@ -863,9 +864,11 @@ function DrawBuilder() {
         const allowed = ALLOWED_TEAM_COUNTS.WF_TO_POOLS_DYNAMIC.join(',')
         errors.push(`WF_TO_POOLS_DYNAMIC requires team count in {${allowed}}, got ${n}`)
       }
-      const expectedWfRounds = requiredWfRounds('WF_TO_POOLS_DYNAMIC', n)
-      if (state.wfRounds !== expectedWfRounds) {
-        errors.push(`WF_TO_POOLS_DYNAMIC with ${n} teams requires ${expectedWfRounds} waterfall rounds`)
+      const allowedRounds = allowedWfRounds('WF_TO_POOLS_DYNAMIC', n)
+      if (!allowedRounds.includes(state.wfRounds)) {
+        errors.push(
+          `WF_TO_POOLS_DYNAMIC with ${n} teams requires ${allowedRounds.join(' or ')} waterfall rounds`,
+        )
       }
     }
 
@@ -1575,25 +1578,40 @@ function DrawBuilder() {
         {(state.templateType === 'WF_TO_POOLS_DYNAMIC' || state.templateType === 'WF_TO_BRACKETS_8' || state.templateType === 'WF_14_TOP2_BYE' || state.templateType === 'WF_10_SIX_FOUR') && (
           <div className="form-group" style={{ marginBottom: '16px' }}>
             <label>Waterfall Rounds</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ 
-                padding: '4px 12px', 
-                backgroundColor: 'var(--theme-table-row-hover)', 
-                borderRadius: '4px',
-                fontWeight: '500'
-              }}>
-                {state.wfRounds}
-              </span>
-              <span style={{ fontSize: '12px', color: '#666' }}>
-                {state.templateType === 'WF_TO_POOLS_DYNAMIC' && 
-                  (event.team_count === 8
-                    ? '(Fixed at 1 for 8 teams)' 
-                    : '(Fixed at 2 for 12+ teams)')}
-                {state.templateType === 'WF_TO_BRACKETS_8' && '(Fixed at 2)'}
-                {state.templateType === 'WF_14_TOP2_BYE' && '(R1: 12 teams / 6 matches; R2: 8 teams / 4 matches; top 2 combined rating byes)'}
-                {state.templateType === 'WF_10_SIX_FOUR' && '(1 WF → winners 6 + losers 4; Fri/Sat RR; Sunday placement)'}
-              </span>
-            </div>
+            {state.templateType === 'WF_TO_POOLS_DYNAMIC' && event.team_count === 8 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <select
+                  value={state.wfRounds}
+                  onChange={(e) => updateEventEditorState(event.id, { wfRounds: Number(e.target.value) })}
+                  disabled={event.draw_status === 'final'}
+                  style={{ width: '80px' }}
+                >
+                  {allowedWfRounds('WF_TO_POOLS_DYNAMIC', 8).map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: '12px', color: '#666' }}>
+                  (1 = classic; 2 = full W/L waterfall, then 2 pools of 4)
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ 
+                  padding: '4px 12px', 
+                  backgroundColor: 'var(--theme-table-row-hover)', 
+                  borderRadius: '4px',
+                  fontWeight: '500'
+                }}>
+                  {state.wfRounds}
+                </span>
+                <span style={{ fontSize: '12px', color: '#666' }}>
+                  {state.templateType === 'WF_TO_POOLS_DYNAMIC' && '(Fixed at 2 for 12+ teams)'}
+                  {state.templateType === 'WF_TO_BRACKETS_8' && '(Fixed at 2)'}
+                  {state.templateType === 'WF_14_TOP2_BYE' && '(R1: 12 teams / 6 matches; R2: 8 teams / 4 matches; top 2 combined rating byes)'}
+                  {state.templateType === 'WF_10_SIX_FOUR' && '(1 WF → winners 6 + losers 4; Fri/Sat RR; Sunday placement)'}
+                </span>
+              </div>
+            )}
           </div>
         )}
 

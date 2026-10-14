@@ -46,14 +46,14 @@ export function isPhase1TeamCount(teamCount: number): boolean {
 export const PHASE2_TEAM_COUNTS = [18, 22, 26, 30] as const;
 
 /**
- * Return the required number of waterfall rounds for a given family and team count.
+ * Return the default number of waterfall rounds for a given family and team count.
  */
 export function requiredWfRounds(family: TemplateFamily, teamCount: number): number {
   switch (family) {
     case 'RR_ONLY':
       return 0;
     case 'WF_TO_POOLS_DYNAMIC':
-      return teamCount === 8 ? 1 : 2;
+      return 2;
     case 'WF_TO_BRACKETS_8':
       return 2;
     case 'WF_14_TOP2_BYE':
@@ -63,6 +63,17 @@ export function requiredWfRounds(family: TemplateFamily, teamCount: number): num
     default:
       return 0;
   }
+}
+
+/**
+ * Return allowed waterfall round counts for a family/team count.
+ * 8-team pools may use 1 (classic) or 2 (full W/L waterfall) before 2 pools of 4.
+ */
+export function allowedWfRounds(family: TemplateFamily, teamCount: number): number[] {
+  if (family === 'WF_TO_POOLS_DYNAMIC' && teamCount === 8) {
+    return [1, 2];
+  }
+  return [requiredWfRounds(family, teamCount)];
 }
 
 /**
@@ -136,9 +147,9 @@ export function validateTemplateConfig(
   }
   
   // Validate waterfall rounds
-  const expectedWf = requiredWfRounds(family, teamCount);
-  if (wfRounds !== expectedWf) {
-    return `${family} with ${teamCount} teams requires waterfall_rounds=${expectedWf}, got ${wfRounds}`;
+  const allowed = allowedWfRounds(family, teamCount);
+  if (!allowed.includes(wfRounds)) {
+    return `${family} with ${teamCount} teams requires waterfall_rounds in {${allowed.join(',')}}, got ${wfRounds}`;
   }
   
   return null;

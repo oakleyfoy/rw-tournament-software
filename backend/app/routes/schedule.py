@@ -2950,9 +2950,14 @@ def get_matches_preview(
 
 
 class MatchesGenerateOnlyRequest(BaseModel):
-    """Optional body for generate matches only."""
+    """Optional body for generate matches only.
+
+    When event_id is set, only that event is wiped/regenerated — other events
+    (e.g. Women's while rebuilding Mixed) are left alone.
+    """
 
     wipe_existing: bool = False
+    event_id: Optional[int] = None
 
 
 class EventExpectedItem(BaseModel):
@@ -2990,15 +2995,20 @@ def generate_matches_only(
     session: Session = Depends(get_session),
     body: Optional[MatchesGenerateOnlyRequest] = None,
 ):
-    """Generate matches only (no slots, no assignment). Idempotent unless wipe_existing=True."""
+    """Generate matches only (no slots, no assignment). Idempotent unless wipe_existing=True.
+
+    Pass event_id to scope wipe + generation to a single event.
+    """
     trace_id = uuid4().hex[:8]
     wipe_existing = body.wipe_existing if body else False
+    event_id = body.event_id if body else None
     logger.info(
-        "[GEN_MATCHES][%s] tournament=%s version=%s wipe=%s caller=ScheduleBuilder",
+        "[GEN_MATCHES][%s] tournament=%s version=%s wipe=%s event_id=%s caller=ScheduleBuilder",
         trace_id,
         tournament_id,
         version_id,
         wipe_existing,
+        event_id,
     )
 
     tournament = session.get(Tournament, tournament_id)
@@ -3009,17 +3019,27 @@ def generate_matches_only(
         raise HTTPException(status_code=404, detail="Schedule version not found")
     require_draft_version(session, version_id, tournament_id)
 
+    if event_id is not None:
+        scoped_event = session.get(Event, event_id)
+        if not scoped_event or scoped_event.tournament_id != tournament_id:
+            raise HTTPException(status_code=404, detail="Event not found")
+
     if wipe_existing:
-        existing_count = scalar_int(
-            session.exec(select(func.count(Match.id)).where(Match.schedule_version_id == version_id)).one()
-        )
+        match_count_q = select(func.count(Match.id)).where(Match.schedule_version_id == version_id)
+        if event_id is not None:
+            match_count_q = match_count_q.where(Match.event_id == event_id)
+        existing_count = scalar_int(session.exec(match_count_q).one())
         if existing_count > 0:
-            wipe_matches_for_version(session, version_id)
+            wipe_matches_for_version(session, version_id, event_id=event_id)
             session.flush()
 
     try:
         session._allow_match_generation = True
-        match_request = MatchGenerateRequest(schedule_version_id=version_id, wipe_existing=False)
+        match_request = MatchGenerateRequest(
+            schedule_version_id=version_id,
+            wipe_existing=False,
+            event_id=event_id,
+        )
         result = generate_matches(tournament_id, match_request, session, _transactional=True)
         session.flush()
         session.commit()

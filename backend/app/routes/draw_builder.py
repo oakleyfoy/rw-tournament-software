@@ -262,7 +262,14 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
 
     all_matches = []
 
-    if template_key == "WF_14_TOP2_BYE":
+    # Engine-backed templates: event-scoped match generation (does not touch other events).
+    engine_templates = {
+        "WF_14_TOP2_BYE",
+        "WF_10_SIX_FOUR",
+        "WF_TO_POOLS_DYNAMIC",
+        "WF_TO_BRACKETS_8",
+    }
+    if template_key in engine_templates:
         spec = build_spec_from_event(event, draw_plan)
         inventory = compute_inventory(spec)
         if inventory.has_errors():
