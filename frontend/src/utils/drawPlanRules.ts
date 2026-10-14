@@ -48,7 +48,7 @@ export const PHASE2_TEAM_COUNTS = [18, 22, 26, 30] as const;
 /**
  * Return the default number of waterfall rounds for a given family and team count.
  */
-export function requiredWfRounds(family: TemplateFamily, teamCount: number): number {
+export function requiredWfRounds(family: TemplateFamily, _teamCount: number): number {
   switch (family) {
     case 'RR_ONLY':
       return 0;
