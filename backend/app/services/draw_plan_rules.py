@@ -38,11 +38,11 @@ PHASE2_TEAM_COUNTS: FrozenSet[int] = frozenset({18, 22, 26, 30})
 
 def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
     """
-    Return the required number of waterfall rounds for a given family and team count.
+    Return the default number of waterfall rounds for a given family and team count.
 
     Rules:
     - RR_ONLY: always 0
-    - WF_TO_POOLS_DYNAMIC: 1 for 8 teams, 2 for 12+ teams
+    - WF_TO_POOLS_DYNAMIC: default 2 (8 teams also allow 1 for classic single-WF)
     - WF_TO_BRACKETS_8: always 2
     - WF_10_SIX_FOUR: always 1
     - WF_14_TOP2_BYE: always 2
@@ -50,7 +50,7 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
     if family == "RR_ONLY":
         return 0
     elif family == "WF_TO_POOLS_DYNAMIC":
-        return 1 if team_count == 8 else 2
+        return 2
     elif family == "WF_TO_BRACKETS_8":
         return 2
     elif family == "WF_14_TOP2_BYE":
@@ -62,6 +62,14 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
 
         return REQUIRED_WF_ROUNDS
     return 0
+
+
+def allowed_wf_rounds(family: TemplateFamily, team_count: int) -> FrozenSet[int]:
+    """Return the set of allowed waterfall round counts for a family/team_count."""
+    if family == "WF_TO_POOLS_DYNAMIC" and team_count == 8:
+        # 8-team pools: classic 1-WF or full 2-WF (W/L) then 2 pools of 4
+        return frozenset({1, 2})
+    return frozenset({required_wf_rounds(family, team_count)})
 
 
 # =============================================================================
@@ -210,9 +218,10 @@ def validate_template_config(
         return f"{family} requires team_count in {{{','.join(map(str, allowed))}}}, got {team_count}"
 
     # Validate waterfall rounds
-    expected_wf = required_wf_rounds(family, team_count)
-    if wf_rounds != expected_wf:
-        return f"{family} with {team_count} teams requires waterfall_rounds={expected_wf}, got {wf_rounds}"
+    allowed = allowed_wf_rounds(family, team_count)
+    if wf_rounds not in allowed:
+        allowed_str = ",".join(str(v) for v in sorted(allowed))
+        return f"{family} with {team_count} teams requires waterfall_rounds in {{{allowed_str}}}, got {wf_rounds}"
 
     return None
 

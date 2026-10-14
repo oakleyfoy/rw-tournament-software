@@ -1276,12 +1276,21 @@ class TestWfToPoolsDynamic:
         inv = compute_inventory(spec)
         assert inv.has_errors(), "Expected error for 18 teams"
 
-    def test_wrong_wf_rounds_for_8_teams(self):
-        """8 teams requires wf_rounds=1, not 2."""
-        spec = make_spec("WF_TO_POOLS_DYNAMIC", 8, wf_rounds=2)
-        inv = compute_inventory(spec)
-        assert inv.has_errors(), "Expected error for wf_rounds=2 with 8 teams"
-        assert any("requires waterfall_rounds=1" in e for e in inv.errors)
+    def test_8_teams_allows_1_or_2_wf_rounds(self):
+        """8-team pools may use 1 or 2 waterfall rounds."""
+        inv_two = compute_inventory(make_spec("WF_TO_POOLS_DYNAMIC", 8, wf_rounds=2))
+        assert not inv_two.has_errors(), inv_two.errors
+        assert inv_two.wf_matches == 8
+        assert inv_two.rr_matches == 12
+
+        inv_one = compute_inventory(make_spec("WF_TO_POOLS_DYNAMIC", 8, wf_rounds=1))
+        assert not inv_one.has_errors(), inv_one.errors
+        assert inv_one.wf_matches == 4
+        assert inv_one.rr_matches == 12
+
+        inv_bad = compute_inventory(make_spec("WF_TO_POOLS_DYNAMIC", 8, wf_rounds=0))
+        assert inv_bad.has_errors(), "Expected error for wf_rounds=0 with 8 teams"
+        assert any("waterfall_rounds" in e for e in inv_bad.errors)
 
     def test_wrong_wf_rounds_for_12_teams(self):
         """12 teams requires wf_rounds=2, not 1."""

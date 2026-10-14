@@ -398,10 +398,13 @@ def _compute_wf_to_pools_dynamic(spec: DrawPlanSpec) -> InventoryCounts:
         return InventoryCounts(errors=errors)
 
     # Validate waterfall rounds using rules module
-    expected_wf_rounds = required_wf_rounds("WF_TO_POOLS_DYNAMIC", n)
-    if wf_rounds != expected_wf_rounds:
+    from app.services.draw_plan_rules import allowed_wf_rounds
+
+    allowed = allowed_wf_rounds("WF_TO_POOLS_DYNAMIC", n)
+    if wf_rounds not in allowed:
+        allowed_str = ",".join(str(v) for v in sorted(allowed))
         errors.append(
-            f"WF_TO_POOLS_DYNAMIC with {n} teams requires waterfall_rounds={expected_wf_rounds}, got {wf_rounds}"
+            f"WF_TO_POOLS_DYNAMIC with {n} teams requires waterfall_rounds in {{{allowed_str}}}, got {wf_rounds}"
         )
         return InventoryCounts(errors=errors)
 
@@ -1039,9 +1042,14 @@ def _generate_wf_to_pools_dynamic(
         return matches, warnings
 
     # Validate waterfall rounds using rules module
-    expected_wf_rounds = required_wf_rounds("WF_TO_POOLS_DYNAMIC", n)
-    if wf_rounds != expected_wf_rounds:
-        warnings.append(f"WF_TO_POOLS_DYNAMIC with {n} teams requires wf_rounds={expected_wf_rounds}, got {wf_rounds}")
+    from app.services.draw_plan_rules import allowed_wf_rounds
+
+    allowed = allowed_wf_rounds("WF_TO_POOLS_DYNAMIC", n)
+    if wf_rounds not in allowed:
+        allowed_str = ",".join(str(v) for v in sorted(allowed))
+        warnings.append(
+            f"WF_TO_POOLS_DYNAMIC with {n} teams requires wf_rounds in {{{allowed_str}}}, got {wf_rounds}"
+        )
         return matches, warnings
 
     prefix = spec.match_code_prefix

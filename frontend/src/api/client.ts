@@ -1642,6 +1642,8 @@ export interface MatchesGenerateOnlyResponse {
 
 export interface MatchesGenerateOnlyOptions {
   wipeExisting?: boolean
+  /** When set, wipe/regenerate matches for this event only (other events untouched). */
+  eventId?: number
 }
 
 export async function generateMatchesOnly(
@@ -1649,11 +1651,14 @@ export async function generateMatchesOnly(
   versionId: number,
   options?: MatchesGenerateOnlyOptions
 ): Promise<MatchesGenerateOnlyResponse> {
+  const body: { wipe_existing?: boolean; event_id?: number } = {}
+  if (options?.wipeExisting) body.wipe_existing = true
+  if (options?.eventId != null) body.event_id = options.eventId
   return fetchJson<MatchesGenerateOnlyResponse>(
     `${API_BASE_URL}/tournaments/${tournamentId}/schedule/versions/${versionId}/matches/generate`,
     {
       method: 'POST',
-      body: options?.wipeExisting ? JSON.stringify({ wipe_existing: true }) : undefined,
+      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     }
   )
 }
