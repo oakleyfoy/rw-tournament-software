@@ -182,7 +182,8 @@ def test_save_court_names_rejects_when_excess_has_assignments(client: TestClient
     assert t.court_names == _old_labels(15)
 
 
-def test_save_court_names_leaves_final_version_slots_untouched(client: TestClient, session: Session):
+def test_save_court_names_relabels_final_version_slots(client: TestClient, session: Session):
+    """Published/final grids use the same slot labels, so they must be rewritten too."""
     t, v, day, window, _slots = _seed_tournament(session, status="final", courts=15)
     new_names = _new_labels_5_to_18()
 
@@ -195,19 +196,44 @@ def test_save_court_names_leaves_final_version_slots_untouched(client: TestClien
     assert body["court_names"] == new_names
     sync = body["court_sync"]
     assert sync is not None
-    assert sync["relabeled_slots"] == 0
-    assert sync["removed_slots"] == 0
+    assert sync["relabeled_slots"] == 14
+    assert sync["removed_slots"] == 1
     assert sync["capped_windows"] == 1
     assert sync["capped_days"] == 1
 
     slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)).all()
-    assert len(slots) == 15
-    assert all(s.court_label == str(s.court_number) for s in slots)
+    assert len(slots) == 14
+    by_num = {s.court_number: s.court_label for s in slots}
+    assert by_num == {i + 1: new_names[i] for i in range(14)}
 
     session.refresh(day)
     session.refresh(window)
     assert day.courts_available == 14
     assert window.courts_available == 14
+
+
+def test_resave_same_names_repairs_stale_slot_labels(client: TestClient, session: Session):
+    """Names saved earlier must still rewrite slots that were never relabeled."""
+    t, v, _day, _window, slots = _seed_tournament(session, status="draft", courts=15)
+    saved_names = _new_labels_5_to_18()
+    t.court_names = saved_names
+    session.add(t)
+    session.commit()
+
+    resp = client.put(
+        f"/api/tournaments/{t.id}",
+        json={"court_names": saved_names},
+    )
+    assert resp.status_code == 200, resp.text
+    sync = resp.json()["court_sync"]
+    assert sync["relabeled_slots"] == 14
+    assert sync["removed_slots"] == 1
+
+    refreshed = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == v.id)).all()
+    assert len(refreshed) == 14
+    assert {s.court_label for s in refreshed} == set(saved_names)
+    assert all(s.court_label != str(s.court_number) for s in refreshed)
+    assert slots  # original objects were the stale 1-15 rows
 
 
 def test_save_unchanged_court_names_is_noop(client: TestClient, session: Session):
