@@ -35,6 +35,7 @@ from app.models.tournament_import import TournamentImport
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.services.assignment_ownership import create_owned_assignment, validate_assignment_ownership
+from app.services.court_names_sync import CourtSyncStats, sync_court_names_to_drafts
 from app.utils.courts import parse_court_names
 from app.utils.event_schedule_orders import remap_event_schedule_day_orders_json
 
@@ -129,6 +130,15 @@ class TournamentUpdate(BaseModel):
         return self
 
 
+class CourtSyncResponse(BaseModel):
+    relabeled_slots: int = 0
+    removed_slots: int = 0
+    capped_windows: int = 0
+    capped_days: int = 0
+    remapped_states: int = 0
+    removed_states: int = 0
+
+
 class TournamentResponse(BaseModel):
     id: int
     name: str
@@ -148,6 +158,7 @@ class TournamentResponse(BaseModel):
     rw_os_import_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    court_sync: Optional[CourtSyncResponse] = None
 
     @field_validator("court_names", mode="before")
     @classmethod
@@ -1046,6 +1057,7 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
 
     old_start = tournament.start_date
     old_end = tournament.end_date
+    old_court_names = list(tournament.court_names or []) if tournament.court_names is not None else None
 
     # Update tournament fields
     update_data = tournament_data.model_dump(exclude_unset=True)
@@ -1054,6 +1066,19 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
 
     if "event_schedule_day_orders_json" in update_data:
         _strip_schedule_order_from_tournament_events(session, tournament_id)
+
+    court_sync_stats: Optional[CourtSyncStats] = None
+    if "court_names" in update_data:
+        try:
+            court_sync_stats = sync_court_names_to_drafts(
+                session,
+                tournament,
+                old_names=old_court_names,
+                new_names=tournament.court_names,
+            )
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     tournament.updated_at = datetime.utcnow()
     session.add(tournament)
@@ -1083,7 +1108,12 @@ def update_tournament(tournament_id: int, tournament_data: TournamentUpdate, ses
         generate_tournament_days(session, tournament_id, new_start, new_end)
 
     session.refresh(tournament)
-    return _tournament_response(session, tournament)
+    response = _tournament_response(session, tournament)
+    if court_sync_stats is not None and court_sync_stats.applied:
+        response = response.model_copy(
+            update={"court_sync": CourtSyncResponse(**court_sync_stats.as_dict())}
+        )
+    return response
 
 
 def _towel_lookup_text(value: Optional[str]) -> Optional[str]:
