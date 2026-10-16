@@ -16,6 +16,15 @@ export function clearAuthToken(): void {
   window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
 }
 
+export interface CourtSyncStats {
+  relabeled_slots: number
+  removed_slots: number
+  capped_windows: number
+  capped_days: number
+  remapped_states: number
+  removed_states: number
+}
+
 export interface Tournament {
   id: number;
   name: string;
@@ -36,6 +45,8 @@ export interface Tournament {
   rw_os_import_id?: number | null;
   created_at: string;
   updated_at: string;
+  /** Present when Save Court Names applied labels to draft schedules */
+  court_sync?: CourtSyncStats | null;
 }
 
 export interface TournamentCreate {

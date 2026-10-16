@@ -257,10 +257,43 @@ function TournamentSetup() {
         console.log('Saving tournament payload:', updatePayload)
         const saved = await updateTournament(tournament.id!, updatePayload)
         console.log('Saved tournament returned court_names:', saved.court_names)
-        showToast('Tournament updated successfully', 'success')
+
+        const sync = saved.court_sync
+        if (sync) {
+          const parts: string[] = []
+          if (sync.relabeled_slots > 0) parts.push(`relabeled ${sync.relabeled_slots} slot(s)`)
+          if (sync.removed_slots > 0) parts.push(`removed ${sync.removed_slots} excess slot(s)`)
+          if (sync.capped_windows > 0) parts.push(`capped ${sync.capped_windows} time window(s)`)
+          if (sync.capped_days > 0) parts.push(`capped ${sync.capped_days} day(s)`)
+          showToast(
+            parts.length > 0
+              ? `Court names saved — ${parts.join('; ')}.`
+              : 'Court names saved and applied to draft schedules.',
+            'success',
+          )
+        } else {
+          showToast('Tournament updated successfully', 'success')
+        }
         
         // Update tournament state with saved data, but preserve courtNamesInput
         setTournament(saved)
+        setOriginalCourtNames(saved.court_names || null)
+        const savedInput = saved.court_names && saved.court_names.length > 0
+          ? saved.court_names.join(',')
+          : ''
+        setCourtNamesInput(savedInput)
+
+        // Refresh days/windows so capacity warnings match capped values
+        if (saved.id) {
+          const daysData = await getTournamentDays(saved.id).catch(() => null)
+          if (daysData) setDays(daysData)
+          if (saved.use_time_windows) {
+            const windows = await getTimeWindows(saved.id).catch(() => null)
+            if (windows) setTimeWindows(windows)
+            const summary = await getTimeWindowsSummary(saved.id).catch(() => null)
+            if (summary) setTimeWindowSummary(summary)
+          }
+        }
         
         // Restore scroll position after React re-renders
         requestAnimationFrame(() => {
@@ -1657,9 +1690,10 @@ function TournamentSetup() {
               placeholder="e.g., 1,2,3,4,5 or A,B,C,D,E"
             />
             <div style={{ fontSize: '12px', color: 'var(--theme-text)', marginTop: '4px', opacity: 0.7 }}>
-              Master inventory of physical court labels for the whole tournament. Time windows decide how many of
-              these courts are used in each period. Extra labels are kept; they do not have to match the largest
-              window. Leave empty to use default numbering (1, 2, 3…).
+              Master inventory of physical court labels for the whole tournament. Saving applies these labels to
+              draft schedule slots (check-in and grid). If the list is shorter than day/window court counts, those
+              counts are capped down and empty excess courts are removed. Leave empty to use default numbering
+              (1, 2, 3…).
             </div>
             
             {/* Validation Warnings */}
@@ -1730,7 +1764,8 @@ function TournamentSetup() {
                       fontSize: '13px',
                       color: '#0c5460'
                     }}>
-                      ℹ️ Court labels changed. Existing schedule drafts may need rebuild to use new labels.
+                      ℹ️ Court labels changed. Saving will relabel draft schedule slots, cap day/window court
+                      counts to this list, and remove empty excess courts. Final schedules are left unchanged.
                     </div>
                   )}
                 </>
