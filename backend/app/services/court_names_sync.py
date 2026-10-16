@@ -62,15 +62,19 @@ def sync_court_names_to_drafts(
     new_names: Optional[Sequence[str]],
 ) -> CourtSyncStats:
     """
-    Sync a court_names change onto draft schedule data.
+    Align schedule slots with the saved court-name inventory.
+
+    Check-in and the grid read ScheduleSlot.court_label, including on the
+    published version. Saving the same list again still repairs labels that
+    were stored before this sync existed.
 
     - Caps active day/window court counts to len(new_names)
-    - Relabels draft slots by court_number index
-    - Deletes unassigned draft slots with court_number > N
-    - Remaps TournamentCourtState labels by index
+    - Relabels every version's slots by court_number index
+    - Deletes unassigned slots with court_number > N
+    - Remaps TournamentCourtState labels from the slot label change
 
     Raises ValueError if excess courts still have match assignments.
-    No-op when new_names is empty/cleared or unchanged.
+    No-op when new_names is empty, or when slots already match the list.
     """
     old_parsed = parse_court_names(list(old_names) if old_names is not None else None)
     new_parsed = parse_court_names(list(new_names) if new_names is not None else None)
@@ -78,26 +82,30 @@ def sync_court_names_to_drafts(
 
     if not new_parsed:
         return stats
-    if old_parsed == new_parsed:
-        return stats
 
     n = len(new_parsed)
     stats.capped_days = _cap_days(session, tournament.id, n)
     stats.capped_windows = _cap_windows(session, tournament.id, n)
 
-    draft_versions = session.exec(
-        select(ScheduleVersion).where(
-            ScheduleVersion.tournament_id == tournament.id,
-            ScheduleVersion.status == "draft",
-        )
+    versions = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == tournament.id)
     ).all()
 
-    for version in draft_versions:
-        relabeled, removed = _sync_draft_version(session, version.id, new_parsed, n)
+    label_map: dict[str, str] = {}
+    for version in versions:
+        relabeled, removed, version_map = _sync_version_slots(session, version.id, new_parsed, n)
         stats.relabeled_slots += relabeled
         stats.removed_slots += removed
+        label_map.update(version_map)
 
-    remapped, removed_states = _sync_court_states(session, tournament.id, old_parsed, new_parsed)
+    for idx, old_label in enumerate(old_parsed):
+        if idx >= n:
+            continue
+        old_key = (old_label or "").strip()
+        if old_key and old_key not in label_map:
+            label_map[old_key] = new_parsed[idx]
+
+    remapped, removed_states = _sync_court_states(session, tournament.id, label_map, new_parsed)
     stats.remapped_states += remapped
     stats.removed_states += removed_states
 
@@ -144,20 +152,21 @@ def _cap_windows(session: Session, tournament_id: int, n: int) -> int:
     return capped
 
 
-def _sync_draft_version(
+def _sync_version_slots(
     session: Session,
     version_id: int,
     new_names: List[str],
     n: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, dict[str, str]]:
     slots = session.exec(
         select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version_id)
     ).all()
     if not slots:
-        return 0, 0
+        return 0, 0, {}
 
     keep_slots = [s for s in slots if s.court_number <= n]
     excess_slots = [s for s in slots if s.court_number > n]
+    label_map: dict[str, str] = {}
 
     if excess_slots:
         excess_ids = [s.id for s in excess_slots if s.id is not None]
@@ -191,18 +200,21 @@ def _sync_draft_version(
     relabeled = 0
     for slot in keep_slots:
         new_label = court_label_for_index(new_names, slot.court_number)
-        if (slot.court_label or "").strip() != new_label:
+        old_label = (slot.court_label or "").strip()
+        if old_label and old_label != new_label:
+            label_map[old_label] = new_label
+        if old_label != new_label:
             slot.court_label = new_label
             session.add(slot)
             relabeled += 1
 
-    return relabeled, len(excess_slots)
+    return relabeled, len(excess_slots), label_map
 
 
 def _sync_court_states(
     session: Session,
     tournament_id: int,
-    old_names: List[str],
+    label_map: dict[str, str],
     new_names: List[str],
 ) -> tuple[int, int]:
     states = session.exec(
@@ -218,10 +230,7 @@ def _sync_court_states(
     # Two-phase remap avoids unique (tournament_id, court_label) collisions
     # when old and new inventories overlap (e.g. 1-15 → 5-18).
     index_pairs: list[tuple[str, str, int]] = []
-    for idx, old_label in enumerate(old_names):
-        if idx >= len(new_names):
-            continue
-        new_label = new_names[idx]
+    for idx, (old_label, new_label) in enumerate(label_map.items()):
         if (old_label or "").strip() == (new_label or "").strip():
             continue
         index_pairs.append((old_label, new_label, idx))

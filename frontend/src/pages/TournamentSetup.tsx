@@ -1690,10 +1690,10 @@ function TournamentSetup() {
               placeholder="e.g., 1,2,3,4,5 or A,B,C,D,E"
             />
             <div style={{ fontSize: '12px', color: 'var(--theme-text)', marginTop: '4px', opacity: 0.7 }}>
-              Master inventory of physical court labels for the whole tournament. Saving applies these labels to
-              draft schedule slots (check-in and grid). If the list is shorter than day/window court counts, those
-              counts are capped down and empty excess courts are removed. Leave empty to use default numbering
-              (1, 2, 3…).
+              Master inventory of physical court labels for the whole tournament. Saving rewrites these labels
+              on every schedule version, including the live check-in board and grid. If the list is shorter than
+              day/window court counts, those counts are capped down and empty excess courts are removed. Leave empty
+              to use default numbering (1, 2, 3…).
             </div>
             
             {/* Validation Warnings */}
@@ -1764,8 +1764,8 @@ function TournamentSetup() {
                       fontSize: '13px',
                       color: '#0c5460'
                     }}>
-                      ℹ️ Court labels changed. Saving will relabel draft schedule slots, cap day/window court
-                      counts to this list, and remove empty excess courts. Final schedules are left unchanged.
+                      ℹ️ Court labels changed. Saving rewrites labels on the live check-in board and grid,
+                      caps day/window court counts to this list, and removes empty excess courts.
                     </div>
                   )}
                 </>
