@@ -8,6 +8,7 @@ import {
   listAuthUsers,
   updateAuthUser,
 } from '../api/client'
+import { listPhotographyAccess, setPhotographyTournaments } from '../api/photography'
 import './Settings.css'
 
 function Settings() {
@@ -22,7 +23,9 @@ function Settings() {
   const [newUsername, setNewUsername] = useState('')
   const [newDisplayName, setNewDisplayName] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [newRole, setNewRole] = useState<'admin' | 'director'>('director')
+  const [newRole, setNewRole] = useState<'admin' | 'director' | 'photographer'>('director')
+  const [newTournamentIds, setNewTournamentIds] = useState('')
+  const [accessDrafts, setAccessDrafts] = useState<Record<number, string>>({})
 
   useEffect(() => {
     const settings = getSettings()
@@ -40,6 +43,10 @@ function Settings() {
     try {
       const list = await listAuthUsers()
       setUsers(list)
+      const access = await listPhotographyAccess()
+      const drafts: Record<number, string> = {}
+      for (const row of access) drafts[row.user_id] = row.tournament_ids.join(', ')
+      setAccessDrafts(drafts)
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to load users')
     } finally {
@@ -103,16 +110,24 @@ function Settings() {
     setCreatingUser(true)
     setUsersError(null)
     try {
-      await createAuthUser({
+      const created = await createAuthUser({
         username: newUsername,
         password: newPassword,
         display_name: newDisplayName || undefined,
         role: newRole,
       })
+      if (newRole === 'photographer') {
+        const tournamentIds = newTournamentIds
+          .split(',')
+          .map((part) => Number(part.trim()))
+          .filter((value) => Number.isInteger(value) && value > 0)
+        await setPhotographyTournaments(created.id, tournamentIds)
+      }
       setNewUsername('')
       setNewDisplayName('')
       setNewPassword('')
       setNewRole('director')
+      setNewTournamentIds('')
       await loadUsers()
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to create user')
@@ -128,6 +143,20 @@ function Settings() {
       await loadUsers()
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : 'Failed to update user')
+    }
+  }
+
+  const savePhotographyAccess = async (userId: number) => {
+    setUsersError(null)
+    const tournamentIds = (accessDrafts[userId] || '')
+      .split(',')
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isInteger(value) && value > 0)
+    try {
+      await setPhotographyTournaments(userId, tournamentIds)
+      await loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to save photographer tournaments')
     }
   }
 
@@ -223,13 +252,27 @@ function Settings() {
             />
             <select
               value={newRole}
-              onChange={(e) => setNewRole(e.target.value as 'admin' | 'director')}
+              onChange={(e) => setNewRole(e.target.value as 'admin' | 'director' | 'photographer')}
               style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid #c9d6e8' }}
             >
               <option value="director">Director</option>
               <option value="admin">Admin</option>
+              <option value="photographer">Photographer</option>
             </select>
           </div>
+          {newRole === 'photographer' && (
+            <div style={{ marginBottom: 10 }}>
+              <input
+                placeholder="Authorized tournament IDs, comma separated"
+                value={newTournamentIds}
+                onChange={(e) => setNewTournamentIds(e.target.value)}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #c9d6e8', boxSizing: 'border-box' }}
+              />
+              <div style={{ fontSize: 12, color: '#607d8b', marginTop: 4 }}>
+                Photographers can search these tournaments and manage team photos only.
+              </div>
+            </div>
+          )}
           <div style={{ marginBottom: 10 }}>
             <button className="btn btn-primary" onClick={handleCreateUser} disabled={creatingUser}>
               {creatingUser ? 'Creating...' : 'Create User'}
@@ -268,6 +311,20 @@ function Settings() {
                       <button className="btn btn-secondary" onClick={() => handleToggleActive(u)}>
                         {u.is_active ? 'Disable' : 'Enable'}
                       </button>
+                      {u.role === 'photographer' && (
+                        <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                          <input
+                            aria-label={`Tournaments for ${u.username}`}
+                            value={accessDrafts[u.id] || ''}
+                            onChange={(e) => setAccessDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                            placeholder="Tournament IDs"
+                            style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #c9d6e8' }}
+                          />
+                          <button type="button" className="btn btn-secondary" onClick={() => void savePhotographyAccess(u.id)}>
+                            Save photo access
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

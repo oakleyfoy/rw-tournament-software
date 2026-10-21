@@ -24,14 +24,19 @@ import CourtBoardPage from './pages/display/CourtBoardPage'
 import UpcomingMatchesPage from './pages/display/UpcomingMatchesPage'
 import DrawQrBoardPage from './pages/drawQr/DrawQrBoardPage'
 import { getCurrentTheme, applyTheme } from './utils/settings'
-import { getAuthToken } from './api/client'
+import { getAuthToken, getAuthRole } from './api/client'
 import LoginPage from './pages/LoginPage'
+import PhotographerPage from './pages/PhotographerPage'
 
 function RequireAuthLayout() {
   const location = useLocation()
   const token = getAuthToken()
+  const role = getAuthRole()
   if (!token) {
     return <Navigate to="/login" replace state={{ from: location }} />
+  }
+  if (role === 'photographer' && !location.pathname.startsWith('/photography')) {
+    return <Navigate to="/photography" replace />
   }
   return <Outlet />
 }
@@ -69,6 +74,7 @@ function App() {
           <Route path="/tournaments/:id/schedule/editor" element={<ScheduleEditorPage />} />
           <Route path="/events/:eventId/who-knows-who" element={<WhoKnowsWho />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/photography" element={<PhotographerPage />} />
           {/* Staff desk */}
           <Route path="/desk/t/:tournamentId" element={<TournamentDeskPage />} />
           <Route path="/desk/t/:tournamentId/board" element={<TournamentDeskBoardPage />} />

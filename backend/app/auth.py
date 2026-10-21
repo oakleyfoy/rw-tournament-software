@@ -149,6 +149,41 @@ def require_authenticated_user(
     return user
 
 
+def require_operations_user(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Optional[UserAccount]:
+    """Authenticated staff access. Photographers cannot use operational routes."""
+    user = require_authenticated_user(request=request, session=session)
+    if user and (user.role or "").strip().lower() == "photographer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Photographer access is limited to team photography",
+        )
+    request.state.current_user = user
+    return user
+
+
+def require_photo_user(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> UserAccount:
+    """Admin, director, and photographer access for team photographs."""
+    user = require_authenticated_user(request=request, session=session)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+    if (user.role or "").strip().lower() not in {"admin", "director", "photographer"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Team photography access required",
+        )
+    request.state.current_user = user
+    return user
+
+
 def require_authenticated_user_except_sms_webhooks(
     request: Request,
     session: Session = Depends(get_session),
@@ -158,7 +193,7 @@ def require_authenticated_user_except_sms_webhooks(
     if "/sms/webhook/" in path:
         request.state.current_user = None
         return None
-    return require_authenticated_user(request=request, session=session)
+    return require_operations_user(request=request, session=session)
 
 
 def require_admin_user(

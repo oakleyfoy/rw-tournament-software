@@ -417,6 +417,9 @@ function TournamentList() {
           <button className="btn btn-secondary" onClick={handleLogoutClick}>
             Log Out
           </button>
+          <button className="btn btn-secondary" onClick={() => navigate('/photography')}>
+            Team Photos
+          </button>
           <button className="btn btn-secondary" onClick={handleSettingsClick}>
             Settings
           </button>

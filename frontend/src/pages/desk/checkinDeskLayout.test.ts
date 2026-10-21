@@ -47,4 +47,18 @@ describe('Check-In Desk layout changes', () => {
   it('does not surface obsolete REST_TOO_SHORT conflict UI icons', () => {
     expect(page).not.toContain('REST_TOO_SHORT')
   })
+
+  it('keeps the four-column desk grids when team photos are shown', () => {
+    expect(css).toMatch(/@media \(min-width:\s*1100px\)[\s\S]*repeat\(4/)
+    expect(page).toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'")
+    expect(page).toContain("gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)'")
+    expect(page).toContain("gridTemplateColumns: 'repeat(10, minmax(0, 1fr))'")
+    expect(page).toContain("gridTemplateColumns: 'auto auto auto auto auto'")
+    expect(page).toContain('surface="check-in-desk"')
+    expect(page).toContain('surface="assigned-court"')
+    expect(page).toContain('photoSurface="ready-assigned"')
+    expect(page).toContain('data-testid="score-entry-photos"')
+    expect(page).toContain('data-team-details-photo')
+    expect(page).toContain('className="checkin-dynamic-ready-grid"')
+  })
 })

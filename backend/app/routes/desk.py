@@ -5091,6 +5091,7 @@ class MergeDuplicateTeamsResponse(BaseModel):
 def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplicateTeamsResponse:
     from app.models.sms_log import SmsLog
     from app.models.team_avoid_edge import TeamAvoidEdge
+    from app.services.team_photos import relink_photos_for_team_merge
 
     events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_ids = [e.id for e in events]
@@ -5315,6 +5316,13 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
                     edge.team_id_b = ordered_b
                     avoid_edges_relinked += 1
                     session.add(edge)
+
+            relink_photos_for_team_merge(
+                session,
+                canonical.id,
+                [duplicate.id for duplicate in duplicates if duplicate.id is not None],
+            )
+            session.flush()
 
             for duplicate in duplicates:
                 session.delete(duplicate)

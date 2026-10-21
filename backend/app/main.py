@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.auth import (
-    require_authenticated_user,
     require_authenticated_user_except_sms_webhooks,
+    require_operations_user,
 )
 from app.database import engine, init_db
 from app.db_schema_patch import (
@@ -50,6 +50,7 @@ from app.routes import (
     schedule_sanity,
     sms,
     team_import,
+    team_photos,
     teams,
     time_windows,
     tournament_days,
@@ -155,7 +156,7 @@ async def agent_request_trace(request: Request, call_next):
 
 
 # Include routers
-_protected_deps = [Depends(require_authenticated_user)]
+_protected_deps = [Depends(require_operations_user)]
 
 app.include_router(tournaments.router, prefix="/api", tags=["tournaments"], dependencies=_protected_deps)
 app.include_router(tournament_days.router, prefix="/api", tags=["tournament_days"], dependencies=_protected_deps)
@@ -180,6 +181,7 @@ app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"], dep
 
 # Include teams router
 app.include_router(teams.router, prefix="/api", tags=["teams"], dependencies=_protected_deps)
+app.include_router(team_photos.router)
 
 # Post-draw staff corrections (move division / edit WF R1 matchup)
 app.include_router(

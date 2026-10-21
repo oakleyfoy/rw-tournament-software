@@ -20,6 +20,7 @@ from app.models.sms_template import SmsTemplate
 from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
+from app.models.team_photo import PhotographerTournamentAccess, TeamOfficialPhoto, TeamPhotoCapture
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
@@ -51,6 +52,9 @@ __all__ = [
     "StartOverBaselineAssignment",
     "Team",
     "TeamAvoidEdge",
+    "TeamOfficialPhoto",
+    "TeamPhotoCapture",
+    "PhotographerTournamentAccess",
     "PolicyRun",
     "SmsLog",
     "SmsPhoneList",

@@ -8,6 +8,8 @@ import {
   preassignedEntryToReadyQueueItem,
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
+import { MatchTeamPhotos, TeamPhotoProvider, TeamPhotoThumb, useTeamPhotos } from '../../components/TeamPhotoThumb'
+import { listOfficialTeamPhotos, uploadAndSetOfficialTeamPhoto } from '../../api/photography'
 import {
   getEvents,
   getTournament,
@@ -1714,6 +1716,9 @@ function MatchDrawer({
         </div>
         <div style={{ marginBottom: 8 }}>
           <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
+          <div aria-label="Score Entry" data-testid="score-entry-photos" style={{ margin: '8px 0' }}>
+            <MatchTeamPhotos teamIds={[match.team1_id, match.team2_id]} size={36} surface="score-entry" />
+          </div>
           <input
             type="text"
             placeholder="e.g. 8-4"
@@ -6454,6 +6459,28 @@ function TeamsTab({
   const [defaulting, setDefaulting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const teamPhotos = useTeamPhotos()
+  const replacePhotoRef = useRef<HTMLInputElement>(null)
+  const replaceTeamIdRef = useRef<number | null>(null)
+  const [replacingTeamId, setReplacingTeamId] = useState<number | null>(null)
+
+  const onReplacePhoto = async (file: File | undefined) => {
+    const teamId = replaceTeamIdRef.current
+    if (!file || teamId == null) return
+    setReplacingTeamId(teamId)
+    try {
+      await uploadAndSetOfficialTeamPhoto({ tournamentId, teamId, file })
+      await teamPhotos.refresh()
+      setToast('Official team photo saved')
+      setTimeout(() => setToast(null), 3000)
+    } catch (e: any) {
+      setToast(e?.message || 'Photo upload failed. You can retry.')
+      setTimeout(() => setToast(null), 5000)
+    } finally {
+      setReplacingTeamId(null)
+      replaceTeamIdRef.current = null
+    }
+  }
 
   const loadTeams = useCallback(async () => {
     setLoading(true)
@@ -6569,12 +6596,24 @@ function TeamsTab({
         />
         <span style={{ fontSize: 12, color: '#888' }}>{filtered.length} of {teams.length} teams</span>
       </div>
+      <input
+        ref={replacePhotoRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          void onReplacePhoto(file)
+        }}
+      />
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ccc' }}>
               <th style={{ padding: '8px 10px', textAlign: 'left' }}>Seed</th>
+              <th style={{ padding: '8px 10px', textAlign: 'left' }}>Photo</th>
               <th style={{ padding: '8px 10px', textAlign: 'left' }}>Display Name</th>
               <th style={{ padding: '8px 10px', textAlign: 'left' }}>Full Name</th>
               <th style={{ padding: '8px 10px', textAlign: 'left' }}>Event</th>
@@ -6598,6 +6637,21 @@ function TeamsTab({
                   opacity: t.is_defaulted ? 0.7 : 1,
                 }}>
                   <td style={{ padding: '6px 10px', fontWeight: 700 }}>{t.seed ?? '—'}</td>
+                  <td data-team-details-photo style={{ padding: '6px 10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <TeamPhotoThumb teamId={t.team_id} size={40} surface="team-details" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          replaceTeamIdRef.current = t.team_id
+                          replacePhotoRef.current?.click()
+                        }}
+                        style={{ fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        {replacingTeamId === t.team_id ? 'Uploading…' : 'Replace Official Photo'}
+                      </button>
+                    </div>
+                  </td>
                   <td style={{ padding: '6px 10px' }}>
                     {isEditing ? (
                       <input value={editFields.display_name} onChange={e => setEditFields(f => ({ ...f, display_name: e.target.value }))} style={inputStyle} />
@@ -9212,6 +9266,7 @@ function CheckInCourtBoardCard({
                   #{match.match_number} · {row.preassignedStatusLabel}
                 </div>
               )}
+              <MatchTeamPhotos teamIds={[match.team1_id, match.team2_id]} size={22} surface="assigned-court" />
               <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
                 {match.team1_display}
               </div>
@@ -9284,6 +9339,7 @@ function CheckInReadyQueueCard({
   allowDrag = true,
   showReturnButton = true,
   compact = false,
+  photoSurface = 'ready-to-go',
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -9298,6 +9354,7 @@ function CheckInReadyQueueCard({
   allowDrag?: boolean
   showReturnButton?: boolean
   compact?: boolean
+  photoSurface?: string
 }) {
   const tint = getSlotTint(slotTintIndex)
 
@@ -9410,6 +9467,11 @@ function CheckInReadyQueueCard({
             Queue: {queueElapsedLabel}
           </div>
         )}
+        <MatchTeamPhotos
+          teamIds={[deskMatch?.team1_id, deskMatch?.team2_id]}
+          size={compact ? 18 : 22}
+          surface={photoSurface}
+        />
         <div style={{
           color: '#1a1a1a',
           fontSize: teamFont,
@@ -9487,6 +9549,19 @@ export default function TournamentDeskPage() {
   const [openingReleasePreview, setOpeningReleasePreview] = useState<OpeningReleasePreview | null>(null)
   const [openingReleaseBusy, setOpeningReleaseBusy] = useState(false)
   const [openingReleaseError, setOpeningReleaseError] = useState<string | null>(null)
+  const [teamPhotoVersions, setTeamPhotoVersions] = useState<Record<number, string>>({})
+  const refreshTeamPhotos = useCallback(async () => {
+    if (!tid) return
+    try {
+      const rows = await listOfficialTeamPhotos(tid)
+      const next: Record<number, string> = {}
+      for (const row of rows) next[row.team_id] = row.updated_at
+      setTeamPhotoVersions(next)
+    } catch {
+      setTeamPhotoVersions({})
+    }
+  }, [tid])
+  useEffect(() => { void refreshTeamPhotos() }, [refreshTeamPhotos, rosterReloadKey])
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -11068,7 +11143,12 @@ export default function TournamentDeskPage() {
           color: '#37474f',
           fontWeight: 700,
           textAlign: 'center',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
         }}>
+          <TeamPhotoThumb teamId={state.team_id} size={18} surface="check-in-desk" />
           {teamLabel}
         </span>
         {renderCheckInPlayerCircle(rightPlayer.checked, rightPlayer.disabled, rightPlayer.onClick)}
@@ -11115,6 +11195,7 @@ export default function TournamentDeskPage() {
   }
 
   return (
+    <TeamPhotoProvider value={{ photos: teamPhotoVersions, refresh: refreshTeamPhotos, tournamentId: tid }}>
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
       {/* Header */}
       <div style={{
@@ -11151,6 +11232,22 @@ export default function TournamentDeskPage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            type="button"
+            onClick={() => navigate(`/photography?tournament=${tid}`)}
+            style={{
+              background: 'rgba(255,255,255,0.15)',
+              border: '1px solid rgba(255,255,255,0.35)',
+              color: '#fff',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+              borderRadius: 4,
+              padding: '6px 10px',
+            }}
+          >
+            Team Photos
+          </button>
           <DeskRwOsRefresh
             importId={rwOsImportId}
             onApplied={async () => {
@@ -11799,6 +11896,7 @@ export default function TournamentDeskPage() {
                                     onPointerDragStart={() => undefined}
                                     allowDrag={false}
                                     showReturnButton={false}
+                                    photoSurface="ready-assigned"
                                   />
                                 )
                               })}
@@ -11843,6 +11941,7 @@ export default function TournamentDeskPage() {
                                     onPointerDragStart={handlePointerDragStart}
                                     allowDrag
                                     compact
+                                    photoSurface="dynamic-ready"
                                   />
                                 )
                               })}
@@ -12542,5 +12641,6 @@ export default function TournamentDeskPage() {
         </>
       )}
     </div>
+    </TeamPhotoProvider>
   )
 }

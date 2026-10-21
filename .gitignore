@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Root setuptools output only. Application source under frontend/src/lib stays tracked.
+/lib/
 lib64/
 parts/
 sdist/
@@ -69,10 +70,12 @@ Thumbs.db
 # Production build (generated on Render)
 backend/static/
 
-# Environment variables
+# Environment variables and local-only tooling
 .env
 .env.local
 .env.*.local
+.wrangler/
+frontend/vite.photo.local.config.ts
 
 # Claude Code
 .claude/

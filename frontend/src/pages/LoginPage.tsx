@@ -4,6 +4,7 @@ import {
   bootstrapAdmin,
   getAuthBootstrapNeeded,
   loginWithPassword,
+  setAuthRole,
   setAuthToken,
 } from '../api/client'
 
@@ -35,7 +36,9 @@ export default function LoginPage() {
     try {
       const resp = await loginWithPassword(username, password)
       setAuthToken(resp.access_token)
-      navigate(redirectPath, { replace: true })
+      setAuthRole(resp.user.role)
+      const nextPath = resp.user.role === 'photographer' ? '/photography' : redirectPath
+      navigate(nextPath, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
@@ -55,6 +58,7 @@ export default function LoginPage() {
       await bootstrapAdmin({ username, password, display_name: displayName || undefined })
       const resp = await loginWithPassword(username, password)
       setAuthToken(resp.access_token)
+      setAuthRole(resp.user.role)
       navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create admin account')

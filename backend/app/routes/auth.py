@@ -16,6 +16,8 @@ from app.auth import (
     verify_password,
 )
 from app.database import get_session
+from app.models.team_photo import PhotographerTournamentAccess
+from app.models.tournament import Tournament
 from app.models.user_account import UserAccount
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -76,7 +78,7 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     display_name: Optional[str] = None
-    role: Literal["admin", "director"] = "director"
+    role: Literal["admin", "director", "photographer"] = "director"
     is_active: bool = True
 
     @field_validator("username")
@@ -99,7 +101,7 @@ class CreateUserRequest(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     display_name: Optional[str] = None
-    role: Optional[Literal["admin", "director"]] = None
+    role: Optional[Literal["admin", "director", "photographer"]] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
 
@@ -237,3 +239,76 @@ def update_user(
     session.commit()
     session.refresh(user)
     return AuthUserResponse.model_validate(user)
+
+
+class PhotographyAccessUpdate(BaseModel):
+    tournament_ids: List[int]
+
+
+class PhotographyAccessResponse(BaseModel):
+    user_id: int
+    tournament_ids: List[int]
+
+
+def _replace_photography_access(session: Session, user_id: int, tournament_ids: List[int]) -> List[int]:
+    unique_ids = sorted({int(tournament_id) for tournament_id in tournament_ids})
+    if unique_ids:
+        found = session.exec(select(Tournament).where(Tournament.id.in_(unique_ids))).all()  # type: ignore[attr-defined]
+        found_ids = {row.id for row in found}
+        missing = [tournament_id for tournament_id in unique_ids if tournament_id not in found_ids]
+        if missing:
+            raise HTTPException(status_code=400, detail="One or more tournaments were not found")
+    existing = session.exec(
+        select(PhotographerTournamentAccess).where(PhotographerTournamentAccess.user_id == user_id)
+    ).all()
+    for row in existing:
+        session.delete(row)
+    session.flush()
+    for tournament_id in unique_ids:
+        session.add(PhotographerTournamentAccess(user_id=user_id, tournament_id=tournament_id))
+    session.commit()
+    return unique_ids
+
+
+@router.get("/photography-access", response_model=List[PhotographyAccessResponse])
+def list_photography_access(
+    _admin: UserAccount = Depends(require_admin_user),
+    session: Session = Depends(get_session),
+):
+    rows = session.exec(select(PhotographerTournamentAccess).order_by(PhotographerTournamentAccess.user_id)).all()
+    grouped: dict[int, List[int]] = {}
+    for row in rows:
+        grouped.setdefault(row.user_id, []).append(row.tournament_id)
+    return [
+        PhotographyAccessResponse(user_id=user_id, tournament_ids=sorted(ids))
+        for user_id, ids in grouped.items()
+    ]
+
+
+@router.get("/users/{user_id}/photography-tournaments", response_model=PhotographyAccessResponse)
+def get_user_photography_tournaments(
+    user_id: int,
+    _admin: UserAccount = Depends(require_admin_user),
+    session: Session = Depends(get_session),
+):
+    user = session.get(UserAccount, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    rows = session.exec(
+        select(PhotographerTournamentAccess).where(PhotographerTournamentAccess.user_id == user_id)
+    ).all()
+    return PhotographyAccessResponse(user_id=user_id, tournament_ids=sorted(row.tournament_id for row in rows))
+
+
+@router.put("/users/{user_id}/photography-tournaments", response_model=PhotographyAccessResponse)
+def set_user_photography_tournaments(
+    user_id: int,
+    payload: PhotographyAccessUpdate,
+    _admin: UserAccount = Depends(require_admin_user),
+    session: Session = Depends(get_session),
+):
+    user = session.get(UserAccount, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    tournament_ids = _replace_photography_access(session, user_id, payload.tournament_ids)
+    return PhotographyAccessResponse(user_id=user_id, tournament_ids=tournament_ids)
