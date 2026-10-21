@@ -533,6 +533,124 @@ def test_later_round_reset_waits_when_court_is_occupied(client, session: Session
     assert _match_row(body, later.id)["status"] == "SCHEDULED"
 
 
+def test_unchecking_one_ready_side_returns_later_round_to_waiting(client, session: Session):
+    ctx = _prepare_later_round(session)
+    tournament, version, later = ctx["tournament"], ctx["version"], ctx["m_r2"]
+    _enable_checkin(client, tournament.id, version.id)
+    assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == later.id)).one()
+    slot_id = assignment.slot_id
+    team_a = later.team_a_id
+    team_b = later.team_b_id
+    early = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=ctx["day"],
+        start_time=time(8, 0),
+        end_time=time(9, 0),
+        court_number=ctx["slot_c"].court_number,
+        court_label=str(ctx["slot_c"].court_number),
+        block_minutes=60,
+    )
+    session.add(early)
+    session.flush()
+    live = Match(
+        tournament_id=tournament.id,
+        event_id=later.event_id,
+        schedule_version_id=version.id,
+        match_code="COURT_OCCUPANT_UNCHECK",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=3,
+        duration_minutes=60,
+        team_a_id=later.team_a_id,
+        team_b_id=later.team_b_id,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="IN_PROGRESS",
+    )
+    session.add(live)
+    session.flush()
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=live.id,
+            slot_id=early.id,
+            assigned_by="MANUAL",
+        )
+    )
+    later.runtime_status = "SCHEDULED"
+    later.started_at = None
+    later.checkin_reset_pending = False
+    session.add(later)
+    session.commit()
+
+    for side in ("A", "B"):
+        checked = client.patch(
+            f"/api/desk/tournaments/{tournament.id}/matches/{later.id}/checkin/team",
+            json={"version_id": version.id, "side": side, "checked_in": True},
+        )
+        assert checked.status_code == 200
+    session.expire_all()
+    ready = session.get(Match, later.id)
+    assert ready.runtime_status == "SCHEDULED"
+    assert ready.checkin_reset_pending is False
+    before = _snapshot(client, tournament.id, version.id)
+    assert later.id in {row["match_id"] for row in before["ready_assigned_queue"]}
+
+    unchecked = client.patch(
+        f"/api/desk/tournaments/{tournament.id}/matches/{later.id}/checkin/team",
+        json={"version_id": version.id, "side": "B", "checked_in": False},
+    )
+    assert unchecked.status_code == 200
+    session.expire_all()
+    held = session.get(Match, later.id)
+    assert held.runtime_status == "SCHEDULED"
+    assert held.checkin_reset_pending is True
+    assert held.team_a_id == team_a
+    assert held.team_b_id == team_b
+    assert session.get(MatchAssignment, assignment.id).slot_id == slot_id
+    body = _snapshot(client, tournament.id, version.id)
+    assert later.id not in {row["match_id"] for row in body["ready_assigned_queue"]}
+    assert later.id not in {row["match_id"] for row in body["ready_queue"]}
+    assert later.id not in {row["match_id"] for row in body["now_playing_by_court"].values() if row}
+    waiting = _checkin_row(body, later.id)
+    assert waiting["match_ready"] is False
+    assert waiting["checkin_reset_pending"] is True
+    assert waiting["side_a"]["team_checked_in"] is True
+    assert waiting["side_b"]["team_checked_in"] is False
+    assert _match_row(body, later.id)["checkin_reset_pending"] is True
+    assert evaluate_eligibility(session, session.get(Tournament, tournament.id), held).outcome == OUTCOME_WAITING_CHECKIN
+    occupant = session.get(Match, live.id)
+    occupant.runtime_status = "FINAL"
+    occupant.winner_team_id = occupant.team_a_id
+    session.add(occupant)
+    session.commit()
+    blocked = dispatch_court(
+        session,
+        session.get(Tournament, tournament.id),
+        version_id=version.id,
+        day_date=ctx["day"],
+        court_number=ctx["slot_c"].court_number,
+    )
+    assert later.id not in blocked.started_match_ids
+    session.expire_all()
+    assert session.get(Match, later.id).runtime_status == "SCHEDULED"
+
+    restored = client.patch(
+        f"/api/desk/tournaments/{tournament.id}/matches/{later.id}/checkin/team",
+        json={"version_id": version.id, "side": "B", "checked_in": True},
+    )
+    assert restored.status_code == 200
+    session.expire_all()
+    again = session.get(Match, later.id)
+    assert again.checkin_reset_pending is False
+    assert again.runtime_status == "IN_PROGRESS"
+    assert again.team_a_id == team_a
+    assert again.team_b_id == team_b
+    assert session.get(MatchAssignment, assignment.id).slot_id == slot_id
+
+
 def test_unreset_later_round_still_starts_without_checkin(session: Session):
     ctx = _prepare_later_round(session)
     tournament, later = ctx["tournament"], ctx["m_r2"]

@@ -15,6 +15,8 @@ describe('Check-In Desk layout changes', () => {
     expect(css).toMatch(/@media \(min-width:\s*1100px\)[\s\S]*repeat\(4/)
     expect(page).toContain('className="checkin-dynamic-ready-grid"')
     expect(page).toMatch(/compact\b/)
+    expect(page).toContain('onToggleCheckIn')
+    expect(page).toContain('handleReadyQueueCheckToggle')
   })
 
   it('places Dynamic Ready To Go immediately beneath Ready To Go — Assigned Court', () => {

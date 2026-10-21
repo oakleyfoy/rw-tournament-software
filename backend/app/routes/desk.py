@@ -84,6 +84,7 @@ from app.services.schedule_slot_availability import (
 )
 from app.services.checkin_reset import (
     CheckInResetRejected,
+    arm_checkin_reset_if_not_ready,
     checkin_reset_blocks_start,
     clear_checkin_reset_if_ready,
     return_match_to_waiting_checkin,
@@ -588,6 +589,7 @@ class CheckInMatchItem(BaseModel):
     match_ready: bool = False
     ready_at: Optional[str] = None
     checkin_enabled: bool = False
+    checkin_reset_pending: bool = False
 
 
 class ReadyQueueItem(BaseModel):
@@ -1512,6 +1514,7 @@ def _build_checkin_snapshot(
                 checkin_enabled=bool(
                     m.team_a_id and m.team_b_id and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
                 ),
+                checkin_reset_pending=bool(getattr(m, "checkin_reset_pending", False)),
             )
         )
 
@@ -2425,6 +2428,8 @@ def set_team_checkin(
     session.commit()
     session.refresh(match)
     clear_checkin_reset_if_ready(session, match)
+    if not payload.checked_in:
+        arm_checkin_reset_if_not_ready(session, match)
 
     # Late check-in after opening release: reevaluate without another Release click.
     if payload.checked_in:
@@ -2538,6 +2543,8 @@ def set_player_checkin(
     session.commit()
     session.refresh(match)
     clear_checkin_reset_if_ready(session, match)
+    if not payload.checked_in:
+        arm_checkin_reset_if_not_ready(session, match)
 
     if payload.checked_in:
         try:

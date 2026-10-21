@@ -9382,6 +9382,82 @@ function CheckInCourtBoardCard({
   )
 }
 
+function ReadyQueueCheckInSide({
+  side,
+  state,
+  teamId,
+  name,
+  photoSurface,
+  compact,
+  onToggle,
+}: {
+  side: 'A' | 'B'
+  state: MatchCheckInSideState
+  teamId?: number | null
+  name: string
+  photoSurface: string
+  compact: boolean
+  onToggle: (side: 'A' | 'B', playerId: number | null) => void
+}) {
+  const slots = [0, 1].map((index) => state.players[index])
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '18px minmax(0, 1fr) 18px',
+      gap: 4,
+      alignItems: 'center',
+      minWidth: 0,
+    }}>
+      {slots.map((player, index) => {
+        const checked = true
+        return index === 0 ? (
+          <button
+            key={`${side}-left`}
+            type="button"
+            aria-label={`Uncheck ${player?.player_display || name}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggle(side, player?.player_id ?? null)
+            }}
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: '50%',
+              border: `2px solid ${checked ? '#2e7d32' : '#90a4ae'}`,
+              background: checked ? '#2e7d32' : '#fff',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+          />
+        ) : (
+          <span key={`${side}-name`} style={{ minWidth: 0, fontSize: compact ? 11 : 13, fontWeight: 700, color: '#1a1a1a' }}>
+            <TeamPhotoNameRow teamId={teamId} name={name} size={compact ? 16 : 18} surface={photoSurface} />
+          </span>
+        )
+      })}
+      <button
+        type="button"
+        aria-label={`Uncheck ${slots[1]?.player_display || name}`}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation()
+          onToggle(side, slots[1]?.player_id ?? null)
+        }}
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: '50%',
+          border: '2px solid #2e7d32',
+          background: '#2e7d32',
+          padding: 0,
+          cursor: 'pointer',
+        }}
+      />
+    </div>
+  )
+}
+
 function CheckInReadyQueueCard({
   rq,
   titleLabel,
@@ -9397,6 +9473,8 @@ function CheckInReadyQueueCard({
   showReturnButton = true,
   compact = false,
   photoSurface = 'ready-to-go',
+  checkinMatch = null,
+  onToggleCheckIn,
 }: {
   rq: ReadyQueueItem
   titleLabel: string
@@ -9412,6 +9490,8 @@ function CheckInReadyQueueCard({
   showReturnButton?: boolean
   compact?: boolean
   photoSurface?: string
+  checkinMatch?: CheckInMatchItem | null
+  onToggleCheckIn?: (side: 'A' | 'B', playerId: number | null) => void
 }) {
   const tint = getSlotTint(slotTintIndex)
 
@@ -9524,23 +9604,49 @@ function CheckInReadyQueueCard({
             Queue: {queueElapsedLabel}
           </div>
         )}
-        <div style={{ color: '#1a1a1a', fontSize: teamFont, fontWeight: 700, marginTop: compact ? 1 : 2 }}>
-          <TeamPhotoNameRow
-            teamId={deskMatch?.team1_id}
-            name={rq.team1_display}
-            size={compact ? 16 : 18}
-            surface={photoSurface}
-          />
-        </div>
-        <div style={{ color: '#999', fontSize: compact ? 7 : 8, margin: 0, lineHeight: 1 }}>vs</div>
-        <div style={{ color: '#1a1a1a', fontSize: teamFont, fontWeight: 700 }}>
-          <TeamPhotoNameRow
-            teamId={deskMatch?.team2_id}
-            name={rq.team2_display}
-            size={compact ? 16 : 18}
-            surface={photoSurface}
-          />
-        </div>
+        {checkinMatch && onToggleCheckIn ? (
+          <div style={{ display: 'grid', gap: 2, marginTop: compact ? 1 : 2 }}>
+            <ReadyQueueCheckInSide
+              side="A"
+              state={checkinMatch.side_a}
+              teamId={deskMatch?.team1_id}
+              name={rq.team1_display}
+              photoSurface={photoSurface}
+              compact={compact}
+              onToggle={onToggleCheckIn}
+            />
+            <div style={{ color: '#999', fontSize: compact ? 7 : 8, margin: 0, lineHeight: 1, textAlign: 'center' }}>vs</div>
+            <ReadyQueueCheckInSide
+              side="B"
+              state={checkinMatch.side_b}
+              teamId={deskMatch?.team2_id}
+              name={rq.team2_display}
+              photoSurface={photoSurface}
+              compact={compact}
+              onToggle={onToggleCheckIn}
+            />
+          </div>
+        ) : (
+          <>
+            <div style={{ color: '#1a1a1a', fontSize: teamFont, fontWeight: 700, marginTop: compact ? 1 : 2 }}>
+              <TeamPhotoNameRow
+                teamId={deskMatch?.team1_id}
+                name={rq.team1_display}
+                size={compact ? 16 : 18}
+                surface={photoSurface}
+              />
+            </div>
+            <div style={{ color: '#999', fontSize: compact ? 7 : 8, margin: 0, lineHeight: 1 }}>vs</div>
+            <div style={{ color: '#1a1a1a', fontSize: teamFont, fontWeight: 700 }}>
+              <TeamPhotoNameRow
+                teamId={deskMatch?.team2_id}
+                name={rq.team2_display}
+                size={compact ? 16 : 18}
+                surface={photoSurface}
+              />
+            </div>
+          </>
+        )}
       </div>
       <div
         style={{
@@ -9617,6 +9723,10 @@ export default function TournamentDeskPage() {
         active_checkin_slot_key: resp.active_checkin_slot_key,
         checkin_court_warnings: resp.checkin_court_warnings,
         ready_assigned_queue: resp.ready_assigned_queue || [],
+        matches: (prev.matches || []).map((match) => {
+          const row = (resp.checkin_matches || []).find((item) => item.match_id === match.match_id)
+          return row ? { ...match, checkin_reset_pending: Boolean(row.checkin_reset_pending) } : match
+        }),
       }
     })
   }, [])
@@ -10005,6 +10115,22 @@ export default function TournamentDeskPage() {
       setError(e instanceof Error ? e.message : 'Failed team check-in')
     }
   }, [tid, data, syncCheckInSide, runCheckInWithNotePrompt])
+
+  const handleReadyQueueCheckToggle = useCallback((
+    match: CheckInMatchItem,
+    side: 'A' | 'B',
+    playerId: number | null,
+  ) => {
+    const state = side === 'A' ? match.side_a : match.side_b
+    if (playerId != null && !state.team_checked_in) {
+      const player = state.players.find((row) => row.player_id === playerId)
+      if (player?.checked_in) {
+        void handlePlayerCheckIn(match, side, playerId, false)
+        return
+      }
+    }
+    void syncCheckInSide(match, side, state, false)
+  }, [handlePlayerCheckIn, syncCheckInSide])
 
   const handleImportTemporaryLookups = useCallback(async () => {
     if (!tid) return
@@ -11155,11 +11281,13 @@ export default function TournamentDeskPage() {
         checked: Boolean(state.team_checked_in || player?.checked_in),
         disabled: !entry.checkinEnabled || !cm,
         onClick: (entry.checkinEnabled && cm)
-          ? () => (
-              player?.player_id != null
-                ? handlePlayerCheckIn(cm, side, player.player_id, !Boolean(state.team_checked_in || player.checked_in))
-                : handleSideTeamCheckIn(cm, side, state)
-            )
+          ? () => {
+              if (state.team_checked_in || player?.player_id == null) {
+                void handleSideTeamCheckIn(cm, side, state)
+                return
+              }
+              void handlePlayerCheckIn(cm, side, player.player_id, !Boolean(player.checked_in))
+            }
           : undefined,
       }
     })
@@ -11938,6 +12066,11 @@ export default function TournamentDeskPage() {
                                     allowDrag={false}
                                     showReturnButton={false}
                                     photoSurface="ready-assigned"
+                                    checkinMatch={entry.checkinMatch}
+                                    onToggleCheckIn={(side, playerId) => {
+                                      if (!entry.checkinMatch) return
+                                      handleReadyQueueCheckToggle(entry.checkinMatch, side, playerId)
+                                    }}
                                   />
                                 )
                               })}
@@ -11983,6 +12116,12 @@ export default function TournamentDeskPage() {
                                     allowDrag
                                     compact
                                     photoSurface="dynamic-ready"
+                                    checkinMatch={checkInByMatchId.get(rq.match_id) || null}
+                                    onToggleCheckIn={(side, playerId) => {
+                                      const match = checkInByMatchId.get(rq.match_id)
+                                      if (!match) return
+                                      handleReadyQueueCheckToggle(match, side, playerId)
+                                    }}
                                   />
                                 )
                               })}

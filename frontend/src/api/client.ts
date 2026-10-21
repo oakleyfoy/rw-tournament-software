@@ -3144,6 +3144,7 @@ export interface CheckInMatchItem {
   match_ready: boolean
   ready_at: string | null
   checkin_enabled: boolean
+  checkin_reset_pending?: boolean
 }
 
 export interface ReadyQueueItem {

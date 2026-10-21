@@ -115,6 +115,20 @@ def checkin_reset_blocks_start(session: Session, match: Match) -> bool:
     return not match_fully_checked_in(session, match)
 
 
+def arm_checkin_reset_if_not_ready(session: Session, match: Match) -> None:
+    """Hold a scheduled match that staff just unchecked until both sides are ready again."""
+    status = (match.runtime_status or "SCHEDULED").upper()
+    if status not in {"SCHEDULED", "DELAYED"}:
+        return
+    if match_fully_checked_in(session, match):
+        return
+    if bool(getattr(match, "checkin_reset_pending", False)):
+        return
+    match.checkin_reset_pending = True
+    session.add(match)
+    session.commit()
+
+
 def clear_checkin_reset_if_ready(session: Session, match: Match) -> None:
     """Drop the reset hold once both teams are checked in, then commit that alone."""
     if not bool(getattr(match, "checkin_reset_pending", False)):
