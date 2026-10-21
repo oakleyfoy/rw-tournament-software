@@ -71,6 +71,7 @@ export function buildPreassignedReadyEntries(args: {
     for (const row of args.readyAssignedQueue || []) {
       const desk = matchById.get(row.match_id)
       if (!desk) continue
+      if (desk.checkin_reset_pending) continue
       if (DONE_OR_LIVE.has((desk.status || '').toUpperCase())) continue
       const courtName = row.court_name || desk.court_name
       if (!courtName) continue
@@ -122,6 +123,7 @@ export function buildPreassignedReadyEntries(args: {
 
     const desk = matchById.get(cm.match_id)
     if (!desk) continue
+    if (desk.checkin_reset_pending) continue
     if (DONE_OR_LIVE.has((desk.status || '').toUpperCase())) continue
     if (!isPreassignedDeskMatch(desk)) continue
 
@@ -268,7 +270,12 @@ export function placePreassignedMatches(
 export function belongsInWaitingForCheckIn(
   match: Pick<
     DeskMatchItem,
-    'match_id' | 'court_assignment_mode' | 'source_match_a_id' | 'source_match_b_id' | 'status'
+    | 'match_id'
+    | 'court_assignment_mode'
+    | 'source_match_a_id'
+    | 'source_match_b_id'
+    | 'status'
+    | 'checkin_reset_pending'
   > | null | undefined,
   operationalMatchIds: ReadonlySet<number>,
 ): boolean {
@@ -276,6 +283,7 @@ export function belongsInWaitingForCheckIn(
   const status = (match.status || '').toUpperCase()
   if (status === 'IN_PROGRESS' || status === 'PAUSED' || status === 'FINAL') return false
   if (operationalMatchIds.has(match.match_id)) return false
+  if (match.checkin_reset_pending) return true
   const mode = (match.court_assignment_mode || '').toUpperCase()
   if (mode === 'PREASSIGNED' && (match.source_match_a_id || match.source_match_b_id)) return false
   return true

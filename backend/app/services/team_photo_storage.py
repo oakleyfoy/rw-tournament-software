@@ -80,6 +80,7 @@ class MemoryObjectStore:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.fail_next_put = False
+        self.fail_next_delete = False
 
     def put_jpeg(self, key: str, data: bytes) -> None:
         if self.fail_next_put:
@@ -98,6 +99,9 @@ class MemoryObjectStore:
         return self.objects[key]
 
     def delete(self, key: str | None) -> None:
+        if self.fail_next_delete:
+            self.fail_next_delete = False
+            raise PhotoStorageUnavailable("Team photograph storage delete failed")
         if key:
             self.objects.pop(key, None)
 
@@ -108,10 +112,15 @@ _memory_store = MemoryObjectStore()
 def reset_memory_store() -> None:
     _memory_store.objects.clear()
     _memory_store.fail_next_put = False
+    _memory_store.fail_next_delete = False
 
 
 def arm_next_put_failure() -> None:
     _memory_store.fail_next_put = True
+
+
+def arm_next_delete_failure() -> None:
+    _memory_store.fail_next_delete = True
 
 
 class R2ObjectStore:

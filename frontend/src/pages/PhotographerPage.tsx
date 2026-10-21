@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useReducer, useRef, useState, type CSSProperties 
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { clearAuthToken, logoutAuth } from '../api/client'
 import {
+  deleteOfficialTeamPhoto,
+  listOfficialTeamPhotos,
   listPhotographyTournaments,
   PhotographyTournament,
   postOfficialTeamPhoto,
@@ -22,6 +24,10 @@ export default function PhotographerPage() {
   const [results, setResults] = useState<PhotoTeamSearchHit[]>([])
   const [selectedTeam, setSelectedTeam] = useState<PhotoTeamSearchHit | null>(null)
   const [savedOfficial, setSavedOfficial] = useState<{ teamId: number; version: string } | null>(null)
+  const [photoVersions, setPhotoVersions] = useState<Record<number, string>>({})
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const deleteLock = useRef(false)
   const [searching, setSearching] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -66,11 +72,60 @@ export default function PhotographerPage() {
     if (session.phase === 'search') searchRef.current?.focus()
   }, [session.phase, session.confirmationMessage])
 
+  useEffect(() => {
+    if (!session.tournamentId) return
+    let cancelled = false
+    listOfficialTeamPhotos(session.tournamentId)
+      .then((rows) => {
+        if (cancelled) return
+        const next: Record<number, string> = {}
+        for (const row of rows) {
+          const version = row.version || row.updated_at
+          if (version) next[row.team_id] = version
+        }
+        setPhotoVersions(next)
+      })
+      .catch(() => {
+        // The team card still shows a placeholder when the current version is unknown.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session.tournamentId])
+
   const selectTeam = (hit: PhotoTeamSearchHit) => {
     blobsRef.current = {}
+    setConfirmDelete(false)
     setSelectedTeam(hit)
     setActionError(null)
     dispatch({ type: 'selectTeam', teamId: hit.team_id })
+  }
+
+  const teamLabel = (names: string[]) => names.filter((name) => name !== 'Partner not on file').join(' / ')
+
+  const confirmDeletePhoto = async () => {
+    if (deleteLock.current || deleting || !session.tournamentId || !selectedTeam) return
+    deleteLock.current = true
+    setDeleting(true)
+    setActionError(null)
+    const teamId = selectedTeam.team_id
+    try {
+      await deleteOfficialTeamPhoto(session.tournamentId, teamId)
+      setPhotoVersions((current) => {
+        if (!(teamId in current)) return current
+        const next = { ...current }
+        delete next[teamId]
+        return next
+      })
+      setSelectedTeam({ ...selectedTeam, has_official_photo: false })
+      setSavedOfficial((current) => (current?.teamId === teamId ? null : current))
+      setConfirmDelete(false)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not delete the official photo. You can retry.')
+    } finally {
+      deleteLock.current = false
+      setDeleting(false)
+    }
   }
 
   const onPickFile = async (file: File | undefined) => {
@@ -250,6 +305,17 @@ export default function PhotographerPage() {
               Next team
             </button>
             <div style={{ marginTop: 12, padding: 14, borderRadius: 12, background: '#fff', border: '1px solid #d7dee5' }}>
+              <TeamPhotoProvider
+                value={{
+                  photos: photoVersions,
+                  refresh: async () => undefined,
+                  tournamentId: session.tournamentId,
+                }}
+              >
+                <div data-testid="selected-team-photo" style={{ marginBottom: 10 }}>
+                  <TeamPhotoThumb teamId={selectedTeam.team_id} size={96} surface="photographer" />
+                </div>
+              </TeamPhotoProvider>
               <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[0]}</div>
               <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[1]}</div>
               {selectedTeam.has_official_photo && (
@@ -330,15 +396,58 @@ export default function PhotographerPage() {
 
             {actionError && <div style={{ ...errorBox, marginTop: 12 }}>{actionError}</div>}
 
-            <button
-              type="button"
-              disabled={!canConfirm}
-              onClick={() => void confirmOfficial()}
-              style={{ ...primaryButton, marginTop: 14, opacity: canConfirm ? 1 : 0.55 }}
-            >
-              {session.confirming ? 'Saving…' : 'Save official photo'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button
+                type="button"
+                disabled={!canConfirm}
+                onClick={() => void confirmOfficial()}
+                style={{ ...primaryButton, flex: 1, opacity: canConfirm ? 1 : 0.55 }}
+              >
+                {session.confirming ? 'Saving…' : 'Save official photo'}
+              </button>
+              {selectedTeam.has_official_photo && (
+                <button
+                  type="button"
+                  disabled={deleting || session.confirming}
+                  onClick={() => setConfirmDelete(true)}
+                  style={{ ...dangerButton, flex: 1, opacity: deleting || session.confirming ? 0.55 : 1 }}
+                >
+                  Delete Photo
+                </button>
+              )}
+            </div>
           </section>
+        )}
+        {confirmDelete && selectedTeam && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete official photo"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+              zIndex: 20,
+            }}
+          >
+            <div style={{ width: 'min(420px, 100%)', background: '#fff', borderRadius: 12, padding: 16 }}>
+              <p style={{ margin: '0 0 16px', fontSize: 16, lineHeight: 1.4, color: '#1a1a1a' }}>
+                Are you sure you want to permanently delete the official photograph for {teamLabel(selectedTeam.player_names)}?
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" disabled={deleting} onClick={() => setConfirmDelete(false)} style={{ ...secondaryButton, flex: 1 }}>
+                  Cancel
+                </button>
+                <button type="button" disabled={deleting} onClick={() => void confirmDeletePhoto()} style={{ ...dangerButton, flex: 1 }}>
+                  {deleting ? 'Deleting…' : 'Delete Photo'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -377,6 +486,17 @@ const primaryButton: CSSProperties = {
   border: 'none',
   borderRadius: 10,
   background: '#1a237e',
+  color: '#fff',
+  fontSize: 16,
+  fontWeight: 800,
+  cursor: 'pointer',
+}
+
+const dangerButton: CSSProperties = {
+  minHeight: 52,
+  border: 'none',
+  borderRadius: 10,
+  background: '#b71c1c',
   color: '#fff',
   fontSize: 16,
   fontWeight: 800,

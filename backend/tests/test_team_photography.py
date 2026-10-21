@@ -19,7 +19,13 @@ from app.models.team_photo import TeamOfficialPhoto, TeamPhotoCapture
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.services.team_photo_search import person_matches
-from app.services.team_photo_storage import arm_next_put_failure, get_object_store, official_object_key, reset_memory_store
+from app.services.team_photo_storage import (
+    arm_next_delete_failure,
+    arm_next_put_failure,
+    get_object_store,
+    official_object_key,
+    reset_memory_store,
+)
 from app.services.team_photos import relink_photos_for_team_merge
 
 
@@ -429,6 +435,111 @@ def test_merge_keeps_canonical_team_photo(session: Session):
     session.delete(duplicate)
     session.commit()
     assert session.get(Team, canonical.id) is not None
+
+
+def test_delete_official_photo_permissions_storage_and_team_records(client: TestClient, session: Session):
+    admin = _bootstrap_admin(client)
+    roster = _seed_roster(session)
+    photographer_id = _create_user(client, admin, "photographer1", "photographer")
+    assigned = client.put(
+        f"/api/auth/users/{photographer_id}/photography-tournaments",
+        headers=admin,
+        json={"tournament_ids": [roster["tournament_id"]]},
+    )
+    assert assigned.status_code == 200
+    photographer = _login(client, "photographer1")
+    saved = _save(client, photographer, roster["tournament_id"], roster["jane_amy"], "delete-photo-01", _jpeg())
+    other = _save(client, admin, roster["tournament_id"], roster["jane_sue"], "delete-photo-02", _jpeg(color="blue"))
+    outside = _save(client, admin, roster["other_tournament_id"], roster["later"], "delete-photo-03", _jpeg(color="green"))
+    assert saved.status_code == other.status_code == outside.status_code == 200
+    capture_key = official_object_key(roster["tournament_id"], roster["jane_amy"], "capture-extra1")
+    get_object_store().put_jpeg(capture_key, _jpeg())
+    session.add(
+        TeamPhotoCapture(
+            team_id=roster["jane_amy"],
+            tournament_id=roster["tournament_id"],
+            session_id="session-1",
+            client_upload_id="capture-extra1",
+            storage_key=capture_key,
+            byte_size=4,
+        )
+    )
+    session.commit()
+    team_name = session.get(Team, roster["jane_amy"]).name
+    player_ids = {player.id for player in session.exec(select(Player)).all()}
+    match = session.get(Match, roster["match_id"])
+    match_before = (match.status, match.runtime_status, match.winner_team_id, match.team_a_id, match.team_b_id)
+
+    deleted = client.delete(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['jane_amy']}/official",
+        headers=photographer,
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"team_id": roster["jane_amy"], "deleted": True}
+    session.expire_all()
+    official_key = official_object_key(roster["tournament_id"], roster["jane_amy"], "delete-photo-01")
+    assert official_key not in get_object_store().objects
+    assert capture_key not in get_object_store().objects
+    assert session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_amy"])).first() is None
+    assert session.exec(select(TeamPhotoCapture).where(TeamPhotoCapture.team_id == roster["jane_amy"])).all() == []
+    kept = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_sue"])).one()
+    assert kept.storage_key == official_object_key(roster["tournament_id"], roster["jane_sue"], "delete-photo-02")
+    assert kept.storage_key in get_object_store().objects
+    assert session.get(Team, roster["jane_amy"]).name == team_name
+    assert {player.id for player in session.exec(select(Player)).all()} == player_ids
+    session.refresh(match)
+    assert (match.status, match.runtime_status, match.winner_team_id, match.team_a_id, match.team_b_id) == match_before
+    assert client.get(
+        f"/api/photography/teams/{roster['jane_amy']}/official/content",
+        headers=photographer,
+    ).status_code == 404
+    summary = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/official-photos",
+        headers=photographer,
+    )
+    assert roster["jane_amy"] not in [row["team_id"] for row in summary.json()]
+    assert roster["jane_sue"] in [row["team_id"] for row in summary.json()]
+
+    repeated = client.delete(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['jane_amy']}/official",
+        headers=photographer,
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["deleted"] is True
+
+    denied = client.delete(
+        f"/api/photography/tournaments/{roster['other_tournament_id']}/teams/{roster['later']}/official",
+        headers=photographer,
+    )
+    assert denied.status_code == 403
+    session.expire_all()
+    later = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["later"])).one()
+    assert later.storage_key in get_object_store().objects
+
+    arm_next_delete_failure()
+    blocked = client.delete(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['jane_sue']}/official",
+        headers=admin,
+    )
+    assert blocked.status_code == 503
+    session.expire_all()
+    still_there = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_sue"])).one()
+    assert still_there.storage_key in get_object_store().objects
+
+    foreign_key = official_object_key(roster["tournament_id"], roster["jane_amy"], "other-team-key1")
+    get_object_store().put_jpeg(foreign_key, _jpeg())
+    still_there.storage_key = foreign_key
+    session.add(still_there)
+    session.commit()
+    refused = client.delete(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['jane_sue']}/official",
+        headers=admin,
+    )
+    assert refused.status_code == 409
+    assert foreign_key in get_object_store().objects
+    session.expire_all()
+    assert session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_sue"])).one().storage_key == foreign_key
+    assert session.get(Team, roster["jane_sue"]).name == "Jane Doe / Sue Park"
 
 
 def test_unconfigured_r2_does_not_store_a_local_photograph(client: TestClient, session: Session, monkeypatch):

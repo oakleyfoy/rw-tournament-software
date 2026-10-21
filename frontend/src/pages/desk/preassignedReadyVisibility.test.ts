@@ -313,6 +313,94 @@ describe('preassignedReadyVisibility', () => {
     expect(new Set([...courtIds, ...queueIds]).size).toBe(courtIds.length + queueIds.length)
   })
 
+  it('keeps a reset match on its scheduled court out of Assigned Court and in Waiting', () => {
+    const resetMatch = desk({
+      match_id: 101,
+      court_name: 'Court 14',
+      court_assignment_mode: 'PREASSIGNED',
+    })
+    const other = desk({ match_id: 303, court_name: 'Court 15', court_number: 15 })
+    const assigned: ReadyAssignedItem[] = [{
+      match_id: 303, match_number: 303, match_code: 'WF_303', event_name: "Women's",
+      day_label: 'Friday, November 6', scheduled_time: '9:00 AM', court_name: 'Court 15',
+      team1_display: 'Cara', team2_display: 'Dee', status_label: 'Ready — Assigned Court',
+      waiting_for_court: false, slot_key: '2026-11-06|09:00', is_opening: true, dispatch_outcome: 'ready_to_start',
+    }]
+    const entries = buildPreassignedReadyEntries({
+      checkinMatches: [
+        checkin({ match_id: 101, match_ready: false }),
+        checkin({ match_id: 303, match_ready: true }),
+      ],
+      matches: [resetMatch, other],
+      readyQueue: [],
+      readyAssignedQueue: assigned,
+      nowPlayingByCourt: {},
+    })
+    const placed = placePreassignedMatches(entries, [resetMatch, other])
+    const operational = new Set([
+      ...placed.courtCards.map((entry) => entry.matchId),
+      ...placed.readyQueue.map((entry) => entry.matchId),
+    ])
+    expect(placed.courtCards.map((entry) => entry.matchId)).not.toContain(101)
+    expect(placed.readyQueue.map((entry) => entry.matchId)).not.toContain(101)
+    expect(belongsInWaitingForCheckIn(resetMatch, operational)).toBe(true)
+    expect(operational.has(303)).toBe(true)
+  })
+
+  it('keeps a reset later-round waterfall match only in Waiting until both teams check in', () => {
+    const resetMatch = desk({
+      match_id: 501,
+      source_match_a_id: 11,
+      source_match_b_id: 12,
+      court_name: 'Court 14',
+      court_assignment_mode: 'PREASSIGNED',
+      checkin_reset_pending: true,
+      scheduled_time: '10:00 AM',
+    })
+    const other = desk({ match_id: 303, court_name: 'Court 15', court_number: 15 })
+    const assigned: ReadyAssignedItem[] = [{
+      match_id: 501, match_number: 501, match_code: 'WF_R2', event_name: "Women's",
+      day_label: 'Friday, November 6', scheduled_time: '10:00 AM', court_name: 'Court 14',
+      team1_display: 'Amanda', team2_display: 'Holly', status_label: 'Waiting for court',
+      waiting_for_court: true, slot_key: '2026-11-06|10:00', is_opening: false, dispatch_outcome: 'waiting_court',
+    }]
+    const entries = buildPreassignedReadyEntries({
+      checkinMatches: [checkin({ match_id: 501, match_ready: false })],
+      matches: [resetMatch, other],
+      readyQueue: [{ match_id: 501 } as ReadyQueueItem],
+      readyAssignedQueue: assigned,
+      nowPlayingByCourt: {},
+    })
+    const placed = placePreassignedMatches(entries, [resetMatch, other])
+    const operational = new Set([
+      ...placed.courtCards.map((entry) => entry.matchId),
+      ...placed.readyQueue.map((entry) => entry.matchId),
+    ])
+    expect(placed.courtCards.map((entry) => entry.matchId)).not.toContain(501)
+    expect(placed.readyQueue.map((entry) => entry.matchId)).not.toContain(501)
+    expect(belongsInWaitingForCheckIn(resetMatch, operational)).toBe(true)
+
+    const resumed = desk({
+      match_id: 501,
+      source_match_a_id: 11,
+      source_match_b_id: 12,
+      court_name: 'Court 14',
+      court_assignment_mode: 'PREASSIGNED',
+      checkin_reset_pending: false,
+    })
+    const resumedEntries = buildPreassignedReadyEntries({
+      checkinMatches: [checkin({ match_id: 501, match_ready: true })],
+      matches: [resumed],
+      readyQueue: [],
+      readyAssignedQueue: assigned,
+      nowPlayingByCourt: {},
+    })
+    const resumedPlaced = placePreassignedMatches(resumedEntries, [resumed])
+    const resumedOperational = new Set(resumedPlaced.readyQueue.map((entry) => entry.matchId))
+    expect(resumedPlaced.readyQueue.map((entry) => entry.matchId)).toContain(501)
+    expect(belongsInWaitingForCheckIn(resumed, resumedOperational)).toBe(false)
+  })
+
   it('keeps a missing check-in in Waiting and out of the court card', () => {
     const entries = buildPreassignedReadyEntries({
       checkinMatches: [checkin({ match_id: 101, match_ready: false })],

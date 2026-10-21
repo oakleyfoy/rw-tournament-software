@@ -32,6 +32,10 @@ export function getCompactDivisionLabel(matchCode?: string | null): string {
   if (code.includes('BLW') || code.includes('POOLC')) return 'DIV III'
   if (code.includes('BLL') || code.includes('POOLD')) return 'DIV IV'
   if (code.includes('POOLE')) return 'DIV V'
+  if (code.includes('POOLF')) return 'DIV VI'
+  if (code.includes('POOLG')) return 'DIV VII'
+  if (code.includes('POOLH')) return 'DIV VIII'
+  if (code.includes('POOLI')) return 'DIV IX'
 
   // WF_14 consolation mini-pools: ..._CONS_FRI_C01 / _D02
   if (/_CONS_(?:FRI|SAT1|SAT2)_C\d+/i.test(code)) return 'DIV III'
@@ -59,6 +63,14 @@ export function getDivisionPhrase(matchCode?: string | null): string {
       return 'Div IV'
     case 'DIV V':
       return 'Div V'
+    case 'DIV VI':
+      return 'Div VI'
+    case 'DIV VII':
+      return 'Div VII'
+    case 'DIV VIII':
+      return 'Div VIII'
+    case 'DIV IX':
+      return 'Div IX'
     case 'BR 1':
       return 'Bracket 1'
     case 'BR 2':

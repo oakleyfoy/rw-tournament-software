@@ -4,6 +4,9 @@ import { getCompactDivisionLabel, getDivisionPhrase } from './matchDivisionLabel
 describe('getCompactDivisionLabel', () => {
   it('maps classic pool and bracket codes', () => {
     expect(getCompactDivisionLabel('WOM_POOLA_RR_01')).toBe('DIV I')
+    expect(getCompactDivisionLabel('MIX_E1_RR_POOLA_M01')).toBe('DIV I')
+    expect(getCompactDivisionLabel('MIX_E1_RR_POOLE_M01')).toBe('DIV V')
+    expect(getCompactDivisionLabel('MIX_E1_RR_POOLI_M01')).toBe('DIV IX')
     expect(getCompactDivisionLabel('WOM_POOLB_RR_01')).toBe('DIV II')
     expect(getCompactDivisionLabel('WOM_BWW_R1_01')).toBe('DIV I')
     expect(getCompactDivisionLabel('MIX_E1_B1_M1')).toBe('BR 1')

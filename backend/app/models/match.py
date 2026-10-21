@@ -55,6 +55,9 @@ class Match(SQLModel, table=True):
     winner_team_id: Optional[int] = Field(default=None, foreign_key="team.id")
     started_at: Optional[datetime] = Field(default=None)
     completed_at: Optional[datetime] = Field(default=None)
+    # Set only by Back To Waiting for Check-In. Later-round dispatch ignores it
+    # unless this match was explicitly reset.
+    checkin_reset_pending: bool = Field(default=False)
 
     # Relationships
     tournament: "Tournament" = Relationship(back_populates="matches")

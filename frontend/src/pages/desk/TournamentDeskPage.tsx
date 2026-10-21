@@ -27,6 +27,7 @@ import {
   deskSendFinalizeSms,
   deskCorrectMatch,
   deskSetMatchStatus,
+  deskReturnMatchToWaitingCheckIn,
   deskMoveMatch,
   deskSwapMatches,
   deskAddSlots,
@@ -1285,6 +1286,8 @@ function MatchDrawer({
   const [noteEventId, setNoteEventId] = useState<number | null>(null)
   const [noteText, setNoteText] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
+  const [returningToWaiting, setReturningToWaiting] = useState(false)
+  const waitingResetLock = useRef(false)
 
   const openNote = useCallback((teamId: number, currentNote: string | null) => {
     setNoteTeamId(teamId)
@@ -1458,6 +1461,31 @@ function MatchDrawer({
     }
   }, [tournamentId, match.match_id, versionId, onRefreshAndClose])
 
+  const returnToWaitingCheckIn = useCallback(async () => {
+    if (waitingResetLock.current) return
+    const confirmed = await confirmDialog(
+      `Match #${match.match_number}: ${match.team1_display} vs ${match.team2_display}.\n\nThis match will be removed from its current court, and both teams will need to check in again.`,
+      { title: 'Back To Waiting for Check-In', confirmLabel: 'Back To Waiting for Check-In' },
+    )
+    if (!confirmed || waitingResetLock.current) return
+    waitingResetLock.current = true
+    setReturningToWaiting(true)
+    setError(null)
+    setStatusMsg(null)
+    try {
+      await deskReturnMatchToWaitingCheckIn(tournamentId, match.match_id, {
+        version_id: versionId,
+      })
+      setStatusMsg('Returned to Waiting for Check-In')
+      onRefreshAndClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to return match to Waiting for Check-In')
+    } finally {
+      waitingResetLock.current = false
+      setReturningToWaiting(false)
+    }
+  }, [tournamentId, match.match_id, match.match_number, match.team1_display, match.team2_display, versionId, onRefreshAndClose])
+
   const reopenToCurrentlyPlaying = useCallback(async () => {
     setError(null)
     setStatusMsg(null)
@@ -1625,7 +1653,7 @@ function MatchDrawer({
   const actionsPanel = isDraft ? (
     <div style={{ marginBottom: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
-        Actions
+        Match Actions
       </div>
 
       {(match.status === 'SCHEDULED' || match.status === 'DELAYED') && (
@@ -1683,6 +1711,27 @@ function MatchDrawer({
           }}
         >
           Back To Ready To Go
+        </button>
+      )}
+      {match.status !== 'FINAL' && (
+        <button
+          type="button"
+          onClick={returnToWaitingCheckIn}
+          disabled={returningToWaiting}
+          style={{
+            width: '100%',
+            padding: '8px 16px',
+            fontSize: 13,
+            fontWeight: 700,
+            backgroundColor: '#fff',
+            color: '#b71c1c',
+            border: '2px solid #b71c1c',
+            borderRadius: 4,
+            cursor: returningToWaiting ? 'not-allowed' : 'pointer',
+            marginBottom: 12,
+          }}
+        >
+          {returningToWaiting ? 'Returning…' : 'Back To Waiting for Check-In'}
         </button>
       )}
       {match.status === 'FINAL' && (
@@ -10923,12 +10972,17 @@ export default function TournamentDeskPage() {
       ),
     }))
     .filter((group) => group.entries.length > 0)
+  const resetHoldMatchIds = new Set(
+    (data.matches || []).filter((match) => match.checkin_reset_pending).map((match) => match.match_id),
+  )
   const filteredReadyQueue = mergeReadyQueueWithPreassigned(
     data.ready_queue || [],
     preassignedReadyEntries,
   ).filter((rq) => (
-    effectiveSelectedCheckInSlotKey === 'all' ||
-    slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
+    !resetHoldMatchIds.has(rq.match_id) && (
+      effectiveSelectedCheckInSlotKey === 'all' ||
+      slotKeyByMatchId.get(rq.match_id) === effectiveSelectedCheckInSlotKey
+    )
   ))
 
   const releaseSlotKey = data.active_checkin_slot_key || focusSlotKey || null

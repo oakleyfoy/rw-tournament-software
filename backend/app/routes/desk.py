@@ -82,6 +82,12 @@ from app.services.schedule_slot_availability import (
     slot_key_for_slot,
     validate_checkin_court_assignment,
 )
+from app.services.checkin_reset import (
+    CheckInResetRejected,
+    checkin_reset_blocks_start,
+    clear_checkin_reset_if_ready,
+    return_match_to_waiting_checkin,
+)
 from app.services.sms_automation import SmsAutomationEngine
 
 logger = logging.getLogger(__name__)
@@ -133,6 +139,7 @@ _POOL_LABELS = {
     "POOLF": "Division VI",
     "POOLG": "Division VII",
     "POOLH": "Division VIII",
+    "POOLI": "Division IX",
 }
 
 MODE_COURT_MANAGEMENT = "court_management"
@@ -509,6 +516,7 @@ class DeskMatchItem(BaseModel):
     completed_at: Optional[str] = None
     winner_display: Optional[str] = None
     winner_team_id: Optional[int] = None
+    checkin_reset_pending: bool = False
     duration_minutes: int = 0
     team1_defaulted: bool = False
     team2_defaulted: bool = False
@@ -931,6 +939,16 @@ class StatusRequest(BaseModel):
 class StatusResponse(BaseModel):
     match_id: int
     status: str
+
+
+class ReturnToWaitingCheckInRequest(BaseModel):
+    version_id: int
+
+
+class ReturnToWaitingCheckInResponse(BaseModel):
+    match_id: int
+    status: str
+    previous_status: str
 
 
 # ── Impact models ────────────────────────────────────────────────────────
@@ -1949,6 +1967,7 @@ def _build_match_items(
                 completed_at=m.completed_at.isoformat() if m.completed_at else None,
                 winner_display=winner_disp,
                 winner_team_id=m.winner_team_id,
+                checkin_reset_pending=bool(getattr(m, "checkin_reset_pending", False)),
                 duration_minutes=m.duration_minutes,
                 team1_defaulted=bool(
                     team_map.get(m.team_a_id, None) and getattr(team_map[m.team_a_id], "is_defaulted", False)
@@ -2067,6 +2086,7 @@ def _match_to_desk_item(
         completed_at=match.completed_at.isoformat() if match.completed_at else None,
         winner_display=winner_disp,
         winner_team_id=match.winner_team_id,
+        checkin_reset_pending=bool(getattr(match, "checkin_reset_pending", False)),
         duration_minutes=match.duration_minutes,
         team1_defaulted=bool(
             team_map.get(match.team_a_id, None) and getattr(team_map[match.team_a_id], "is_defaulted", False)
@@ -2404,6 +2424,7 @@ def set_team_checkin(
     session.add(row)
     session.commit()
     session.refresh(match)
+    clear_checkin_reset_if_ready(session, match)
 
     # Late check-in after opening release: reevaluate without another Release click.
     if payload.checked_in:
@@ -2516,6 +2537,7 @@ def set_player_checkin(
     session.add(row)
     session.commit()
     session.refresh(match)
+    clear_checkin_reset_if_ready(session, match)
 
     if payload.checked_in:
         try:
@@ -2993,6 +3015,11 @@ def assign_ready_match_to_slot(
         _ready_assigned_queue,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     ready_ids = {r.match_id for r in ready_queue}
+    if checkin_reset_blocks_start(session, match):
+        raise HTTPException(
+            status_code=409,
+            detail="Both teams must check in again before this match can be assigned.",
+        )
     if payload.match_id not in ready_ids:
         raise HTTPException(status_code=400, detail="Match is not ready to play")
 
@@ -4096,6 +4123,12 @@ def set_match_status(
                 down.team_b_id = None
                 session.add(down)
 
+    if payload.status == "IN_PROGRESS" and checkin_reset_blocks_start(session, match):
+        raise HTTPException(
+            status_code=409,
+            detail="Both teams must check in again before this match can start.",
+        )
+
     previous_status = (match.runtime_status or "SCHEDULED").upper()
     match.runtime_status = payload.status
     if payload.reset_started_at:
@@ -4123,6 +4156,73 @@ def set_match_status(
         )
 
     return StatusResponse(match_id=match.id, status=match.runtime_status)
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/matches/{match_id}/return-to-waiting-checkin",
+    response_model=ReturnToWaitingCheckInResponse,
+)
+def return_match_to_waiting_checkin_route(
+    tournament_id: int,
+    match_id: int,
+    payload: ReturnToWaitingCheckInRequest,
+    session: Session = Depends(get_session),
+):
+    """Release live court occupancy and clear this match's check-in together.
+
+    Back To Ready To Go uses set_match_status and keeps check-in. This route
+    does not. Court release and check-in reset commit in one transaction.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    match = session.get(Match, match_id)
+    if not match or match.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if match.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=400, detail="Match does not belong to this version")
+
+    try:
+        previous_status = return_match_to_waiting_checkin(
+            session,
+            tournament=tournament,
+            version=version,
+            match=match,
+        )
+        session.commit()
+    except CheckInResetRejected as exc:
+        session.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception:
+        session.rollback()
+        raise
+
+    session.refresh(match)
+    if previous_status != (match.runtime_status or "SCHEDULED").upper():
+        try:
+            automation = SmsAutomationEngine(session, tournament, payload.version_id)
+            automation.handle_match_status_change(
+                match=match,
+                previous_status=previous_status,
+                new_status=match.runtime_status,
+            )
+        except Exception:
+            logger.exception(
+                "SMS automation status trigger failed for tournament=%s match=%s return-to-waiting",
+                tournament_id,
+                match_id,
+            )
+
+    return ReturnToWaitingCheckInResponse(
+        match_id=match.id,
+        status=match.runtime_status,
+        previous_status=previous_status,
+    )
 
 
 # ── Impact endpoint ──────────────────────────────────────────────────────

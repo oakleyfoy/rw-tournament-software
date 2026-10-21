@@ -82,6 +82,10 @@ export function listOfficialTeamPhotos(tournamentId: number): Promise<OfficialPh
   return photoFetch(`/photography/tournaments/${tournamentId}/official-photos`)
 }
 
+export function deleteOfficialTeamPhoto(tournamentId: number, teamId: number): Promise<{ team_id: number; deleted: boolean }> {
+  return photoFetch(`/photography/tournaments/${tournamentId}/teams/${teamId}/official`, { method: 'DELETE' })
+}
+
 export function listPhotographyAccess(): Promise<PhotographyAccess[]> {
   return photoFetch('/auth/photography-access')
 }

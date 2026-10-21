@@ -650,6 +650,20 @@ def evaluate_eligibility(
             is_opening=False,
         )
 
+    # Match-specific hold. Later-round matches that were never reset still
+    # start without check-in. A reset match cannot.
+    if bool(getattr(match, "checkin_reset_pending", False)) and not match_fully_checked_in(session, match):
+        return EligibilityResult(
+            mid,
+            OUTCOME_WAITING_CHECKIN,
+            "Returned to Waiting for Check-In",
+            court_name=court_name,
+            scheduled_time=_format_time_label(slot.start_time),
+            day_date=slot.day_date,
+            slot_key=key,
+            is_opening=opening,
+        )
+
     if opening:
         if not match_fully_checked_in(session, match):
             return EligibilityResult(

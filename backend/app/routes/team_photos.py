@@ -24,7 +24,7 @@ from app.services.team_photo_storage import (
     get_object_store,
     process_image,
 )
-from app.services.team_photos import save_official_photo
+from app.services.team_photos import delete_official_photo, save_official_photo
 
 router = APIRouter(prefix="/api/photography", tags=["photography"], dependencies=[Depends(require_photo_user)])
 
@@ -224,6 +224,30 @@ async def set_official_photo(
         _discard_new_object(result.delete_after_commit)
     session.refresh(result.photo)
     return _photo_response(result.photo)
+
+
+@router.delete("/tournaments/{tournament_id}/teams/{team_id}/official")
+def remove_official_photo(
+    tournament_id: int,
+    team_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    _assert_can_photograph(session, user, tournament_id)
+    team = _team_in_tournament(session, tournament_id, team_id)
+    try:
+        delete_official_photo(session, tournament_id=tournament_id, team_id=team.id)  # type: ignore[arg-type]
+        session.commit()
+    except PhotoRejected as exc:
+        session.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except PhotoStorageUnavailable as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        session.rollback()
+        raise
+    return {"team_id": team.id, "deleted": True}
 
 
 @router.get("/teams/{team_id}/official/content")

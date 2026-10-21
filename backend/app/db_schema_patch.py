@@ -1060,3 +1060,46 @@ def ensure_tournament_import_columns(engine: Engine) -> None:
         import logging
 
         logging.getLogger(__name__).warning("Failed to ensure tournament_import columns: %s", exc)
+
+
+def ensure_match_checkin_reset_column(engine: Engine) -> None:
+    """Add checkin_reset_pending on startup.
+
+    Production SQLite is not migrated with ``alembic upgrade head``. This
+    patch is idempotent: existing rows keep their status, score, assignment,
+    and check-in data, and the new flag defaults to false.
+    """
+    try:
+        from app.models.match import Match
+
+        table = Match.__table__.name
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+            existing = _get_existing_columns_sqlite(engine, table)
+            if "checkin_reset_pending" in existing:
+                return
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN checkin_reset_pending INTEGER NOT NULL DEFAULT 0;")
+                )
+            return
+        existing = _get_existing_columns_postgres(engine, table)
+        if not existing or "checkin_reset_pending" in existing:
+            return
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
+                    "checkin_reset_pending BOOLEAN NOT NULL DEFAULT FALSE;"
+                )
+            )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure match check-in reset column: %s", exc)

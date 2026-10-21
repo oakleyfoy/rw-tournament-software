@@ -17,6 +17,7 @@ from app.db_schema_patch import (
     ensure_court_dispatch_lock_table,
     ensure_event_columns,
     ensure_opening_slot_release_table,
+    ensure_match_checkin_reset_column,
     ensure_schedule_slot_columns,
     ensure_sms_log_columns,
     ensure_sms_phone_list_columns,
@@ -256,6 +257,7 @@ def on_startup():
     ensure_sms_phone_list_columns(engine)
     ensure_tournament_time_window_columns(engine)
     ensure_schedule_slot_columns(engine)
+    ensure_match_checkin_reset_column(engine)
     start_first_match_runner_if_enabled()
 
     # Print all registered routes for debugging (full path stack)

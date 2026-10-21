@@ -12,6 +12,8 @@ _WIN_RR_RE = re.compile(r"_WIN_(?:FRI|SAT1|SAT2)_([AB])\d+", re.IGNORECASE)
 _FUN_RR_RE = re.compile(r"_FUN_(?:FRI|SAT1|SAT2)_\d+", re.IGNORECASE)
 _LOSS_RR_RE = re.compile(r"_LOSS_(?:FRI|SAT1|SAT2)_\d+", re.IGNORECASE)
 _WF10_SUN_RE = re.compile(r"_(?:WIN|LOSS)_SUN_\d+", re.IGNORECASE)
+# Pool letter is its own match-code segment, either before or after _RR_.
+_POOL_TOKEN_RE = re.compile(r"(?:^|_)(POOL[A-I])(?:_|$)")
 
 
 def is_wf10_sunday_placement_code(match_code: Optional[str]) -> bool:
@@ -25,6 +27,7 @@ def rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
 
     Handles:
     - Standard RR pools (``..._POOLA_RR_01``)
+    - Event-prefixed pools (``MIX_E1_RR_POOLA_M01``)
     - WF_14 loser-flight consolation (``..._CONS_<DAYTAG>_<POOL><SEQ>``)
     - WF_10 winners/fun/losers RR (``..._WIN_FRI_A01``, ``..._FUN_FRI_01``, ``..._LOSS_FRI_01``)
     """
@@ -32,7 +35,13 @@ def rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
         return None
     upper = match_code.upper()
 
+    pool_token = _POOL_TOKEN_RE.search(upper)
+    if pool_token:
+        return pool_token.group(1)
+
     if "_RR_" in upper:
+        # RR-only codes have no pool letter. Keep the historical segment
+        # before _RR_ so those matches still group as they did.
         head = match_code.split("_RR_")[0]
         return head.split("_")[-1].upper() or None
 

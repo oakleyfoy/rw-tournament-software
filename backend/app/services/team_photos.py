@@ -28,6 +28,49 @@ class OfficialSaveResult:
     delete_after_commit: Optional[str]
 
 
+def _owned_photo_key(tournament_id: int, team_id: int, storage_key: str) -> bool:
+    prefix = f"team-photos/{int(tournament_id)}/{int(team_id)}/"
+    if not storage_key.startswith(prefix) or ".." in storage_key:
+        return False
+    remainder = storage_key[len(prefix):]
+    return bool(remainder) and "/" not in remainder and remainder.endswith(".jpg")
+
+
+def delete_official_photo(session: Session, *, tournament_id: int, team_id: int) -> None:
+    """Remove one team's official photograph and its stored object.
+
+    A missing photograph is treated as already deleted. Storage is removed
+    only after every key is confirmed to belong to this team. If storage
+    deletion fails, the database row stays in place.
+    """
+    photo = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == team_id)).first()
+    if photo is None:
+        return
+    if photo.tournament_id != tournament_id:
+        raise PhotoRejected("Team not found", status_code=404)
+    captures = session.exec(
+        select(TeamPhotoCapture).where(
+            TeamPhotoCapture.team_id == team_id,
+            TeamPhotoCapture.tournament_id == tournament_id,
+        )
+    ).all()
+    keys: list[str] = []
+    for capture in captures:
+        if capture.storage_key and capture.storage_key not in keys:
+            keys.append(capture.storage_key)
+    if photo.storage_key not in keys:
+        keys.append(photo.storage_key)
+    if any(not _owned_photo_key(tournament_id, team_id, key) for key in keys):
+        raise PhotoRejected("Official photograph could not be deleted", status_code=409)
+    store = get_object_store()
+    for key in keys:
+        store.delete(key)
+    session.delete(photo)
+    for capture in captures:
+        session.delete(capture)
+    session.flush()
+
+
 def _delete_key(storage_key: Optional[str]) -> None:
     if not storage_key:
         return

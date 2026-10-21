@@ -3073,6 +3073,7 @@ export interface DeskMatchItem {
   completed_at: string | null
   winner_display: string | null
   winner_team_id?: number | null
+  checkin_reset_pending?: boolean
   duration_minutes?: number | null
   team1_defaulted?: boolean | null
   team2_defaulted?: boolean | null
@@ -3472,6 +3473,17 @@ export async function deskSetMatchStatus(
   return fetchJson<{ match_id: number; status: string }>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/status`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function deskReturnMatchToWaitingCheckIn(
+  tournamentId: number,
+  matchId: number,
+  payload: { version_id: number }
+): Promise<{ match_id: number; status: string; previous_status: string }> {
+  return fetchJson<{ match_id: number; status: string; previous_status: string }>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/return-to-waiting-checkin`,
+    { method: 'POST', body: JSON.stringify(payload) }
   )
 }
 

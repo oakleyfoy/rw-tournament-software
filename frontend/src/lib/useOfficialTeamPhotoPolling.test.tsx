@@ -148,6 +148,43 @@ describe('official team photo polling', () => {
     expect(loadSnapshot).not.toHaveBeenCalled()
   })
 
+  it('shows a placeholder after a photograph is removed without reloading the desk', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const contentUrls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      contentUrls.push(String(url))
+      return new Response(new Blob(['photo'], { type: 'image/jpeg' }), { status: 200 })
+    }))
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:removed-photo'),
+      revokeObjectURL: vi.fn(),
+    })
+    window.localStorage.setItem('rw_auth_token', 'token')
+    let catalog = [summary(11, 'team-photos/4/11/removed.jpg')]
+    const listPhotos = vi.fn(async () => catalog)
+    const loadSnapshot = vi.fn()
+    render(<OperationalScreen label="desk-a" listPhotos={listPhotos} />)
+    const photo = await within(screen.getByTestId('desk-a')).findByTestId('team-photo')
+    const row = photo.closest('[data-testid="team-photo-name-row"]')
+    expect(row).toHaveAttribute('data-team-id', '11')
+    expect(within(row as HTMLElement).getByTestId('team-photo-name')).toHaveTextContent('Haley / Stacey')
+    expect(photo).toHaveAttribute('data-photo-version', 'team-photos/4/11/removed.jpg')
+
+    catalog = []
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+    const removed = within(screen.getByTestId('desk-a')).getAllByTestId('team-photo-name-row')
+      .find((item) => item.getAttribute('data-team-id') === '11')
+    expect(within(removed as HTMLElement).getByTestId('team-photo-placeholder')).toBeInTheDocument()
+    expect(within(removed as HTMLElement).queryByTestId('team-photo')).toBeNull()
+    expect(within(removed as HTMLElement).getByTestId('team-photo-name')).toHaveTextContent('Haley / Stacey')
+    expect(contentUrls.filter((url) => url.includes(encodeURIComponent('team-photos/4/11/removed.jpg')))).toHaveLength(1)
+    expect(loadSnapshot).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'desk-a score' })).toHaveValue('6-4, 7-5')
+  })
+
   it('does not start a second metadata request while one is still running', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let release: (() => void) | undefined
