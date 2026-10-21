@@ -9,15 +9,6 @@ export interface PhotoTeamSearchHit {
   has_official_photo: boolean
 }
 
-export function teamSearchDistinguishers(hit: PhotoTeamSearchHit): string {
-  const parts = [`Team ${hit.team_id}`, hit.division || 'Division unknown']
-  if (hit.seed != null) parts.push(`Seed ${hit.seed}`)
-  if (hit.avoid_group) parts.push(`Avoid ${hit.avoid_group}`)
-  if (hit.source_team_key) parts.push(hit.source_team_key)
-  if (hit.has_official_photo) parts.push('Has official photo')
-  return parts.join(' · ')
-}
-
 export function TeamSearchResultButton({
   hit,
   onSelect,
@@ -40,9 +31,8 @@ export function TeamSearchResultButton({
         cursor: 'pointer',
       }}
     >
-      <div style={{ fontWeight: 800, fontSize: 16 }}>{names[0]}</div>
-      <div style={{ fontWeight: 800, fontSize: 16 }}>{names[1]}</div>
-      <div style={{ marginTop: 4, fontSize: 13, color: '#546e7a' }}>{teamSearchDistinguishers(hit)}</div>
+      <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{names[0]}</div>
+      <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{names[1]}</div>
     </button>
   )
 }

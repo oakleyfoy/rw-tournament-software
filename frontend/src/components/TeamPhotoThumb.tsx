@@ -6,12 +6,14 @@ import { officialTeamPhotoContentUrl } from '../api/photography'
 export interface TeamPhotoContextValue {
   photos: Record<number, string>
   refresh: () => Promise<void>
+  showSaved?: (teamId: number, version: string) => void
   tournamentId: number | null
 }
 
 const TeamPhotoContext = createContext<TeamPhotoContextValue>({
   photos: {},
   refresh: async () => undefined,
+  showSaved: () => undefined,
   tournamentId: null,
 })
 
@@ -71,12 +73,14 @@ export function TeamPhotoThumb({
   const { photos } = useTeamPhotos()
   const version = teamId != null ? photos[teamId] : undefined
   const [src, setSrc] = useState<string | null>(null)
+  const [loadedVersion, setLoadedVersion] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
     if (teamId == null || !version) {
       setSrc(null)
+      setLoadedVersion(null)
       setFailed(false)
       return
     }
@@ -84,6 +88,7 @@ export function TeamPhotoThumb({
     const cached = objectUrlCache.get(url)
     if (cached) {
       setSrc(cached)
+      setLoadedVersion(version)
       setFailed(false)
       return
     }
@@ -96,11 +101,13 @@ export function TeamPhotoThumb({
         if (!blob) {
           setFailed(true)
           setSrc(null)
+          setLoadedVersion(null)
           return
         }
         const objectUrl = URL.createObjectURL(blob)
         objectUrlCache.set(url, objectUrl)
         setSrc(objectUrl)
+        setLoadedVersion(version)
         setFailed(false)
       })
       .catch(() => {
@@ -111,26 +118,39 @@ export function TeamPhotoThumb({
     }
   }, [teamId, version])
 
-  if (!version || failed || !src) {
+  if (!version || failed || !src || loadedVersion !== version) {
     return <Placeholder size={size} surface={surface} />
   }
   return (
     <>
-      <button
-        type="button"
+      <span
+        role="button"
+        tabIndex={0}
         aria-label="View larger team photo"
-        onClick={() => setOpen(true)}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          setOpen(true)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          event.stopPropagation()
+          setOpen(true)
+        }}
         style={{
           padding: 0,
           border: 0,
           background: 'transparent',
           lineHeight: 0,
           cursor: 'pointer',
+          flexShrink: 0,
         }}
       >
         <img
           data-testid="team-photo"
           data-photo-surface={surface}
+          data-photo-version={version}
           src={src}
           alt="Official team photo"
           width={size}
@@ -145,7 +165,7 @@ export function TeamPhotoThumb({
             background: '#eceff1',
           }}
         />
-      </button>
+      </span>
       {open && createPortal(
         <div
           role="dialog"
@@ -171,6 +191,43 @@ export function TeamPhotoThumb({
         document.body,
       )}
     </>
+  )
+}
+
+export function TeamPhotoNameRow({
+  teamId,
+  name,
+  size = 22,
+  surface,
+}: {
+  teamId?: number | null
+  name: string
+  size?: number
+  surface?: string
+}) {
+  return (
+    <div
+      data-testid="team-photo-name-row"
+      data-team-id={teamId ?? ''}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        minWidth: 0,
+      }}
+    >
+      <TeamPhotoThumb teamId={teamId} size={size} surface={surface} />
+      <span
+        data-testid="team-photo-name"
+        style={{
+          minWidth: 0,
+          overflowWrap: 'anywhere',
+          lineHeight: 1.2,
+        }}
+      >
+        {name}
+      </span>
+    </div>
   )
 }
 

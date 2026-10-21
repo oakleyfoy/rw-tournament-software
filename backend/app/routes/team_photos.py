@@ -55,11 +55,13 @@ class OfficialPhotoResponse(BaseModel):
     captured_at: datetime
     updated_at: datetime
     byte_size: int
+    version: str
 
 
 class OfficialPhotoSummary(BaseModel):
     team_id: int
     updated_at: datetime
+    version: str
 
 
 def _role(user: UserAccount) -> str:
@@ -148,7 +150,10 @@ def list_official_photos(
 ):
     _assert_can_photograph(session, user, tournament_id)
     rows = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.tournament_id == tournament_id)).all()
-    return [OfficialPhotoSummary(team_id=row.team_id, updated_at=row.updated_at) for row in rows]
+    return [
+        OfficialPhotoSummary(team_id=row.team_id, updated_at=row.updated_at, version=row.storage_key)
+        for row in rows
+    ]
 
 
 def _photo_response(photo: TeamOfficialPhoto) -> OfficialPhotoResponse:
@@ -159,6 +164,7 @@ def _photo_response(photo: TeamOfficialPhoto) -> OfficialPhotoResponse:
         captured_at=photo.captured_at,
         updated_at=photo.updated_at,
         byte_size=photo.byte_size,
+        version=photo.storage_key,
     )
 
 

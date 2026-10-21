@@ -8,8 +8,9 @@ import {
   preassignedEntryToReadyQueueItem,
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
-import { MatchTeamPhotos, TeamPhotoProvider, TeamPhotoThumb, useTeamPhotos } from '../../components/TeamPhotoThumb'
-import { listOfficialTeamPhotos, uploadAndSetOfficialTeamPhoto } from '../../api/photography'
+import { TeamPhotoNameRow, TeamPhotoProvider, TeamPhotoThumb, useTeamPhotos } from '../../components/TeamPhotoThumb'
+import { uploadAndSetOfficialTeamPhoto } from '../../api/photography'
+import { useOfficialTeamPhotoPolling } from '../../lib/useOfficialTeamPhotoPolling'
 import {
   getEvents,
   getTournament,
@@ -1716,9 +1717,6 @@ function MatchDrawer({
         </div>
         <div style={{ marginBottom: 8 }}>
           <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
-          <div aria-label="Score Entry" data-testid="score-entry-photos" style={{ margin: '8px 0' }}>
-            <MatchTeamPhotos teamIds={[match.team1_id, match.team2_id]} size={36} surface="score-entry" />
-          </div>
           <input
             type="text"
             placeholder="e.g. 8-4"
@@ -1737,7 +1735,7 @@ function MatchDrawer({
         </div>
         <div style={{ marginBottom: 10 }}>
           <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Winner</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+          <div aria-label="Score Entry" data-testid="score-entry-photos" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
             {match.team1_id && (
               <label style={{
                 display: 'flex',
@@ -1756,7 +1754,7 @@ function MatchDrawer({
                   checked={winnerId === match.team1_id}
                   onChange={() => setWinnerId(match.team1_id)}
                 />
-                {match.team1_display}
+                <TeamPhotoNameRow teamId={match.team1_id} name={match.team1_display} size={28} surface="score-entry" />
               </label>
             )}
             {match.team2_id && (
@@ -1777,7 +1775,7 @@ function MatchDrawer({
                   checked={winnerId === match.team2_id}
                   onChange={() => setWinnerId(match.team2_id)}
                 />
-                {match.team2_display}
+                <TeamPhotoNameRow teamId={match.team2_id} name={match.team2_display} size={28} surface="score-entry" />
               </label>
             )}
           </div>
@@ -6469,7 +6467,8 @@ function TeamsTab({
     if (!file || teamId == null) return
     setReplacingTeamId(teamId)
     try {
-      await uploadAndSetOfficialTeamPhoto({ tournamentId, teamId, file })
+      const saved = await uploadAndSetOfficialTeamPhoto({ tournamentId, teamId, file })
+      teamPhotos.showSaved?.(teamId, saved.version)
       await teamPhotos.refresh()
       setToast('Official team photo saved')
       setTimeout(() => setToast(null), 3000)
@@ -9266,13 +9265,22 @@ function CheckInCourtBoardCard({
                   #{match.match_number} · {row.preassignedStatusLabel}
                 </div>
               )}
-              <MatchTeamPhotos teamIds={[match.team1_id, match.team2_id]} size={22} surface="assigned-court" />
               <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
-                {match.team1_display}
+                <TeamPhotoNameRow
+                  teamId={match.team1_id}
+                  name={match.team1_display}
+                  size={18}
+                  surface={row.preassignedStatusLabel ? 'assigned-court' : 'on-court'}
+                />
               </div>
               <div style={{ color: '#999', fontSize: 9, margin: '1px 0' }}>vs</div>
               <div style={{ color: '#1a1a1a', fontSize: 12, fontWeight: 700, lineHeight: 1.25 }}>
-                {match.team2_display}
+                <TeamPhotoNameRow
+                  teamId={match.team2_id}
+                  name={match.team2_display}
+                  size={18}
+                  surface={row.preassignedStatusLabel ? 'assigned-court' : 'on-court'}
+                />
               </div>
               {(row.startAtLabel || row.elapsedLabel) && (
                 <div style={{ marginTop: 3, fontSize: 9, color: '#607d8b' }}>
@@ -9467,30 +9475,22 @@ function CheckInReadyQueueCard({
             Queue: {queueElapsedLabel}
           </div>
         )}
-        <MatchTeamPhotos
-          teamIds={[deskMatch?.team1_id, deskMatch?.team2_id]}
-          size={compact ? 18 : 22}
-          surface={photoSurface}
-        />
-        <div style={{
-          color: '#1a1a1a',
-          fontSize: teamFont,
-          fontWeight: 700,
-          lineHeight: 1.15,
-          overflowWrap: 'anywhere',
-          marginTop: compact ? 1 : 2,
-        }}>
-          {rq.team1_display}
+        <div style={{ color: '#1a1a1a', fontSize: teamFont, fontWeight: 700, marginTop: compact ? 1 : 2 }}>
+          <TeamPhotoNameRow
+            teamId={deskMatch?.team1_id}
+            name={rq.team1_display}
+            size={compact ? 16 : 18}
+            surface={photoSurface}
+          />
         </div>
         <div style={{ color: '#999', fontSize: compact ? 7 : 8, margin: 0, lineHeight: 1 }}>vs</div>
-        <div style={{
-          color: '#1a1a1a',
-          fontSize: teamFont,
-          fontWeight: 700,
-          lineHeight: 1.15,
-          overflowWrap: 'anywhere',
-        }}>
-          {rq.team2_display}
+        <div style={{ color: '#1a1a1a', fontSize: teamFont, fontWeight: 700 }}>
+          <TeamPhotoNameRow
+            teamId={deskMatch?.team2_id}
+            name={rq.team2_display}
+            size={compact ? 16 : 18}
+            surface={photoSurface}
+          />
         </div>
       </div>
       <div
@@ -9549,19 +9549,7 @@ export default function TournamentDeskPage() {
   const [openingReleasePreview, setOpeningReleasePreview] = useState<OpeningReleasePreview | null>(null)
   const [openingReleaseBusy, setOpeningReleaseBusy] = useState(false)
   const [openingReleaseError, setOpeningReleaseError] = useState<string | null>(null)
-  const [teamPhotoVersions, setTeamPhotoVersions] = useState<Record<number, string>>({})
-  const refreshTeamPhotos = useCallback(async () => {
-    if (!tid) return
-    try {
-      const rows = await listOfficialTeamPhotos(tid)
-      const next: Record<number, string> = {}
-      for (const row of rows) next[row.team_id] = row.updated_at
-      setTeamPhotoVersions(next)
-    } catch {
-      setTeamPhotoVersions({})
-    }
-  }, [tid])
-  useEffect(() => { void refreshTeamPhotos() }, [refreshTeamPhotos, rosterReloadKey])
+  const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -11148,8 +11136,7 @@ export default function TournamentDeskPage() {
           justifyContent: 'center',
           gap: 4,
         }}>
-          <TeamPhotoThumb teamId={state.team_id} size={18} surface="check-in-desk" />
-          {teamLabel}
+          <TeamPhotoNameRow teamId={state.team_id} name={teamLabel} size={18} surface="check-in-desk" />
         </span>
         {renderCheckInPlayerCircle(rightPlayer.checked, rightPlayer.disabled, rightPlayer.onClick)}
         {rightPlayer.towelColor ? (
@@ -11195,7 +11182,7 @@ export default function TournamentDeskPage() {
   }
 
   return (
-    <TeamPhotoProvider value={{ photos: teamPhotoVersions, refresh: refreshTeamPhotos, tournamentId: tid }}>
+    <TeamPhotoProvider value={{ photos: teamPhotoLive.versions, refresh: teamPhotoLive.refresh, showSaved: teamPhotoLive.showSaved, tournamentId: tid }}>
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
       {/* Header */}
       <div style={{

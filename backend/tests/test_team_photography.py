@@ -278,6 +278,7 @@ def test_capture_selection_replacement_and_team_isolation(client: TestClient, se
     summary = client.get(f"/api/photography/tournaments/{tournament_id}/official-photos", headers=admin)
     assert summary.status_code == 200
     assert [row["team_id"] for row in summary.json()] == [team_id]
+    assert summary.json()[0]["version"] == photos[0].storage_key
 
     current_key = photos[0].storage_key
     arm_next_put_failure()
@@ -291,6 +292,8 @@ def test_capture_selection_replacement_and_team_isolation(client: TestClient, se
 
     replaced = _save(client, admin, tournament_id, team_id, "upload-replace", _jpeg(color="blue"))
     assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["version"] == official_object_key(tournament_id, team_id, "upload-replace")
+    assert replaced.json()["version"] != current_key
     retried_official = _save(client, admin, tournament_id, team_id, "upload-replace", _jpeg(color="yellow"))
     assert retried_official.status_code == 200
     session.expire_all()

@@ -7,6 +7,7 @@ import {
   postOfficialTeamPhoto,
   searchPhotographyTeams,
 } from '../api/photography'
+import { TeamPhotoProvider, TeamPhotoThumb } from '../components/TeamPhotoThumb'
 import { TeamSearchResultButton } from '../components/TeamSearchResultButton'
 import type { PhotoTeamSearchHit } from '../components/TeamSearchResultButton'
 import { initialPhotographerSession, photographerReducer } from '../lib/photographerSession'
@@ -20,6 +21,7 @@ export default function PhotographerPage() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<PhotoTeamSearchHit[]>([])
   const [selectedTeam, setSelectedTeam] = useState<PhotoTeamSearchHit | null>(null)
+  const [savedOfficial, setSavedOfficial] = useState<{ teamId: number; version: string } | null>(null)
   const [searching, setSearching] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -104,13 +106,17 @@ export default function PhotographerPage() {
     dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: 0 })
     setActionError(null)
     try {
-      await postOfficialTeamPhoto({
+      const saved = await postOfficialTeamPhoto({
         tournamentId: session.tournamentId,
         teamId: selectedTeam.team_id,
         blob,
         clientUploadId: chosen.clientUploadId,
         onProgress: (fraction) =>
           dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: Math.round(fraction * 100) }),
+      })
+      setSavedOfficial({
+        teamId: selectedTeam.team_id,
+        version: saved.version || saved.updated_at,
       })
       const label = selectedTeam.player_names.filter((name) => name !== 'Partner not on file').join(' / ')
       blobsRef.current = {}
@@ -174,6 +180,19 @@ export default function PhotographerPage() {
         </div>
         {pageError && <div style={errorBox}>{pageError}</div>}
         {session.confirmationMessage && <div style={successBox}>{session.confirmationMessage}. Search the next team.</div>}
+        {session.confirmationMessage && savedOfficial && (
+          <TeamPhotoProvider
+            value={{
+              photos: { [savedOfficial.teamId]: savedOfficial.version },
+              refresh: async () => undefined,
+              tournamentId: session.tournamentId,
+            }}
+          >
+            <div data-testid="saved-official-photo" style={{ marginTop: 10 }}>
+              <TeamPhotoThumb teamId={savedOfficial.teamId} size={96} surface="photographer" />
+            </div>
+          </TeamPhotoProvider>
+        )}
 
         {tournaments.length > 1 && <label style={labelStyle}>
           Tournament
@@ -231,12 +250,8 @@ export default function PhotographerPage() {
               Next team
             </button>
             <div style={{ marginTop: 12, padding: 14, borderRadius: 12, background: '#fff', border: '1px solid #d7dee5' }}>
-              <div style={{ fontWeight: 800, fontSize: 18 }}>{selectedTeam.player_names[0]}</div>
-              <div style={{ fontWeight: 800, fontSize: 18 }}>{selectedTeam.player_names[1]}</div>
-              <div style={{ marginTop: 6, color: '#546e7a' }}>
-                {selectedTeam.division} · Team {selectedTeam.team_id}
-                {selectedTeam.seed != null ? ` · Seed ${selectedTeam.seed}` : ''}
-              </div>
+              <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[0]}</div>
+              <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[1]}</div>
               {selectedTeam.has_official_photo && (
                 <div style={{ marginTop: 8, fontSize: 13, color: '#1565c0' }}>This team already has an official photo. A confirmed selection replaces it.</div>
               )}

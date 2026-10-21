@@ -27,11 +27,13 @@ export interface OfficialPhotoResponse {
   captured_at: string
   updated_at: string
   byte_size: number
+  version: string
 }
 
 export interface OfficialPhotoSummary {
   team_id: number
   updated_at: string
+  version: string
 }
 
 export interface PhotographyAccess {
