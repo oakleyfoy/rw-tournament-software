@@ -209,19 +209,10 @@ export function publicSideLabel(name: string | null | undefined, options?: { hid
     if (options?.hideSeeds) return 'Opponent TBD'
     return /^cons\b/i.test(value) ? `Cons Seed ${seed[1]}` : `Seed ${seed[1]}`
   }
-  const short = value.match(/^([WL])\(R(\d+)_\d+\)$/i)
-  if (short) return `${short[1].toUpperCase() === 'W' ? 'Winner' : 'Loser'} of Round ${short[2]}`
-  const waterfall = value.match(/WF_R(\d+)_([WL])\d+/i)
-  if (waterfall) {
-    const role = waterfall[2].toUpperCase() === 'W' ? 'Winner' : 'Loser'
-    return `${role} of Waterfall Round ${waterfall[1]}`
+  if (/^(winner|loser) of match #\d+\b/i.test(value)) return value
+  if (/^[WL]\(R\d+_\d+\)$/i.test(value) || /WF_R\d+_/i.test(value) || /^(winner|loser):/i.test(value)) {
+    return 'Opponent TBD'
   }
-  const division = value.match(/_(BWW|BWL|BLW|BLL)_/i)
-  const divisionName = division
-    ? { BWW: 'Division I', BWL: 'Division II', BLW: 'Division III', BLL: 'Division IV' }[division[1].toUpperCase()]
-    : null
-  if (/^winner:/i.test(value)) return divisionName ? `Winner of ${divisionName}` : 'Winner of an earlier match'
-  if (/^loser:/i.test(value)) return divisionName ? `Loser of ${divisionName}` : 'Loser of an earlier match'
   if (!/\s/.test(value) && (value.match(/_/g) || []).length >= 2) return 'Opponent TBD'
   return value
 }

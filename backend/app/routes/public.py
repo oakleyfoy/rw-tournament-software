@@ -353,6 +353,29 @@ def _build_match_box(
 
 
 _WATERFALL_SEED_LABEL = re.compile(r"^(?:play\s*)?(?:cons\s+)?seed[\s_-]*\d+$", re.IGNORECASE)
+_PUBLIC_FEEDER_CODE = re.compile(r"^(?:[WL]\(R\d+_\d+\)|(?:WINNER|LOSER):.+)$", re.IGNORECASE)
+
+
+def _is_unresolved_feeder_code(text: str) -> bool:
+    """Internal advancement tokens, not a team name or a pool seed."""
+    if _PUBLIC_FEEDER_CODE.match(text):
+        return True
+    upper = text.upper()
+    return "WF_R" in upper and " " not in text and "_" in text
+
+
+def _feeder_match_label(source_match_id: Optional[int], source_role: Optional[str]) -> Optional[str]:
+    """Name the actual source match. Never invent a number from the destination."""
+    if not source_match_id or not source_role:
+        return None
+    role = str(source_role).strip().upper()
+    if role == "WINNER":
+        word = "Winner"
+    elif role == "LOSER":
+        word = "Loser"
+    else:
+        return None
+    return f"{word} of Match #{source_match_id}"
 
 
 def _waterfall_public_side(value: Optional[str]) -> str:
@@ -360,6 +383,8 @@ def _waterfall_public_side(value: Optional[str]) -> str:
     text = (value or "").strip()
     if not text or _WATERFALL_SEED_LABEL.match(text):
         return "TBD"
+    if _is_unresolved_feeder_code(text):
+        return "Opponent TBD"
     return text
 
 
@@ -386,9 +411,9 @@ def _team_line_for_r2(
         if team:
             return _public_team_name(team)
 
-    if source_match_id and source_role:
-        role_label = "Winner" if source_role == "WINNER" else "Loser"
-        return f"{role_label} of Match #{source_match_id}"
+    feeder = _feeder_match_label(source_match_id, source_role)
+    if feeder:
+        return feeder
 
     return _waterfall_public_side(placeholder)
 
@@ -859,18 +884,10 @@ def _bracket_team_line(
         team = team_map.get(team_id)
         if team:
             return _public_team_name(team)
-    if source_match_id and source_role:
-        role = "Winner" if source_role == "WINNER" else "Loser"
-        return f"{role} of Match #{source_match_id}"
+    feeder = _feeder_match_label(source_match_id, source_role)
+    if feeder:
+        return feeder
     if placeholder:
-        if "_WF_R2_W" in placeholder:
-            seq = int(placeholder.rsplit("W", 1)[-1].lstrip("0") or "1")
-            letter = chr(ord("A") + seq - 1)
-            return f"Winner {letter}"
-        if "_WF_R2_L" in placeholder:
-            seq = int(placeholder.rsplit("L", 1)[-1].lstrip("0") or "1")
-            letter = chr(ord("A") + seq - 1)
-            return f"Loser {letter}"
         return _waterfall_public_side(placeholder)
     return "TBD"
 
@@ -1788,6 +1805,8 @@ def _schedule_team_line(
     placeholder: Optional[str],
     team_map: Dict[int, Team],
     short: bool = True,
+    source_match_id: Optional[int] = None,
+    source_role: Optional[str] = None,
 ) -> str:
     if team_id:
         t = team_map.get(team_id)
@@ -1795,7 +1814,13 @@ def _schedule_team_line(
             if short:
                 return _schedule_short_team_name(t.name) or t.display_name or t.name
             return t.name
-    return placeholder or "TBD"
+    feeder = _feeder_match_label(source_match_id, source_role)
+    if feeder:
+        return feeder
+    text = (placeholder or "").strip()
+    if text and _is_unresolved_feeder_code(text):
+        return "Opponent TBD"
+    return text or "TBD"
 
 
 @router.get(
@@ -1917,10 +1942,22 @@ def public_schedule(
         status = (m.runtime_status or "SCHEDULED").upper()
         score = _format_score(m.score_json) if status == "FINAL" else None
 
-        t1_display = _schedule_team_line(m.team_a_id, m.placeholder_side_a, team_map, short=True)
-        t2_display = _schedule_team_line(m.team_b_id, m.placeholder_side_b, team_map, short=True)
-        t1_full = _schedule_team_line(m.team_a_id, m.placeholder_side_a, team_map, short=False)
-        t2_full = _schedule_team_line(m.team_b_id, m.placeholder_side_b, team_map, short=False)
+        t1_display = _schedule_team_line(
+            m.team_a_id, m.placeholder_side_a, team_map, short=True,
+            source_match_id=m.source_match_a_id, source_role=m.source_a_role,
+        )
+        t2_display = _schedule_team_line(
+            m.team_b_id, m.placeholder_side_b, team_map, short=True,
+            source_match_id=m.source_match_b_id, source_role=m.source_b_role,
+        )
+        t1_full = _schedule_team_line(
+            m.team_a_id, m.placeholder_side_a, team_map, short=False,
+            source_match_id=m.source_match_a_id, source_role=m.source_a_role,
+        )
+        t2_full = _schedule_team_line(
+            m.team_b_id, m.placeholder_side_b, team_map, short=False,
+            source_match_id=m.source_match_b_id, source_role=m.source_b_role,
+        )
 
         items.append(
             ScheduleMatchItem(

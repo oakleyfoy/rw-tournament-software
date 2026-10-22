@@ -125,9 +125,10 @@ def _photo_names(session: Session, team: Team) -> list[str]:
 
 
 def _image_size(data: bytes) -> tuple[int, int]:
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     with Image.open(io.BytesIO(data)) as image:
+        image = ImageOps.exif_transpose(image)
         return image.size
 
 

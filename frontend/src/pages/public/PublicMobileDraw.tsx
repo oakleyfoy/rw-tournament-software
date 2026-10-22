@@ -163,9 +163,9 @@ export default function PublicMobileDraw({
   const sideLabel = (name: string | null | undefined) => displaySideLabel(name, { keepPoolSeeds })
   const drawStatus = divisionMatches.some((match) => match.status === 'IN_PROGRESS')
     ? 'In progress'
-    : divisionMatches.some((match) => match.status !== 'FINAL')
-      ? 'Underway'
-      : divisionMatches.length ? 'Complete' : 'Published'
+    : divisionMatches.length && divisionMatches.every((match) => match.status === 'FINAL')
+      ? 'Complete'
+      : null
 
   if (notPublished) {
     return <div className="public-mobile"><p>The tournament schedule has not been published yet.</p></div>
@@ -180,6 +180,7 @@ export default function PublicMobileDraw({
     setDetailId(null)
     setQuery('')
   }
+  const headingStatus = headerTeam && journey ? journey.statusLabel : drawStatus
 
   return (
     <div className="public-mobile">
@@ -191,7 +192,7 @@ export default function PublicMobileDraw({
         {' · '}
         {divisionLabel || formatLabel}
       </p>
-      <span className="public-mobile-status">{headerTeam && journey ? journey.statusLabel : drawStatus}</span>
+      {headingStatus ? <span className="public-mobile-status">{headingStatus}</span> : null}
 
       <form className="public-search" role="search" onSubmit={(event) => event.preventDefault()}>
         <label htmlFor="public-team-search">Find your team</label>

@@ -51,6 +51,9 @@ FONT_FAMILIES = [
     "Lora",
     "Libre Baskerville",
     "Cinzel",
+    "Arial Black",
+    "Bernard MT Condensed",
+    "Gabriola",
 ]
 FONT_STYLES = {"normal", "medium", "bold", "italic"}
 POSITIONS = {
@@ -169,6 +172,24 @@ _FONT_FILES = {
         "medium": ["Cinzel[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
         "bold": ["Cinzel[wght].ttf", "georgiab.ttf", "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"],
         "italic": ["Cinzel[wght].ttf", "georgiai.ttf", "LiberationSerif-Italic.ttf", "DejaVuSerif-Italic.ttf"],
+    },
+    "Arial Black": {
+        "normal": ["ariblk.ttf", "ARIBLK.TTF", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "medium": ["ariblk.ttf", "ARIBLK.TTF", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "bold": ["ariblk.ttf", "ARIBLK.TTF", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["ariblk.ttf", "ARIBLK.TTF", "arialbi.ttf", "DejaVuSans-Bold.ttf"],
+    },
+    "Bernard MT Condensed": {
+        "normal": ["BERNHC.TTF", "bernard.ttf", "georgia.ttf", "DejaVuSerif.ttf"],
+        "medium": ["BERNHC.TTF", "bernard.ttf", "georgia.ttf", "DejaVuSerif.ttf"],
+        "bold": ["BERNHC.TTF", "bernard.ttf", "georgiab.ttf", "DejaVuSerif-Bold.ttf"],
+        "italic": ["BERNHC.TTF", "bernard.ttf", "georgiai.ttf", "DejaVuSerif-Italic.ttf"],
+    },
+    "Gabriola": {
+        "normal": ["Gabriola.ttf", "GABRIOLA.TTF", "georgia.ttf", "DejaVuSerif.ttf"],
+        "medium": ["Gabriola.ttf", "GABRIOLA.TTF", "georgia.ttf", "DejaVuSerif.ttf"],
+        "bold": ["Gabriola.ttf", "GABRIOLA.TTF", "georgiab.ttf", "DejaVuSerif-Bold.ttf"],
+        "italic": ["Gabriola.ttf", "GABRIOLA.TTF", "georgiai.ttf", "DejaVuSerif-Italic.ttf"],
     },
 }
 _FONT_DIRS = (
@@ -552,7 +573,7 @@ def render_print_jpeg(
         layer = _watermark_layer(settings, canvas_w, logo)
         canvas = _paste_watermark(canvas, layer, settings)
     out = io.BytesIO()
-    canvas.save(out, format="JPEG", quality=92, subsampling=0, dpi=(PRINT_DPI, PRINT_DPI), optimize=True)
+    canvas.save(out, format="JPEG", quality=98, subsampling=0, dpi=(PRINT_DPI, PRINT_DPI), optimize=True)
     data = out.getvalue()
     if not data:
         raise PhotoRejected("Print file could not be created")

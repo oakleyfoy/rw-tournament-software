@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_EDGE = 4096
-JPEG_QUALITY = 95
+JPEG_QUALITY = 98
 THUMB_EDGE = 480
 
 
@@ -55,16 +55,9 @@ def process_image(raw: bytes) -> bytes:
     try:
         image = Image.open(io.BytesIO(raw))
         image.seek(0)
-        orientation = 1
-        exif = image.getexif()
-        if exif:
-            orientation = int(exif.get(274, 1) or 1)
-        if (
-            image.format == "JPEG"
-            and orientation == 1
-            and image.mode in {"RGB", "L"}
-            and max(image.size) <= MAX_EDGE
-        ):
+        # Keep the camera JPEG itself. Rewriting it, including to honor a
+        # rotation tag, is what made the preview look grainy.
+        if image.format == "JPEG" and image.mode in {"RGB", "L"}:
             return raw
         image = ImageOps.exif_transpose(image)
         if image.mode != "RGB":

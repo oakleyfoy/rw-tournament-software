@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
+from PIL import Image, ImageOps
 from sqlmodel import Session, select
 
 from app.models.event import Event
@@ -275,8 +275,9 @@ def test_capture_selection_replacement_and_team_isolation(client: TestClient, se
     content = client.get(f"/api/photography/teams/{team_id}/official/content", headers=admin)
     assert content.status_code == 200
     assert content.headers["content-type"].startswith("image/jpeg")
+    assert content.content == oriented_jpeg
     with Image.open(io.BytesIO(content.content)) as oriented:
-        assert oriented.size == (10, 30)
+        assert ImageOps.exif_transpose(oriented).size == (10, 30)
 
     missing = client.get(f"/api/photography/teams/{other_team_id}/official/content", headers=admin)
     assert missing.status_code == 404
@@ -561,9 +562,14 @@ def test_new_uploads_keep_the_camera_jpeg_and_store_a_separate_thumbnail(client:
 
     camera = _jpeg(width=4000, height=2000, color="blue")
     assert process_image(camera) == camera
-    oversized = _jpeg(width=5000, height=2500, color="blue")
-    processed = process_image(oversized)
+    rotated = _jpeg(width=30, height=10, color="blue", orientation=6)
+    assert process_image(rotated) == rotated
+    oversized = Image.new("RGB", (5000, 2500), "blue")
+    raw_png = io.BytesIO()
+    oversized.save(raw_png, format="PNG")
+    processed = process_image(raw_png.getvalue())
     with Image.open(io.BytesIO(processed)) as image:
+        assert image.format == "JPEG"
         assert max(image.size) == MAX_EDGE
         assert image.size == (4096, 2048)
     untouched = _jpeg(width=64, height=40)

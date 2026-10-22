@@ -21,6 +21,9 @@ export const FONT_FAMILIES = [
   'Lora',
   'Libre Baskerville',
   'Cinzel',
+  'Arial Black',
+  'Bernard MT Condensed',
+  'Gabriola',
 ] as const
 export const FONT_STYLES = ['normal', 'medium', 'bold', 'italic'] as const
 export const CONTENT_MODES = [
@@ -196,11 +199,13 @@ export function watermarkBox(
   }
 }
 
-const SERIF_FAMILIES = new Set(['Georgia', 'Times New Roman', 'Playfair Display', 'Lora', 'Libre Baskerville', 'Cinzel'])
+const SERIF_FAMILIES = new Set(['Georgia', 'Times New Roman', 'Playfair Display', 'Lora', 'Libre Baskerville', 'Cinzel', 'Bernard MT Condensed'])
+const SCRIPT_FAMILIES = new Set(['Gabriola'])
 
 export function fontCss(settings: Pick<WatermarkSettings, 'font_family' | 'font_style'>): string {
   const quoted = settings.font_family.includes(' ') ? `"${settings.font_family}"` : settings.font_family
-  const family = SERIF_FAMILIES.has(settings.font_family) ? `${quoted}, serif` : `${quoted}, sans-serif`
+  const generic = SCRIPT_FAMILIES.has(settings.font_family) ? 'cursive' : SERIF_FAMILIES.has(settings.font_family) ? 'serif' : 'sans-serif'
+  const family = `${quoted}, ${generic}`
   const italic = settings.font_style === 'italic' ? 'italic' : 'normal'
   const weight = settings.font_style === 'bold' ? 700 : settings.font_style === 'medium' ? 500 : 400
   return `font-family:${family};font-style:${italic};font-weight:${weight};`

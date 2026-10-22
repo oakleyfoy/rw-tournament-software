@@ -131,10 +131,25 @@ def test_public_photo_stays_hidden_until_the_draw_is_published(client, session: 
 
 
 def test_public_draws_hide_seeds_outside_round_robin_pools():
-    from app.routes.public import _bracket_team_line, _rr_team_line, _waterfall_public_side
+    from app.routes.public import (
+        _bracket_team_line,
+        _rr_team_line,
+        _schedule_team_line,
+        _team_line_for_r2,
+        _waterfall_public_side,
+    )
 
     assert _waterfall_public_side("Seed 1") == "TBD"
     assert _bracket_team_line(None, "Seed 4", None, None, {}, {}) == "TBD"
     assert _bracket_team_line(None, "Winner of Match #12", None, None, {}, {}) == "Winner of Match #12"
+    assert _bracket_team_line(None, "W(R1_1)", 5612, "WINNER", {}, {}) == "Winner of Match #5612"
+    assert _bracket_team_line(None, "L(R1_10)", 5621, "LOSER", {}, {}) == "Loser of Match #5621"
+    assert _bracket_team_line(None, "WOM_WF_R2_W01", None, None, {}, {}) == "Opponent TBD"
+    assert _team_line_for_r2(None, "W(R1_1)", 5612, "WINNER", {}, {}) == "Winner of Match #5612"
+    assert _team_line_for_r2(None, "L(R1_2)", 5613, "LOSER", {}, {}) == "Loser of Match #5613"
+    assert _schedule_team_line(None, "W(R1_1)", {}, short=False, source_match_id=5612, source_role="WINNER") == "Winner of Match #5612"
+    assert _schedule_team_line(None, "L(R1_10)", {}, short=True, source_match_id=5621, source_role="LOSER") == "Loser of Match #5621"
+    assert _schedule_team_line(None, "W(R1_1)", {}, short=False) == "Opponent TBD"
+    assert _schedule_team_line(None, "SEED_4", {}, short=False) == "SEED_4"
     assert _rr_team_line(None, "SEED_4", {}) == "Seed 4"
     assert _rr_team_line(None, "ConsL1", {}) == "Cons Seed 1"

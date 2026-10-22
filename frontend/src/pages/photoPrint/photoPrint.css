@@ -117,7 +117,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: min(100%, 420px);
+  width: min(100%, 720px);
 }
 
 .photo-print-stage-nav button {

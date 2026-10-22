@@ -422,7 +422,17 @@ def test_every_watermark_font_loads_its_own_face():
         width = box[2] - box[0]
         assert width > 40
         widths.add(width)
-    assert len(FONT_FAMILIES) == 16
+    assert len(FONT_FAMILIES) == 19
+    from pathlib import Path
+
+    windows_fonts = Path("C:/Windows/Fonts")
+    if (windows_fonts / "ariblk.ttf").exists():
+        black = _load_font("Arial Black", "bold", 64)
+        assert black.getname() == ("Arial", "Black")
+    if (windows_fonts / "BERNHC.TTF").exists():
+        assert _load_font("Bernard MT Condensed", "bold", 64).getname()[0] == "Bernard MT Condensed"
+    if (windows_fonts / "Gabriola.ttf").exists():
+        assert _load_font("Gabriola", "bold", 64).getname()[0] == "Gabriola"
     assert len(widths) >= 10
 
 

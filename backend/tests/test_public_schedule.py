@@ -665,3 +665,119 @@ def test_public_bracket_hides_court_info_in_checkin_management(client, session):
 
     body = resp.json()
     assert body["show_court_info"] is False
+
+
+def test_public_schedule_names_each_feeder_source_match(client, session):
+    """Waterfall sides use their own source match, including after one side is filled."""
+    t = Tournament(
+        name="Wild Dunes Mixed Feeders",
+        location="Isle of Palms",
+        timezone="America/New_York",
+        start_date=date(2026, 10, 16),
+        end_date=date(2026, 10, 18),
+    )
+    session.add(t)
+    session.flush()
+    version = ScheduleVersion(tournament_id=t.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    event = Event(tournament_id=t.id, category="mixed", name="Mixed", team_count=24)
+    session.add(event)
+    session.flush()
+    advanced = Team(event_id=event.id, name="Ada Smith / Bea Jones", seed=1, display_name="Ada / Bea")
+    session.add(advanced)
+    session.flush()
+
+    def add_match(code, **kwargs):
+        fields = {
+            "round_number": 1,
+            "round_index": 1,
+            "sequence_in_round": 1,
+            "duration_minutes": 60,
+            "placeholder_side_a": "TBD",
+            "placeholder_side_b": "TBD",
+        }
+        fields.update(kwargs)
+        match = Match(
+            tournament_id=t.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=code,
+            match_type="WF",
+            **fields,
+        )
+        session.add(match)
+        session.flush()
+        return match
+
+    source_a = add_match("MIX_WF_R1_01", team_a_id=advanced.id, runtime_status="FINAL", winner_team_id=advanced.id)
+    source_b = add_match("MIX_WF_R1_02")
+    source_c = add_match("MIX_WF_R1_07")
+    source_d = add_match("MIX_WF_R1_08")
+    source_e = add_match("MIX_WF_R1_09")
+    source_f = add_match("MIX_WF_R1_10")
+    winner_match = add_match(
+        "MIX_WF_R2_W01",
+        round_number=2,
+        round_index=2,
+        placeholder_side_a="W(R1_1)",
+        placeholder_side_b="W(R1_2)",
+        source_match_a_id=source_a.id,
+        source_a_role="WINNER",
+        source_match_b_id=source_b.id,
+        source_b_role="WINNER",
+        team_a_id=advanced.id,
+    )
+    loser_four = add_match(
+        "MIX_WF_R2_L04",
+        round_number=2,
+        round_index=2,
+        placeholder_side_a="L(R1_7)",
+        placeholder_side_b="L(R1_8)",
+        source_match_a_id=source_c.id,
+        source_a_role="LOSER",
+        source_match_b_id=source_d.id,
+        source_b_role="LOSER",
+    )
+    loser_five = add_match(
+        "MIX_WF_R2_L05",
+        round_number=2,
+        round_index=2,
+        placeholder_side_a="L(R1_9)",
+        placeholder_side_b="L(R1_10)",
+        source_match_a_id=source_e.id,
+        source_a_role="LOSER",
+        source_match_b_id=source_f.id,
+        source_b_role="LOSER",
+    )
+    unknown = add_match(
+        "MIX_WF_R2_W99",
+        round_number=2,
+        round_index=2,
+        placeholder_side_a="W(R1_99)",
+        placeholder_side_b="SEED_4",
+    )
+    t.public_schedule_version_id = version.id
+    session.add(t)
+    session.commit()
+
+    resp = client.get(f"/api/public/tournaments/{t.id}/schedule?event_id={event.id}")
+    assert resp.status_code == 200, resp.text
+    by_id = {item["match_id"]: item for item in resp.json()["matches"]}
+
+    filled = by_id[winner_match.id]
+    assert filled["team1_full_name"] == "Ada Smith / Bea Jones"
+    assert filled["team2_full_name"] == f"Winner of Match #{source_b.id}"
+    assert str(winner_match.id) not in filled["team2_full_name"]
+
+    fourth = by_id[loser_four.id]
+    assert fourth["team1_full_name"] == f"Loser of Match #{source_c.id}"
+    assert fourth["team2_full_name"] == f"Loser of Match #{source_d.id}"
+
+    fifth = by_id[loser_five.id]
+    assert fifth["team1_full_name"] == f"Loser of Match #{source_e.id}"
+    assert fifth["team2_full_name"] == f"Loser of Match #{source_f.id}"
+
+    unresolved = by_id[unknown.id]
+    assert unresolved["team1_full_name"] == "Opponent TBD"
+    assert unresolved["team2_full_name"] == "SEED_4"

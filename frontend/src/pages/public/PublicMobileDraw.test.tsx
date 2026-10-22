@@ -96,6 +96,7 @@ describe('PublicMobileDraw', () => {
     )
 
     expect(await screen.findByText('Ada Smith / Bea Jones')).toBeTruthy()
+    expect(screen.queryByText('Underway')).toBeNull()
     expect(screen.queryByText('Seed 1')).toBeNull()
     expect(screen.queryByText('Seed 2')).toBeNull()
     expect(document.querySelector('img')?.getAttribute('src')).toContain('/teams/20/photo?v=photo-1')
