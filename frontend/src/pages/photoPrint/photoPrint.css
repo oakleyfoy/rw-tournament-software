@@ -117,7 +117,8 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: min(100%, 720px);
+  width: fit-content;
+  max-width: 100%;
 }
 
 .photo-print-stage-nav button {
@@ -192,7 +193,7 @@
 
 .photo-print-frame {
   position: relative;
-  max-width: min(100%, 720px);
+  max-width: min(100%, 8in);
   background: #111;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }

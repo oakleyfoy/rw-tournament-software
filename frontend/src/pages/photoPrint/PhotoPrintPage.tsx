@@ -427,7 +427,7 @@ export default function PhotoPrintPage() {
             </label>
           </div>
           {current && settings && (
-            <div ref={frameRef} className="photo-print-frame" style={{ width: `min(100%, ${Math.round(720 * zoom / 100)}px)`, aspectRatio: '2 / 3' }}>
+            <div ref={frameRef} className="photo-print-frame" style={{ width: `min(100%, calc(4in * ${zoom / 100}))`, aspectRatio: '2 / 3' }}>
               {images[current.team_id]
                 ? (
                   <img

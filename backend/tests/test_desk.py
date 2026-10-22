@@ -5004,3 +5004,58 @@ def test_reschedule_apply_with_duration_updates(client, session):
         match = session.get(Match, int(match_id_str))
         assert match is not None
         assert match.duration_minutes == 35
+
+
+def test_desk_team_list_hides_leftover_teams_once_the_draw_exists(client, session):
+    tournament = Tournament(
+        name="Extra Teams",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 10, 16),
+        end_date=date(2026, 10, 18),
+    )
+    session.add(tournament)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's B", team_count=32)
+    open_event = Event(tournament_id=tournament.id, category="mixed", name="Mixed", team_count=24)
+    session.add_all([event, open_event])
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    playing = Team(event_id=event.id, name="Kipsy / Gina", display_name="Kipsy / Gina", seed=None, rating=7)
+    seeded = Team(event_id=event.id, name="Haley / Stacey", display_name="Haley / Stacey", seed=1, rating=7)
+    skipped = Team(event_id=event.id, name="Margie / Susan", display_name="Margie / Susan", seed=3, rating=7)
+    leftover = Team(event_id=event.id, name="Gina / Sarah", display_name="Gina / Sarah", seed=None)
+    not_drawn_yet = Team(event_id=open_event.id, name="Waiting / Pair", display_name="Waiting / Pair", seed=None)
+    session.add_all([playing, seeded, skipped, leftover, not_drawn_yet])
+    session.flush()
+    session.add(
+        Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WOM_WF_R1_12",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=12,
+            duration_minutes=60,
+            team_a_id=playing.id,
+            team_b_id=skipped.id,
+            placeholder_side_a="TBD",
+            placeholder_side_b="TBD",
+        )
+    )
+    session.commit()
+
+    response = client.get(f"/api/desk/tournaments/{tournament.id}/teams")
+    assert response.status_code == 200, response.text
+    names = {item["name"]: item["seed"] for item in response.json()}
+    assert names == {
+        "Haley / Stacey": 1,
+        "Kipsy / Gina": 2,
+        "Margie / Susan": 3,
+        "Waiting / Pair": None,
+    }
+

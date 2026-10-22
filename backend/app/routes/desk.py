@@ -5450,6 +5450,40 @@ def _merge_duplicate_teams(session: Session, tournament_id: int) -> MergeDuplica
     )
 
 
+def _contiguous_event_seeds(teams: list, events_with_matches: set) -> dict:
+    """Fill skipped seed numbers for teams that are actually in a drawn event.
+
+    A withdrawn team clears a number, and the team that took that spot can be
+    left blank. Existing seeds stay as they are. The blank rows receive the
+    skipped numbers, highest rating first.
+    """
+    grouped: dict = {}
+    for team in teams:
+        grouped.setdefault(team.event_id, []).append(team)
+    assigned: dict = {}
+    for event_id, group in grouped.items():
+        if event_id not in events_with_matches:
+            for team in group:
+                assigned[team.id] = team.seed
+            continue
+        used = {team.seed for team in group if team.seed is not None}
+        blanks = sorted(
+            (team for team in group if team.seed is None),
+            key=lambda team: (team.rating is None, -(team.rating or 0), team.id or 0),
+        )
+        cursor = 1
+        for team in blanks:
+            while cursor in used:
+                cursor += 1
+            assigned[team.id] = cursor
+            used.add(cursor)
+            cursor += 1
+        for team in group:
+            if team.seed is not None:
+                assigned[team.id] = team.seed
+    return assigned
+
+
 @router.get(
     "/desk/tournaments/{tournament_id}/teams",
     response_model=List[DeskTeamItem],
@@ -5475,17 +5509,36 @@ def get_desk_teams(
     from app.services.active_roster import team_is_active
 
     teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()
+    from app.models.match import Match
+
+    matches = session.exec(select(Match).where(Match.event_id.in_(event_ids))).all()
+    events_with_matches = {match.event_id for match in matches}
+    on_a_match = {
+        team_id
+        for match in matches
+        for team_id in (match.team_a_id, match.team_b_id)
+        if team_id is not None
+    }
     if not include_inactive:
         teams = [team for team in teams if team_is_active(team)]
+        # Once an event has a draw, a team with no seed and no match is a leftover
+        # partner row. It is not one of the teams in that event.
+        teams = [
+            team for team in teams
+            if team.seed is not None
+            or team.id in on_a_match
+            or team.event_id not in events_with_matches
+        ]
+    display_seed = _contiguous_event_seeds(teams, events_with_matches)
 
     items = []
-    for t in sorted(teams, key=lambda t: (event_map.get(t.event_id, ""), t.seed or 9999, t.id)):
+    for t in sorted(teams, key=lambda t: (event_map.get(t.event_id, ""), display_seed.get(t.id) or 9999, t.id)):
         items.append(
             DeskTeamItem(
                 team_id=t.id,
                 event_id=t.event_id,
                 event_name=event_map.get(t.event_id, ""),
-                seed=t.seed,
+                seed=display_seed.get(t.id, t.seed),
                 name=t.name,
                 display_name=t.display_name,
                 rating=t.rating,
