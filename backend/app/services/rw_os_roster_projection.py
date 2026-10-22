@@ -26,6 +26,7 @@ from app.services.combined_roster_writes import (
     sync_players_from_team_slots_if_enabled,
 )
 from app.services.post_draw_corrections import match_locked_for_participant_edit
+from app.services.registration_sms_consent import apply_registration_sms_consent
 from app.services.rw_os_import import import_payload_from_row, import_snapshot_teams, parse_teams, snapshot_hash
 from app.services.rw_os_wkw import (
     load_snapshot_connections,
@@ -1752,6 +1753,7 @@ def project_approved_roster(
                 result.warnings.append(_warning("wkw_edge_error", f"Error creating avoid edges: {exc}"))
 
     sync_players_from_team_slots_if_enabled(session, import_row.tournament_id, touched_teams)
+    apply_registration_sms_consent(session, import_row.tournament_id, teams)
     if operational_only:
         session.flush()
         _record_draw_reconciliation_failure(session, import_row, plans, teams, result, failed_event_ids)

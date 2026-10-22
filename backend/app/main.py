@@ -19,6 +19,7 @@ from app.db_schema_patch import (
     ensure_opening_slot_release_table,
     ensure_match_checkin_reset_column,
     ensure_team_photo_print_tables,
+    ensure_team_photo_sms_tables,
     ensure_schedule_slot_columns,
     ensure_sms_log_columns,
     ensure_sms_phone_list_columns,
@@ -53,6 +54,7 @@ from app.routes import (
     sms,
     team_import,
     team_photo_print,
+    team_photo_share,
     team_photos,
     teams,
     time_windows,
@@ -203,6 +205,7 @@ app.include_router(wf_conflicts.router, prefix="/api", tags=["wf-conflicts"], de
 
 # Public read-only endpoints (no auth)
 app.include_router(public.router, prefix="/api", tags=["public"])
+app.include_router(team_photo_share.router)
 
 # Desk runtime console (staff-only)
 app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_protected_deps)
@@ -262,7 +265,11 @@ def on_startup():
     ensure_schedule_slot_columns(engine)
     ensure_match_checkin_reset_column(engine)
     ensure_team_photo_print_tables(engine)
+    ensure_team_photo_sms_tables(engine)
     start_first_match_runner_if_enabled()
+    from app.services.team_photo_sms import start_team_photo_sms_worker
+
+    start_team_photo_sms_worker()
 
     # Print all registered routes for debugging (full path stack)
     print("\n" + "=" * 80)

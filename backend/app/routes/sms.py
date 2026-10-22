@@ -2836,6 +2836,18 @@ async def handle_status_callback(
             log_entry.error_message = err_message
     session.add(log_entry)
     session.commit()
+    try:
+        from app.services.team_photo_sms import record_team_photo_provider_status
+
+        record_team_photo_provider_status(
+            session,
+            provider_sid=message_sid,
+            provider_status=message_status,
+            error_code=err_code or None,
+            error_message=err_message or None,
+        )
+    except Exception:
+        logger.exception("Team photo SMS status update failed for sid=%s", message_sid)
 
     return SmsStatusCallbackResponse(ok=True, updated=True)
 

@@ -107,6 +107,10 @@ class SnapshotPlayer:
     email: Optional[str] = None
     towel_color: Optional[str] = None
     identity_status: str = "unresolved"
+    sms_consent: Optional[str] = None
+    sms_consent_source: Optional[str] = None
+    sms_consent_at: Optional[str] = None
+    sms_consent_record_key: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +128,14 @@ class SnapshotPlayer:
             "rating_field": self.rating_field,
             "identityStatus": self.identity_status,
             "identity_status": self.identity_status,
+            "smsConsent": self.sms_consent,
+            "sms_consent": self.sms_consent,
+            "smsConsentSource": self.sms_consent_source,
+            "sms_consent_source": self.sms_consent_source,
+            "smsConsentAt": self.sms_consent_at,
+            "sms_consent_at": self.sms_consent_at,
+            "smsConsentRecordKey": self.sms_consent_record_key,
+            "sms_consent_record_key": self.sms_consent_record_key,
         }
 
     @classmethod
@@ -141,6 +153,14 @@ class SnapshotPlayer:
             towel_color=present_optional_text(payload.get("towelColor") or payload.get("towel_color")),
             identity_status=resolve_identity_status(
                 rw_id, payload.get("identityStatus") or payload.get("identity_status")
+            ),
+            sms_consent=present_optional_text(payload.get("smsConsent") or payload.get("sms_consent")),
+            sms_consent_source=present_optional_text(
+                payload.get("smsConsentSource") or payload.get("sms_consent_source")
+            ),
+            sms_consent_at=present_optional_text(payload.get("smsConsentAt") or payload.get("sms_consent_at")),
+            sms_consent_record_key=present_optional_text(
+                payload.get("smsConsentRecordKey") or payload.get("sms_consent_record_key")
             ),
         )
 

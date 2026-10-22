@@ -82,6 +82,10 @@ export function searchPhotographyTeams(tournamentId: number, query: string): Pro
   return photoFetch(`/photography/tournaments/${tournamentId}/teams/search?q=${encodeURIComponent(query)}`)
 }
 
+export function getTeamPhotoSms(tournamentId: number, teamId: number): Promise<{ players: { name: string; status: string; detail?: string | null }[] }> {
+  return photoFetch(`/photography/tournaments/${tournamentId}/teams/${teamId}/photo-sms`)
+}
+
 export function listOfficialTeamPhotos(tournamentId: number): Promise<OfficialPhotoSummary[]> {
   return photoFetch(`/photography/tournaments/${tournamentId}/official-photos`)
 }

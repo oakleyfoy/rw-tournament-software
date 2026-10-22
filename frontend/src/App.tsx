@@ -15,6 +15,7 @@ import PublicWaterfallPage from './pages/public/PublicWaterfallPage'
 import PublicBracketPage from './pages/public/PublicBracketPage'
 import PublicRoundRobinPage from './pages/public/PublicRoundRobinPage'
 import PublicSchedulePage from './pages/public/PublicSchedulePage'
+import PublicTeamPhotoPage from './pages/public/PublicTeamPhotoPage'
 import TournamentDeskPage from './pages/desk/TournamentDeskPage'
 import TournamentDeskBoardPage from './pages/desk/TournamentDeskBoardPage'
 import TournamentDeskCheckinBoardPage from './pages/desk/TournamentDeskCheckinBoardPage'
@@ -60,6 +61,7 @@ function App() {
         <Route path="/t/:tournamentId/draws/:eventId/bracket/:divisionCode" element={<PublicBracketPage />} />
         <Route path="/t/:tournamentId/draws/:eventId/roundrobin" element={<PublicRoundRobinPage />} />
         <Route path="/t/:tournamentId/schedule" element={<PublicSchedulePage />} />
+        <Route path="/p/photo/:token" element={<PublicTeamPhotoPage />} />
 
         <Route element={<RequireAuthLayout />}>
           <Route path="/" element={<TournamentList />} />

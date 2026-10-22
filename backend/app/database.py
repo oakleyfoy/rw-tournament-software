@@ -84,6 +84,7 @@ def init_db() -> None:
         TeamOfficialPhoto,
         TeamPhotoCapture,
     )
+    from app.models.team_photo_sms import TeamPhotoShare, TeamPhotoSmsNotice  # noqa: F401
     from app.models.team_photo_print import (  # noqa: F401
         TeamPhotoPrint,
         TeamPhotoWatermark,

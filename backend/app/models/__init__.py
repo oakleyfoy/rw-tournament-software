@@ -21,6 +21,7 @@ from app.models.start_over_baseline_assignment import StartOverBaselineAssignmen
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.team_photo import PhotographerTournamentAccess, TeamOfficialPhoto, TeamPhotoCapture
+from app.models.team_photo_sms import TeamPhotoShare, TeamPhotoSmsNotice
 from app.models.team_photo_print import TeamPhotoPrint, TeamPhotoWatermark, TournamentPhotoWatermark
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
@@ -55,6 +56,8 @@ __all__ = [
     "TeamAvoidEdge",
     "TeamOfficialPhoto",
     "TeamPhotoCapture",
+    "TeamPhotoShare",
+    "TeamPhotoSmsNotice",
     "TeamPhotoPrint",
     "TeamPhotoWatermark",
     "TournamentPhotoWatermark",

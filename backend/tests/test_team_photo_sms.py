@@ -1,0 +1,427 @@
+"""Automatic team-photo SMS: queue on first save, consent, dedupe, and the private link."""
+
+from __future__ import annotations
+
+import io
+from datetime import date, datetime, timedelta, timezone
+
+from fastapi.testclient import TestClient
+from PIL import Image
+from sqlmodel import Session, select
+
+from app.models.event import Event
+from app.models.player import Player
+from app.models.team import Team
+from app.models.team_photo_sms import TeamPhotoShare, TeamPhotoSmsNotice
+from app.models.team_player import TeamPlayer
+from app.models.tournament import Tournament
+from app.models.tournament_sms_settings import TournamentSmsSettings
+from app.services.team_photo_sms import (
+    classify_photo_recipients,
+    dispatch_team_photo_notices,
+    photo_sms_body,
+    record_team_photo_provider_status,
+)
+from app.services.team_photo_storage import reset_memory_store
+
+
+def _jpeg() -> bytes:
+    image = Image.new("RGB", (8, 8), "red")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
+def _login(client: TestClient) -> dict[str, str]:
+    created = client.post("/api/auth/bootstrap-admin", json={"username": "admin", "password": "password123"})
+    assert created.status_code == 201, created.text
+    response = client.post("/api/auth/login", json={"username": "admin", "password": "password123"})
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def _roster(
+    session: Session,
+    *,
+    p1_phone: str | None = "+15555550101",
+    p2_phone: str | None = "+15555550102",
+    p1_consent: str = "opted_in",
+    p2_consent: str = "opted_in",
+) -> dict:
+    tournament = Tournament(
+        name="2026 Wild Dunes",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 10, 16),
+        end_date=date(2026, 10, 18),
+    )
+    session.add(tournament)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed", team_count=4)
+    session.add(event)
+    session.flush()
+    team = Team(event_id=event.id, name="Mike Arsenault / Dee Dee Worley", display_name="Mike / Dee Dee", seed=1)
+    session.add(team)
+    session.flush()
+    players = []
+    for slot, name, phone, consent in (
+        (1, "Mike Arsenault", p1_phone, p1_consent),
+        (2, "Dee Dee Worley", p2_phone, p2_consent),
+    ):
+        player = Player(
+            tournament_id=tournament.id,
+            full_name=name,
+            phone_e164=phone,
+            sms_consent_status=consent,
+            sms_consent_source="registration",
+        )
+        session.add(player)
+        session.flush()
+        session.add(TeamPlayer(team_id=team.id, player_id=player.id, lineup_slot=slot))
+        players.append(player)
+    session.commit()
+    return {"tournament_id": tournament.id, "team_id": team.id, "players": [player.id for player in players]}
+
+
+def _save(client: TestClient, headers: dict, tournament_id: int, team_id: int, upload_id: str, payload: bytes):
+    return client.post(
+        f"/api/photography/tournaments/{tournament_id}/teams/{team_id}/official",
+        headers=headers,
+        files={"file": ("team.jpg", payload, "image/jpeg")},
+        data={"client_upload_id": upload_id},
+    )
+
+
+def _statuses(session: Session, team_id: int) -> dict[str, str]:
+    session.expire_all()
+    rows = session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == team_id)).all()
+    return {row.phone_e164 or f"player:{row.player_id}": row.status for row in rows}
+
+
+def _sender(calls: list[dict]):
+    def send(to: str, body: str, status_callback_url=None):
+        calls.append({"to": to, "body": body, "callback": status_callback_url})
+        return {"sid": f"SM{len(calls)}", "status": "sent", "error": None}
+
+    return send
+
+
+def test_same_phone_on_both_registrations_is_one_message():
+    first = Player(full_name="Mike", phone_e164="(555) 555-0101", sms_consent_status="opted_in")
+    second = Player(full_name="Dee", phone_e164="+15555550101", sms_consent_status="opted_in")
+    plans = classify_photo_recipients([first, second])
+    assert [kind for _player, _phone, kind in plans] == ["ready", "duplicate"]
+    assert plans[0][1] == "+15555550101"
+
+
+def test_message_uses_the_tournament_name_and_link():
+    body = photo_sms_body("2026 Wild Dunes", "https://photos.test/p/photo/token")
+    assert "2026 Wild Dunes" in body
+    assert "https://photos.test/p/photo/token" in body
+    assert "{{" not in body
+    assert "Reply STOP to opt out." in body
+
+
+def test_photo_saved_queues_two_messages_and_dispatch_sends_them(
+    client: TestClient, session: Session, monkeypatch
+):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    saved = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-first-1", _jpeg())
+    assert saved.status_code == 200, saved.text
+    assert _statuses(session, roster["team_id"]) == {"+15555550101": "PENDING", "+15555550102": "PENDING"}
+
+    calls: list[dict] = []
+    sent = dispatch_team_photo_notices(session, send=_sender(calls))
+    assert sent == 2
+    assert len(calls) == 2
+    assert {call["to"] for call in calls} == {"+15555550101", "+15555550102"}
+    assert all("https://photos.test/p/photo/" in call["body"] for call in calls)
+    assert _statuses(session, roster["team_id"]) == {"+15555550101": "SENT", "+15555550102": "SENT"}
+    session.expire_all()
+    notices = session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"])).all()
+    assert all(notice.provider_sid and notice.sent_at and notice.status == "SENT" for notice in notices)
+
+
+def test_failed_upload_creates_no_notification(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    failed = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-bad-1", b"not-a-photo")
+    assert failed.status_code == 400
+    session.expire_all()
+    assert session.exec(select(TeamPhotoSmsNotice)).all() == []
+    assert session.exec(select(TeamPhotoShare)).all() == []
+
+
+def test_one_opt_out_still_texts_the_other_player(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p2_consent="opted_out")
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-opt-1", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    dispatch_team_photo_notices(session, send=_sender(calls))
+    assert [call["to"] for call in calls] == ["+15555550101"]
+    assert _statuses(session, roster["team_id"])["+15555550102"] == "SKIPPED_OPT_OUT"
+
+
+def test_both_opted_out_sends_nothing(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p1_consent="opted_out", p2_consent="opted_out")
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-both-out", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_OPT_OUT"}
+
+
+def test_missing_consent_sends_nothing(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p1_consent="unknown", p2_consent="unknown")
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-unknown", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    dispatch_team_photo_notices(session, send=_sender(calls))
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_NO_CONSENT"}
+
+
+def test_invalid_number_is_skipped(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p2_phone="12")
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-bad-phone", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    dispatch_team_photo_notices(session, send=_sender(calls))
+    assert len(calls) == 1
+    session.expire_all()
+    skipped = session.exec(
+        select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.status == "SKIPPED_INVALID_NUMBER")
+    ).all()
+    assert len(skipped) == 1
+
+
+def test_double_save_and_replacement_and_thumbnail_do_not_send_again(
+    client: TestClient, session: Session, monkeypatch
+):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    first = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-once-1", _jpeg())
+    assert first.status_code == 200
+    again = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-once-1", _jpeg())
+    assert again.status_code == 200
+    session.expire_all()
+    assert len(session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"])).all()) == 2
+    thumb = client.get(f"/api/photography/teams/{roster['team_id']}/official/thumb", headers=headers)
+    assert thumb.status_code == 200
+    replaced = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-retake-2", _jpeg())
+    assert replaced.status_code == 200
+    session.expire_all()
+    notices = session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"])).all()
+    assert len(notices) == 2
+    calls: list[dict] = []
+    dispatch_team_photo_notices(session, send=_sender(calls))
+    assert len(calls) == 2
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert len(calls) == 2
+
+
+def test_transient_failure_retries_and_permanent_failure_stops(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p2_phone=None)
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-retry-1", _jpeg()).status_code == 200
+    attempts = {"n": 0}
+
+    def flaky(to, body, status_callback_url=None):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return {"sid": None, "status": "failed", "error": "timeout"}
+        return {"sid": "SMok", "status": "sent", "error": None}
+
+    assert dispatch_team_photo_notices(session, send=flaky) == 0
+    session.expire_all()
+    notice = session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.notice_type == "team_photo_ready")).one()
+    assert notice.status == "PENDING"
+    assert notice.retry_count == 1
+    notice.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    session.add(notice)
+    session.commit()
+    assert dispatch_team_photo_notices(session, send=flaky) == 1
+    session.expire_all()
+    assert session.get(TeamPhotoSmsNotice, notice.id).status == "SENT"
+
+    other = _roster(session, p1_phone="+15555550109", p2_phone=None)
+    assert _save(client, headers, other["tournament_id"], other["team_id"], "upload-permanent", _jpeg()).status_code == 200
+
+    def rejected(to, body, status_callback_url=None):
+        return {"sid": None, "status": "failed", "error": "Twilio 21211 not a valid phone"}
+
+    assert dispatch_team_photo_notices(session, send=rejected) == 0
+    session.expire_all()
+    failed = session.exec(
+        select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == other["team_id"], TeamPhotoSmsNotice.notice_type == "team_photo_ready")
+    ).one()
+    assert failed.status == "FAILED"
+    assert dispatch_team_photo_notices(session, send=rejected) == 0
+
+
+def test_stop_before_dispatch_suppresses_the_text(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-stop-1", _jpeg()).status_code == 200
+    session.expire_all()
+    for player_id in roster["players"]:
+        player = session.get(Player, player_id)
+        player.sms_consent_status = "opted_out"
+        player.sms_consent_source = "twilio_webhook"
+        session.add(player)
+    session.commit()
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_OPT_OUT"}
+
+
+def test_delivery_callback_marks_delivered_not_merely_accepted(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    monkeypatch.setattr("app.routes.sms._validate_twilio_signature", lambda *_args, **_kwargs: None)
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p2_phone=None)
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-callback", _jpeg()).status_code == 200
+    dispatch_team_photo_notices(session, send=_sender([]))
+    session.expire_all()
+    notice = session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.notice_type == "team_photo_ready")).one()
+    assert notice.status == "SENT"
+    assert notice.delivered_at is None
+    response = client.post(
+        f"/api/tournaments/{roster['tournament_id']}/sms/webhook/status-callback",
+        data={"MessageSid": notice.provider_sid, "MessageStatus": "delivered"},
+    )
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    updated = session.get(TeamPhotoSmsNotice, notice.id)
+    assert updated.status == "DELIVERED"
+    assert updated.delivered_at is not None
+    assert record_team_photo_provider_status(session, provider_sid="missing", provider_status="delivered") is False
+
+
+def test_secure_link_returns_the_original_and_rejects_a_bad_token(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    original = _jpeg()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-link-1", original).status_code == 200
+    session.expire_all()
+    share = session.exec(select(TeamPhotoShare).where(TeamPhotoShare.team_id == roster["team_id"])).one()
+    page = client.get(f"/api/public/team-photo/{share.token}")
+    assert page.status_code == 200, page.text
+    body = page.json()
+    assert body["tournament_name"] == "2026 Wild Dunes"
+    assert body["players"] == ["Mike Arsenault", "Dee Dee Worley"]
+    assert "phone" not in page.text
+    image = client.get(f"/api/public/team-photo/{share.token}/image")
+    assert image.status_code == 200
+    assert image.content == original
+    download = client.get(f"/api/public/team-photo/{share.token}/image?download=1")
+    assert "attachment" in download.headers["content-disposition"]
+    assert client.get("/api/public/team-photo/not-a-real-token").status_code == 404
+    share.revoked_at = datetime.now(timezone.utc)
+    session.add(share)
+    session.commit()
+    assert client.get(f"/api/public/team-photo/{share.token}").status_code == 404
+
+
+def test_feature_flag_off_does_not_queue_existing_or_new_photos(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "false")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-off-1", _jpeg()).status_code == 200
+    session.expire_all()
+    assert session.exec(select(TeamPhotoSmsNotice)).all() == []
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+
+
+def test_allowlist_mode_texts_only_approved_numbers(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=roster["tournament_id"],
+            delivery_mode="allowlist",
+            test_mode=True,
+            test_allowlist="+15555550101",
+        )
+    )
+    session.commit()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-allow-1", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    dispatch_team_photo_notices(session, send=_sender(calls))
+    assert [call["to"] for call in calls] == ["+15555550101"]
+    assert _statuses(session, roster["team_id"])["+15555550102"] == "SKIPPED_TEST_MODE"
+
+
+def test_staff_status_hides_phone_numbers(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p2_consent="opted_out")
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-staff-1", _jpeg()).status_code == 200
+    dispatch_team_photo_notices(session, send=_sender([]))
+    status = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['team_id']}/photo-sms",
+        headers=headers,
+    )
+    assert status.status_code == 200, status.text
+    payload = status.json()
+    assert payload["players"][0]["name"] == "Mike Arsenault"
+    assert payload["players"][0]["status"] == "Sent"
+    assert payload["players"][1]["status"] == "Skipped"
+    assert payload["players"][1]["detail"] == "Opted out"
+    assert "555" not in status.text

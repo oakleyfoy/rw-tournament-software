@@ -66,6 +66,16 @@ class OfficialPhotoSummary(BaseModel):
     version: str
 
 
+class TeamPhotoSmsPlayerStatus(BaseModel):
+    name: str
+    status: str
+    detail: Optional[str] = None
+
+
+class TeamPhotoSmsStatusResponse(BaseModel):
+    players: List[TeamPhotoSmsPlayerStatus]
+
+
 def _role(user: UserAccount) -> str:
     return (user.role or "").strip().lower()
 
@@ -208,6 +218,10 @@ async def set_official_photo(
             image_bytes=processed,
             photographer_user_id=user.id,
         )
+        if result.created:
+            from app.services.team_photo_sms import queue_team_photo_sms
+
+            queue_team_photo_sms(session, result.photo)
         session.commit()
     except PhotoRejected as exc:
         session.rollback()
@@ -227,6 +241,26 @@ async def set_official_photo(
         _discard_new_object(display_thumb_key(result.delete_after_commit))
     session.refresh(result.photo)
     return _photo_response(result.photo)
+
+
+@router.get(
+    "/tournaments/{tournament_id}/teams/{team_id}/photo-sms",
+    response_model=TeamPhotoSmsStatusResponse,
+)
+def team_photo_sms_delivery(
+    tournament_id: int,
+    team_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    """Read photo-text status. Opening this does not send or resend anything."""
+    _assert_can_photograph(session, user, tournament_id)
+    _team_in_tournament(session, tournament_id, team_id)
+    from app.services.team_photo_sms import team_photo_sms_status
+
+    return TeamPhotoSmsStatusResponse(
+        players=[TeamPhotoSmsPlayerStatus(**row) for row in team_photo_sms_status(session, tournament_id, team_id)]
+    )
 
 
 @router.delete("/tournaments/{tournament_id}/teams/{team_id}/official")

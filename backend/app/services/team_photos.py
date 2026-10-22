@@ -28,6 +28,8 @@ class OfficialSaveResult:
     photo: TeamOfficialPhoto
     delete_on_failure: Optional[str]
     delete_after_commit: Optional[str]
+    created: bool = False
+    replaced: bool = False
 
 
 def _owned_photo_key(tournament_id: int, team_id: int, storage_key: str) -> bool:
@@ -70,6 +72,9 @@ def delete_official_photo(session: Session, *, tournament_id: int, team_id: int)
     store = get_object_store()
     for key in keys:
         store.delete(key)
+    from app.services.team_photo_sms import revoke_team_photo_share
+
+    revoke_team_photo_share(session, team_id)
     session.delete(photo)
     for capture in captures:
         session.delete(capture)
@@ -155,7 +160,13 @@ def save_official_photo(
     if existing and existing.tournament_id != tournament_id:
         raise PhotoRejected("Team not found", status_code=404)
     if existing and existing.last_client_upload_id == client_upload_id:
-        return OfficialSaveResult(photo=existing, delete_on_failure=None, delete_after_commit=None)
+        return OfficialSaveResult(
+            photo=existing,
+            delete_on_failure=None,
+            delete_after_commit=None,
+            created=False,
+            replaced=False,
+        )
 
     new_key = official_object_key(tournament_id, team_id, client_upload_id)
     previous_key = existing.storage_key if existing else None
@@ -175,6 +186,7 @@ def save_official_photo(
             raise
 
     now = datetime.utcnow()
+    creating = existing is None
     if existing is None:
         existing = TeamOfficialPhoto(
             team_id=team_id,
@@ -207,4 +219,6 @@ def save_official_photo(
         photo=existing,
         delete_on_failure=None if previous_key == new_key else new_key,
         delete_after_commit=previous_key if previous_key and previous_key != new_key else None,
+        created=creating,
+        replaced=not creating,
     )

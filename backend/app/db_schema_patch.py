@@ -1105,6 +1105,20 @@ def ensure_match_checkin_reset_column(engine: Engine) -> None:
         logging.getLogger(__name__).warning("Failed to ensure match check-in reset column: %s", exc)
 
 
+def ensure_team_photo_sms_tables(engine: Engine) -> None:
+    """Create photo-link and photo-SMS tables without rewriting official photographs."""
+    try:
+        from app.models.team_photo_sms import TeamPhotoShare, TeamPhotoSmsNotice
+
+        with engine.begin() as conn:
+            TeamPhotoShare.__table__.create(conn, checkfirst=True)
+            TeamPhotoSmsNotice.__table__.create(conn, checkfirst=True)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure team photo SMS tables: %s", exc)
+
+
 def ensure_team_photo_print_tables(engine: Engine) -> None:
     """Create watermark and print tables without rewriting official photographs."""
     try:
