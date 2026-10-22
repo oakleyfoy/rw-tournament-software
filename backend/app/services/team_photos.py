@@ -76,9 +76,9 @@ def delete_official_photo(session: Session, *, tournament_id: int, team_id: int)
     store = get_object_store()
     for key in keys:
         store.delete(key)
-    from app.services.team_photo_sms import revoke_team_photo_share
+    from app.services.team_photo_sms import close_team_photo_sms_session
 
-    revoke_team_photo_share(session, team_id)
+    close_team_photo_sms_session(session, team_id)
     session.delete(photo)
     for capture in captures:
         session.delete(capture)

@@ -19,6 +19,7 @@ from app.db_schema_patch import (
     ensure_opening_slot_release_table,
     ensure_match_checkin_reset_column,
     ensure_team_photo_print_tables,
+    ensure_team_photo_sms_session_columns,
     ensure_team_photo_sms_tables,
     ensure_tournament_group_photo_tables,
     ensure_schedule_slot_columns,
@@ -267,6 +268,7 @@ def on_startup():
     ensure_match_checkin_reset_column(engine)
     ensure_team_photo_print_tables(engine)
     ensure_team_photo_sms_tables(engine)
+    ensure_team_photo_sms_session_columns(engine)
     ensure_tournament_group_photo_tables(engine)
     start_first_match_runner_if_enabled()
     from app.services.team_photo_sms import start_team_photo_sms_worker
@@ -300,16 +302,20 @@ def health_check():
     from sqlalchemy import inspect
 
     from app.database import engine
+    from app.db_schema_patch import team_photo_sms_session_columns_ready
     from app.services.team_photo_sms import auto_sms_enabled, team_photo_sms_worker_started
 
     names = set(inspect(engine).get_table_names())
+    tables_ready = "team_photo_share" in names and "team_photo_sms_notice" in names
+    session_columns_ready = team_photo_sms_session_columns_ready(engine)
     return {
         "app_name": "RW Tournament Software API",
         "build_hash": BUILD_HASH,
-        "status": "healthy",
+        "status": "healthy" if tables_ready and session_columns_ready else "unhealthy",
         "team_photo_auto_sms_enabled": auto_sms_enabled(),
         "team_photo_sms_worker_started": team_photo_sms_worker_started(),
-        "team_photo_sms_tables_ready": "team_photo_share" in names and "team_photo_sms_notice" in names,
+        "team_photo_sms_tables_ready": tables_ready,
+        "team_photo_sms_session_columns_ready": session_columns_ready,
     }
 
 

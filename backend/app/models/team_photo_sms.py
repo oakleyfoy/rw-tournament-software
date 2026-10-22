@@ -26,6 +26,7 @@ STATUS_SKIPPED_DUPLICATE = "SKIPPED_DUPLICATE"
 STATUS_SKIPPED_TEST_MODE = "SKIPPED_TEST_MODE"
 STATUS_SKIPPED_DISABLED = "SKIPPED_DISABLED"
 STATUS_SKIPPED_TEXTS_OFF = "SKIPPED_TEXTS_OFF"
+STATUS_CANCELED = "CANCELED"
 
 
 def _utcnow() -> datetime:
@@ -33,11 +34,12 @@ def _utcnow() -> datetime:
 
 
 class TeamPhotoShare(SQLModel, table=True):
-    """One private link for a team's official photograph.
+    """One private link for a team's current official-photo session.
 
     Replacing the photograph keeps this token. The page shows the current
-    official JPEG. Deleting the photograph revokes the token. The link expires
-    one year after it is issued so players have time to save the picture.
+    official JPEG. Deleting the photograph revokes the token. The next
+    successful save after that delete opens a new generation and a new token.
+    The link expires one year after it is issued.
     """
 
     __tablename__ = "team_photo_share"
@@ -49,6 +51,8 @@ class TeamPhotoShare(SQLModel, table=True):
     # Not a foreign key: the official photo row can be deleted while this link
     # stays revoked for audit. The page reads the current photo, not this id.
     photo_id: int = Field(index=True)
+    # Advances only after an explicit delete, when the next photo is saved.
+    generation: int = Field(default=1)
     token: str = Field(max_length=128, unique=True, index=True)
     expires_at: datetime
     revoked_at: Optional[datetime] = Field(default=None)
@@ -56,11 +60,12 @@ class TeamPhotoShare(SQLModel, table=True):
 
 
 class TeamPhotoSmsNotice(SQLModel, table=True):
-    """One recipient of one team's first official-photo text.
+    """One recipient of one official-photo session.
 
-    Uniqueness is the team, the notification type, and the normalized phone
-    (or the player, when there is no phone). A later retake does not insert
-    another sendable row.
+    Uniqueness is the photo session, the team, the notification type, and the
+    normalized phone (or the player, when there is no phone). A retake keeps
+    the session. A save after an explicit delete uses the next session and can
+    insert a new row. Older rows stay for delivery history.
     """
 
     __tablename__ = "team_photo_sms_notice"
@@ -70,6 +75,7 @@ class TeamPhotoSmsNotice(SQLModel, table=True):
     tournament_id: int = Field(foreign_key="tournament.id", index=True)
     team_id: int = Field(foreign_key="team.id", index=True)
     photo_id: int = Field(index=True)
+    photo_session_id: int = Field(default=1, index=True)
     player_id: Optional[int] = Field(default=None, foreign_key="player.id", index=True)
     phone_e164: Optional[str] = Field(default=None, index=True)
     notice_type: str = Field(default=NOTICE_READY, max_length=64, index=True)

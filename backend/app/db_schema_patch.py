@@ -1119,6 +1119,65 @@ def ensure_tournament_group_photo_tables(engine: Engine) -> None:
         logging.getLogger(__name__).warning("Failed to ensure tournament group photo tables: %s", exc)
 
 
+_PHOTO_SMS_SESSION_COLUMNS: List[Tuple[str, str]] = [
+    ("team_photo_share", "generation"),
+    ("team_photo_sms_notice", "photo_session_id"),
+]
+
+
+def _photo_sms_table_columns(engine: Engine, table: str) -> Dict[str, str]:
+    if _is_sqlite(engine):
+        with engine.connect() as conn:
+            present = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                {"table_name": table},
+            ).fetchone()
+        if not present:
+            return {}
+        return _get_existing_columns_sqlite(engine, table)
+    return _get_existing_columns_postgres(engine, table)
+
+
+def team_photo_sms_session_columns_ready(engine: Engine) -> bool:
+    """True only when both photo-session columns are present."""
+    for table, column in _PHOTO_SMS_SESSION_COLUMNS:
+        if column not in _photo_sms_table_columns(engine, table):
+            return False
+    return True
+
+
+def ensure_team_photo_sms_session_columns(engine: Engine) -> None:
+    """Add the photo-session id used to text again after an explicit delete.
+
+    Existing notice rows keep their status, provider id, and timestamps.
+    The new columns default to session 1, which is the session already sent.
+    Startup fails when either column is still missing, so the process does
+    not serve traffic with an incomplete photo-SMS schema.
+    """
+    for table, column in _PHOTO_SMS_SESSION_COLUMNS:
+        existing = _photo_sms_table_columns(engine, table)
+        if not existing:
+            raise RuntimeError(f"Photo SMS schema is incomplete: table {table} is missing")
+        if column in existing:
+            continue
+        with engine.begin() as conn:
+            if _is_sqlite(engine):
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 1;"))
+            else:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} INTEGER NOT NULL DEFAULT 1;")
+                )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_team_photo_sms_notice_photo_session_id "
+                "ON team_photo_sms_notice (photo_session_id);"
+            )
+        )
+    if not team_photo_sms_session_columns_ready(engine):
+        raise RuntimeError("Photo SMS schema is incomplete: session columns are missing")
+
+
 def ensure_team_photo_sms_tables(engine: Engine) -> None:
     """Create photo-link and photo-SMS tables without rewriting official photographs."""
     try:

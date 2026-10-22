@@ -1,4 +1,4 @@
-"""Queue and send one photo text per eligible player after the first official save.
+"""Queue and send one photo text per eligible player for each photo session.
 
 The photograph, the team roster, and tournament SMS consent all live in this
 app. War Campaign's outbox sends registration and invoice messages and has no
@@ -8,11 +8,14 @@ not change match, check-in, or registration texts.
 A notice is written in the same transaction as the official photo. The send
 happens later, on the photo worker, so the camera flow does not wait on Twilio.
 Consent is read again at send time. Missing or unknown consent is not treated
-as permission. A retake does not create another automatic text.
+as permission. A retake keeps the same photo session and does not create
+another automatic text. Deleting the official photo revokes its link and
+cancels notices that have not been accepted by the provider. The next
+successful save opens a new session and can text again.
 
-Link policy: the token issued for the first official photo keeps working after
-a retake and shows the current official JPEG. Deleting the photo revokes it.
-The token expires one year after it is created.
+Link policy: the token issued for a session keeps working after a retake and
+shows the current official JPEG. Deleting the photo revokes it. A later
+session gets a new token. The token expires one year after it is issued.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from app.models.team_photo_sms import (
     STATUS_SKIPPED_NO_CONSENT,
     STATUS_SKIPPED_OPT_OUT,
     STATUS_SKIPPED_TEST_MODE,
+    STATUS_CANCELED,
     STATUS_SKIPPED_DISABLED,
     STATUS_SKIPPED_TEXTS_OFF,
     TeamPhotoShare,
@@ -162,86 +166,101 @@ def _roster_players(session: Session, team_id: int, tournament_id: int) -> list[
     return players
 
 
-def queue_team_photo_sms(session: Session, photo: TeamOfficialPhoto) -> None:
-    """Record share + recipient rows for a team's first official photo.
+def _idempotency_key(photo_session_id: int, team_id: int, notice_type: str, recipient: str) -> str:
+    return f"photo-sms:{int(photo_session_id)}:{int(team_id)}:{notice_type}:{recipient}"
 
-    Caller must invoke this only for a newly created official photo, inside the
-    photo transaction, and before commit. A disabled flag records nothing, so
+
+def _recipient_token(phone: Optional[str], player_id: Optional[int]) -> str:
+    if phone:
+        return phone
+    return f"player:{int(player_id or 0)}"
+
+
+def queue_team_photo_sms(session: Session, photo: TeamOfficialPhoto) -> None:
+    """Record share + recipient rows for a new official-photo session.
+
+    Caller must invoke this only when the official photo row was just created,
+    inside the photo transaction, and before commit. A replacement keeps the
+    current row and must not call this. A disabled flag records nothing, so
     turning the flag on later does not text photographs that already exist.
+
+    An active share means this session was already queued. A revoked share
+    means the previous official photo was deleted, so this save opens the
+    next session and uses new idempotency keys.
     """
     if not auto_sms_enabled() or photo.id is None or photo.team_id is None:
         return
+
+    share = session.exec(select(TeamPhotoShare).where(TeamPhotoShare.team_id == photo.team_id)).first()
+    now = _utcnow()
+    if share is None:
+        generation = 1
+        share = TeamPhotoShare(
+            tournament_id=photo.tournament_id,
+            team_id=photo.team_id,
+            photo_id=photo.id,
+            generation=generation,
+            token=secrets.token_urlsafe(32),
+            expires_at=now + _SHARE_TTL,
+            created_at=now,
+        )
+        session.add(share)
+    elif share.revoked_at is not None:
+        generation = int(share.generation or 1) + 1
+        share.generation = generation
+        share.tournament_id = photo.tournament_id
+        share.photo_id = photo.id
+        share.token = secrets.token_urlsafe(32)
+        share.revoked_at = None
+        share.expires_at = now + _SHARE_TTL
+        share.created_at = now
+        session.add(share)
+    else:
+        return
+
     already = session.exec(
         select(TeamPhotoSmsNotice).where(
             TeamPhotoSmsNotice.team_id == photo.team_id,
+            TeamPhotoSmsNotice.photo_session_id == generation,
             TeamPhotoSmsNotice.notice_type == NOTICE_READY,
         )
     ).first()
     if already:
         return
 
-    share = session.exec(select(TeamPhotoShare).where(TeamPhotoShare.team_id == photo.team_id)).first()
-    if share is None:
-        share = TeamPhotoShare(
-            tournament_id=photo.tournament_id,
-            team_id=photo.team_id,
-            photo_id=photo.id,
-            token=secrets.token_urlsafe(32),
-            expires_at=_utcnow() + _SHARE_TTL,
-        )
-        session.add(share)
-
-    now = _utcnow()
     roster = _roster_players(session, photo.team_id, photo.tournament_id)
     for player, phone, kind in classify_photo_recipients(roster):
         if kind == "duplicate":
-            session.add(
-                TeamPhotoSmsNotice(
-                    tournament_id=photo.tournament_id,
-                    team_id=photo.team_id,
-                    photo_id=photo.id,
-                    player_id=player.id,
-                    phone_e164=phone,
-                    notice_type=NOTICE_DUPLICATE,
-                    idempotency_key=f"photo-sms:{photo.team_id}:duplicate:{player.id}",
-                    status=STATUS_SKIPPED_DUPLICATE,
-                    consent_status=(player.sms_consent_status or "unknown").lower(),
-                    consent_source=player.sms_consent_source,
-                    created_at=now,
-                    next_attempt_at=now,
-                )
-            )
-            continue
-        if kind == "no_phone":
-            session.add(
-                TeamPhotoSmsNotice(
-                    tournament_id=photo.tournament_id,
-                    team_id=photo.team_id,
-                    photo_id=photo.id,
-                    player_id=player.id,
-                    phone_e164=None,
-                    notice_type=NOTICE_NO_PHONE,
-                    idempotency_key=f"photo-sms:{photo.team_id}:no-phone:{player.id}",
-                    status=STATUS_SKIPPED_INVALID_NUMBER,
-                    failure_code="invalid_number",
-                    failure_reason="No valid mobile number",
-                    consent_status=(player.sms_consent_status or "unknown").lower(),
-                    consent_source=player.sms_consent_source,
-                    created_at=now,
-                    next_attempt_at=now,
-                )
-            )
+            notice_type = NOTICE_DUPLICATE
+            status = STATUS_SKIPPED_DUPLICATE
+            failure_code = None
+            failure_reason = None
+        elif kind == "no_phone":
+            notice_type = NOTICE_NO_PHONE
+            status = STATUS_SKIPPED_INVALID_NUMBER
+            failure_code = "invalid_number"
+            failure_reason = "No valid mobile number"
+        else:
+            notice_type = NOTICE_READY
+            status = STATUS_PENDING
+            failure_code = None
+            failure_reason = None
+        key = _idempotency_key(generation, photo.team_id, notice_type, _recipient_token(phone, player.id))
+        if session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.idempotency_key == key)).first():
             continue
         session.add(
             TeamPhotoSmsNotice(
                 tournament_id=photo.tournament_id,
                 team_id=photo.team_id,
                 photo_id=photo.id,
+                photo_session_id=generation,
                 player_id=player.id,
                 phone_e164=phone,
-                notice_type=NOTICE_READY,
-                idempotency_key=f"photo-sms:{photo.team_id}:team_photo_ready:{phone}",
-                status=STATUS_PENDING,
+                notice_type=notice_type,
+                idempotency_key=key,
+                status=status,
+                failure_code=failure_code,
+                failure_reason=failure_reason,
                 consent_status=(player.sms_consent_status or "unknown").lower(),
                 consent_source=player.sms_consent_source,
                 created_at=now,
@@ -257,6 +276,29 @@ def revoke_team_photo_share(session: Session, team_id: int) -> None:
         return
     share.revoked_at = _utcnow()
     session.add(share)
+    session.flush()
+
+
+def close_team_photo_sms_session(session: Session, team_id: int) -> None:
+    """Revoke the current link and stop notices the provider has not accepted.
+
+    Sent, delivered, failed, and skipped rows stay as they are. Player consent
+    is not read or written here.
+    """
+    revoke_team_photo_share(session, team_id)
+    pending = session.exec(
+        select(TeamPhotoSmsNotice).where(
+            TeamPhotoSmsNotice.team_id == team_id,
+            TeamPhotoSmsNotice.status.in_([STATUS_PENDING, STATUS_QUEUED]),  # type: ignore[attr-defined]
+        )
+    ).all()
+    if not pending:
+        return
+    for notice in pending:
+        notice.status = STATUS_CANCELED
+        notice.failure_code = "photo_deleted"
+        notice.failure_reason = "Official photograph was deleted before this text was sent"
+        session.add(notice)
     session.flush()
 
 
@@ -388,12 +430,30 @@ def _latest_photo_log(session: Session, notice: TeamPhotoSmsNotice, intended_pho
     ).first()
 
 
+def _session_closed(share: Optional[TeamPhotoShare], notice: TeamPhotoSmsNotice) -> bool:
+    if share is None or share.revoked_at is not None:
+        return True
+    return int(share.generation or 1) != int(notice.photo_session_id or 1)
+
+
+def _cancel_closed_notice(session: Session, notice: TeamPhotoSmsNotice) -> None:
+    notice.status = STATUS_CANCELED
+    notice.failure_code = "photo_deleted"
+    notice.failure_reason = "Official photograph was deleted before this text was sent"
+    session.add(notice)
+    session.commit()
+
+
 def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: Optional[SendSms], moment: datetime) -> bool:
     """Hand one notice to the tournament SMS sender.
 
     Consent is decided here. All Texting, Redirect All, Allowlist Only, and
     Live are decided inside that sender at call time, not when the photo was saved.
+    A notice whose photo session was deleted is canceled instead of sent.
     """
+    session.refresh(notice)
+    if notice.status != STATUS_QUEUED:
+        return False
     if not auto_sms_enabled():
         _finish_skip(
             session,
@@ -414,8 +474,18 @@ def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: Optional
 
     origin = _public_origin()
     share = session.exec(select(TeamPhotoShare).where(TeamPhotoShare.team_id == notice.team_id)).first()
-    if not origin or share is None or share.revoked_at is not None:
+    if share is None or _session_closed(share, notice):
+        _cancel_closed_notice(session, notice)
+        return False
+    if not origin:
         _defer(session, notice, moment, "link_unavailable", "Photo link is not configured", timedelta(minutes=5))
+        return False
+    session.refresh(notice)
+    session.refresh(share)
+    if notice.status != STATUS_QUEUED:
+        return False
+    if _session_closed(share, notice):
+        _cancel_closed_notice(session, notice)
         return False
 
     tournament = session.get(Tournament, notice.tournament_id)
@@ -561,6 +631,7 @@ def _safe_reason(status: str, reason: Optional[str]) -> Optional[str]:
         STATUS_SKIPPED_TEST_MODE: "Not an approved test number",
         STATUS_SKIPPED_DISABLED: "Team photo texts are turned off",
         STATUS_SKIPPED_TEXTS_OFF: "Tournament texts are turned off",
+        STATUS_CANCELED: "Official photograph was deleted",
     }
     if status in labels:
         return labels[status]
@@ -578,6 +649,9 @@ def team_photo_sms_status(session: Session, tournament_id: int, team_id: int) ->
         )
         .order_by(TeamPhotoSmsNotice.id)
     ).all()
+    if notices:
+        latest = max(int(notice.photo_session_id or 1) for notice in notices)
+        notices = [notice for notice in notices if int(notice.photo_session_id or 1) == latest]
     rows = []
     for notice in notices:
         player = session.get(Player, notice.player_id) if notice.player_id else None
@@ -590,6 +664,7 @@ def team_photo_sms_status(session: Session, tournament_id: int, team_id: int) ->
             STATUS_SENT: "Sent",
             STATUS_DELIVERED: "Delivered",
             STATUS_FAILED: "Failed",
+            STATUS_CANCELED: "Canceled",
         }.get(notice.status, "Skipped")
         rows.append(
             {
