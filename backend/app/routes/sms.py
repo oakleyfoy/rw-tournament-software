@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Callable, List, Optional
 from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -1515,6 +1515,7 @@ def _send_to_phone_targets(
     dedupe_key: Optional[str] = None,
     skipped_no_phone: int = 0,
     status_callback_base_url: Optional[str] = None,
+    send_sms: Optional[Callable[..., dict]] = None,
 ) -> SmsSendResponse:
     """Send to explicit phone targets with consent + dedupe + delivery-mode protections."""
     twilio = get_twilio_service()
@@ -1704,7 +1705,8 @@ def _send_to_phone_targets(
         delivery_phone = redirect_phone if is_redirect else phone
         outbound_body = _redirect_body(phone, normalized_message) if is_redirect else normalized_message
 
-        send_result = twilio.send_sms(
+        deliver = send_sms or twilio.send_sms
+        send_result = deliver(
             delivery_phone,
             outbound_body,
             status_callback_url=status_callback_url,

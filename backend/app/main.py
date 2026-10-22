@@ -294,8 +294,21 @@ def on_startup():
 
 @app.get("/api/health")
 def health_check():
-    """Diagnostic endpoint to verify which code is running"""
-    return {"app_name": "RW Tournament Software API", "build_hash": BUILD_HASH, "status": "healthy"}
+    """Diagnostic endpoint to verify which code is running."""
+    from sqlalchemy import inspect
+
+    from app.database import engine
+    from app.services.team_photo_sms import auto_sms_enabled, team_photo_sms_worker_started
+
+    names = set(inspect(engine).get_table_names())
+    return {
+        "app_name": "RW Tournament Software API",
+        "build_hash": BUILD_HASH,
+        "status": "healthy",
+        "team_photo_auto_sms_enabled": auto_sms_enabled(),
+        "team_photo_sms_worker_started": team_photo_sms_worker_started(),
+        "team_photo_sms_tables_ready": "team_photo_share" in names and "team_photo_sms_notice" in names,
+    }
 
 
 # Serve frontend static build in production.

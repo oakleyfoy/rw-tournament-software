@@ -49,25 +49,26 @@ from app.models.team_photo_sms import (
     STATUS_SKIPPED_NO_CONSENT,
     STATUS_SKIPPED_OPT_OUT,
     STATUS_SKIPPED_TEST_MODE,
+    STATUS_SKIPPED_DISABLED,
+    STATUS_SKIPPED_TEXTS_OFF,
     TeamPhotoShare,
     TeamPhotoSmsNotice,
 )
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
-from app.models.tournament_sms_settings import (
-    SMS_DELIVERY_MODE_ALLOWLIST,
-    SMS_DELIVERY_MODE_LIVE,
-    SMS_DELIVERY_MODE_REDIRECT,
-    TournamentSmsSettings,
-)
 from app.services.team_photo_search import player_names_for_team
-from app.services.twilio_service import format_e164, get_twilio_service
+from app.services.twilio_service import format_e164
 
 logger = logging.getLogger(__name__)
 
 _ENABLED_VALUES = {"1", "true", "yes", "on"}
-_PUBLIC_ORIGIN_KEYS = ("PUBLIC_APP_URL", "FRONTEND_URL", "PUBLIC_BASE_URL", "APP_BASE_URL")
-_CALLBACK_ORIGIN_KEYS = ("SMS_STATUS_CALLBACK_BASE_URL", "PUBLIC_BASE_URL", "APP_BASE_URL", "EXTERNAL_BASE_URL")
+_PUBLIC_ORIGIN_KEYS = (
+    "PUBLIC_APP_URL",
+    "FRONTEND_URL",
+    "PUBLIC_BASE_URL",
+    "APP_BASE_URL",
+    "RENDER_EXTERNAL_URL",
+)
 _PERMANENT_ERROR_MARKERS = ("21211", "21610", "21614", "21408", "30005", "30006", "unsubscribed", "not a valid phone")
 _BACKOFF_SECONDS = (30, 120, 480, 1800, 7200)
 _MAX_ATTEMPTS = len(_BACKOFF_SECONDS)
@@ -112,46 +113,6 @@ def _public_origin() -> Optional[str]:
         if raw:
             return raw.rstrip("/")
     return None
-
-
-def _callback_url(tournament_id: int) -> Optional[str]:
-    base = ""
-    for key in _CALLBACK_ORIGIN_KEYS:
-        raw = os.getenv(key, "").strip()
-        if raw:
-            base = raw.rstrip("/")
-            break
-    if not base:
-        return None
-    if base.endswith("/api"):
-        return f"{base}/tournaments/{tournament_id}/sms/webhook/status-callback"
-    return f"{base}/api/tournaments/{tournament_id}/sms/webhook/status-callback"
-
-
-def _delivery_mode(settings: Optional[TournamentSmsSettings]) -> str:
-    if settings is None:
-        return SMS_DELIVERY_MODE_LIVE
-    raw = str(getattr(settings, "delivery_mode", "") or "").strip().lower()
-    if raw == SMS_DELIVERY_MODE_REDIRECT:
-        return SMS_DELIVERY_MODE_REDIRECT
-    if raw == SMS_DELIVERY_MODE_ALLOWLIST or bool(getattr(settings, "test_mode", False)):
-        return SMS_DELIVERY_MODE_ALLOWLIST
-    return SMS_DELIVERY_MODE_LIVE
-
-
-def _allowlist(raw: Optional[str]) -> set[str]:
-    if not raw:
-        return set()
-    numbers: set[str] = set()
-    for token in re.split(r"[,;\n]+", raw):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            numbers.add(format_e164(token))
-        except ValueError:
-            numbers.add(token)
-    return numbers
 
 
 def _roster_links(session: Session, team_id: int) -> list[TeamPlayer]:
@@ -352,11 +313,18 @@ def dispatch_team_photo_notices(
 ) -> int:
     """Send due photo notices. Returns how many provider accepts were recorded.
 
-    A disabled flag leaves rows pending. Provider acceptance is SENT. Handset
-    delivery stays on the status callback. A dry-run provider is left pending
-    so an unconfigured sender is not reported as sent.
+    The feature flag and All Texting are both required on the tick that sends.
+    A notice blocked by either gate is finished as skipped. Turning the gate
+    on later does not release it and does not mark it delivered. Photographs
+    saved while the feature flag is off are never queued.
     """
     if not auto_sms_enabled():
+        _hold_pending(
+            session,
+            STATUS_SKIPPED_DISABLED,
+            "feature_disabled",
+            "Team photo texts are turned off",
+        )
         return 0
     moment = now or _utcnow()
     due = session.exec(
@@ -369,29 +337,73 @@ def dispatch_team_photo_notices(
         .order_by(TeamPhotoSmsNotice.id)
         .limit(limit)
     ).all()
-    sender = send or get_twilio_service().send_sms
     accepted = 0
     for notice in due:
         if notice.id is None or not _claim(session, notice.id, moment):
             continue
         session.refresh(notice)
-        outcome = _dispatch_one(session, notice, sender, moment)
+        outcome = _dispatch_one(session, notice, send, moment)
         if outcome:
             accepted += 1
     return accepted
 
 
-def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: SendSms, moment: datetime) -> bool:
-    settings = session.exec(
-        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == notice.tournament_id)
-    ).first()
-    if settings is not None and not bool(getattr(settings, "texts_enabled", True)):
-        notice.status = STATUS_PENDING
-        notice.next_attempt_at = moment + timedelta(seconds=60)
-        notice.failure_code = "texts_disabled"
-        notice.failure_reason = "Tournament texts are turned off"
+def _hold_pending(session: Session, status: str, code: str, reason: str) -> None:
+    """Stop pending photo texts. A later change to the gate does not send them."""
+    pending = session.exec(
+        select(TeamPhotoSmsNotice).where(
+            TeamPhotoSmsNotice.status == STATUS_PENDING,
+            TeamPhotoSmsNotice.notice_type == NOTICE_READY,
+        )
+    ).all()
+    if not pending:
+        return
+    for notice in pending:
+        notice.status = status
+        notice.failure_code = code
+        notice.failure_reason = reason
         session.add(notice)
-        session.commit()
+    session.commit()
+
+
+def _defer(session: Session, notice: TeamPhotoSmsNotice, moment: datetime, code: str, reason: str, delay: timedelta) -> None:
+    notice.status = STATUS_PENDING
+    notice.next_attempt_at = moment + delay
+    notice.failure_code = code
+    notice.failure_reason = reason
+    session.add(notice)
+    session.commit()
+
+
+def _latest_photo_log(session: Session, notice: TeamPhotoSmsNotice, intended_phone: str) -> Optional[SmsLog]:
+    return session.exec(
+        select(SmsLog)
+        .where(
+            SmsLog.tournament_id == notice.tournament_id,
+            SmsLog.team_id == notice.team_id,
+            SmsLog.message_type == "team_photo",
+            SmsLog.intended_phone_number == intended_phone,
+        )
+        .order_by(SmsLog.id.desc())
+    ).first()
+
+
+def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: Optional[SendSms], moment: datetime) -> bool:
+    """Hand one notice to the tournament SMS sender.
+
+    Consent is decided here. All Texting, Redirect All, Allowlist Only, and
+    Live are decided inside that sender at call time, not when the photo was saved.
+    """
+    if not auto_sms_enabled():
+        _finish_skip(
+            session,
+            notice,
+            STATUS_SKIPPED_DISABLED,
+            "feature_disabled",
+            "Team photo texts are turned off",
+            None,
+            None,
+        )
         return False
 
     skip_status, consent, source = _consent_decision(session, notice)
@@ -400,9 +412,53 @@ def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: SendSms,
         _finish_skip(session, notice, skip_status, consent or "consent", reason, source, consent)
         return False
 
-    mode = _delivery_mode(settings)
+    origin = _public_origin()
+    share = session.exec(select(TeamPhotoShare).where(TeamPhotoShare.team_id == notice.team_id)).first()
+    if not origin or share is None or share.revoked_at is not None:
+        _defer(session, notice, moment, "link_unavailable", "Photo link is not configured", timedelta(minutes=5))
+        return False
+
+    tournament = session.get(Tournament, notice.tournament_id)
     phone = notice.phone_e164 or ""
-    if mode == SMS_DELIVERY_MODE_ALLOWLIST and phone not in _allowlist(getattr(settings, "test_allowlist", None) if settings else None):
+    body = photo_sms_body(tournament.name if tournament else "", f"{origin}/p/photo/{share.token}")
+    from fastapi import HTTPException
+
+    from app.routes.sms import _send_to_phone_targets
+
+    try:
+        response = _send_to_phone_targets(
+            session,
+            notice.tournament_id,
+            targets=[{"phone": phone, "team_id": notice.team_id, "player_id": notice.player_id}],
+            message=body,
+            message_type="team_photo",
+            trigger="auto",
+            send_sms=sender,
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Tournament SMS delivery is not ready"
+        _defer(session, notice, moment, "delivery_mode", detail[:300], timedelta(minutes=5))
+        return False
+    except Exception as exc:
+        logger.exception("Team photo SMS send failed for notice %s", notice.id)
+        _schedule_retry(session, notice, moment, "send_error", str(exc)[:300])
+        return False
+
+    if not response.results:
+        _finish_skip(
+            session,
+            notice,
+            STATUS_SKIPPED_TEXTS_OFF,
+            "texts_disabled",
+            "Tournament texts are turned off",
+            source,
+            consent,
+        )
+        return False
+
+    result = response.results[0]
+    status = (result.status or "").lower()
+    if status == "blocked_test_mode":
         _finish_skip(
             session,
             notice,
@@ -413,55 +469,14 @@ def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: SendSms,
             consent,
         )
         return False
-
-    origin = _public_origin()
-    share = session.exec(select(TeamPhotoShare).where(TeamPhotoShare.team_id == notice.team_id)).first()
-    if not origin or share is None or share.revoked_at is not None:
-        notice.status = STATUS_PENDING
-        notice.next_attempt_at = moment + timedelta(minutes=5)
-        notice.failure_code = "link_unavailable"
-        notice.failure_reason = "Photo link is not configured"
-        session.add(notice)
-        session.commit()
+    if status == "blocked_consent":
+        _finish_skip(session, notice, STATUS_SKIPPED_OPT_OUT, "opted_out", "Opted out", source, "opted_out")
         return False
-
-    tournament = session.get(Tournament, notice.tournament_id)
-    photo_url = f"{origin}/p/photo/{share.token}"
-    body = photo_sms_body(tournament.name if tournament else "", photo_url)
-    delivery_phone = phone
-    outbound = body
-    if mode == SMS_DELIVERY_MODE_REDIRECT:
-        redirect = str(getattr(settings, "redirect_phone", None) or "").strip()
-        try:
-            delivery_phone = format_e164(redirect)
-        except ValueError:
-            notice.status = STATUS_PENDING
-            notice.next_attempt_at = moment + timedelta(minutes=5)
-            notice.failure_code = "redirect_phone"
-            notice.failure_reason = "Redirect test number is invalid"
-            session.add(notice)
-            session.commit()
-            return False
-        outbound = f"[TEST redirect — intended {phone}]\n{body}"
-
-    try:
-        result = sender(delivery_phone, outbound, status_callback_url=_callback_url(notice.tournament_id))
-    except Exception as exc:
-        logger.exception("Team photo SMS send failed for notice %s", notice.id)
-        _schedule_retry(session, notice, moment, "send_error", str(exc)[:300])
+    if status == "dry_run":
+        _defer(session, notice, moment, "provider_unconfigured", "SMS provider is not configured", timedelta(minutes=5))
         return False
-
-    provider_status = str(result.get("status") or "failed").lower()
-    if provider_status == "dry_run":
-        notice.status = STATUS_PENDING
-        notice.next_attempt_at = moment + timedelta(minutes=5)
-        notice.failure_code = "provider_unconfigured"
-        notice.failure_reason = "SMS provider is not configured"
-        session.add(notice)
-        session.commit()
-        return False
-    if provider_status not in {"queued", "sent"}:
-        error = str(result.get("error") or "SMS provider rejected the message")
+    if status not in {"queued", "sent", "sent_redirect"}:
+        error = str(result.error or "SMS provider rejected the message")
         if _permanent_failure(error):
             notice.status = STATUS_FAILED
             notice.failure_code = "permanent"
@@ -474,30 +489,15 @@ def _dispatch_one(session: Session, notice: TeamPhotoSmsNotice, sender: SendSms,
         _schedule_retry(session, notice, moment, "transient", error[:300])
         return False
 
+    log = _latest_photo_log(session, notice, phone)
     notice.status = STATUS_SENT
-    notice.provider_sid = result.get("sid")
+    notice.provider_sid = log.twilio_sid if log is not None else None
     notice.sent_at = moment
     notice.consent_status = consent
     notice.consent_source = source
     notice.failure_code = None
     notice.failure_reason = None
     session.add(notice)
-    session.add(
-        SmsLog(
-            tournament_id=notice.tournament_id,
-            team_id=notice.team_id,
-            phone_number=delivery_phone,
-            intended_phone_number=phone,
-            message_body=outbound,
-            message_type="team_photo",
-            twilio_sid=result.get("sid"),
-            status=provider_status,
-            error_message=None,
-            trigger="auto",
-            dedupe_key=notice.idempotency_key,
-            sent_at=moment,
-        )
-    )
     session.commit()
     return True
 
@@ -559,6 +559,8 @@ def _safe_reason(status: str, reason: Optional[str]) -> Optional[str]:
         STATUS_SKIPPED_INVALID_NUMBER: "No valid mobile number",
         STATUS_SKIPPED_DUPLICATE: "Same number as the other player",
         STATUS_SKIPPED_TEST_MODE: "Not an approved test number",
+        STATUS_SKIPPED_DISABLED: "Team photo texts are turned off",
+        STATUS_SKIPPED_TEXTS_OFF: "Tournament texts are turned off",
     }
     if status in labels:
         return labels[status]
@@ -627,16 +629,19 @@ def resolve_team_photo_share(session: Session, token: str) -> Optional[tuple[Tea
 def _runner_loop(interval_seconds: int) -> None:
     while True:
         try:
-            if auto_sms_enabled():
-                with Session(engine) as session:
-                    dispatch_team_photo_notices(session)
+            with Session(engine) as session:
+                dispatch_team_photo_notices(session)
         except Exception:
             logger.exception("Team photo SMS worker failed")
         time.sleep(interval_seconds)
 
 
+def team_photo_sms_worker_started() -> bool:
+    return _runner_started
+
+
 def start_team_photo_sms_worker() -> None:
-    """Drain pending photo notices. Tests and a disabled flag do not send."""
+    """Start the photo-notice worker. Tests do not start it."""
     global _runner_started
     if "pytest" in sys.modules:
         return

@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.player import Player
+from app.models.sms_log import SmsLog
 from app.models.team import Team
 from app.models.team_photo_sms import TeamPhotoShare, TeamPhotoSmsNotice
 from app.models.team_player import TeamPlayer
@@ -403,6 +404,142 @@ def test_allowlist_mode_texts_only_approved_numbers(client: TestClient, session:
     dispatch_team_photo_notices(session, send=_sender(calls))
     assert [call["to"] for call in calls] == ["+15555550101"]
     assert _statuses(session, roster["team_id"])["+15555550102"] == "SKIPPED_TEST_MODE"
+
+
+def _photo_logs(session: Session, tournament_id: int) -> list[SmsLog]:
+    session.expire_all()
+    return session.exec(
+        select(SmsLog).where(SmsLog.tournament_id == tournament_id, SmsLog.message_type == "team_photo")
+    ).all()
+
+
+def test_blocked_gates_do_not_send_when_they_are_opened_later(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    session.add(TournamentSmsSettings(tournament_id=roster["tournament_id"], texts_enabled=False, delivery_mode="live"))
+    session.commit()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-hold-1", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_TEXTS_OFF"}
+    assert _photo_logs(session, roster["tournament_id"]) == []
+
+    settings = session.exec(
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == roster["tournament_id"])
+    ).one()
+    settings.texts_enabled = True
+    session.add(settings)
+    session.commit()
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_TEXTS_OFF"}
+
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "false")
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+
+
+def test_tournament_delivery_modes_gate_photo_texts(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://rw-tournament-software.onrender.com")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=roster["tournament_id"],
+            texts_enabled=True,
+            delivery_mode="redirect",
+            redirect_phone="+15555550999",
+        )
+    )
+    session.commit()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-modes-1", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 2
+    assert {call["to"] for call in calls} == {"+15555550999"}
+    assert all(call["body"].startswith("[TEST redirect — intended +") for call in calls)
+    assert all("https://rw-tournament-software.onrender.com/p/photo/" in call["body"] for call in calls)
+    logs = _photo_logs(session, roster["tournament_id"])
+    assert len(logs) == 2
+    assert {log.status for log in logs} == {"sent_redirect"}
+    assert {log.phone_number for log in logs} == {"+15555550999"}
+    assert {log.intended_phone_number for log in logs} == {"+15555550101", "+15555550102"}
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SENT"}
+
+    notices = session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"])).all()
+    for notice in notices:
+        notice.status = "PENDING"
+        notice.provider_sid = None
+        session.add(notice)
+    for log in logs:
+        session.delete(log)
+    settings = session.exec(
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == roster["tournament_id"])
+    ).one()
+    settings.delivery_mode = "allowlist"
+    settings.test_mode = True
+    settings.test_allowlist = "+15555550101"
+    settings.redirect_phone = None
+    session.add(settings)
+    session.commit()
+    calls.clear()
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 1
+    assert [call["to"] for call in calls] == ["+15555550101"]
+    assert _statuses(session, roster["team_id"])["+15555550102"] == "SKIPPED_TEST_MODE"
+    blocked = [log for log in _photo_logs(session, roster["tournament_id"]) if log.status == "blocked_test_mode"]
+    assert len(blocked) == 1
+    assert blocked[0].intended_phone_number == "+15555550102"
+    assert all(notice.status != "DELIVERED" for notice in session.exec(select(TeamPhotoSmsNotice)).all())
+
+    for notice in session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"])).all():
+        if notice.phone_e164 == "+15555550101":
+            notice.status = "PENDING"
+            notice.provider_sid = None
+            session.add(notice)
+    session.commit()
+    for log in session.exec(select(SmsLog).where(SmsLog.tournament_id == roster["tournament_id"])).all():
+        session.delete(log)
+    settings.delivery_mode = "live"
+    settings.test_mode = False
+    settings.test_allowlist = None
+    session.add(settings)
+    session.commit()
+    calls.clear()
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 1
+    assert [call["to"] for call in calls] == ["+15555550101"]
+    live_logs = [log for log in _photo_logs(session, roster["tournament_id"]) if log.status == "sent"]
+    assert len(live_logs) == 1
+    assert live_logs[0].phone_number == "+15555550101"
+    assert live_logs[0].intended_phone_number == "+15555550101"
+    assert all(notice.status != "DELIVERED" for notice in session.exec(select(TeamPhotoSmsNotice)).all())
+
+
+def test_photo_flag_off_blocks_even_when_tournament_texting_is_live(client: TestClient, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session)
+    session.add(TournamentSmsSettings(tournament_id=roster["tournament_id"], texts_enabled=True, delivery_mode="live"))
+    session.commit()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-flag-1", _jpeg()).status_code == 200
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "false")
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_DISABLED"}
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_DISABLED"}
 
 
 def test_staff_status_hides_phone_numbers(client: TestClient, session: Session, monkeypatch):
