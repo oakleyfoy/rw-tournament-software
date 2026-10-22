@@ -172,20 +172,20 @@ export function buildTeamJourney(teamId: number, matches: MobileMatch[]): TeamJo
   }
 }
 
-export function opponentName(match: MobileMatch, teamId: number | null): string {
-  if (teamId != null && match.team_a_id === teamId) return publicSideLabel(match.team2_full_name)
-  if (teamId != null && match.team_b_id === teamId) return publicSideLabel(match.team1_full_name)
+export function opponentName(match: MobileMatch, teamId: number | null, options?: { hideSeeds?: boolean }): string {
+  if (teamId != null && match.team_a_id === teamId) return publicSideLabel(match.team2_full_name, options)
+  if (teamId != null && match.team_b_id === teamId) return publicSideLabel(match.team1_full_name, options)
   const known = [match.team1_full_name, match.team2_full_name]
-    .map(publicSideLabel)
+    .map((name) => publicSideLabel(name, options))
     .filter((name) => name !== 'Opponent TBD')
   return known[0] || 'Opponent TBD'
 }
 
-export function publicSideLabel(name: string | null | undefined): string {
+export function publicSideLabel(name: string | null | undefined, options?: { hideSeeds?: boolean }): string {
   const value = (name || '').trim()
   if (!value || /^tbd$/i.test(value)) return 'Opponent TBD'
   const seed = value.match(/^seed[_\s-]?(\d+)$/i)
-  if (seed) return `Seed ${seed[1]}`
+  if (seed) return options?.hideSeeds ? 'Opponent TBD' : `Seed ${seed[1]}`
   const short = value.match(/^([WL])\(R(\d+)_\d+\)$/i)
   if (short) return `${short[1].toUpperCase() === 'W' ? 'Winner' : 'Loser'} of Round ${short[2]}`
   const waterfall = value.match(/WF_R(\d+)_([WL])\d+/i)

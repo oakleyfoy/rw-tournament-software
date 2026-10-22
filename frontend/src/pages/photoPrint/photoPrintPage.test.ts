@@ -21,6 +21,7 @@ describe('Watermark and print center', () => {
     expect(page).toContain('Order Prints at Walgreens')
     expect(page).toContain('Apply to All Photos')
     expect(page).toContain('Save This Photo')
+    expect(page).toContain('/assets/rw-watermark-logo.png')
     expect(desk).toContain('Watermark & Print')
   })
 })

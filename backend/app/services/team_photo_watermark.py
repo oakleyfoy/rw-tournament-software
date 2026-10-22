@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import re
 import secrets
+from pathlib import Path
 from typing import Iterable, Optional
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
@@ -29,9 +30,28 @@ PRINT_WIDTH = 1200
 PRINT_HEIGHT = 1800
 PRINT_DPI = 300
 SAFE_MARGIN = 0.04
+_BRAND_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "rw-watermark-logo.png"
+_BRAND_LOGO: Optional[Image.Image] = None
 
 CONTENT_MODES = {"logo_and_text", "logo_only", "text_only", "custom_logo", "custom_text"}
-FONT_FAMILIES = ["Arial", "Montserrat", "Poppins", "Roboto", "Georgia", "Times New Roman"]
+FONT_FAMILIES = [
+    "Arial",
+    "Montserrat",
+    "Poppins",
+    "Roboto",
+    "Georgia",
+    "Times New Roman",
+    "Lato",
+    "Oswald",
+    "Nunito",
+    "Raleway",
+    "Josefin Sans",
+    "Barlow Condensed",
+    "Playfair Display",
+    "Lora",
+    "Libre Baskerville",
+    "Cinzel",
+]
 FONT_STYLES = {"normal", "medium", "bold", "italic"}
 POSITIONS = {
     "top-left": (0.0, 0.0),
@@ -90,13 +110,75 @@ _FONT_FILES = {
         "bold": ["timesbd.ttf", "Times New Roman Bold.ttf", "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"],
         "italic": ["timesi.ttf", "Times New Roman Italic.ttf", "LiberationSerif-Italic.ttf", "DejaVuSerif-Italic.ttf"],
     },
+    "Lato": {
+        "normal": ["Lato-Regular.ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "medium": ["Lato-Medium.ttf", "Lato-Regular.ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "bold": ["Lato-Bold.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["Lato-Italic.ttf", "ariali.ttf", "DejaVuSans-Oblique.ttf"],
+    },
+    "Oswald": {
+        "normal": ["Oswald[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "medium": ["Oswald[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "bold": ["Oswald[wght].ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["Oswald[wght].ttf", "ariali.ttf", "DejaVuSans-Oblique.ttf"],
+    },
+    "Nunito": {
+        "normal": ["Nunito[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "medium": ["Nunito[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "bold": ["Nunito[wght].ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["Nunito-Italic[wght].ttf", "Nunito[wght].ttf", "ariali.ttf", "DejaVuSans-Oblique.ttf"],
+    },
+    "Raleway": {
+        "normal": ["Raleway[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "medium": ["Raleway[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "bold": ["Raleway[wght].ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["Raleway-Italic[wght].ttf", "Raleway[wght].ttf", "ariali.ttf", "DejaVuSans-Oblique.ttf"],
+    },
+    "Josefin Sans": {
+        "normal": ["JosefinSans[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "medium": ["JosefinSans[wght].ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "bold": ["JosefinSans[wght].ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["JosefinSans-Italic[wght].ttf", "JosefinSans[wght].ttf", "ariali.ttf", "DejaVuSans-Oblique.ttf"],
+    },
+    "Barlow Condensed": {
+        "normal": ["BarlowCondensed-Regular.ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "medium": ["BarlowCondensed-Medium.ttf", "BarlowCondensed-Regular.ttf", "arial.ttf", "DejaVuSans.ttf"],
+        "bold": ["BarlowCondensed-Bold.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
+        "italic": ["BarlowCondensed-Italic.ttf", "BarlowCondensed-Regular.ttf", "ariali.ttf", "DejaVuSans-Oblique.ttf"],
+    },
+    "Playfair Display": {
+        "normal": ["PlayfairDisplay[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "medium": ["PlayfairDisplay[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "bold": ["PlayfairDisplay[wght].ttf", "georgiab.ttf", "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"],
+        "italic": ["PlayfairDisplay-Italic[wght].ttf", "PlayfairDisplay[wght].ttf", "georgiai.ttf", "DejaVuSerif-Italic.ttf"],
+    },
+    "Lora": {
+        "normal": ["Lora[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "medium": ["Lora[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "bold": ["Lora[wght].ttf", "georgiab.ttf", "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"],
+        "italic": ["Lora-Italic[wght].ttf", "Lora[wght].ttf", "georgiai.ttf", "DejaVuSerif-Italic.ttf"],
+    },
+    "Libre Baskerville": {
+        "normal": ["LibreBaskerville[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "medium": ["LibreBaskerville[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "bold": ["LibreBaskerville[wght].ttf", "georgiab.ttf", "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"],
+        "italic": ["LibreBaskerville-Italic[wght].ttf", "LibreBaskerville[wght].ttf", "georgiai.ttf", "DejaVuSerif-Italic.ttf"],
+    },
+    "Cinzel": {
+        "normal": ["Cinzel[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "medium": ["Cinzel[wght].ttf", "georgia.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"],
+        "bold": ["Cinzel[wght].ttf", "georgiab.ttf", "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"],
+        "italic": ["Cinzel[wght].ttf", "georgiai.ttf", "LiberationSerif-Italic.ttf", "DejaVuSerif-Italic.ttf"],
+    },
 }
 _FONT_DIRS = (
+    str(Path(__file__).resolve().parent.parent / "assets" / "fonts"),
     "C:/Windows/Fonts",
     "/usr/share/fonts/truetype/dejavu",
     "/usr/share/fonts/truetype/liberation",
     "/usr/share/fonts/truetype/msttcorefonts",
 )
+_STYLE_WEIGHT = {"normal": 400, "medium": 500, "bold": 700, "italic": 400}
 
 
 def default_settings(tournament_name: str) -> dict:
@@ -116,7 +198,7 @@ def default_settings(tournament_name: str) -> dict:
         "offset_y": 0.0,
         "shadow": True,
         "visible": True,
-        "crop_mode": "fit",
+        "crop_mode": "fill",
         "crop_x": 0.5,
         "crop_y": 0.5,
         "show_margins": False,
@@ -268,13 +350,40 @@ def new_print_version() -> str:
     return secrets.token_hex(8)
 
 
+def _apply_variation(font: ImageFont.ImageFont, style: str) -> ImageFont.ImageFont:
+    getter = getattr(font, "get_variation_axes", None)
+    if getter is None:
+        return font
+    try:
+        axes = getter()
+    except OSError:
+        return font
+    if not axes:
+        return font
+    weight = _STYLE_WEIGHT.get(style, 400)
+    values = []
+    for axis in axes:
+        raw_name = axis.get("name", b"")
+        name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
+        minimum = float(axis["minimum"])
+        maximum = float(axis["maximum"])
+        default = float(axis.get("default", minimum))
+        chosen = float(weight) if name.lower() in {"weight", "wght"} else default
+        values.append(max(minimum, min(maximum, chosen)))
+    try:
+        font.set_variation_by_axes(values)
+    except OSError:
+        return font
+    return font
+
+
 def _load_font(family: str, style: str, size: int) -> ImageFont.ImageFont:
     names = _FONT_FILES.get(family, _FONT_FILES["Arial"]).get(style) or _FONT_FILES["Arial"]["normal"]
     for folder in _FONT_DIRS:
         for name in names:
             path = f"{folder}/{name}"
             try:
-                return ImageFont.truetype(path, size=max(8, size))
+                return _apply_variation(ImageFont.truetype(path, size=max(8, size)), style)
             except OSError:
                 continue
     try:
@@ -297,6 +406,30 @@ def _fit_font(draw: ImageDraw.ImageDraw, text: str, family: str, style: str, max
             return font
         size -= 2
     return font
+
+
+def _brand_logo() -> Image.Image:
+    global _BRAND_LOGO
+    if _BRAND_LOGO is None:
+        _BRAND_LOGO = Image.open(_BRAND_LOGO_PATH).convert("RGBA")
+    return _BRAND_LOGO
+
+
+def _colored_brand_logo(color: tuple[int, int, int], max_width: int, max_height: int) -> Image.Image:
+    """Scale the white RW emblem and recolor it without losing the brush edge."""
+    source = _brand_logo().copy()
+    source.thumbnail((max(1, max_width), max(1, max_height)), Image.Resampling.LANCZOS)
+    _red, _green, _blue, alpha = source.split()
+    red, green, blue = color
+    return Image.merge(
+        "RGBA",
+        (
+            Image.new("L", source.size, red),
+            Image.new("L", source.size, green),
+            Image.new("L", source.size, blue),
+            alpha,
+        ),
+    )
 
 
 def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Image]) -> Image.Image:
@@ -323,31 +456,18 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
         logo_h = max(18, int(mark_width * 0.34 * float(settings["logo_scale"])))
         if logo is not None and mode == "custom_logo":
             logo_image = logo.convert("RGBA")
-            logo_image.thumbnail((mark_width, logo_h), Image.Resampling.LANCZOS)
-            logo_h = logo_image.height
         else:
-            logo_image = None
+            logo_image = _colored_brand_logo(color, mark_width, logo_h)
+        logo_image.thumbnail((mark_width, logo_h), Image.Resampling.LANCZOS)
+        logo_h = logo_image.height
     gap = settings["spacing"] if text and show_logo else 0
     layer_h = logo_h + gap + text_h + 8
     layer = Image.new("RGBA", (max(mark_width, text_w), max(layer_h, 8)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     cursor = 0
     if show_logo:
-        if logo_image is not None:
-            left = max(0, (layer.width - logo_image.width) // 2)
-            layer.alpha_composite(logo_image, (left, 0))
-        else:
-            badge_w = min(mark_width, max(36, int(logo_h * 1.8)))
-            left = max(0, (layer.width - badge_w) // 2)
-            draw.rounded_rectangle((left, 0, left + badge_w, logo_h), radius=max(4, logo_h // 5), outline=color + (255,), width=max(2, logo_h // 14))
-            badge_font = _fit_font(draw, "RW", settings["font_family"], "bold", int(badge_w * 0.7))
-            badge_box = draw.textbbox((0, 0), "RW", font=badge_font)
-            draw.text(
-                (left + (badge_w - (badge_box[2] - badge_box[0])) / 2, (logo_h - (badge_box[3] - badge_box[1])) / 2 - badge_box[1]),
-                "RW",
-                font=badge_font,
-                fill=color + (255,),
-            )
+        left = max(0, (layer.width - logo_image.width) // 2)
+        layer.alpha_composite(logo_image, (left, 0))
         cursor = logo_h + gap
     if text:
         left = max(0, (layer.width - text_w) // 2)
@@ -363,25 +483,19 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
 
 
 def _place_photo(source: Image.Image, canvas_w: int, canvas_h: int, settings: dict) -> Image.Image:
+    """Fill the 4×6 frame. A wider or taller photo is cropped instead of leaving white bars."""
     canvas = Image.new("RGB", (canvas_w, canvas_h), (255, 255, 255))
     src_w, src_h = source.size
-    if settings["crop_mode"] == "fill":
-        scale = max(canvas_w / src_w, canvas_h / src_h)
-        resized = source.resize((max(1, int(round(src_w * scale))), max(1, int(round(src_h * scale)))), Image.Resampling.LANCZOS)
-        extra_x = resized.width - canvas_w
-        extra_y = resized.height - canvas_h
-        left = int(round(extra_x * settings["crop_x"]))
-        top = int(round(extra_y * settings["crop_y"]))
-        left = max(0, min(left, extra_x))
-        top = max(0, min(top, extra_y))
-        cropped = resized.crop((left, top, left + canvas_w, top + canvas_h))
-        canvas.paste(cropped, (0, 0))
-        return canvas
-    scale = min(canvas_w / src_w, canvas_h / src_h)
+    scale = max(canvas_w / src_w, canvas_h / src_h)
     resized = source.resize((max(1, int(round(src_w * scale))), max(1, int(round(src_h * scale)))), Image.Resampling.LANCZOS)
-    left = (canvas_w - resized.width) // 2
-    top = (canvas_h - resized.height) // 2
-    canvas.paste(resized, (left, top))
+    extra_x = resized.width - canvas_w
+    extra_y = resized.height - canvas_h
+    left = int(round(extra_x * settings["crop_x"]))
+    top = int(round(extra_y * settings["crop_y"]))
+    left = max(0, min(left, extra_x))
+    top = max(0, min(top, extra_y))
+    cropped = resized.crop((left, top, left + canvas_w, top + canvas_h))
+    canvas.paste(cropped, (0, 0))
     return canvas
 
 
@@ -418,7 +532,7 @@ def render_print_jpeg(
         raise PhotoRejected("Official photograph could not be read") from exc
     source_w, source_h = source.size
     canvas_w, canvas_h = print_pixels(print_size, source_w, source_h)
-    low_resolution = source_needs_upscale(source_w, source_h, canvas_w, canvas_h, settings["crop_mode"])
+    low_resolution = source_needs_upscale(source_w, source_h, canvas_w, canvas_h, "fill")
     if low_resolution and not allow_upscale:
         raise PhotoRejected(
             f"This photograph is {source_w}×{source_h}, below 1200×1800 for a 300 DPI 4×6 portrait. "

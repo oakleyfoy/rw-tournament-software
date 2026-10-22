@@ -109,6 +109,9 @@ def test_public_waterfall_roundrobin_dest_uses_pool_seeding_not_four_divisions(c
     body = resp.json()
     assert body["division_type"] == "roundrobin"
     assert len(body["rows"]) == 1
+    center = body["rows"][0]["center_box"]
+    assert center["line1"] == "TBD"
+    assert center["line2"] == "TBD"
     winner_dest = body["rows"][0]["winner_dest"]
     loser_dest = body["rows"][0]["loser_dest"]
     assert "3 pools × 4 teams" in winner_dest

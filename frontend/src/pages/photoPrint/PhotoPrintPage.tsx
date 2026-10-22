@@ -67,7 +67,22 @@ export default function PhotoPrintPage() {
   useEffect(() => {
     const link = document.createElement('link')
     link.rel = 'stylesheet'
-    link.href = 'https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,700;1,400&family=Poppins:ital,wght@0,400;0,500;0,700;1,400&family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap'
+    link.href = [
+      'https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Poppins:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Roboto:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Lato:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Oswald:wght@400;500;700',
+      'family=Nunito:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Raleway:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Josefin+Sans:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Barlow+Condensed:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Playfair+Display:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Lora:ital,wght@0,400;0,500;0,700;1,400',
+      'family=Libre+Baskerville:ital,wght@0,400;0,700;1,400',
+      'family=Cinzel:wght@400;500;700',
+      'display=swap',
+    ].join('&')
     document.head.appendChild(link)
     return () => link.remove()
   }, [])
@@ -259,13 +274,14 @@ export default function PhotoPrintPage() {
   })
 
   const onDragCrop = (event: React.PointerEvent<HTMLImageElement>) => {
-    if (!settings || settings.crop_mode !== 'fill' || !frameRef.current) return
+    if (!settings || !frameRef.current) return
     const frame = frameRef.current.getBoundingClientRect()
     const startX = event.clientX
     const startY = event.clientY
     const origin = { x: settings.crop_x, y: settings.crop_y }
     const move = (ev: PointerEvent) => {
       patch({
+        crop_mode: 'fill',
         crop_x: Math.max(0, Math.min(1, origin.x - (ev.clientX - startX) / frame.width)),
         crop_y: Math.max(0, Math.min(1, origin.y - (ev.clientY - startY) / frame.height)),
       })
@@ -380,9 +396,9 @@ export default function PhotoPrintPage() {
           </div>
         </aside>
         <main className="photo-print-stage">
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={() => setIndex((value) => Math.max(0, value - 1))}>Previous</button>
-            <button type="button" onClick={() => setIndex((value) => Math.min(filtered.length - 1, value + 1))}>Next</button>
+          <div className="photo-print-stage-nav">
+            <button type="button" disabled={index <= 0} onClick={() => setIndex((value) => Math.max(0, value - 1))}>Previous</button>
+            <button type="button" disabled={index >= filtered.length - 1} onClick={() => setIndex((value) => Math.min(filtered.length - 1, value + 1))}>Next</button>
             <label>Zoom {zoom}%
               <input type="range" min={50} max={200} value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
             </label>
@@ -400,10 +416,9 @@ export default function PhotoPrintPage() {
                       inset: 0,
                       width: '100%',
                       height: '100%',
-                      objectFit: settings.crop_mode === 'fill' ? 'cover' : 'contain',
+                      objectFit: 'cover',
                       objectPosition: `${settings.crop_x * 100}% ${settings.crop_y * 100}%`,
-                      background: '#fff',
-                      cursor: settings.crop_mode === 'fill' ? 'grab' : 'default',
+                      cursor: 'grab',
                     }}
                   />
                 )
@@ -430,7 +445,25 @@ export default function PhotoPrintPage() {
                 >
                   {showLogo && (settings.content_mode === 'custom_logo' && logoSrc
                     ? <img src={logoSrc} alt="" style={{ width: `${70 * settings.logo_scale}%`, maxHeight: 64 }} />
-                    : <span style={{ border: `2px solid ${settings.color}`, borderRadius: 8, padding: '2px 8px', fontWeight: 700 }}>RW</span>)}
+                    : (
+                      <span
+                        aria-label="RacquetWar"
+                        style={{
+                          display: 'block',
+                          width: `${Math.min(100, 78 * settings.logo_scale)}%`,
+                          aspectRatio: '1011 / 547',
+                          backgroundColor: settings.color,
+                          maskImage: 'url(/assets/rw-watermark-logo.png)',
+                          WebkitMaskImage: 'url(/assets/rw-watermark-logo.png)',
+                          maskRepeat: 'no-repeat',
+                          WebkitMaskRepeat: 'no-repeat',
+                          maskPosition: 'center',
+                          WebkitMaskPosition: 'center',
+                          maskSize: 'contain',
+                          WebkitMaskSize: 'contain',
+                        }}
+                      />
+                    ))}
                   {watermarkText && <span>{watermarkText}</span>}
                   <button type="button" aria-label="Resize watermark" onPointerDown={onResizeWatermark} />
                 </div>
@@ -438,8 +471,8 @@ export default function PhotoPrintPage() {
             </div>
           )}
           <div style={{ fontSize: 12, color: '#546e7a', maxWidth: 520, textAlign: 'center' }}>
-            4×6 portrait preview. Drag the photograph in fill mode so both players stay inside the frame.
-            {settings && current && cropCutsPhoto(current.source_width, current.source_height, settings.crop_mode) && (
+            4×6 portrait preview. Drag the photograph so both players stay inside the frame.
+            {current && cropCutsPhoto(current.source_width, current.source_height, 'fill') && (
               <div style={{ color: '#c62828', fontWeight: 700, marginTop: 4 }}>
                 This crop removes part of the photo. Reposition it so both players stay fully visible.
               </div>
@@ -521,22 +554,12 @@ export default function PhotoPrintPage() {
               <label className="photo-print-field"><input type="checkbox" checked={settings.shadow} onChange={(event) => patch({ shadow: event.target.checked })} /> Text shadow or outline</label>
               <label className="photo-print-field"><input type="checkbox" checked={settings.visible} onChange={(event) => patch({ visible: event.target.checked })} /> Show watermark</label>
               <label className="photo-print-field"><input type="checkbox" checked={settings.show_margins} onChange={(event) => patch({ show_margins: event.target.checked })} /> Show safe print margins</label>
-              <label className="photo-print-field">Print crop
-                <select value={settings.crop_mode} onChange={(event) => patch({ crop_mode: event.target.value as 'fit' | 'fill' })}>
-                  <option value="fit">Fit entire image with borders</option>
-                  <option value="fill">Fill print area with cropping</option>
-                </select>
+              <label className="photo-print-field">Crop horizontal
+                <input type="range" min={0} max={100} value={Math.round(settings.crop_x * 100)} onChange={(event) => patch({ crop_x: Number(event.target.value) / 100, crop_mode: 'fill' })} />
               </label>
-              {settings.crop_mode === 'fill' && (
-                <>
-                  <label className="photo-print-field">Crop horizontal
-                    <input type="range" min={0} max={100} value={Math.round(settings.crop_x * 100)} onChange={(event) => patch({ crop_x: Number(event.target.value) / 100 })} />
-                  </label>
-                  <label className="photo-print-field">Crop vertical
-                    <input type="range" min={0} max={100} value={Math.round(settings.crop_y * 100)} onChange={(event) => patch({ crop_y: Number(event.target.value) / 100 })} />
-                  </label>
-                </>
-              )}
+              <label className="photo-print-field">Crop vertical
+                <input type="range" min={0} max={100} value={Math.round(settings.crop_y * 100)} onChange={(event) => patch({ crop_y: Number(event.target.value) / 100, crop_mode: 'fill' })} />
+              </label>
               <div className="photo-print-field">Print format
                 <strong>4×6 portrait (2:3)</strong>
               </div>

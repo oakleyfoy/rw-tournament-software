@@ -4,7 +4,24 @@ export const PRINT_HEIGHT = 1800
 export const PRINT_SIZES = [PRINT_SIZE] as const
 export type PrintSize = (typeof PRINT_SIZES)[number]
 
-export const FONT_FAMILIES = ['Arial', 'Montserrat', 'Poppins', 'Roboto', 'Georgia', 'Times New Roman'] as const
+export const FONT_FAMILIES = [
+  'Arial',
+  'Montserrat',
+  'Poppins',
+  'Roboto',
+  'Georgia',
+  'Times New Roman',
+  'Lato',
+  'Oswald',
+  'Nunito',
+  'Raleway',
+  'Josefin Sans',
+  'Barlow Condensed',
+  'Playfair Display',
+  'Lora',
+  'Libre Baskerville',
+  'Cinzel',
+] as const
 export const FONT_STYLES = ['normal', 'medium', 'bold', 'italic'] as const
 export const CONTENT_MODES = [
   { id: 'logo_and_text', label: 'RW logo and event name' },
@@ -98,7 +115,7 @@ export function defaultWatermarkSettings(tournamentName: string): WatermarkSetti
     offset_y: 0,
     shadow: true,
     visible: true,
-    crop_mode: 'fit',
+    crop_mode: 'fill',
     crop_x: 0.5,
     crop_y: 0.5,
     show_margins: false,
@@ -147,8 +164,11 @@ export function watermarkBox(
   }
 }
 
+const SERIF_FAMILIES = new Set(['Georgia', 'Times New Roman', 'Playfair Display', 'Lora', 'Libre Baskerville', 'Cinzel'])
+
 export function fontCss(settings: Pick<WatermarkSettings, 'font_family' | 'font_style'>): string {
-  const family = settings.font_family === 'Times New Roman' ? '"Times New Roman", Times, serif' : `${settings.font_family}, sans-serif`
+  const quoted = settings.font_family.includes(' ') ? `"${settings.font_family}"` : settings.font_family
+  const family = SERIF_FAMILIES.has(settings.font_family) ? `${quoted}, serif` : `${quoted}, sans-serif`
   const italic = settings.font_style === 'italic' ? 'italic' : 'normal'
   const weight = settings.font_style === 'bold' ? 700 : settings.font_style === 'medium' ? 500 : 400
   return `font-family:${family};font-style:${italic};font-weight:${weight};`

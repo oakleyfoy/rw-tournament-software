@@ -289,6 +289,28 @@ def test_landscape_source_still_prints_as_portrait_and_warns_when_cropped():
     assert crop_cuts_photo(3000, 2000, "fit") is False
 
 
+def test_default_watermark_uses_the_rw_emblem():
+    source = Image.new("RGB", (2000, 3000), (0, 0, 0))
+    raw = io.BytesIO()
+    source.save(raw, format="JPEG", quality=95)
+    rendered, width, height, _source_w, _source_h, low = render_print_jpeg(
+        raw.getvalue(),
+        _print_settings(content_mode="logo_only", color="#c62828", position="top-center", shadow=False, opacity=100),
+        "4x6",
+        allow_upscale=False,
+    )
+    assert (width, height, low) == (1200, 1800, False)
+    with Image.open(io.BytesIO(rendered)) as image:
+        margin = int(min(image.size) * 0.04)
+        red = 0
+        for y in range(margin, margin + 160):
+            for x in range(width // 2 - 180, width // 2 + 180, 3):
+                pixel = image.getpixel((x, y))
+                if pixel[0] > 120 and pixel[0] > pixel[1] + 40 and pixel[0] > pixel[2] + 40:
+                    red += 1
+        assert red > 40
+
+
 def test_watermark_stays_inside_the_printable_margin():
     source = Image.new("RGB", (2000, 3000), (0, 0, 0))
     raw = io.BytesIO()
@@ -314,3 +336,21 @@ def test_watermark_stays_inside_the_printable_margin():
         assert image.getpixel((width // 2, margin + 8))[0] < 45
         bright = max(image.getpixel((x, margin + 40))[0] for x in range(margin, width - margin, 8))
         assert bright > 80
+
+
+def test_every_watermark_font_loads_its_own_face():
+    from PIL import ImageDraw
+
+    from app.services.team_photo_watermark import FONT_FAMILIES, _load_font
+
+    image = Image.new("RGB", (800, 120), "white")
+    draw = ImageDraw.Draw(image)
+    widths = set()
+    for family in FONT_FAMILIES:
+        font = _load_font(family, "bold", 64)
+        box = draw.textbbox((0, 0), "Kiawah", font=font)
+        width = box[2] - box[0]
+        assert width > 40
+        widths.add(width)
+    assert len(FONT_FAMILIES) == 16
+    assert len(widths) >= 10

@@ -352,13 +352,24 @@ def _build_match_box(
     )
 
 
+_WATERFALL_SEED_LABEL = re.compile(r"^(?:play\s*)?(?:cons\s+)?seed[\s_-]*\d+$", re.IGNORECASE)
+
+
+def _waterfall_public_side(value: Optional[str]) -> str:
+    """Waterfall boxes are player-facing, so ranking seeds stay off the draw."""
+    text = (value or "").strip()
+    if not text or _WATERFALL_SEED_LABEL.match(text):
+        return "TBD"
+    return text
+
+
 def _team_full_name(team_id: Optional[int], placeholder: str, team_map: Dict[int, Team]) -> str:
     """Team name for R1 center boxes — always use full name (with city/state)."""
     if team_id is not None:
         team = team_map.get(team_id)
         if team:
             return team.name
-    return placeholder or "TBD"
+    return _waterfall_public_side(placeholder)
 
 
 def _team_line_for_r2(
@@ -379,7 +390,7 @@ def _team_line_for_r2(
         role_label = "Winner" if source_role == "WINNER" else "Loser"
         return f"{role_label} of Match #{source_match_id}"
 
-    return placeholder or "TBD"
+    return _waterfall_public_side(placeholder)
 
 
 def _build_notes(match: Match) -> Optional[str]:

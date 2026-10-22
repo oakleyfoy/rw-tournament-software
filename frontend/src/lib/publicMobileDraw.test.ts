@@ -152,6 +152,7 @@ describe('public mobile draw', () => {
 
   it('turns feeder codes and seed placeholders into player-facing labels', () => {
     expect(publicSideLabel('SEED_4')).toBe('Seed 4')
+    expect(publicSideLabel('SEED_4', { hideSeeds: true })).toBe('Opponent TBD')
     expect(publicSideLabel('W(R1_9)')).toBe('Winner of Round 1')
     expect(publicSideLabel('L(R1_2)')).toBe('Loser of Round 1')
     expect(publicSideLabel('WINNER:WOM_WOM_E11_BWW_M1')).toBe('Winner of Division I')

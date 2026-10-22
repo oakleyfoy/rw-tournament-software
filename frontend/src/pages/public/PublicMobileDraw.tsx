@@ -158,6 +158,8 @@ export default function PublicMobileDraw({
   )
   const detail = matches.find((match) => match.match_id === detailId) || null
   const headerTeam = selectedTeam
+  const showSeeds = formatLabel !== 'Waterfall'
+  const sideLabel = (name: string | null | undefined) => publicSideLabel(name, { hideSeeds: !showSeeds })
   const drawStatus = divisionMatches.some((match) => match.status === 'IN_PROGRESS')
     ? 'In progress'
     : divisionMatches.some((match) => match.status !== 'FINAL')
@@ -207,7 +209,7 @@ export default function PublicMobileDraw({
                 <TeamPhoto tournamentId={tournamentId} team={team} />
                 <span>
                   <strong>{team.full_name}</strong>
-                  <small>{team.event_name}{team.seed ? ` · Seed ${team.seed}` : ''}</small>
+                  <small>{team.event_name}{showSeeds && team.seed ? ` · Seed ${team.seed}` : ''}</small>
                 </span>
               </button>
             ))}
@@ -236,14 +238,14 @@ export default function PublicMobileDraw({
               <div className="public-team-copy">
                 <strong className="public-team-name">{selectedTeam.full_name}</strong>
                 <div>{selectedTeam.players.join(' · ')}</div>
-                <div>{selectedTeam.event_name}{selectedTeam.seed ? ` · Seed ${selectedTeam.seed}` : ''}</div>
+                <div>{selectedTeam.event_name}{showSeeds && selectedTeam.seed ? ` · Seed ${selectedTeam.seed}` : ''}</div>
               </div>
             </div>
             {journey.next && (
               <div>
                 <div className="public-when">{timeText(journey.next)}</div>
                 <div>{journey.next.day_label}</div>
-                <div>vs {opponentName(journey.next, selectedTeam.team_id)}</div>
+                <div>vs {opponentName(journey.next, selectedTeam.team_id, { hideSeeds: !showSeeds })}</div>
                 <div>Match #{journey.next.match_number}</div>
                 {courtText(journey.next, showCourtInfo) && <div>{courtText(journey.next, showCourtInfo)}</div>}
               </div>
@@ -256,6 +258,7 @@ export default function PublicMobileDraw({
               teams={teamMap}
               tournamentId={tournamentId}
               showCourtInfo={showCourtInfo}
+              showSeeds={showSeeds}
               highlightTeamId={selectedTeam.team_id}
               onOpen={() => setDetailId(match.match_id)}
             />
@@ -281,6 +284,7 @@ export default function PublicMobileDraw({
                 teams={teamMap}
                 tournamentId={tournamentId}
                 showCourtInfo={showCourtInfo}
+                showSeeds={showSeeds}
                 onOpen={() => setDetailId(match.match_id)}
               />
             ))}
@@ -300,14 +304,14 @@ export default function PublicMobileDraw({
           <div className="public-detail-teams">
             <DetailSide
               tournamentId={tournamentId}
-              name={publicSideLabel(detail.team1_full_name)}
+              name={sideLabel(detail.team1_full_name)}
               team={teamForSide(teamMap, detail.team_a_id)}
               winner={detail.winner_team_id != null && detail.winner_team_id === detail.team_a_id}
               onEnlarge={() => detail.team_a_id != null && setEnlargedTeamId(detail.team_a_id)}
             />
             <DetailSide
               tournamentId={tournamentId}
-              name={publicSideLabel(detail.team2_full_name)}
+              name={sideLabel(detail.team2_full_name)}
               team={teamForSide(teamMap, detail.team_b_id)}
               winner={detail.winner_team_id != null && detail.winner_team_id === detail.team_b_id}
               onEnlarge={() => detail.team_b_id != null && setEnlargedTeamId(detail.team_b_id)}
@@ -363,6 +367,7 @@ function MatchCard({
   teams,
   tournamentId,
   showCourtInfo,
+  showSeeds,
   highlightTeamId,
   onOpen,
 }: {
@@ -370,6 +375,7 @@ function MatchCard({
   teams: Map<number, MobileTeam>
   tournamentId: number
   showCourtInfo: boolean
+  showSeeds: boolean
   highlightTeamId?: number
   onOpen: () => void
 }) {
@@ -384,17 +390,19 @@ function MatchCard({
       </div>
       <TeamLine
         tournamentId={tournamentId}
-        name={publicSideLabel(match.team1_full_name)}
+        name={publicSideLabel(match.team1_full_name, { hideSeeds: !showSeeds })}
         team={teamForSide(teams, match.team_a_id)}
         winner={winnerId != null && winnerId === match.team_a_id}
         highlight={highlightTeamId != null && highlightTeamId === match.team_a_id}
+        showSeeds={showSeeds}
       />
       <TeamLine
         tournamentId={tournamentId}
-        name={publicSideLabel(match.team2_full_name)}
+        name={publicSideLabel(match.team2_full_name, { hideSeeds: !showSeeds })}
         team={teamForSide(teams, match.team_b_id)}
         winner={winnerId != null && winnerId === match.team_b_id}
         highlight={highlightTeamId != null && highlightTeamId === match.team_b_id}
+        showSeeds={showSeeds}
       />
       {match.score_display && <div>Score {match.score_display}</div>}
       {upcoming && <div className="public-when">{timeText(match)}</div>}
@@ -412,12 +420,14 @@ function TeamLine({
   team,
   winner,
   highlight,
+  showSeeds,
 }: {
   tournamentId: number
   name: string
   team: MobileTeam | null
   winner: boolean
   highlight: boolean
+  showSeeds: boolean
 }) {
   return (
     <div className="public-team-row">
@@ -427,7 +437,7 @@ function TeamLine({
       />
       <div className="public-team-copy">
         <span className={winner || highlight ? 'public-team-name winner' : 'public-team-name'} title={name}>{name}</span>
-        {team?.seed ? <span className="public-seed">Seed {team.seed}</span> : null}
+        {showSeeds && team?.seed ? <span className="public-seed">Seed {team.seed}</span> : null}
       </div>
     </div>
   )
