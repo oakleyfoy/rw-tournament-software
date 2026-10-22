@@ -11400,7 +11400,32 @@ export default function TournamentDeskPage() {
             <div style={{ fontSize: 12, opacity: 0.8 }}>Tournament Desk</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+          <DeskRwOsRefresh
+            importId={rwOsImportId}
+            onApplied={async () => {
+              await refreshSnapshotAndLookups()
+              setRosterReloadKey((key) => key + 1)
+            }}
+          />
+          <button
+            onClick={() => {
+              if (!tid) return
+              window.open(`/tournaments/${tid}/draw-qr-board`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Print Draw QR Board
+          </button>
           <button
             type="button"
             onClick={() => navigate(`/photography?tournament=${tid}`)}
@@ -11432,118 +11457,6 @@ export default function TournamentDeskPage() {
             }}
           >
             Watermark & Print
-          </button>
-          <DeskRwOsRefresh
-            importId={rwOsImportId}
-            onApplied={async () => {
-              await refreshSnapshotAndLookups()
-              setRosterReloadKey((key) => key + 1)
-            }}
-          />
-          <button
-            onClick={() => {
-              if (!tid) return
-              window.open(`/desk/t/${tid}/draws-display?kiosk=1`, '_blank', 'noopener,noreferrer')
-            }}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: tid ? 'pointer' : 'default',
-            }}
-          >
-            Draws Display
-          </button>
-          <button
-            onClick={() => {
-              if (!tid) return
-              window.open(`/tournaments/${tid}/draw-qr-board`, '_blank', 'noopener,noreferrer')
-            }}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: tid ? 'pointer' : 'default',
-            }}
-          >
-            Print Draw QR Board
-          </button>
-          <button
-            onClick={() => {
-              if (!tid) return
-              window.open(`/desk/t/${tid}/checkin-board?kiosk=1`, '_blank', 'noopener,noreferrer')
-            }}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: tid ? 'pointer' : 'default',
-            }}
-          >
-            Check-In Display
-          </button>
-          <button
-            onClick={() => {
-              if (!tid) return
-              window.open(`/desk/t/${tid}/display/courts`, '_blank', 'noopener,noreferrer')
-            }}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: tid ? 'pointer' : 'default',
-            }}
-          >
-            Open Court Board
-          </button>
-          <button
-            onClick={() => {
-              if (!tid) return
-              window.open(`/desk/t/${tid}/display/upcoming`, '_blank', 'noopener,noreferrer')
-            }}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: tid ? 'pointer' : 'default',
-            }}
-          >
-            Open Upcoming Matches
-          </button>
-          <button
-            onClick={handleRefresh}
-            style={{
-              padding: '6px 14px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            Refresh
           </button>
         </div>
       </div>
