@@ -69,6 +69,42 @@ def registration_sms_evidence_by_phone(teams: list[SnapshotTeam]) -> dict[str, d
     return evidence
 
 
+def _registration_evidence_for_player(
+    session: Session,
+    tournament_id: int,
+    player: Player,
+    evidence: dict[str, dict],
+) -> Optional[dict]:
+    """Match registration consent by the player's phone, then by that player's team slot.
+
+    The slot lookup uses the TeamPlayer lineup. It does not copy the slot phone
+    onto the player, and it does not treat a nearby teammate's number as consent.
+    """
+    own = normalize_player_phone(player.phone_e164)
+    if own and own in evidence:
+        return evidence[own]
+    if player.id is None:
+        return None
+    from app.models.event import Event
+    from app.models.team import Team
+    from app.models.team_player import TeamPlayer
+    from app.routes.sms import _team_slot_phone
+
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.player_id == player.id)).all()
+    for link in links:
+        slot = int(link.lineup_slot or 0)
+        if slot not in (1, 2):
+            continue
+        team = session.get(Team, link.team_id)
+        event = session.get(Event, team.event_id) if team is not None else None
+        if team is None or event is None or event.tournament_id != tournament_id:
+            continue
+        phone = _team_slot_phone(team, slot)
+        if phone and phone in evidence:
+            return evidence[phone]
+    return None
+
+
 def apply_registration_sms_consent(
     session: Session,
     tournament_id: int,
@@ -78,7 +114,9 @@ def apply_registration_sms_consent(
 ) -> dict[str, int]:
     """Upgrade unknown players only when the snapshot proves registration consent.
 
-    write=False counts the same decisions without changing rows.
+    write=False counts the same decisions without changing rows. STOP and
+    opted_out are left unchanged. A legacy team-slot phone can match the
+    registration evidence without being copied onto the player.
     """
     evidence = registration_sms_evidence_by_phone(teams)
     players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
@@ -98,7 +136,7 @@ def apply_registration_sms_consent(
         if status == "opted_in":
             counts["already_opted_in"] += 1
             continue
-        item = evidence.get(player.phone_e164 or "")
+        item = _registration_evidence_for_player(session, tournament_id, player, evidence)
         if item is None:
             counts["unresolved"] += 1
             continue

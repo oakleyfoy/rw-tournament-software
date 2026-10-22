@@ -87,6 +87,22 @@ class TeamPhotoSmsStatusResponse(BaseModel):
     players: List[TeamPhotoSmsPlayerStatus]
 
 
+class TeamPhotoSmsDiagnosticRow(BaseModel):
+    name: str
+    phone_source: str
+    consent_status: str
+    consent_source: Optional[str] = None
+    photo_session: int
+    status: str
+    detail: Optional[str] = None
+    sender_called: bool
+    twilio_accepted: bool
+
+
+class TeamPhotoSmsDiagnosticResponse(BaseModel):
+    players: List[TeamPhotoSmsDiagnosticRow]
+
+
 def _role(user: UserAccount) -> str:
     return (user.role or "").strip().lower()
 
@@ -374,6 +390,29 @@ def team_photo_sms_delivery(
 
     return TeamPhotoSmsStatusResponse(
         players=[TeamPhotoSmsPlayerStatus(**row) for row in team_photo_sms_status(session, tournament_id, team_id)]
+    )
+
+
+@router.get(
+    "/tournaments/{tournament_id}/teams/{team_id}/photo-sms-diagnostic",
+    response_model=TeamPhotoSmsDiagnosticResponse,
+)
+def team_photo_sms_diagnostic_view(
+    tournament_id: int,
+    team_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    """Read photo-text delivery for one team. This does not send, and it omits phone numbers."""
+    _assert_can_photograph(session, user, tournament_id)
+    _team_in_tournament(session, tournament_id, team_id)
+    from app.services.team_photo_sms import team_photo_sms_diagnostic
+
+    return TeamPhotoSmsDiagnosticResponse(
+        players=[
+            TeamPhotoSmsDiagnosticRow(**row)
+            for row in team_photo_sms_diagnostic(session, tournament_id, team_id)
+        ]
     )
 
 

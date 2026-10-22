@@ -126,15 +126,20 @@ def _roster_links(session: Session, team_id: int) -> list[TeamPlayer]:
     return roster[:2]
 
 
-def classify_photo_recipients(players: list[Player]) -> list[tuple[Player, Optional[str], str]]:
+def classify_photo_recipients(
+    players: list[Player],
+    phones: Optional[list[Optional[str]]] = None,
+) -> list[tuple[Player, Optional[str], str]]:
     """Return (player, e164 or None, kind) for the two roster players.
 
     kind is ready, duplicate, or no_phone. The same normalized number is one SMS.
+    phones overrides Player.phone_e164 for this plan only and is not saved.
     """
     seen: set[str] = set()
     plans: list[tuple[Player, Optional[str], str]] = []
-    for player in players:
-        phone = _normalize_phone(player.phone_e164)
+    for index, player in enumerate(players):
+        raw = phones[index] if phones is not None else player.phone_e164
+        phone = _normalize_phone(raw)
         if phone and phone in seen:
             plans.append((player, phone, "duplicate"))
             continue
@@ -156,14 +161,26 @@ def _normalize_phone(raw: Optional[str]) -> Optional[str]:
         return None
 
 
-def _roster_players(session: Session, team_id: int, tournament_id: int) -> list[Player]:
-    players: list[Player] = []
+def _roster_players(session: Session, team_id: int, tournament_id: int) -> list[tuple[Player, Optional[str]]]:
+    """Roster players and the number to text, without writing the player row.
+
+    Player.phone_e164 wins. In legacy team-field mode the slot phone is only a
+    fallback for this notice. Consent still comes from the player record.
+    """
+    from app.routes.sms import _team_slot_phone
+
+    team = session.get(Team, team_id)
+    found: list[tuple[Player, Optional[str]]] = []
     for link in _roster_links(session, team_id):
         player = session.get(Player, link.player_id)
         if player is None or player.tournament_id != tournament_id:
             continue
-        players.append(player)
-    return players
+        phone = _normalize_phone(player.phone_e164)
+        slot = int(link.lineup_slot or 0)
+        if not phone and team is not None and slot in (1, 2):
+            phone = _team_slot_phone(team, slot)
+        found.append((player, phone))
+    return found
 
 
 def _idempotency_key(photo_session_id: int, team_id: int, notice_type: str, recipient: str) -> str:
@@ -229,7 +246,9 @@ def queue_team_photo_sms(session: Session, photo: TeamOfficialPhoto) -> None:
         return
 
     roster = _roster_players(session, photo.team_id, photo.tournament_id)
-    for player, phone, kind in classify_photo_recipients(roster):
+    players = [player for player, _phone in roster]
+    phones = [phone for _player, phone in roster]
+    for player, phone, kind in classify_photo_recipients(players, phones):
         if kind == "duplicate":
             notice_type = NOTICE_DUPLICATE
             status = STATUS_SKIPPED_DUPLICATE
@@ -638,6 +657,70 @@ def _safe_reason(status: str, reason: Optional[str]) -> Optional[str]:
     if status == STATUS_FAILED and reason:
         return _PHONE_IN_TEXT.sub("…", reason)[:160]
     return None
+
+
+def _phone_source(session: Session, notice: TeamPhotoSmsNotice, player: Optional[Player]) -> str:
+    target = _normalize_phone(notice.phone_e164)
+    if not target:
+        return "none"
+    if player is not None and _normalize_phone(player.phone_e164) == target:
+        return "player"
+    if player is None or player.id is None:
+        return "unattributed"
+    from app.routes.sms import _team_slot_phone
+
+    link = session.exec(
+        select(TeamPlayer).where(TeamPlayer.team_id == notice.team_id, TeamPlayer.player_id == player.id)
+    ).first()
+    team = session.get(Team, notice.team_id)
+    slot = int(link.lineup_slot or 0) if link is not None else 0
+    if team is not None and slot in (1, 2) and _normalize_phone(_team_slot_phone(team, slot)) == target:
+        return "legacy_team_field"
+    return "unattributed"
+
+
+def _delivery_flags(notice: TeamPhotoSmsNotice) -> tuple[bool, bool]:
+    """Whether the tournament sender ran, and whether Twilio accepted the message."""
+    twilio_accepted = notice.status in {STATUS_SENT, STATUS_DELIVERED} or bool(notice.provider_sid)
+    sender_called = twilio_accepted or notice.status in {
+        STATUS_FAILED,
+        STATUS_SKIPPED_TEXTS_OFF,
+        STATUS_SKIPPED_TEST_MODE,
+    }
+    return sender_called, twilio_accepted and notice.status != STATUS_FAILED
+
+
+def team_photo_sms_diagnostic(session: Session, tournament_id: int, team_id: int) -> list[dict]:
+    """Staff view of one team's photo notices. Phone numbers and tokens are omitted."""
+    notices = session.exec(
+        select(TeamPhotoSmsNotice)
+        .where(
+            TeamPhotoSmsNotice.tournament_id == tournament_id,
+            TeamPhotoSmsNotice.team_id == team_id,
+        )
+        .order_by(TeamPhotoSmsNotice.photo_session_id, TeamPhotoSmsNotice.id)
+    ).all()
+    rows = []
+    for notice in notices:
+        player = session.get(Player, notice.player_id) if notice.player_id else None
+        name = ""
+        if player is not None:
+            name = (player.display_name or player.full_name or "").strip()
+        sender_called, twilio_accepted = _delivery_flags(notice)
+        rows.append(
+            {
+                "name": name or "Player",
+                "phone_source": _phone_source(session, notice, player),
+                "consent_status": (player.sms_consent_status if player is not None else notice.consent_status) or "unknown",
+                "consent_source": player.sms_consent_source if player is not None else notice.consent_source,
+                "photo_session": int(notice.photo_session_id or 1),
+                "status": notice.status,
+                "detail": _safe_reason(notice.status, notice.failure_reason),
+                "sender_called": sender_called,
+                "twilio_accepted": twilio_accepted,
+            }
+        )
+    return rows
 
 
 def team_photo_sms_status(session: Session, tournament_id: int, team_id: int) -> list[dict]:

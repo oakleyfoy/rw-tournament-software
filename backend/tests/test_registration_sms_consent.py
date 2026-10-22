@@ -159,6 +159,66 @@ def test_registration_consent_reconciles_unknown_and_preserves_opt_out(session: 
     assert all(notice.status == "SENT" for notice in notices)
 
 
+def test_legacy_slot_phone_matches_registration_consent_without_copying_the_number(session: Session):
+    tournament = Tournament(
+        name="Legacy consent",
+        location="Test",
+        timezone="America/Chicago",
+        start_date=date(2026, 10, 16),
+        end_date=date(2026, 10, 18),
+    )
+    session.add(tournament)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed", team_count=2)
+    session.add(event)
+    session.flush()
+    team = Team(
+        event_id=event.id,
+        name="Slot / Stopped",
+        seed=1,
+        player1_cellphone="(555) 555-0101",
+        player2_cellphone="555-555-0102",
+    )
+    session.add(team)
+    session.flush()
+    slotted = Player(
+        tournament_id=tournament.id,
+        full_name="Slot Player",
+        phone_e164=None,
+        sms_consent_status="unknown",
+        sms_consent_source="team_phone_sync",
+    )
+    stopped = Player(
+        tournament_id=tournament.id,
+        full_name="Stopped Partner",
+        phone_e164=None,
+        sms_consent_status="opted_out",
+        sms_consent_source="twilio_stop",
+    )
+    session.add(slotted)
+    session.add(stopped)
+    session.flush()
+    session.add(TeamPlayer(team_id=team.id, player_id=slotted.id, lineup_slot=1))
+    session.add(TeamPlayer(team_id=team.id, player_id=stopped.id, lineup_slot=2))
+    session.flush()
+
+    counts = apply_registration_sms_consent(
+        session,
+        tournament.id,
+        [_team(_player("11", "+15555550101", consent="opted_in"), _player("22", "+15555550102", consent="opted_in"))],
+    )
+    assert counts["reconciled"] == 1
+    assert counts["opted_out_preserved"] == 1
+    session.refresh(slotted)
+    session.refresh(stopped)
+    assert slotted.sms_consent_status == "opted_in"
+    assert slotted.sms_consent_source == "registration_terms:Registration_Web:900"
+    assert slotted.phone_e164 is None
+    assert stopped.sms_consent_status == "opted_out"
+    assert stopped.sms_consent_source == "twilio_stop"
+    assert stopped.phone_e164 is None
+
+
 def test_consent_fields_do_not_change_the_structural_snapshot_hash():
     base = {
         "tournamentId": 244,

@@ -959,3 +959,168 @@ def test_health_reports_session_columns_and_keeps_photo_sms_disabled(client: Tes
     assert body["team_photo_sms_tables_ready"] is True
     assert body["team_photo_sms_session_columns_ready"] is True
 
+
+def _legacy_team_phones(session: Session, roster: dict) -> None:
+    team = session.get(Team, roster["team_id"])
+    team.player1_cellphone = "(555) 555-0101"
+    team.player2_cellphone = "555-555-0102"
+    session.add(team)
+    session.commit()
+
+
+def test_opted_in_players_text_legacy_team_phones_through_redirect(
+    client: TestClient, session: Session, monkeypatch
+):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p1_phone=None, p2_phone=None)
+    _legacy_team_phones(session, roster)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=roster["tournament_id"],
+            texts_enabled=True,
+            delivery_mode="redirect",
+            redirect_phone="+15555550999",
+        )
+    )
+    session.commit()
+    saved = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-legacy-1", _jpeg())
+    assert saved.status_code == 200, saved.text
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 2
+    assert {call["to"] for call in calls} == {"+15555550999"}
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SENT"}
+    session.expire_all()
+    for player_id in roster["players"]:
+        player = session.get(Player, player_id)
+        assert player.phone_e164 is None
+        assert player.sms_consent_status == "opted_in"
+
+
+def test_unknown_consent_does_not_text_legacy_team_phones(
+    client: TestClient, session: Session, monkeypatch
+):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p1_phone=None, p2_phone=None, p1_consent="unknown", p2_consent="unknown")
+    _legacy_team_phones(session, roster)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=roster["tournament_id"],
+            texts_enabled=True,
+            delivery_mode="redirect",
+            redirect_phone="+15555550999",
+        )
+    )
+    session.commit()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-legacy-unknown", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
+    assert calls == []
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_NO_CONSENT"}
+    assert _photo_logs(session, roster["tournament_id"]) == []
+
+
+def test_registration_consent_and_legacy_phones_redirect_without_exposing_numbers(
+    client: TestClient, session: Session, monkeypatch
+):
+    from app.services.canonical_teams import SnapshotPlayer, SnapshotTeam
+    from app.services.registration_sms_consent import apply_registration_sms_consent
+
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
+    reset_memory_store()
+    headers = _login(client)
+    roster = _roster(session, p1_phone=None, p2_phone=None, p1_consent="unknown", p2_consent="unknown")
+    _legacy_team_phones(session, roster)
+    players = [session.get(Player, player_id) for player_id in roster["players"]]
+    snapshot = [
+        SnapshotTeam(
+            team_key="11/22",
+            draw_kind="mixed",
+            draw_label="Mixed",
+            player1=SnapshotPlayer(
+                rw_id="11",
+                name="Mike",
+                rating=4.0,
+                cellphone="+15555550101",
+                sms_consent="opted_in",
+                sms_consent_source="registration_terms",
+                sms_consent_at="2026-09-01",
+                sms_consent_record_key="Registration_Web:851",
+            ),
+            player2=SnapshotPlayer(
+                rw_id="22",
+                name="Dee",
+                rating=4.0,
+                cellphone="+15555550102",
+                sms_consent="opted_in",
+                sms_consent_source="registration_terms",
+                sms_consent_at="2026-09-01",
+                sms_consent_record_key="Registration_Web:851",
+            ),
+            team_rating=8.0,
+            rating_status="complete",
+            status="confirmed",
+            bucket="active",
+        )
+    ]
+    assert apply_registration_sms_consent(session, roster["tournament_id"], snapshot)["reconciled"] == 2
+    session.commit()
+    for player in players:
+        session.refresh(player)
+        assert player.sms_consent_status == "opted_in"
+        assert player.phone_e164 is None
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=roster["tournament_id"],
+            texts_enabled=True,
+            delivery_mode="redirect",
+            redirect_phone="+15555550999",
+        )
+    )
+    session.commit()
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-consent-legacy-1", _jpeg()).status_code == 200
+    calls: list[dict] = []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 2
+    assert len(calls) == 2
+    assert {call["to"] for call in calls} == {"+15555550999"}
+    replaced = _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-consent-legacy-2", _jpeg("blue"))
+    assert replaced.status_code == 200
+    session.expire_all()
+    assert len(session.exec(select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"])).all()) == 2
+    assert _delete(client, headers, roster["tournament_id"], roster["team_id"]).status_code == 200
+    assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-consent-legacy-3", _jpeg("green")).status_code == 200
+    session.expire_all()
+    notices = session.exec(
+        select(TeamPhotoSmsNotice).where(TeamPhotoSmsNotice.team_id == roster["team_id"]).order_by(TeamPhotoSmsNotice.id)
+    ).all()
+    assert [notice.photo_session_id for notice in notices] == [1, 1, 2, 2]
+    assert {notice.status for notice in notices if notice.photo_session_id == 1} == {"SENT"}
+    calls.clear()
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 2
+    diagnostic = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['team_id']}/photo-sms-diagnostic",
+        headers=headers,
+    )
+    assert diagnostic.status_code == 200, diagnostic.text
+    body = diagnostic.json()
+    assert len(body["players"]) == 4
+    assert {row["phone_source"] for row in body["players"]} == {"legacy_team_field"}
+    assert {row["consent_status"] for row in body["players"]} == {"opted_in"}
+    current = [row for row in body["players"] if row["photo_session"] == 2]
+    assert {row["sender_called"] for row in current} == {True}
+    assert {row["twilio_accepted"] for row in current} == {True}
+    assert "555" not in diagnostic.text
+    denied = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/{roster['team_id']}/photo-sms-diagnostic"
+    )
+    assert denied.status_code == 401
+
