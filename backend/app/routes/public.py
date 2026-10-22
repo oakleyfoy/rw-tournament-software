@@ -871,7 +871,7 @@ def _bracket_team_line(
             seq = int(placeholder.rsplit("L", 1)[-1].lstrip("0") or "1")
             letter = chr(ord("A") + seq - 1)
             return f"Loser {letter}"
-        return placeholder
+        return _waterfall_public_side(placeholder)
     return "TBD"
 
 

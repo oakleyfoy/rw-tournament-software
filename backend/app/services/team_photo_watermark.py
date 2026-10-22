@@ -262,7 +262,7 @@ def normalize_settings(payload: Optional[dict], tournament_name: str) -> dict:
         "font_family": family,
         "font_style": style,
         "color": _hex_color(str(raw.get("color") or base["color"])),
-        "size_percent": int(round(_clamp(size_percent, 8, 80))),
+        "size_percent": int(round(_clamp(size_percent, 8, 100))),
         "logo_scale": round(_clamp(logo_scale, 0.4, 2.5), 2),
         "spacing": int(round(_clamp(spacing, 0, 40))),
         "opacity": int(round(_clamp(opacity, 10, 100))),
@@ -397,15 +397,14 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, family: str, style: str, max_width: int) -> ImageFont.ImageFont:
-    size = max(12, int(max_width * 0.18))
-    font = _load_font(family, style, size)
-    while size > 10:
-        font = _load_font(family, style, size)
-        box = draw.textbbox((0, 0), text, font=font)
-        if box[2] - box[0] <= max_width:
-            return font
-        size -= 2
-    return font
+    """Size the face so the words occupy max_width. The logo is sized separately."""
+    if not text:
+        return _load_font(family, style, 12)
+    probe = _load_font(family, style, 100)
+    box = draw.textbbox((0, 0), text, font=probe)
+    measured = max(1, box[2] - box[0])
+    size = max(8, int(round(max_width * 100 / measured)))
+    return _load_font(family, style, size)
 
 
 def _brand_logo() -> Image.Image:
@@ -443,26 +442,34 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
         text = settings["event_text"]
     else:
         text = settings["event_text"]
-    mark_width = max(40, int(target_width * settings["size_percent"] / 100))
+    printable = max(40, int(target_width * (1 - 2 * SAFE_MARGIN)))
+    wording_width = max(40, int(target_width * settings["size_percent"] / 100))
+    wording_width = min(printable, wording_width)
     color = _rgb(settings["color"])
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-    font = _fit_font(probe, text or "RW", settings["font_family"], settings["font_style"], mark_width)
+    font = _fit_font(probe, text or "RW", settings["font_family"], settings["font_style"], wording_width)
     text_box = probe.textbbox((0, 0), text, font=font) if text else (0, 0, 0, 0)
     text_h = text_box[3] - text_box[1] if text else 0
     text_w = text_box[2] - text_box[0] if text else 0
     logo_h = 0
     logo_image = None
     if show_logo:
-        logo_h = max(18, int(mark_width * 0.34 * float(settings["logo_scale"])))
+        scale = float(settings["logo_scale"])
         if logo is not None and mode == "custom_logo":
             logo_image = logo.convert("RGBA")
+            logo_max_w = max(1, int(target_width * 0.28 * scale))
+            logo_max_h = max(1, int(logo_max_w * 0.34))
         else:
-            logo_image = _colored_brand_logo(color, mark_width, logo_h)
-        logo_image.thumbnail((mark_width, logo_h), Image.Resampling.LANCZOS)
+            logo_max_w = max(1, int(target_width * 0.28 * 0.78 * scale))
+            logo_max_h = max(1, int(logo_max_w * 547 / 1011))
+            logo_image = _colored_brand_logo(color, logo_max_w, logo_max_h)
+        logo_max_w = min(printable, logo_max_w)
+        logo_image.thumbnail((logo_max_w, logo_max_h), Image.Resampling.LANCZOS)
         logo_h = logo_image.height
     gap = settings["spacing"] if text and show_logo else 0
+    layer_w = max(logo_image.width if logo_image is not None else 0, text_w, 8)
     layer_h = logo_h + gap + text_h + 8
-    layer = Image.new("RGBA", (max(mark_width, text_w), max(layer_h, 8)), (0, 0, 0, 0))
+    layer = Image.new("RGBA", (layer_w, max(layer_h, 8)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     cursor = 0
     if show_logo:
@@ -501,11 +508,6 @@ def _place_photo(source: Image.Image, canvas_w: int, canvas_h: int, settings: di
 
 def _paste_watermark(canvas: Image.Image, layer: Image.Image, settings: dict) -> Image.Image:
     margin = int(round(min(canvas.size) * SAFE_MARGIN))
-    max_w = max(1, canvas.width - margin * 2)
-    max_h = max(1, canvas.height - margin * 2)
-    if layer.width > max_w or layer.height > max_h:
-        layer = layer.copy()
-        layer.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     anchor_x, anchor_y = POSITIONS[settings["position"]]
     x = margin + anchor_x * (canvas.width - margin * 2 - layer.width) + settings["offset_x"] * canvas.width
     y = margin + anchor_y * (canvas.height - margin * 2 - layer.height) + settings["offset_y"] * canvas.height

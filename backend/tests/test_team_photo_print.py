@@ -311,6 +311,76 @@ def test_default_watermark_uses_the_rw_emblem():
         assert red > 40
 
 
+def test_logo_scale_changes_the_printed_emblem_size():
+    source = Image.new("RGB", (2000, 3000), (0, 0, 0))
+    raw = io.BytesIO()
+    source.save(raw, format="JPEG", quality=95)
+
+    def span(scale: float) -> int:
+        rendered, width, height, _source_w, _source_h, _low = render_print_jpeg(
+            raw.getvalue(),
+            _print_settings(content_mode="logo_only", color="#c62828", position="top-center", shadow=False, opacity=100, logo_scale=scale),
+            "4x6",
+            allow_upscale=False,
+        )
+        top = bottom = None
+        with Image.open(io.BytesIO(rendered)) as image:
+            for y in range(0, height, 2):
+                for x in range(width // 2 - 280, width // 2 + 280, 4):
+                    pixel = image.getpixel((x, y))
+                    if pixel[0] > 120 and pixel[0] > pixel[1] + 40 and pixel[0] > pixel[2] + 40:
+                        top = y if top is None else top
+                        bottom = y
+                        break
+        assert top is not None and bottom is not None
+        return bottom - top
+
+    assert span(2.5) > span(1) * 1.8
+
+
+def _wording_span(size_percent: int) -> int:
+    source = Image.new("RGB", (2000, 3000), (0, 0, 0))
+    raw = io.BytesIO()
+    source.save(raw, format="JPEG", quality=95)
+    rendered, width, height, _source_w, _source_h, _low = render_print_jpeg(
+        raw.getvalue(),
+        _print_settings(
+            content_mode="logo_and_text",
+            event_text="2026 Wild Dunes",
+            color="#ffffff",
+            size_percent=size_percent,
+            logo_scale=1,
+            position="top-center",
+            shadow=False,
+            opacity=100,
+            spacing=8,
+        ),
+        "4x6",
+        allow_upscale=False,
+    )
+    def white_span(image, y0, y1):
+        top = bottom = None
+        for y in range(y0, y1, 2):
+            for x in range(40, width - 40, 8):
+                pixel = image.getpixel((x, y))
+                if pixel[0] > 180 and pixel[1] > 180 and pixel[2] > 180:
+                    top = y if top is None else top
+                    bottom = y
+                    break
+        assert top is not None and bottom is not None
+        return bottom - top
+
+    with Image.open(io.BytesIO(rendered)) as image:
+        return white_span(image, 190, 900), white_span(image, 0, 185)
+
+
+def test_wording_size_does_not_change_the_logo():
+    small_text, small_logo = _wording_span(20)
+    large_text, large_logo = _wording_span(90)
+    assert large_text > small_text * 2
+    assert abs(large_logo - small_logo) <= 16
+
+
 def test_watermark_stays_inside_the_printable_margin():
     source = Image.new("RGB", (2000, 3000), (0, 0, 0))
     raw = io.BytesIO()

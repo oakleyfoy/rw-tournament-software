@@ -116,4 +116,88 @@ describe('PublicMobileDraw', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Full Draw' }))
     expect(onShowFullDraw).toHaveBeenCalled()
   })
+
+  it('shows a short team header and does not repeat the next match', async () => {
+    vi.mocked(getPublicSchedule).mockResolvedValue({
+      ...schedule,
+      matches: [
+        {
+          ...schedule.matches[0],
+          status: 'FINAL',
+          score_display: '8-5',
+          winner_team_id: 10,
+          team1_full_name: 'Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC',
+          team2_full_name: 'Cara Lee, Southlake, TX / Dee Chen, Plano, TX',
+        },
+        {
+          ...schedule.matches[0],
+          match_id: 42,
+          match_number: 42,
+          match_code: 'EVT_WF_R2_W01',
+          day_label: 'Saturday, June 6',
+          scheduled_time: '11:00 AM',
+          court_name: 'Court 4',
+          status: 'SCHEDULED',
+          team_a_id: 10,
+          team_b_id: 20,
+          team1_full_name: 'Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC',
+          team2_full_name: 'Cara Lee, Southlake, TX / Dee Chen, Plano, TX',
+          score_display: null,
+          winner_team_id: null,
+        },
+      ],
+    })
+    vi.mocked(getPublicTeamDirectory).mockResolvedValue({
+      ...directory,
+      teams: [
+        {
+          ...directory.teams[0],
+          seed: 4,
+          full_name: 'Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC',
+          players: ['Heather Robinson', 'Shea Butler', 'HR'],
+          photo_version: null,
+        },
+        {
+          ...directory.teams[1],
+          full_name: 'Cara Lee, Southlake, TX / Dee Chen, Plano, TX',
+          players: ['Cara Lee', 'Dee Chen'],
+          photo_version: null,
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <PublicMobileDraw
+          tournamentId={3}
+          eventId={7}
+          tournamentName="Amelia Island"
+          eventName="Women's A"
+          formatLabel="Waterfall"
+          backHref="/t/3/draws"
+          onShowFullDraw={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(await screen.findByLabelText('Find your team'), { target: { value: 'heather' } })
+    fireEvent.click(document.querySelector('.public-search-result') as HTMLButtonElement)
+    expect(screen.getByRole('tab', { name: 'My Matches' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Heather Robinson')).toBeTruthy()
+    expect(screen.getByText('Shea Butler')).toBeTruthy()
+    expect(screen.queryByText(/Cumming/)).toBeNull()
+    expect(screen.queryByText('HR')).toBeNull()
+    expect(screen.queryByText(/Seed 4/)).toBeNull()
+    expect(screen.getByText('Cara Lee')).toBeTruthy()
+    expect(screen.getByText('Dee Chen')).toBeTruthy()
+    expect(screen.getByText('11:00 AM')).toBeTruthy()
+    expect(screen.getByText('Court 4')).toBeTruthy()
+    expect(screen.getAllByText('Match #42')).toHaveLength(1)
+    expect(screen.getByText('Score 8-5')).toBeTruthy()
+    expect(document.querySelector('.public-photo-fallback.large')).toBeTruthy()
+    expect(document.querySelector('.public-photo.large')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Score 8-5/ }))
+    expect(screen.getByText('Full registration names')).toBeTruthy()
+  })
 })

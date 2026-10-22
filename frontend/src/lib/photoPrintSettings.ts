@@ -144,14 +144,46 @@ export function cropCutsPhoto(width: number, height: number, cropMode: string): 
   return Math.abs(width / height - PRINT_WIDTH / PRINT_HEIGHT) > 0.015
 }
 
+/** Logo width at 100% scale, as a fraction of the photo width. Independent of wording size. */
+export const LOGO_WIDTH_FRACTION = 0.28 * 0.78
+
+export function logoPixelWidth(frameWidth: number, logoScale: number): number {
+  return Math.max(18, frameWidth * LOGO_WIDTH_FRACTION * logoScale)
+}
+
+export function wordingPixelWidth(frameWidth: number, sizePercent: number): number {
+  return Math.max(24, frameWidth * (sizePercent / 100))
+}
+
+/** Font size that makes `text` about `targetWidth` pixels wide. */
+export function wordingFontSize(text: string, targetWidth: number, font: string): number {
+  const sample = text.trim()
+  if (!sample || targetWidth <= 0) return 16
+  const fallback = Math.max(12, targetWidth / (sample.length * 0.58))
+  if (typeof document === 'undefined') return fallback
+  let context: CanvasRenderingContext2D | null = null
+  try {
+    context = document.createElement('canvas').getContext('2d')
+  } catch {
+    context = null
+  }
+  if (!context || typeof context.measureText !== 'function') return fallback
+  context.font = font
+  const measured = context.measureText(sample).width
+  if (!measured) return fallback
+  const probe = Number(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] || 100)
+  return Math.max(12, (targetWidth * probe) / measured)
+}
+
 export function watermarkBox(
   frameWidth: number,
   frameHeight: number,
   settings: Pick<WatermarkSettings, 'size_percent' | 'position' | 'offset_x' | 'offset_y'>,
+  content?: { width: number; height: number },
 ) {
   const margin = Math.min(frameWidth, frameHeight) * 0.04
-  const markWidth = frameWidth * (settings.size_percent / 100)
-  const markHeight = markWidth * 0.46
+  const markWidth = content?.width ?? frameWidth * (settings.size_percent / 100)
+  const markHeight = content?.height ?? markWidth * 0.46
   const [anchorX, anchorY] = ANCHORS[settings.position] || ANCHORS['top-center']
   const rawX = margin + anchorX * (frameWidth - margin * 2 - markWidth) + settings.offset_x * frameWidth
   const rawY = margin + anchorY * (frameHeight - margin * 2 - markHeight) + settings.offset_y * frameHeight

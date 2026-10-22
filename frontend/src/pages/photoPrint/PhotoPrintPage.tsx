@@ -27,8 +27,11 @@ import {
   PRINT_SIZE,
   cropCutsPhoto,
   defaultWatermarkSettings,
+  logoPixelWidth,
   printFilename,
   watermarkBox,
+  wordingFontSize,
+  wordingPixelWidth,
   type WatermarkSettings,
 } from '../../lib/photoPrintSettings'
 import './photoPrint.css'
@@ -323,7 +326,7 @@ export default function PhotoPrintPage() {
     const startSize = settings.size_percent
     const move = (ev: PointerEvent) => {
       const next = startSize + ((ev.clientX - startX) / frame.width) * 100
-      patch({ size_percent: Math.max(8, Math.min(80, Math.round(next))) })
+      patch({ size_percent: Math.max(8, Math.min(100, Math.round(next))) })
     }
     const stop = () => {
       window.removeEventListener('pointermove', move)
@@ -333,13 +336,31 @@ export default function PhotoPrintPage() {
     window.addEventListener('pointerup', stop)
   }
 
-  const box = settings ? watermarkBox(frameSize.width || 640, frameSize.height || 480, settings) : null
+  const frameWidth = frameSize.width || 640
+  const frameHeight = frameSize.height || 480
   const watermarkText = settings?.content_mode === 'custom_text'
     ? settings.custom_text
     : settings?.content_mode === 'logo_only'
       ? ''
       : settings?.event_text || ''
   const showLogo = settings ? ['logo_and_text', 'logo_only', 'custom_logo'].includes(settings.content_mode) : false
+  const logoWidth = showLogo && settings ? logoPixelWidth(frameWidth, settings.logo_scale) : 0
+  const logoHeight = showLogo ? logoWidth * (547 / 1011) : 0
+  const textWidth = settings && watermarkText ? wordingPixelWidth(frameWidth, settings.size_percent) : 0
+  const wordingWeight = settings?.font_style === 'bold' ? 700 : settings?.font_style === 'medium' ? 500 : 400
+  const wordingStyle = settings?.font_style === 'italic' ? 'italic' : 'normal'
+  const wordingFamily = settings?.font_family.includes(' ') ? `"${settings.font_family}"` : settings?.font_family
+  const wordingFont = settings && watermarkText
+    ? wordingFontSize(watermarkText, textWidth, `${wordingStyle} ${wordingWeight} 100px ${wordingFamily}`)
+    : 16
+  const textHeight = watermarkText ? wordingFont * 1.05 : 0
+  const stackGap = showLogo && watermarkText && settings ? settings.spacing / 2 : 0
+  const box = settings
+    ? watermarkBox(frameWidth, frameHeight, settings, {
+      width: Math.max(logoWidth, textWidth, 24),
+      height: Math.max(logoHeight + stackGap + textHeight, 24),
+    })
+    : null
   const selectedPhotos = photos.filter((photo) => selectedIds.includes(photo.team_id))
   const lowSelected = selectedPhotos.filter((photo) => photo.low_resolution_sizes.includes(printSize))
 
@@ -444,14 +465,14 @@ export default function PhotoPrintPage() {
                   }}
                 >
                   {showLogo && (settings.content_mode === 'custom_logo' && logoSrc
-                    ? <img src={logoSrc} alt="" style={{ width: `${70 * settings.logo_scale}%`, maxHeight: 64 }} />
+                    ? <img className="photo-print-logo" src={logoSrc} alt="" style={{ width: logoWidth, height: 'auto' }} />
                     : (
                       <span
+                        className="photo-print-logo"
                         aria-label="RacquetWar"
                         style={{
-                          display: 'block',
-                          width: `${Math.min(100, 78 * settings.logo_scale)}%`,
-                          aspectRatio: '1011 / 547',
+                          width: logoWidth,
+                          height: logoWidth * (547 / 1011),
                           backgroundColor: settings.color,
                           maskImage: 'url(/assets/rw-watermark-logo.png)',
                           WebkitMaskImage: 'url(/assets/rw-watermark-logo.png)',
@@ -464,8 +485,8 @@ export default function PhotoPrintPage() {
                         }}
                       />
                     ))}
-                  {watermarkText && <span>{watermarkText}</span>}
-                  <button type="button" aria-label="Resize watermark" onPointerDown={onResizeWatermark} />
+                  {watermarkText && <span className="photo-print-wording" style={{ fontSize: wordingFont }}>{watermarkText}</span>}
+                  <button type="button" aria-label="Resize wording" onPointerDown={onResizeWatermark} />
                 </div>
               )}
             </div>
@@ -496,12 +517,12 @@ export default function PhotoPrintPage() {
                 <input value={settings.event_text} onChange={(event) => patch({ event_text: event.target.value })} />
               </label>
               {settings.content_mode === 'custom_text' && (
-                <label className="photo-print-field">Custom text
+                <label className="photo-print-field photo-print-span">Custom text
                   <input value={settings.custom_text} onChange={(event) => patch({ custom_text: event.target.value })} />
                 </label>
               )}
               {settings.content_mode === 'custom_logo' && (
-                <label className="photo-print-field">Custom logo
+                <label className="photo-print-field photo-print-span">Custom logo
                   <input type="file" accept="image/png,image/jpeg" onChange={(event) => {
                     const file = event.target.files?.[0]
                     if (!file) return
@@ -530,10 +551,10 @@ export default function PhotoPrintPage() {
                   <input type="color" aria-label="Custom color" value={settings.color} onChange={(event) => patch({ color: event.target.value })} />
                 </div>
               </div>
-              <label className="photo-print-field">Size {settings.size_percent}%
-                <input type="range" min={8} max={80} value={settings.size_percent} onChange={(event) => patch({ size_percent: Number(event.target.value) })} />
+              <label className="photo-print-field">Wording size {settings.size_percent}%
+                <input type="range" min={8} max={100} value={settings.size_percent} onChange={(event) => patch({ size_percent: Number(event.target.value) })} />
               </label>
-              <div className="photo-print-field">Position
+              <div className="photo-print-field photo-print-span">Position
                 <div className="photo-print-positions">
                   {POSITIONS.map((position) => (
                     <button key={position} type="button" aria-label={POSITION_LABELS[position]} onClick={() => patch({ position, offset_x: 0, offset_y: 0 })} style={{ background: settings.position === position ? '#e8eaf6' : '#fff' }}>
@@ -566,7 +587,7 @@ export default function PhotoPrintPage() {
               <label className="photo-print-field">Quantity
                 <input type="number" min={1} max={20} value={quantity} onChange={(event) => setQuantity(Number(event.target.value) || 1)} />
               </label>
-              {current && <p style={{ fontSize: 12 }}>{printFilename(workspace?.tournament_name || '', current.player_names, printSize)}</p>}
+              {current && <p className="photo-print-span" style={{ fontSize: 12, margin: 0 }}>{printFilename(workspace?.tournament_name || '', current.player_names, printSize)}</p>}
             </div>
           )}
           {settings && (

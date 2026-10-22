@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   buildTeamJourney,
   courtText,
+  displaySideLabel,
   groupMatchesByRound,
   publicMatchStatus,
   publicSideLabel,
+  rosterNames,
   roundLabel,
   searchPublicTeams,
   winnerName,
@@ -159,5 +161,13 @@ describe('public mobile draw', () => {
     expect(publicSideLabel('LOSER:WOM_WOM_E11_BWL_M3')).toBe('Loser of Division II')
     expect(publicSideLabel('WOM_WOM_E11_WF_R2_W07')).toBe('Winner of Waterfall Round 2')
     expect(publicSideLabel('Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC')).toContain('Heather Robinson')
+    expect(displaySideLabel('Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC')).toBe('Heather Robinson / Shea Butler')
+    expect(displaySideLabel('SEED_4')).toBe('Opponent TBD')
+    expect(displaySideLabel('SEED_4', { keepPoolSeeds: true })).toBe('Seed 4')
+    expect(displaySideLabel('Cons Seed 1', { keepPoolSeeds: true })).toBe('Cons Seed 1')
+    expect(rosterNames({
+      full_name: 'Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC',
+      players: ['Heather Robinson', 'Shea Butler', 'HR'],
+    })).toEqual(['Heather Robinson', 'Shea Butler'])
   })
 })

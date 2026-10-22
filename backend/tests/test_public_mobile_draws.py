@@ -128,3 +128,13 @@ def test_public_photo_stays_hidden_until_the_draw_is_published(client, session: 
     assert response.json()["status"] == "NOT_PUBLISHED"
     hidden = client.get(f"/api/public/tournaments/{tournament.id}/teams/1/photo")
     assert hidden.status_code == 404
+
+
+def test_public_draws_hide_seeds_outside_round_robin_pools():
+    from app.routes.public import _bracket_team_line, _rr_team_line, _waterfall_public_side
+
+    assert _waterfall_public_side("Seed 1") == "TBD"
+    assert _bracket_team_line(None, "Seed 4", None, None, {}, {}) == "TBD"
+    assert _bracket_team_line(None, "Winner of Match #12", None, None, {}, {}) == "Winner of Match #12"
+    assert _rr_team_line(None, "SEED_4", {}) == "Seed 4"
+    assert _rr_team_line(None, "ConsL1", {}) == "Cons Seed 1"

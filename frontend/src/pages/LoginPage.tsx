@@ -7,6 +7,7 @@ import {
   setAuthRole,
   setAuthToken,
 } from '../api/client'
+import './login.css'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -68,99 +69,49 @@ export default function LoginPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: 40, textAlign: 'center' }}>Loading authentication...</div>
+    return <div className="staff-login">Loading authentication...</div>
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#eef3f8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <form
-        onSubmit={bootstrapNeeded ? handleBootstrap : handleLogin}
-        style={{
-          width: 420,
-          maxWidth: '94vw',
-          background: '#fff',
-          border: '1px solid #d8e1ee',
-          borderRadius: 10,
-          padding: 24,
-          boxShadow: '0 6px 20px rgba(0,0,0,0.06)',
-        }}
-      >
-        <h2 style={{ marginTop: 0, marginBottom: 8, color: '#12336b' }}>
-          {bootstrapNeeded ? 'Create Admin Account' : 'Staff Login'}
-        </h2>
-        <div style={{ color: '#5f6f84', marginBottom: 16, fontSize: 13 }}>
-          {bootstrapNeeded
-            ? 'Set up the first secure admin account for tournament management.'
-            : 'Tournament Directors/Admins only. Public users can use draws/schedule links.'}
+    <div className="staff-login">
+      <form className="staff-login-card" onSubmit={bootstrapNeeded ? handleBootstrap : handleLogin}>
+        <div className="staff-login-brand">
+          <img src="/assets/rw-watermark-logo.png" alt="RacquetWar" />
         </div>
+        <div className="staff-login-body">
+          <h1>{bootstrapNeeded ? 'Create Admin Account' : 'Staff Login'}</h1>
+          <p>
+            {bootstrapNeeded
+              ? 'Set up the first secure admin account for tournament management.'
+              : 'Tournament directors and admins. Public draws and schedules stay open without a login.'}
+          </p>
 
-        {error && (
-          <div style={{ background: '#ffebee', color: '#b71c1c', border: '1px solid #ffcdd2', borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 13 }}>
-            {error}
-          </div>
-        )}
+          {error && <div className="staff-login-error">{error}</div>}
 
-        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Username</label>
-        <input
-          value={username}
-          onChange={e => setUsername(e.target.value)}
-          required
-          style={{ width: '100%', padding: '9px 10px', marginBottom: 12, borderRadius: 6, border: '1px solid #c9d6e8' }}
-        />
+          <label htmlFor="staff-username">Username</label>
+          <input id="staff-username" value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username" />
 
-        {bootstrapNeeded && (
-          <>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Display Name (optional)</label>
-            <input
-              value={displayName}
-              onChange={e => setDisplayName(e.target.value)}
-              style={{ width: '100%', padding: '9px 10px', marginBottom: 12, borderRadius: 6, border: '1px solid #c9d6e8' }}
-            />
-          </>
-        )}
+          {bootstrapNeeded && (
+            <>
+              <label htmlFor="staff-display-name">Display Name (optional)</label>
+              <input id="staff-display-name" value={displayName} onChange={e => setDisplayName(e.target.value)} autoComplete="name" />
+            </>
+          )}
 
-        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Password</label>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          required
-          minLength={8}
-          style={{ width: '100%', padding: '9px 10px', marginBottom: 12, borderRadius: 6, border: '1px solid #c9d6e8' }}
-        />
+          <label htmlFor="staff-password">Password</label>
+          <input id="staff-password" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoComplete={bootstrapNeeded ? 'new-password' : 'current-password'} />
 
-        {bootstrapNeeded && (
-          <>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Confirm Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              required
-              minLength={8}
-              style={{ width: '100%', padding: '9px 10px', marginBottom: 12, borderRadius: 6, border: '1px solid #c9d6e8' }}
-            />
-          </>
-        )}
+          {bootstrapNeeded && (
+            <>
+              <label htmlFor="staff-confirm-password">Confirm Password</label>
+              <input id="staff-confirm-password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+            </>
+          )}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          style={{
-            width: '100%',
-            marginTop: 4,
-            border: 'none',
-            borderRadius: 6,
-            background: '#123d85',
-            color: '#fff',
-            padding: '10px 12px',
-            fontWeight: 700,
-            cursor: submitting ? 'default' : 'pointer',
-            opacity: submitting ? 0.75 : 1,
-          }}
-        >
-          {submitting ? 'Please wait...' : bootstrapNeeded ? 'Create Admin Account' : 'Log In'}
-        </button>
+          <button type="submit" disabled={submitting}>
+            {submitting ? 'Please wait...' : bootstrapNeeded ? 'Create Admin Account' : 'Log In'}
+          </button>
+        </div>
       </form>
     </div>
   )

@@ -172,20 +172,43 @@ export function buildTeamJourney(teamId: number, matches: MobileMatch[]): TeamJo
   }
 }
 
-export function opponentName(match: MobileMatch, teamId: number | null, options?: { hideSeeds?: boolean }): string {
-  if (teamId != null && match.team_a_id === teamId) return publicSideLabel(match.team2_full_name, options)
-  if (teamId != null && match.team_b_id === teamId) return publicSideLabel(match.team1_full_name, options)
+export function opponentName(match: MobileMatch, teamId: number | null, options?: { keepPoolSeeds?: boolean }): string {
+  if (teamId != null && match.team_a_id === teamId) return displaySideLabel(match.team2_full_name, options)
+  if (teamId != null && match.team_b_id === teamId) return displaySideLabel(match.team1_full_name, options)
   const known = [match.team1_full_name, match.team2_full_name]
-    .map((name) => publicSideLabel(name, options))
+    .map((name) => displaySideLabel(name, options))
     .filter((name) => name !== 'Opponent TBD')
   return known[0] || 'Opponent TBD'
+}
+
+export function shortPlayerName(value: string): string {
+  return value
+    .trim()
+    .replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/i, '')
+    .replace(/\s+-\s+[A-Z]{2}\s*$/i, '')
+    .trim()
+}
+
+export function rosterNames(team: Pick<MobileTeam, 'full_name' | 'players'>): string[] {
+  const named = (team.players || []).map(shortPlayerName).filter(Boolean).slice(0, 2)
+  if (named.length) return named
+  return shortPlayerName(team.full_name).split(/\s*\/\s*|\s+&\s+/).map((part) => part.trim()).filter(Boolean).slice(0, 2)
+}
+
+export function displaySideLabel(name: string | null | undefined, options?: { keepPoolSeeds?: boolean }): string {
+  const labeled = publicSideLabel(name, { hideSeeds: !options?.keepPoolSeeds })
+  if (!/[/,]/.test(labeled) || /^(Winner|Loser|Opponent|Pool|Seed|Cons)\b/i.test(labeled)) return labeled
+  return labeled.split(/\s*\/\s*/).map((part) => shortPlayerName(part)).filter(Boolean).join(' / ')
 }
 
 export function publicSideLabel(name: string | null | undefined, options?: { hideSeeds?: boolean }): string {
   const value = (name || '').trim()
   if (!value || /^tbd$/i.test(value)) return 'Opponent TBD'
-  const seed = value.match(/^seed[_\s-]?(\d+)$/i)
-  if (seed) return options?.hideSeeds ? 'Opponent TBD' : `Seed ${seed[1]}`
+  const seed = value.match(/^(?:cons\s+)?seed[_\s-]*(\d+)$/i)
+  if (seed) {
+    if (options?.hideSeeds) return 'Opponent TBD'
+    return /^cons\b/i.test(value) ? `Cons Seed ${seed[1]}` : `Seed ${seed[1]}`
+  }
   const short = value.match(/^([WL])\(R(\d+)_\d+\)$/i)
   if (short) return `${short[1].toUpperCase() === 'W' ? 'Winner' : 'Loser'} of Round ${short[2]}`
   const waterfall = value.match(/WF_R(\d+)_([WL])\d+/i)
@@ -222,7 +245,7 @@ export function timeText(match: MobileMatch): string {
 }
 
 export function teamInitials(name: string): string {
-  const players = name.split(/\s*\/\s*|\s*&\s*/).map((part) => part.trim()).filter(Boolean).slice(0, 2)
+  const players = name.split(/\s*\/\s*|\s*&\s*/).map((part) => shortPlayerName(part)).filter(Boolean).slice(0, 2)
   const letters = players.map((player) => player.charAt(0).toUpperCase()).join('')
   return letters || '•'
 }

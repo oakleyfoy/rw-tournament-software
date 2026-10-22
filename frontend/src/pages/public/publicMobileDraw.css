@@ -206,10 +206,10 @@
 
 .public-photo,
 .public-photo-fallback {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 8px;
-  flex: 0 0 36px;
+  flex: 0 0 44px;
   object-fit: cover;
   background: #e8eaf6;
 }
@@ -225,11 +225,81 @@
 
 .public-photo.large,
 .public-photo-fallback.large {
-  width: 96px;
-  height: 96px;
-  flex-basis: 96px;
+  width: 80px;
+  height: 80px;
+  flex-basis: 80px;
   border-radius: 12px;
   font-size: 22px;
+}
+
+.public-team-header,
+.public-next-match {
+  background: #fff;
+  border: 1px solid #d5deea;
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.public-team-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.public-player-name {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.public-team-division,
+.public-next-meta,
+.public-full-names {
+  color: #526170;
+  font-size: 14px;
+}
+
+.public-team-division {
+  margin-top: 4px;
+}
+
+.public-next-kicker {
+  color: #5c6b7a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.public-opponent {
+  display: grid;
+  margin: 4px 0;
+  color: #1a237e;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.public-court {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.public-next-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.public-full-names summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .public-detail-teams {

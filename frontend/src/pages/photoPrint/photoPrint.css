@@ -47,7 +47,7 @@
   min-width: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(220px, 260px) minmax(320px, 1fr) minmax(560px, 760px);
 }
 
 .photo-print-gallery,
@@ -80,16 +80,25 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 20px;
+  align-content: start;
+  padding: 18px 20px 22px;
 }
 
 .photo-print-controls-actions {
   flex: 0 0 auto;
   display: grid;
-  gap: 6px;
-  padding: 10px 12px 12px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  padding: 14px 20px 16px;
   border-top: 1px solid #dfe4ea;
   background: #fff;
+}
+
+.photo-print-span {
+  grid-column: 1 / -1;
 }
 
 .photo-print-stage {
@@ -207,6 +216,19 @@
   line-height: 1.1;
 }
 
+.photo-print-logo {
+  display: block;
+  flex: 0 0 auto;
+  max-width: none;
+  max-height: none;
+}
+
+.photo-print-wording {
+  display: block;
+  white-space: nowrap;
+  line-height: 1.05;
+}
+
 .photo-print-watermark button {
   position: absolute;
   right: -6px;
@@ -274,9 +296,10 @@
 
 .photo-print-field {
   display: grid;
-  gap: 4px;
-  margin-bottom: 10px;
-  font-size: 12px;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  align-content: start;
 }
 
 .photo-print-field input,
@@ -346,6 +369,13 @@
 
   .photo-print-controls-scroll {
     overflow: visible;
+  }
+}
+
+@media (max-width: 720px) {
+  .photo-print-controls-scroll,
+  .photo-print-controls-actions {
+    grid-template-columns: 1fr;
   }
 }
 
