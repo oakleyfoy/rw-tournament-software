@@ -469,9 +469,14 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
     color = _rgb(settings["color"])
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
     font = _fit_font(probe, text or "RW", settings["font_family"], settings["font_style"], wording_width)
+    # textbbox is relative to the draw anchor, and the ink often starts below that
+    # anchor. Sizing the layer from the ink height and then drawing at the anchor
+    # clips the bottoms of the letters.
     text_box = probe.textbbox((0, 0), text, font=font) if text else (0, 0, 0, 0)
-    text_h = text_box[3] - text_box[1] if text else 0
-    text_w = text_box[2] - text_box[0] if text else 0
+    ink_left, ink_top, ink_right, ink_bottom = text_box
+    text_w = max(0, ink_right - ink_left) if text else 0
+    text_h = max(0, ink_bottom - ink_top) if text else 0
+    shadow_pad = 4 if settings["shadow"] and text else 2
     logo_h = 0
     logo_image = None
     if show_logo:
@@ -488,8 +493,8 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
         logo_image.thumbnail((logo_max_w, logo_max_h), Image.Resampling.LANCZOS)
         logo_h = logo_image.height
     gap = settings["spacing"] if text and show_logo else 0
-    layer_w = max(logo_image.width if logo_image is not None else 0, text_w, 8)
-    layer_h = logo_h + gap + text_h + 8
+    layer_w = max(logo_image.width if logo_image is not None else 0, text_w, 8) + shadow_pad
+    layer_h = logo_h + gap + text_h + shadow_pad
     layer = Image.new("RGBA", (layer_w, max(layer_h, 8)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     cursor = 0
@@ -498,10 +503,11 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
         layer.alpha_composite(logo_image, (left, 0))
         cursor = logo_h + gap
     if text:
-        left = max(0, (layer.width - text_w) // 2)
+        draw_x = (layer.width - text_w) // 2 - ink_left
+        draw_y = cursor - ink_top
         if settings["shadow"]:
-            draw.text((left + 2, cursor + 2), text, font=font, fill=(0, 0, 0, 180))
-        draw.text((left, cursor), text, font=font, fill=color + (255,))
+            draw.text((draw_x + 2, draw_y + 2), text, font=font, fill=(0, 0, 0, 180))
+        draw.text((draw_x, draw_y), text, font=font, fill=color + (255,))
     opacity = settings["opacity"] / 100
     if opacity < 0.999:
         alpha = layer.getchannel("A")

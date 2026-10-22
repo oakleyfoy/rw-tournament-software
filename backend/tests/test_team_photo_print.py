@@ -374,6 +374,46 @@ def _wording_span(size_percent: int) -> int:
         return white_span(image, 190, 900), white_span(image, 0, 185)
 
 
+def test_export_keeps_the_bottom_of_the_wording():
+    from PIL import ImageDraw
+
+    from app.services.team_photo_watermark import _fit_font, _watermark_layer
+
+    settings = _print_settings(
+        content_mode="text_only",
+        event_text="2026 WILD DUNES",
+        font_family="Cinzel",
+        font_style="bold",
+        color="#ffffff",
+        size_percent=70,
+        opacity=100,
+        shadow=True,
+        spacing=8,
+    )
+    layer = _watermark_layer(settings, 1200, None)
+    alpha = layer.getchannel("A")
+    ink = alpha.getbbox()
+    assert ink is not None
+    assert ink[3] < layer.height
+    assert alpha.getpixel((layer.width // 2, layer.height - 1)) == 0
+
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    font = _fit_font(probe, settings["event_text"], "Cinzel", "bold", int(1200 * 0.70))
+    reference = Image.new("RGBA", (1600, 500), (0, 0, 0, 0))
+    ImageDraw.Draw(reference).text((20, 40), settings["event_text"], font=font, fill=(255, 255, 255, 255))
+    reference_ink = reference.getchannel("A").getbbox()
+    assert reference_ink is not None
+    reference_height = reference_ink[3] - reference_ink[1]
+    text_ink_top = None
+    text_ink_bottom = None
+    for y in range(ink[1], ink[3]):
+        if any(alpha.getpixel((x, y)) > 20 for x in range(0, layer.width, 3)):
+            text_ink_top = y if text_ink_top is None else text_ink_top
+            text_ink_bottom = y
+    # The logo sits above the wording. Compare only the lower ink run.
+    assert text_ink_bottom - text_ink_top + 1 >= reference_height
+
+
 def test_wording_size_does_not_change_the_logo():
     small_text, small_logo = _wording_span(20)
     large_text, large_logo = _wording_span(90)
