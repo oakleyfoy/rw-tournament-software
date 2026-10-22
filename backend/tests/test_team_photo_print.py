@@ -424,3 +424,47 @@ def test_every_watermark_font_loads_its_own_face():
         widths.add(width)
     assert len(FONT_FAMILIES) == 16
     assert len(widths) >= 10
+
+
+def test_uploaded_logo_loses_a_solid_background_and_keeps_transparency():
+    from app.services.team_photo_watermark import prepare_logo
+
+    backdrop = Image.new("RGB", (80, 60), (255, 255, 255))
+    draw_image = backdrop.copy()
+    for x in range(28, 52):
+        for y in range(18, 42):
+            draw_image.putpixel((x, y), (198, 40, 40))
+    raw = io.BytesIO()
+    draw_image.save(raw, format="JPEG", quality=95)
+    prepared = prepare_logo(raw.getvalue(), remove_background=True)
+    with Image.open(io.BytesIO(prepared)) as image:
+        image = image.convert("RGBA")
+        assert image.size[0] < 40
+        assert image.size[1] < 40
+        center = image.getpixel((image.width // 2, image.height // 2))
+        assert center[3] > 200
+        assert center[0] > 150 and center[0] > center[1]
+
+    ring = Image.new("RGBA", (60, 60), (255, 255, 255, 255))
+    for y in range(60):
+        for x in range(60):
+            distance = ((x - 30) ** 2 + (y - 30) ** 2) ** 0.5
+            if 16 <= distance <= 26:
+                ring.putpixel((x, y), (20, 90, 180, 255))
+    ring_raw = io.BytesIO()
+    ring.save(ring_raw, format="PNG")
+    prepared_ring = prepare_logo(ring_raw.getvalue(), remove_background=True)
+    with Image.open(io.BytesIO(prepared_ring)) as image:
+        image = image.convert("RGBA")
+        assert image.getpixel((image.width // 2, image.height // 2))[3] == 0
+        assert image.getpixel((image.width // 2, 4))[3] > 200
+
+    clear = Image.new("RGBA", (40, 30), (0, 0, 0, 0))
+    clear.putpixel((20, 15), (10, 20, 30, 255))
+    clear_raw = io.BytesIO()
+    clear.save(clear_raw, format="PNG")
+    prepared_clear = prepare_logo(clear_raw.getvalue(), remove_background=True)
+    with Image.open(io.BytesIO(prepared_clear)) as image:
+        image = image.convert("RGBA")
+        assert image.getpixel((image.width // 2, image.height // 2))[3] == 255
+        assert image.size[0] < 40

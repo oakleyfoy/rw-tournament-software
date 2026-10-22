@@ -458,7 +458,7 @@ def _watermark_layer(settings: dict, target_width: int, logo: Optional[Image.Ima
         if logo is not None and mode == "custom_logo":
             logo_image = logo.convert("RGBA")
             logo_max_w = max(1, int(target_width * 0.28 * scale))
-            logo_max_h = max(1, int(logo_max_w * 0.34))
+            logo_max_h = logo_max_w
         else:
             logo_max_w = max(1, int(target_width * 0.28 * 0.78 * scale))
             logo_max_h = max(1, int(logo_max_w * 547 / 1011))
@@ -559,7 +559,103 @@ def render_print_jpeg(
     return data, canvas_w, canvas_h, source_w, source_h, low_resolution
 
 
-def prepare_logo(raw: bytes) -> bytes:
+def _colors_close(left: tuple[int, int, int], right: tuple[int, int, int], tolerance: int) -> bool:
+    return (
+        abs(left[0] - right[0]) <= tolerance
+        and abs(left[1] - right[1]) <= tolerance
+        and abs(left[2] - right[2]) <= tolerance
+    )
+
+
+def _remove_solid_background(image: Image.Image) -> Image.Image:
+    """Knock out a solid backdrop, including holes inside the artwork.
+
+    A file that is already transparent around the edges is left alone.
+    If the artwork is the same color as the backdrop, the original is kept.
+    """
+    image = image.convert("RGBA")
+    width, height = image.size
+    if width < 2 or height < 2:
+        return image
+    pixels = image.load()
+    border_alpha = []
+    for x in range(width):
+        border_alpha.append(pixels[x, 0][3])
+        border_alpha.append(pixels[x, height - 1][3])
+    for y in range(1, height - 1):
+        border_alpha.append(pixels[0, y][3])
+        border_alpha.append(pixels[width - 1, y][3])
+    if border_alpha and sum(1 for alpha in border_alpha if alpha < 16) / len(border_alpha) > 0.55:
+        return _trim_transparent(image)
+
+    original = image.copy()
+    corners = (
+        pixels[0, 0][:3],
+        pixels[width - 1, 0][:3],
+        pixels[0, height - 1][:3],
+        pixels[width - 1, height - 1][:3],
+    )
+    background = max(set(corners), key=corners.count)
+    seen = bytearray(width * height)
+    stack: list[tuple[int, int]] = []
+
+    def consider(x: int, y: int) -> None:
+        index = y * width + x
+        if seen[index]:
+            return
+        red, green, blue, alpha = pixels[x, y]
+        if alpha < 16 or _colors_close((red, green, blue), background, 42):
+            seen[index] = 1
+            stack.append((x, y))
+
+    for x in range(width):
+        consider(x, 0)
+        consider(x, height - 1)
+    for y in range(height):
+        consider(0, y)
+        consider(width - 1, y)
+    while stack:
+        x, y = stack.pop()
+        red, green, blue, _alpha = pixels[x, y]
+        pixels[x, y] = (red, green, blue, 0)
+        if x > 0:
+            consider(x - 1, y)
+        if x + 1 < width:
+            consider(x + 1, y)
+        if y > 0:
+            consider(x, y - 1)
+        if y + 1 < height:
+            consider(x, y + 1)
+
+    opaque = 0
+    holes: list[tuple[int, int]] = []
+    for y in range(height):
+        for x in range(width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha < 16:
+                continue
+            opaque += 1
+            if _colors_close((red, green, blue), background, 28):
+                holes.append((x, y))
+    kept = opaque - len(holes)
+    if kept >= max(16, int(width * height * 0.004)):
+        for x, y in holes:
+            red, green, blue, _alpha = pixels[x, y]
+            pixels[x, y] = (red, green, blue, 0)
+        opaque = kept
+    if opaque < max(16, int(width * height * 0.004)):
+        return original
+    return _trim_transparent(image)
+
+
+def _trim_transparent(image: Image.Image) -> Image.Image:
+    box = image.getchannel("A").getbbox()
+    if not box:
+        return image
+    return image.crop(box)
+
+
+def prepare_logo(raw: bytes, remove_background: bool = True) -> bytes:
     if not raw:
         raise PhotoRejected("Logo file is empty")
     if len(raw) > 2 * 1024 * 1024:
@@ -568,6 +664,8 @@ def prepare_logo(raw: bytes) -> bytes:
         image = ImageOps.exif_transpose(Image.open(io.BytesIO(raw)))
         image = image.convert("RGBA")
         image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+        if remove_background:
+            image = _remove_solid_background(image)
         out = io.BytesIO()
         image.save(out, format="PNG", optimize=True)
     except PhotoRejected:

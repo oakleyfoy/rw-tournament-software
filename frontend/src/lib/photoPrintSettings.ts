@@ -27,7 +27,7 @@ export const CONTENT_MODES = [
   { id: 'logo_and_text', label: 'RW logo and event name' },
   { id: 'logo_only', label: 'RW logo only' },
   { id: 'text_only', label: 'Text only' },
-  { id: 'custom_logo', label: 'Custom logo upload' },
+  { id: 'custom_logo', label: 'Uploaded logo' },
   { id: 'custom_text', label: 'Custom text' },
 ] as const
 

@@ -8,7 +8,7 @@ import zipfile
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -378,6 +378,7 @@ def mark_photo_reviewed(
 async def upload_custom_logo(
     tournament_id: int,
     file: UploadFile = File(...),
+    remove_background: bool = Form(True),
     user: UserAccount = Depends(require_photo_user),
     session: Session = Depends(get_session),
 ):
@@ -386,7 +387,7 @@ async def upload_custom_logo(
     store = get_object_store()
     key = logo_object_key(tournament_id)
     try:
-        prepared = prepare_logo(raw)
+        prepared = prepare_logo(raw, remove_background=remove_background)
         store.put_jpeg(key, prepared, content_type="image/png")
         row = _settings_row(session, tournament_id)
         if row is None:

@@ -64,6 +64,8 @@ export default function PhotoPrintPage() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [images, setImages] = useState<Record<number, string>>({})
   const [logoSrc, setLogoSrc] = useState<string | null>(null)
+  const [logoVersion, setLogoVersion] = useState(0)
+  const [removeLogoBackground, setRemoveLogoBackground] = useState(true)
   const frameRef = useRef<HTMLDivElement>(null)
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 })
 
@@ -154,7 +156,7 @@ export default function PhotoPrintPage() {
       return
     }
     let url = ''
-    authorizedBlob(photoPrintLogoUrl(tid))
+    authorizedBlob(`${photoPrintLogoUrl(tid)}?v=${logoVersion}`)
       .then((next) => {
         url = next
         setLogoSrc(next)
@@ -163,7 +165,7 @@ export default function PhotoPrintPage() {
     return () => {
       if (url) URL.revokeObjectURL(url)
     }
-  }, [workspace?.has_custom_logo, tid])
+  }, [workspace?.has_custom_logo, tid, logoVersion])
 
   useEffect(() => {
     const node = frameRef.current
@@ -521,17 +523,41 @@ export default function PhotoPrintPage() {
                   <input value={settings.custom_text} onChange={(event) => patch({ custom_text: event.target.value })} />
                 </label>
               )}
-              {settings.content_mode === 'custom_logo' && (
-                <label className="photo-print-field photo-print-span">Custom logo
-                  <input type="file" accept="image/png,image/jpeg" onChange={(event) => {
-                    const file = event.target.files?.[0]
-                    if (!file) return
-                    run(async () => {
-                      await uploadPhotoPrintLogo(tid, file)
-                      await refresh()
-                    })
-                  }} />
-                </label>
+              {showLogo && (
+                <div className="photo-print-field photo-print-span">
+                  <span>Upload logo</span>
+                  <div className="photo-print-logo-upload">
+                    {logoSrc && (
+                      <span className="photo-print-logo-preview">
+                        <img src={logoSrc} alt="Uploaded logo" />
+                      </span>
+                    )}
+                    <div>
+                      <input type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload logo" onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        event.target.value = ''
+                        if (!file) return
+                        run(async () => {
+                          await uploadPhotoPrintLogo(tid, file, removeLogoBackground)
+                          await refresh()
+                          setLogoVersion((version) => version + 1)
+                          patch({ content_mode: 'custom_logo' })
+                        })
+                      }} />
+                      <label>
+                        <input type="checkbox" checked={removeLogoBackground} onChange={(event) => setRemoveLogoBackground(event.target.checked)} />
+                        Remove background
+                      </label>
+                      <p>A solid white or colored backdrop is removed. Artwork that is already transparent is kept.</p>
+                      {workspace?.has_custom_logo && settings.content_mode !== 'custom_logo' && (
+                        <button type="button" onClick={() => patch({ content_mode: 'custom_logo' })}>Use uploaded logo</button>
+                      )}
+                      {settings.content_mode === 'custom_logo' && (
+                        <button type="button" onClick={() => patch({ content_mode: 'logo_and_text' })}>Use RW emblem</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
               <label className="photo-print-field">Font
                 <select value={settings.font_family} onChange={(event) => patch({ font_family: event.target.value })}>

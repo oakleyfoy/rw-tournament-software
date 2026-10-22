@@ -556,27 +556,29 @@ def test_unconfigured_r2_does_not_store_a_local_photograph(client: TestClient, s
     assert session.exec(select(TeamOfficialPhoto)).all() == []
 
 
-def test_new_uploads_keep_3000px_and_store_a_separate_thumbnail(client: TestClient, session: Session):
+def test_new_uploads_keep_the_camera_jpeg_and_store_a_separate_thumbnail(client: TestClient, session: Session):
     from app.services.team_photo_storage import MAX_EDGE, display_thumb_key, process_image
 
-    large = _jpeg(width=4000, height=2000, color="blue")
-    processed = process_image(large)
+    camera = _jpeg(width=4000, height=2000, color="blue")
+    assert process_image(camera) == camera
+    oversized = _jpeg(width=5000, height=2500, color="blue")
+    processed = process_image(oversized)
     with Image.open(io.BytesIO(processed)) as image:
         assert max(image.size) == MAX_EDGE
-        assert image.size == (3000, 1500)
+        assert image.size == (4096, 2048)
     untouched = _jpeg(width=64, height=40)
-    with Image.open(io.BytesIO(process_image(untouched))) as image:
-        assert image.size == (64, 40)
+    assert process_image(untouched) == untouched
 
     admin = _bootstrap_admin(client)
     roster = _seed_roster(session)
-    saved = _save(client, admin, roster["tournament_id"], roster["jane_amy"], "upload-large-01", large)
+    saved = _save(client, admin, roster["tournament_id"], roster["jane_amy"], "upload-large-01", camera)
     assert saved.status_code == 200, saved.text
     session.expire_all()
     photo = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_amy"])).one()
     original = get_object_store().get_bytes(photo.storage_key)
+    assert original == camera
     with Image.open(io.BytesIO(original)) as image:
-        assert max(image.size) == 3000
+        assert image.size == (4000, 2000)
     thumb = client.get(f"/api/photography/teams/{roster['jane_amy']}/official/thumb", headers=admin)
     assert thumb.status_code == 200
     with Image.open(io.BytesIO(thumb.content)) as image:

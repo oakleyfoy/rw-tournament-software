@@ -12,7 +12,8 @@ import os
 from PIL import Image, ImageOps
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
-MAX_EDGE = 3000
+MAX_EDGE = 4096
+JPEG_QUALITY = 95
 THUMB_EDGE = 480
 
 
@@ -42,7 +43,11 @@ class PhotoStorageUnavailable(Exception):
 
 
 def process_image(raw: bytes) -> bytes:
-    """Orient from EXIF and compress to a reasonably sized JPEG."""
+    """Store the camera JPEG as-is when it already fits.
+
+    A second JPEG encode is what makes an upload look grainy next to the
+    original. Rotate or shrink only when the file needs it, and do that once.
+    """
     if not raw:
         raise PhotoRejected("Photograph file is empty")
     if len(raw) > MAX_UPLOAD_BYTES:
@@ -50,12 +55,23 @@ def process_image(raw: bytes) -> bytes:
     try:
         image = Image.open(io.BytesIO(raw))
         image.seek(0)
+        orientation = 1
+        exif = image.getexif()
+        if exif:
+            orientation = int(exif.get(274, 1) or 1)
+        if (
+            image.format == "JPEG"
+            and orientation == 1
+            and image.mode in {"RGB", "L"}
+            and max(image.size) <= MAX_EDGE
+        ):
+            return raw
         image = ImageOps.exif_transpose(image)
         if image.mode != "RGB":
             image = image.convert("RGB")
         image.thumbnail((MAX_EDGE, MAX_EDGE), Image.Resampling.LANCZOS)
         out = io.BytesIO()
-        image.save(out, format="JPEG", quality=90, optimize=True, subsampling=0)
+        image.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True, subsampling=0)
     except PhotoRejected:
         raise
     except Exception as exc:

@@ -118,9 +118,10 @@ export function reviewPhotoPrint(tournamentId: number, teamId: number, reviewed:
   )
 }
 
-export async function uploadPhotoPrintLogo(tournamentId: number, file: File) {
+export async function uploadPhotoPrintLogo(tournamentId: number, file: File, removeBackground = true) {
   const body = new FormData()
   body.append('file', file)
+  body.append('remove_background', removeBackground ? 'true' : 'false')
   const token = getAuthToken()
   const response = await fetch(`${API_BASE_URL}/photography/tournaments/${tournamentId}/photo-print/logo`, {
     method: 'POST',
