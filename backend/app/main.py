@@ -20,6 +20,7 @@ from app.db_schema_patch import (
     ensure_match_checkin_reset_column,
     ensure_team_photo_print_tables,
     ensure_team_photo_sms_tables,
+    ensure_tournament_group_photo_tables,
     ensure_schedule_slot_columns,
     ensure_sms_log_columns,
     ensure_sms_phone_list_columns,
@@ -266,6 +267,7 @@ def on_startup():
     ensure_match_checkin_reset_column(engine)
     ensure_team_photo_print_tables(engine)
     ensure_team_photo_sms_tables(engine)
+    ensure_tournament_group_photo_tables(engine)
     start_first_match_runner_if_enabled()
     from app.services.team_photo_sms import start_team_photo_sms_worker
 

@@ -109,6 +109,22 @@ def official_object_key(tournament_id: int, team_id: int, unique_id: str) -> str
     return f"team-photos/{int(tournament_id)}/{int(team_id)}/{safe}.jpg"
 
 
+def group_object_key(tournament_id: int, unique_id: str) -> str:
+    """High-resolution group photograph. The path is not a team id."""
+    safe = "".join(ch for ch in unique_id if ch.isalnum() or ch in {"-", "_"})[:80]
+    if len(safe) < 8:
+        raise PhotoRejected("client_upload_id is invalid")
+    return f"team-photos/{int(tournament_id)}/groups/{safe}.jpg"
+
+
+def owned_group_key(tournament_id: int, storage_key: str) -> bool:
+    prefix = f"team-photos/{int(tournament_id)}/groups/"
+    if not storage_key.startswith(prefix) or ".." in storage_key:
+        return False
+    remainder = storage_key[len(prefix):]
+    return bool(remainder) and "/" not in remainder and remainder.endswith(".jpg")
+
+
 class MemoryObjectStore:
     """In-process store used by tests. It is not a disk fallback."""
 

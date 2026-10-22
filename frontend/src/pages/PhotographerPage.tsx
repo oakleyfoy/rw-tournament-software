@@ -7,6 +7,7 @@ import {
   listOfficialTeamPhotos,
   listPhotographyTournaments,
   PhotographyTournament,
+  postGroupPhoto,
   postOfficialTeamPhoto,
   searchPhotographyTeams,
 } from '../api/photography'
@@ -170,7 +171,7 @@ export default function PhotographerPage() {
   }
 
   const onPickFile = async (file: File | undefined) => {
-    if (!file || !selectedTeam) return
+    if (!file || (session.photoMode !== 'group' && !selectedTeam)) return
     setActionError(null)
     try {
       const prepared = await prepareTeamPhoto(file)
@@ -192,7 +193,9 @@ export default function PhotographerPage() {
   }
 
   const confirmOfficial = async () => {
-    if (confirmLock.current || !session.tournamentId || !selectedTeam || !session.selectedLocalId) return
+    const groupMode = session.photoMode === 'group'
+    if (confirmLock.current || !session.tournamentId || !session.selectedLocalId) return
+    if (!groupMode && !selectedTeam) return
     const chosen = session.captures.find((capture) => capture.localId === session.selectedLocalId)
     const blob = chosen ? blobsRef.current[chosen.localId] : undefined
     if (!chosen || !blob) return
@@ -202,24 +205,37 @@ export default function PhotographerPage() {
     dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: 0 })
     setActionError(null)
     try {
-      const saved = await postOfficialTeamPhoto({
-        tournamentId: session.tournamentId,
-        teamId: selectedTeam.team_id,
-        blob,
-        clientUploadId: chosen.clientUploadId,
-        onProgress: (fraction) =>
-          dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: Math.round(fraction * 100) }),
-      })
-      setSavedOfficial({
-        teamId: selectedTeam.team_id,
-        version: saved.version || saved.updated_at,
-      })
-      const label = selectedTeam.player_names.filter((name) => name !== 'Partner not on file').join(' / ')
+      if (groupMode) {
+        await postGroupPhoto({
+          tournamentId: session.tournamentId,
+          blob,
+          clientUploadId: chosen.clientUploadId,
+          onProgress: (fraction) =>
+            dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: Math.round(fraction * 100) }),
+        })
+        setSavedOfficial(null)
+      } else if (selectedTeam) {
+        const saved = await postOfficialTeamPhoto({
+          tournamentId: session.tournamentId,
+          teamId: selectedTeam.team_id,
+          blob,
+          clientUploadId: chosen.clientUploadId,
+          onProgress: (fraction) =>
+            dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: Math.round(fraction * 100) }),
+        })
+        setSavedOfficial({
+          teamId: selectedTeam.team_id,
+          version: saved.version || saved.updated_at,
+        })
+      }
+      const label = selectedTeam
+        ? selectedTeam.player_names.filter((name) => name !== 'Partner not on file').join(' / ')
+        : 'Group Photo'
       blobsRef.current = {}
       setSelectedTeam(null)
       setQuery('')
       setResults([])
-      dispatch({ type: 'confirmSucceeded', teamLabel: label || `team ${selectedTeam.team_id}` })
+      dispatch({ type: 'confirmSucceeded', teamLabel: label || `team ${selectedTeam?.team_id ?? ''}` })
     } catch (error) {
       dispatch({
         type: 'uploadFailed',
@@ -254,6 +270,8 @@ export default function PhotographerPage() {
   }
 
   const selectedCapture = session.captures.find((capture) => capture.localId === session.selectedLocalId)
+  const groupMode = session.photoMode === 'group'
+  const modeLocked = session.confirming || session.captures.some((capture) => capture.status === 'uploading' || capture.status === 'ready')
   const canConfirm = Boolean(
     selectedCapture && (selectedCapture.status === 'ready' || selectedCapture.status === 'uploaded') && !session.confirming,
   )
@@ -273,6 +291,37 @@ export default function PhotographerPage() {
             )}
             <button type="button" onClick={logout} style={secondaryButton}>Log out</button>
           </div>
+        </div>
+        <div role="group" aria-label="Photography mode" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button
+            type="button"
+            aria-pressed={session.photoMode === 'team'}
+            disabled={modeLocked}
+            onClick={() => {
+              setSelectedTeam(null)
+              setQuery('')
+              setResults([])
+              dispatch({ type: 'chooseTeamPhoto' })
+            }}
+            style={{ ...modeButton, background: session.photoMode === 'team' ? '#1a237e' : '#fff', color: session.photoMode === 'team' ? '#fff' : '#1a237e' }}
+          >
+            Team Photo
+          </button>
+          <button
+            type="button"
+            aria-pressed={session.photoMode === 'group'}
+            disabled={modeLocked}
+            onClick={() => {
+              setSelectedTeam(null)
+              setQuery('')
+              setResults([])
+              setSavedOfficial(null)
+              dispatch({ type: 'chooseGroupPhoto' })
+            }}
+            style={{ ...modeButton, background: session.photoMode === 'group' ? '#1a237e' : '#fff', color: session.photoMode === 'group' ? '#fff' : '#1a237e' }}
+          >
+            Group Photo
+          </button>
         </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
           {['Search', 'Pictures', 'Select', 'Save'].map((label) => (
@@ -329,7 +378,10 @@ export default function PhotographerPage() {
               <input
                 ref={searchRef}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  dispatch({ type: 'beginTeamSearch' })
+                }}
                 placeholder="Either player's name"
                 enterKeyHint="search"
                 autoComplete="off"
@@ -348,12 +400,14 @@ export default function PhotographerPage() {
           </form>
         )}
 
-        {session.phase === 'capture' && selectedTeam && (
+        {session.phase === 'capture' && (selectedTeam || groupMode) && (
           <section style={{ marginTop: 16 }}>
-            <button type="button" onClick={() => { setSelectedTeam(null); dispatch({ type: 'backToSearch' }) }} style={secondaryButton}>
-              Next team
-            </button>
-            <div style={{ marginTop: 12, padding: 14, borderRadius: 12, background: '#fff', border: '1px solid #d7dee5' }}>
+            {!groupMode && (
+              <button type="button" onClick={() => { setSelectedTeam(null); dispatch({ type: 'backToSearch' }) }} style={secondaryButton}>
+                Next team
+              </button>
+            )}
+            <div style={{ marginTop: groupMode ? 0 : 12, padding: 14, borderRadius: 12, background: '#fff', border: '1px solid #d7dee5' }}>
               <TeamPhotoProvider
                 value={{
                   photos: photoVersions,
@@ -361,16 +415,29 @@ export default function PhotographerPage() {
                   tournamentId: session.tournamentId,
                 }}
               >
-                <div data-testid="selected-team-photo" style={{ marginBottom: 10 }}>
-                  <TeamPhotoThumb teamId={selectedTeam.team_id} size={96} surface="photographer" />
-                </div>
+                {selectedTeam && (
+                  <div data-testid="selected-team-photo" style={{ marginBottom: 10 }}>
+                    <TeamPhotoThumb teamId={selectedTeam.team_id} size={96} surface="photographer" />
+                  </div>
+                )}
               </TeamPhotoProvider>
-              <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[0]}</div>
-              <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[1]}</div>
-              {selectedTeam.has_official_photo && (
-                <div style={{ marginTop: 8, fontSize: 13, color: '#1565c0' }}>This team already has an official photo. A confirmed selection replaces it.</div>
+              {groupMode ? (
+                <>
+                  <div style={{ fontWeight: 800, fontSize: 20 }}>Group Photo</div>
+                  <div style={{ marginTop: 6, fontSize: 14, color: '#455a64' }}>
+                    Saved for printing only. It is not linked to a team and no text is sent.
+                  </div>
+                </>
+              ) : selectedTeam && (
+                <>
+                  <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[0]}</div>
+                  <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.25 }}>{selectedTeam.player_names[1]}</div>
+                  {selectedTeam.has_official_photo && (
+                    <div style={{ marginTop: 8, fontSize: 13, color: '#1565c0' }}>This team already has an official photo. A confirmed selection replaces it.</div>
+                  )}
+                  {photoSms && photoSms.teamId === selectedTeam.team_id && <TeamPhotoSmsLines players={photoSms.players} />}
+                </>
               )}
-              {photoSms && photoSms.teamId === selectedTeam.team_id && <TeamPhotoSmsLines players={photoSms.players} />}
             </div>
 
             <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
@@ -421,7 +488,7 @@ export default function PhotographerPage() {
                       background: '#fff',
                     }}
                   >
-                    <img src={capture.previewUrl} alt="Captured team photograph" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 8 }} />
+                    <img src={capture.previewUrl} alt={groupMode ? 'Captured group photograph' : 'Captured team photograph'} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 8 }} />
                     <div style={{ fontSize: 12, marginTop: 4, color: capture.status === 'failed' ? '#c62828' : '#455a64' }}>
                       {capture.status === 'uploading' && `Uploading ${capture.progress}%`}
                       {(capture.status === 'ready' || capture.status === 'uploaded') && (selected ? 'Selected' : 'Tap to select')}
@@ -453,9 +520,9 @@ export default function PhotographerPage() {
                 onClick={() => void confirmOfficial()}
                 style={{ ...primaryButton, flex: 1, opacity: canConfirm ? 1 : 0.55 }}
               >
-                {session.confirming ? 'Saving…' : 'Save official photo'}
+                {session.confirming ? 'Saving…' : groupMode ? 'Save group photo' : 'Save official photo'}
               </button>
-              {selectedTeam.has_official_photo && (
+              {selectedTeam?.has_official_photo && (
                 <button
                   type="button"
                   disabled={deleting || session.confirming}
@@ -502,6 +569,16 @@ export default function PhotographerPage() {
       </div>
     </div>
   )
+}
+
+const modeButton: CSSProperties = {
+  minHeight: 40,
+  padding: '8px 14px',
+  borderRadius: 999,
+  border: '1px solid #1a237e',
+  fontSize: 14,
+  fontWeight: 800,
+  cursor: 'pointer',
 }
 
 const stepStyle: CSSProperties = {

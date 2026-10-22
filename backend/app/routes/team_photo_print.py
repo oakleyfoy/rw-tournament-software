@@ -18,6 +18,7 @@ from app.database import get_session
 from app.models.event import Event
 from app.models.player import Player
 from app.models.team import Team
+from app.models.group_photo import TournamentGroupPhoto, TournamentGroupPhotoPrint
 from app.models.team_photo import PhotographerTournamentAccess, TeamOfficialPhoto
 from app.models.team_photo_print import TeamPhotoPrint, TeamPhotoWatermark, TournamentPhotoWatermark
 from app.models.team_player import TeamPlayer
@@ -38,6 +39,8 @@ from app.services.team_photo_watermark import (
     prepare_logo,
     PRINT_SIZE,
     crop_cuts_photo,
+    group_print_object_key,
+    owned_group_print_key,
     print_filename,
     print_object_key,
     print_pixels,
@@ -58,6 +61,7 @@ class ReviewBody(BaseModel):
 
 class PrintRequest(BaseModel):
     team_ids: List[int] = Field(default_factory=list)
+    group_photo_ids: List[int] = Field(default_factory=list)
     print_size: str = "4x6"
     quantity: int = 1
     acknowledge_low_resolution: bool = False
@@ -182,7 +186,9 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
         reviewed = bool(override and override.reviewed)
         items.append(
             {
+                "photo_kind": "team",
                 "team_id": photo.team_id,
+                "group_photo_id": None,
                 "player_names": _photo_names(session, team),
                 "version": photo.storage_key,
                 "reviewed": reviewed,
@@ -196,8 +202,11 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
             }
         )
     items.sort(key=lambda item: " ".join(item["player_names"]).lower())
+    group_items = _group_photo_items(session, tournament, default, store)
+    team_photo_count = len(items)
+    items.extend(group_items)
     team_count = len(team_by_id)
-    with_photos = len(items)
+    with_photos = team_photo_count
     reviewed_count = sum(1 for item in items if item["reviewed"])
     ready_count = sum(1 for item in items if item["reviewed"] and not item["low_resolution_sizes"])
     attention_count = sum(1 for item in items if item["needs_attention"])
@@ -210,6 +219,7 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
         "totals": {
             "teams": team_count,
             "with_photos": with_photos,
+            "group_photos": len(group_items),
             "reviewed": reviewed_count,
             "ready": ready_count,
             "needs_attention": attention_count,
@@ -221,6 +231,53 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
         },
         "photos": items,
     }
+
+
+def _group_photo_items(session: Session, tournament: Tournament, default: dict, store) -> list[dict]:
+    photos = session.exec(
+        select(TournamentGroupPhoto)
+        .where(TournamentGroupPhoto.tournament_id == tournament.id)
+        .order_by(TournamentGroupPhoto.id)
+    ).all()
+    items = []
+    for index, photo in enumerate(photos, start=1):
+        label = f"Group Photo {index}"
+        try:
+            source = store.get_bytes(photo.storage_key)
+            width, height = _image_size(source)
+        except Exception:
+            width, height = 0, 0
+        settings = default
+        has_override = bool(photo.settings_json)
+        if has_override:
+            try:
+                settings = normalize_settings(json.loads(photo.settings_json or "{}"), tournament.name)
+            except (json.JSONDecodeError, PhotoRejected):
+                settings = default
+                has_override = False
+        low_sizes = []
+        target_w, target_h = print_pixels(PRINT_SIZE, width, height)
+        if width and height and source_needs_upscale(width, height, target_w, target_h, settings["crop_mode"]):
+            low_sizes.append(PRINT_SIZE)
+        crop_warning = crop_cuts_photo(width, height, settings["crop_mode"])
+        items.append(
+            {
+                "photo_kind": "group",
+                "team_id": None,
+                "group_photo_id": photo.id,
+                "player_names": [label],
+                "version": photo.storage_key,
+                "reviewed": bool(photo.reviewed),
+                "has_override": has_override,
+                "settings": settings,
+                "source_width": width,
+                "source_height": height,
+                "low_resolution_sizes": low_sizes,
+                "crop_warning": crop_warning,
+                "needs_attention": (not photo.reviewed) or bool(low_sizes) or crop_warning,
+            }
+        )
+    return items
 
 
 def _save_default(session: Session, tournament: Tournament, settings: dict) -> None:
@@ -282,6 +339,12 @@ def apply_watermark_to_all(
             row.settings_json = None
             row.updated_at = datetime.utcnow()
             session.add(row)
+        groups = session.exec(
+            select(TournamentGroupPhoto).where(TournamentGroupPhoto.tournament_id == tournament_id)
+        ).all()
+        for group in groups:
+            group.settings_json = None
+            session.add(group)
         session.commit()
     except PhotoRejected as exc:
         session.rollback()
@@ -532,6 +595,172 @@ def _render_team(
     }
 
 
+def _group_in_tournament(session: Session, tournament_id: int, group_photo_id: int) -> TournamentGroupPhoto:
+    photo = session.get(TournamentGroupPhoto, group_photo_id)
+    if not photo or photo.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Group photo is not available")
+    return photo
+
+
+def _group_label(session: Session, photo: TournamentGroupPhoto) -> str:
+    rows = session.exec(
+        select(TournamentGroupPhoto)
+        .where(TournamentGroupPhoto.tournament_id == photo.tournament_id)
+        .order_by(TournamentGroupPhoto.id)
+    ).all()
+    for index, row in enumerate(rows, start=1):
+        if row.id == photo.id:
+            return f"Group Photo {index}"
+    return "Group Photo"
+
+
+@router.put("/tournaments/{tournament_id}/photo-print/group-photos/{group_photo_id}")
+def save_group_photo_override(
+    tournament_id: int,
+    group_photo_id: int,
+    body: WatermarkSettingsBody,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    tournament = _assert_can_photograph(session, user, tournament_id)
+    photo = _group_in_tournament(session, tournament_id, group_photo_id)
+    try:
+        settings = normalize_settings(body.settings, tournament.name)
+    except PhotoRejected as exc:
+        raise _http_photo_error(exc) from exc
+    photo.settings_json = json.dumps(settings)
+    photo.reviewed = True
+    session.add(photo)
+    session.commit()
+    return {"group_photo_id": group_photo_id, "settings": settings, "reviewed": True, "has_override": True}
+
+
+@router.delete("/tournaments/{tournament_id}/photo-print/group-photos/{group_photo_id}")
+def reset_group_photo_override(
+    tournament_id: int,
+    group_photo_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    tournament = _assert_can_photograph(session, user, tournament_id)
+    photo = _group_in_tournament(session, tournament_id, group_photo_id)
+    photo.settings_json = None
+    session.add(photo)
+    session.commit()
+    return {"group_photo_id": group_photo_id, "settings": _stored_settings(session, tournament), "has_override": False}
+
+
+@router.post("/tournaments/{tournament_id}/photo-print/group-photos/{group_photo_id}/review")
+def mark_group_photo_reviewed(
+    tournament_id: int,
+    group_photo_id: int,
+    body: ReviewBody,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    _assert_can_photograph(session, user, tournament_id)
+    photo = _group_in_tournament(session, tournament_id, group_photo_id)
+    photo.reviewed = body.reviewed
+    session.add(photo)
+    session.commit()
+    return {"group_photo_id": group_photo_id, "reviewed": photo.reviewed}
+
+
+def _render_group(
+    session: Session,
+    tournament: Tournament,
+    group_photo_id: int,
+    print_size: str,
+    quantity: int,
+    acknowledge: bool,
+) -> dict:
+    photo = _group_in_tournament(session, tournament.id, group_photo_id)  # type: ignore[arg-type]
+    if not str(photo.storage_key).startswith(f"team-photos/{int(tournament.id)}/groups/"):
+        raise HTTPException(status_code=404, detail="Group photo is not available")
+    settings = _stored_settings(session, tournament)
+    if photo.settings_json:
+        settings = normalize_settings(json.loads(photo.settings_json), tournament.name)
+    store = get_object_store()
+    original = store.get_bytes(photo.storage_key)
+    original_key = photo.storage_key
+    logo_bytes = None
+    brand = _settings_row(session, tournament.id)  # type: ignore[arg-type]
+    if settings["content_mode"] == "custom_logo" and brand and owned_logo_key(tournament.id, brand.custom_logo_key):  # type: ignore[arg-type]
+        try:
+            logo_bytes = store.get_bytes(brand.custom_logo_key or "")
+        except FileNotFoundError:
+            logo_bytes = None
+    rendered, width, height, source_w, source_h, low_resolution = render_print_jpeg(
+        original,
+        settings,
+        print_size,
+        logo_bytes=logo_bytes,
+        allow_upscale=acknowledge,
+    )
+    if store.get_bytes(original_key) != original:
+        raise HTTPException(status_code=500, detail="Group photograph was not left unchanged")
+    version = new_print_version()
+    key = group_print_object_key(tournament.id, group_photo_id, version)  # type: ignore[arg-type]
+    label = _group_label(session, photo)
+    filename = print_filename(tournament.name, [label], print_size)
+    existing = session.exec(
+        select(TournamentGroupPhotoPrint).where(
+            TournamentGroupPhotoPrint.group_photo_id == group_photo_id,
+            TournamentGroupPhotoPrint.print_size == print_size,
+        )
+    ).first()
+    previous_key = existing.storage_key if existing else None
+    store.put_jpeg(key, rendered)
+    if existing is None:
+        existing = TournamentGroupPhotoPrint(
+            tournament_id=tournament.id,  # type: ignore[arg-type]
+            group_photo_id=group_photo_id,
+            print_size=print_size,
+            storage_key=key,
+            filename=filename,
+            byte_size=len(rendered),
+            width=width,
+            height=height,
+            source_width=source_w,
+            source_height=source_h,
+            low_resolution=low_resolution,
+            quantity=quantity,
+            settings_json=json.dumps(settings),
+        )
+    else:
+        existing.storage_key = key
+        existing.filename = filename
+        existing.byte_size = len(rendered)
+        existing.width = width
+        existing.height = height
+        existing.source_width = source_w
+        existing.source_height = source_h
+        existing.low_resolution = low_resolution
+        existing.quantity = quantity
+        existing.settings_json = json.dumps(settings)
+        existing.created_at = datetime.utcnow()
+    session.add(existing)
+    if previous_key and previous_key != key and owned_group_print_key(tournament.id, group_photo_id, previous_key):  # type: ignore[arg-type]
+        store.delete(previous_key)
+    if store.get_bytes(original_key) != original:
+        raise HTTPException(status_code=500, detail="Group photograph was not left unchanged")
+    return {
+        "photo_kind": "group",
+        "team_id": None,
+        "group_photo_id": group_photo_id,
+        "player_names": [label],
+        "print_size": print_size,
+        "filename": filename,
+        "width": width,
+        "height": height,
+        "source_width": source_w,
+        "source_height": source_h,
+        "low_resolution": low_resolution,
+        "quantity": quantity,
+        "byte_size": len(rendered),
+    }
+
+
 @router.post("/tournaments/{tournament_id}/photo-print/exports")
 def export_prints(
     tournament_id: int,
@@ -544,13 +773,18 @@ def export_prints(
         raise HTTPException(status_code=400, detail="Prints are 4×6 portrait only")
     quantity = max(1, min(int(body.quantity or 1), 20))
     team_ids = list(dict.fromkeys(body.team_ids))
-    if not team_ids:
+    group_photo_ids = list(dict.fromkeys(body.group_photo_ids))
+    if not team_ids and not group_photo_ids:
         raise HTTPException(status_code=400, detail="Select at least one photograph")
     results = []
     try:
         for team_id in team_ids:
             results.append(
                 _render_team(session, tournament, team_id, body.print_size, quantity, body.acknowledge_low_resolution)
+            )
+        for group_photo_id in group_photo_ids:
+            results.append(
+                _render_group(session, tournament, group_photo_id, body.print_size, quantity, body.acknowledge_low_resolution)
             )
         session.commit()
     except HTTPException:
@@ -603,7 +837,41 @@ def download_print_file(
     return Response(content=data, media_type="image/jpeg", headers=headers)
 
 
-def _package_bytes(session: Session, tournament: Tournament, team_ids: list[int], print_size: str) -> bytes:
+@router.get("/tournaments/{tournament_id}/photo-print/group-photos/{group_photo_id}/file")
+def download_group_print_file(
+    tournament_id: int,
+    group_photo_id: int,
+    size: str = "4x6",
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    _assert_can_photograph(session, user, tournament_id)
+    row = session.exec(
+        select(TournamentGroupPhotoPrint).where(
+            TournamentGroupPhotoPrint.tournament_id == tournament_id,
+            TournamentGroupPhotoPrint.group_photo_id == group_photo_id,
+            TournamentGroupPhotoPrint.print_size == size,
+        )
+    ).first()
+    if not row or not owned_group_print_key(tournament_id, group_photo_id, row.storage_key):
+        raise HTTPException(status_code=404, detail="Print file has not been created")
+    try:
+        data = get_object_store().get_bytes(row.storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Print file has not been created") from exc
+    except PhotoStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    headers = {"Content-Disposition": f'attachment; filename="{row.filename}"'}
+    return Response(content=data, media_type="image/jpeg", headers=headers)
+
+
+def _package_bytes(
+    session: Session,
+    tournament: Tournament,
+    team_ids: list[int],
+    group_photo_ids: list[int],
+    print_size: str,
+) -> bytes:
     rows = []
     for team_id in team_ids:
         row = session.exec(
@@ -614,6 +882,17 @@ def _package_bytes(session: Session, tournament: Tournament, team_ids: list[int]
             )
         ).first()
         if not row or not owned_print_key(tournament.id, team_id, row.storage_key):  # type: ignore[arg-type]
+            raise HTTPException(status_code=404, detail="Create the print files before downloading the package")
+        rows.append(row)
+    for group_photo_id in group_photo_ids:
+        row = session.exec(
+            select(TournamentGroupPhotoPrint).where(
+                TournamentGroupPhotoPrint.tournament_id == tournament.id,
+                TournamentGroupPhotoPrint.group_photo_id == group_photo_id,
+                TournamentGroupPhotoPrint.print_size == print_size,
+            )
+        ).first()
+        if not row or not owned_group_print_key(tournament.id, group_photo_id, row.storage_key):  # type: ignore[arg-type]
             raise HTTPException(status_code=404, detail="Create the print files before downloading the package")
         rows.append(row)
     store = get_object_store()
@@ -631,7 +910,7 @@ def _package_bytes(session: Session, tournament: Tournament, team_ids: list[int]
             data = store.get_bytes(row.storage_key)
             filename = row.filename
             if filename in used_names:
-                filename = f"{row.team_id}-{filename}"
+                filename = f"{getattr(row, 'group_photo_id', None) or row.team_id}-{filename}"
             used_names.add(filename)
             archive.writestr(filename, data)
             lines.append(f"{filename}\tquantity {row.quantity}")
@@ -650,14 +929,17 @@ def download_print_package(
     if body.print_size != PRINT_SIZE:
         raise HTTPException(status_code=400, detail="Prints are 4×6 portrait only")
     team_ids = list(dict.fromkeys(body.team_ids))
-    if not team_ids:
+    group_photo_ids = list(dict.fromkeys(body.group_photo_ids))
+    if not team_ids and not group_photo_ids:
         raise HTTPException(status_code=400, detail="Select at least one photograph")
     quantity = max(1, min(int(body.quantity or 1), 20))
     try:
         for team_id in team_ids:
             _render_team(session, tournament, team_id, body.print_size, quantity, body.acknowledge_low_resolution)
+        for group_photo_id in group_photo_ids:
+            _render_group(session, tournament, group_photo_id, body.print_size, quantity, body.acknowledge_low_resolution)
         session.commit()
-        payload = _package_bytes(session, tournament, team_ids, body.print_size)
+        payload = _package_bytes(session, tournament, team_ids, group_photo_ids, body.print_size)
     except HTTPException:
         session.rollback()
         raise

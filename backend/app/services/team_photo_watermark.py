@@ -342,6 +342,23 @@ def print_filename(tournament_name: str, player_names: Iterable[str], print_size
     return f"{stem}.jpg"
 
 
+def group_print_object_key(tournament_id: int, group_photo_id: int, version: str) -> str:
+    token = "".join(ch for ch in version if ch.isalnum())[:32]
+    if len(token) < 8:
+        raise PhotoRejected("Print version is invalid")
+    return f"team-photo-prints/{int(tournament_id)}/groups/{int(group_photo_id)}/{token}.jpg"
+
+
+def owned_group_print_key(tournament_id: int, group_photo_id: int, key: Optional[str]) -> bool:
+    if not key or ".." in key or "\\" in key or key.startswith("team-photos/"):
+        return False
+    prefix = f"team-photo-prints/{int(tournament_id)}/groups/{int(group_photo_id)}/"
+    if not key.startswith(prefix):
+        return False
+    rest = key[len(prefix):]
+    return bool(rest) and "/" not in rest and rest.endswith(".jpg")
+
+
 def print_object_key(tournament_id: int, team_id: int, version: str) -> str:
     token = "".join(ch for ch in version if ch.isalnum())[:32]
     if len(token) < 8:

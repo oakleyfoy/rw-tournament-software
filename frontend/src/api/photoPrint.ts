@@ -4,7 +4,9 @@ import type { WatermarkSettings } from '../lib/photoPrintSettings'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 export interface PhotoPrintPhoto {
-  team_id: number
+  photo_kind?: 'team' | 'group'
+  team_id: number | null
+  group_photo_id?: number | null
   player_names: string[]
   version: string
   reviewed: boolean
@@ -28,6 +30,7 @@ export interface PhotoPrintWorkspace {
     reviewed: number
     ready: number
     needs_attention: number
+    group_photos?: number
   }
   walgreens: {
     ordering_url: string
@@ -97,6 +100,27 @@ export function applyPhotoPrintToAll(tournamentId: number, settings: WatermarkSe
   )
 }
 
+export function saveGroupPhotoPrintOverride(tournamentId: number, groupPhotoId: number, settings: WatermarkSettings) {
+  return photoPrintFetch<{ group_photo_id: number; settings: WatermarkSettings; reviewed: boolean; has_override: boolean }>(
+    `/photography/tournaments/${tournamentId}/photo-print/group-photos/${groupPhotoId}`,
+    { method: 'PUT', body: JSON.stringify({ settings }) },
+  )
+}
+
+export function resetGroupPhotoPrintOverride(tournamentId: number, groupPhotoId: number) {
+  return photoPrintFetch<{ group_photo_id: number; settings: WatermarkSettings; has_override: boolean }>(
+    `/photography/tournaments/${tournamentId}/photo-print/group-photos/${groupPhotoId}`,
+    { method: 'DELETE' },
+  )
+}
+
+export function reviewGroupPhotoPrint(tournamentId: number, groupPhotoId: number, reviewed: boolean) {
+  return photoPrintFetch<{ group_photo_id: number; reviewed: boolean }>(
+    `/photography/tournaments/${tournamentId}/photo-print/group-photos/${groupPhotoId}/review`,
+    { method: 'POST', body: JSON.stringify({ reviewed }) },
+  )
+}
+
 export function savePhotoPrintOverride(tournamentId: number, teamId: number, settings: WatermarkSettings) {
   return photoPrintFetch<{ team_id: number; settings: WatermarkSettings; reviewed: boolean; has_override: boolean }>(
     `/photography/tournaments/${tournamentId}/photo-print/photos/${teamId}`,
@@ -138,7 +162,7 @@ export function photoPrintLogoUrl(tournamentId: number) {
 
 export function exportPhotoPrints(
   tournamentId: number,
-  payload: { team_ids: number[]; print_size: string; quantity: number; acknowledge_low_resolution: boolean },
+  payload: { team_ids: number[]; group_photo_ids?: number[]; print_size: string; quantity: number; acknowledge_low_resolution: boolean },
 ) {
   return photoPrintFetch<{ files: PrintFileResult[]; order_placed: boolean; walgreens: PhotoPrintWorkspace['walgreens'] }>(
     `/photography/tournaments/${tournamentId}/photo-print/exports`,
@@ -148,7 +172,7 @@ export function exportPhotoPrints(
 
 export async function downloadPhotoPrintPackage(
   tournamentId: number,
-  payload: { team_ids: number[]; print_size: string; quantity: number; acknowledge_low_resolution: boolean },
+  payload: { team_ids: number[]; group_photo_ids?: number[]; print_size: string; quantity: number; acknowledge_low_resolution: boolean },
 ) {
   const response = await fetch(`${API_BASE_URL}/photography/tournaments/${tournamentId}/photo-print/package`, {
     method: 'POST',
@@ -160,6 +184,19 @@ export async function downloadPhotoPrintPackage(
   const disposition = response.headers.get('Content-Disposition') || ''
   const match = disposition.match(/filename="([^"]+)"/)
   return { blob, filename: match?.[1] || 'team-photos.zip' }
+}
+
+export async function downloadGroupPhotoPrintFile(tournamentId: number, groupPhotoId: number, size: string) {
+  const token = getAuthToken()
+  const response = await fetch(
+    `${API_BASE_URL}/photography/tournaments/${tournamentId}/photo-print/group-photos/${groupPhotoId}/file?size=${encodeURIComponent(size)}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+  )
+  if (!response.ok) throw new Error(await readError(response))
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const match = disposition.match(/filename="([^"]+)"/)
+  return { blob, filename: match?.[1] || 'group-photo.jpg' }
 }
 
 export async function downloadPhotoPrintFile(tournamentId: number, teamId: number, size: string) {

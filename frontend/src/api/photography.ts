@@ -90,6 +90,10 @@ export function listOfficialTeamPhotos(tournamentId: number): Promise<OfficialPh
   return photoFetch(`/photography/tournaments/${tournamentId}/official-photos`)
 }
 
+export function deleteGroupPhoto(tournamentId: number, groupPhotoId: number): Promise<{ group_photo_id: number; deleted: boolean }> {
+  return photoFetch(`/photography/tournaments/${tournamentId}/group-photos/${groupPhotoId}`, { method: 'DELETE' })
+}
+
 export function deleteOfficialTeamPhoto(tournamentId: number, teamId: number): Promise<{ team_id: number; deleted: boolean }> {
   return photoFetch(`/photography/tournaments/${tournamentId}/teams/${teamId}/official`, { method: 'DELETE' })
 }
@@ -102,6 +106,55 @@ export function setPhotographyTournaments(userId: number, tournamentIds: number[
   return photoFetch(`/auth/users/${userId}/photography-tournaments`, {
     method: 'PUT',
     body: JSON.stringify({ tournament_ids: tournamentIds }),
+  })
+}
+
+export interface GroupPhotoResponse {
+  id: number
+  tournament_id: number
+  captured_at: string
+  byte_size: number
+  version: string
+  label: string
+}
+
+export function groupPhotoContentUrl(tournamentId: number, groupPhotoId: number, version: string): string {
+  return `${API_BASE_URL}/photography/tournaments/${tournamentId}/group-photos/${groupPhotoId}/content?v=${encodeURIComponent(version)}`
+}
+
+export function postGroupPhoto(args: {
+  tournamentId: number
+  blob: Blob
+  clientUploadId: string
+  onProgress?: (fraction: number) => void
+}): Promise<GroupPhotoResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE_URL}/photography/tournaments/${args.tournamentId}/group-photos`)
+    const token = getAuthToken()
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && args.onProgress) args.onProgress(event.loaded / event.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText) as GroupPhotoResponse)
+        return
+      }
+      let message = `HTTP error! status: ${xhr.status}`
+      try {
+        const body = JSON.parse(xhr.responseText)
+        if (typeof body?.detail === 'string') message = body.detail
+      } catch {
+        // Keep the status message.
+      }
+      reject(new Error(message))
+    }
+    xhr.onerror = () => reject(new Error('Network error while uploading the photograph. You can retry.'))
+    const form = new FormData()
+    form.append('file', args.blob, 'group-photo.jpg')
+    form.append('client_upload_id', args.clientUploadId)
+    xhr.send(form)
   })
 }
 

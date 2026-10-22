@@ -1105,6 +1105,20 @@ def ensure_match_checkin_reset_column(engine: Engine) -> None:
         logging.getLogger(__name__).warning("Failed to ensure match check-in reset column: %s", exc)
 
 
+def ensure_tournament_group_photo_tables(engine: Engine) -> None:
+    """Create group-photo tables without rewriting official team photographs."""
+    try:
+        from app.models.group_photo import TournamentGroupPhoto, TournamentGroupPhotoPrint
+
+        with engine.begin() as conn:
+            TournamentGroupPhoto.__table__.create(conn, checkfirst=True)
+            TournamentGroupPhotoPrint.__table__.create(conn, checkfirst=True)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure tournament group photo tables: %s", exc)
+
+
 def ensure_team_photo_sms_tables(engine: Engine) -> None:
     """Create photo-link and photo-SMS tables without rewriting official photographs."""
     try:

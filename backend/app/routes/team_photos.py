@@ -14,6 +14,7 @@ from app.auth import require_photo_user
 from app.database import get_session
 from app.models.event import Event
 from app.models.team import Team
+from app.models.group_photo import TournamentGroupPhoto
 from app.models.team_photo import PhotographerTournamentAccess, TeamOfficialPhoto
 from app.models.tournament import Tournament
 from app.models.user_account import UserAccount
@@ -24,9 +25,10 @@ from app.services.team_photo_storage import (
     display_thumb_key,
     get_object_store,
     make_display_thumbnail,
+    owned_group_key,
     process_image,
 )
-from app.services.team_photos import delete_official_photo, save_official_photo
+from app.services.team_photos import delete_group_photo, delete_official_photo, save_group_photo, save_official_photo
 
 router = APIRouter(prefix="/api/photography", tags=["photography"], dependencies=[Depends(require_photo_user)])
 
@@ -48,6 +50,15 @@ class PhotoTeamSearchHit(BaseModel):
     avoid_group: Optional[str] = None
     source_team_key: Optional[str] = None
     has_official_photo: bool = False
+
+
+class GroupPhotoResponse(BaseModel):
+    id: int
+    tournament_id: int
+    captured_at: datetime
+    byte_size: int
+    version: str
+    label: str
 
 
 class OfficialPhotoResponse(BaseModel):
@@ -241,6 +252,109 @@ async def set_official_photo(
         _discard_new_object(display_thumb_key(result.delete_after_commit))
     session.refresh(result.photo)
     return _photo_response(result.photo)
+
+
+def _group_label(session: Session, photo: TournamentGroupPhoto) -> str:
+    rows = session.exec(
+        select(TournamentGroupPhoto)
+        .where(TournamentGroupPhoto.tournament_id == photo.tournament_id)
+        .order_by(TournamentGroupPhoto.id)
+    ).all()
+    for index, row in enumerate(rows, start=1):
+        if row.id == photo.id:
+            return f"Group Photo {index}"
+    return "Group Photo"
+
+
+@router.post(
+    "/tournaments/{tournament_id}/group-photos",
+    response_model=GroupPhotoResponse,
+)
+async def save_group_photograph(
+    tournament_id: int,
+    file: UploadFile = File(...),
+    client_upload_id: str = Form(...),
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    """Save a tournament group photograph. No team, player, draw, or SMS record is created."""
+    client_upload_id = (client_upload_id or "").strip()
+    if len(client_upload_id) < 8 or len(client_upload_id) > 80:
+        raise HTTPException(status_code=400, detail="client_upload_id is invalid")
+    _assert_can_photograph(session, user, tournament_id)
+    raw = await file.read()
+    try:
+        processed = process_image(raw)
+        photo = save_group_photo(
+            session,
+            tournament_id=tournament_id,
+            client_upload_id=client_upload_id,
+            image_bytes=processed,
+            photographer_user_id=user.id,
+        )
+        session.commit()
+    except PhotoRejected as exc:
+        session.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except PhotoStorageUnavailable as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(photo)
+    return GroupPhotoResponse(
+        id=photo.id,  # type: ignore[arg-type]
+        tournament_id=photo.tournament_id,
+        captured_at=photo.captured_at,
+        byte_size=photo.byte_size,
+        version=photo.storage_key,
+        label=_group_label(session, photo),
+    )
+
+
+@router.get("/tournaments/{tournament_id}/group-photos/{group_photo_id}/content")
+def group_photo_content(
+    tournament_id: int,
+    group_photo_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    _assert_can_photograph(session, user, tournament_id)
+    photo = session.get(TournamentGroupPhoto, group_photo_id)
+    if not photo or photo.tournament_id != tournament_id or not owned_group_key(tournament_id, photo.storage_key):
+        raise HTTPException(status_code=404, detail="Group photo is not available")
+    try:
+        data = get_object_store().get_bytes(photo.storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Group photo is not available") from exc
+    except PhotoStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(content=data, media_type="image/jpeg")
+
+
+@router.delete("/tournaments/{tournament_id}/group-photos/{group_photo_id}")
+def remove_group_photograph(
+    tournament_id: int,
+    group_photo_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    """Delete one group photograph. Official team photographs are not changed."""
+    _assert_can_photograph(session, user, tournament_id)
+    try:
+        delete_group_photo(session, tournament_id=tournament_id, group_photo_id=group_photo_id)
+        session.commit()
+    except PhotoRejected as exc:
+        session.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except PhotoStorageUnavailable as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        session.rollback()
+        raise
+    return {"group_photo_id": group_photo_id, "deleted": True}
 
 
 @router.get(

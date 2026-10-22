@@ -18,6 +18,7 @@ vi.mock('../api/photography', () => ({
   deleteOfficialTeamPhoto: mocks.deleteOfficialTeamPhoto,
   getTeamPhotoSms: mocks.getTeamPhotoSms,
   postOfficialTeamPhoto: vi.fn(),
+  postGroupPhoto: vi.fn(),
   officialTeamPhotoContentUrl: (teamId: number, version: string) =>
     `/api/photography/teams/${teamId}/official/content?v=${encodeURIComponent(version)}`,
   officialTeamPhotoThumbUrl: (teamId: number, version: string) =>

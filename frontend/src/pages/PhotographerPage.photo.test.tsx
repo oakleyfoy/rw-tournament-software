@@ -17,6 +17,7 @@ vi.mock('../api/photography', () => ({
   listPhotographyTournaments: mocks.listPhotographyTournaments,
   searchPhotographyTeams: mocks.searchPhotographyTeams,
   postOfficialTeamPhoto: mocks.postOfficialTeamPhoto,
+  postGroupPhoto: vi.fn(),
   listOfficialTeamPhotos: mocks.listOfficialTeamPhotos,
   getTeamPhotoSms: mocks.getTeamPhotoSms,
   deleteOfficialTeamPhoto: mocks.deleteOfficialTeamPhoto,

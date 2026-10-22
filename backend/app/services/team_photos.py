@@ -12,15 +12,19 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
+from app.models.group_photo import TournamentGroupPhoto, TournamentGroupPhotoPrint
 from app.models.team_photo import TeamOfficialPhoto, TeamPhotoCapture
 from app.services.team_photo_storage import (
     PhotoRejected,
     PhotoStorageUnavailable,
     display_thumb_key,
     get_object_store,
+    group_object_key,
     make_display_thumbnail,
     official_object_key,
+    owned_group_key,
 )
+from app.services.team_photo_watermark import owned_group_print_key
 
 
 @dataclass
@@ -138,6 +142,76 @@ def relink_photos_for_team_merge(session: Session, canonical_team_id: int, dupli
     for capture in captures:
         _delete_key(capture.storage_key)
         session.delete(capture)
+
+
+def delete_group_photo(session: Session, *, tournament_id: int, group_photo_id: int) -> None:
+    """Remove one group photograph and its print file. Official team photos stay."""
+    photo = session.get(TournamentGroupPhoto, group_photo_id)
+    if photo is None:
+        return
+    if photo.tournament_id != tournament_id:
+        raise PhotoRejected("Group photo is not available", status_code=404)
+    prints = session.exec(
+        select(TournamentGroupPhotoPrint).where(TournamentGroupPhotoPrint.group_photo_id == group_photo_id)
+    ).all()
+    keys = [photo.storage_key]
+    for printed in prints:
+        if printed.storage_key and printed.storage_key not in keys:
+            keys.append(printed.storage_key)
+    if not owned_group_key(tournament_id, photo.storage_key):
+        raise PhotoRejected("Group photograph could not be deleted", status_code=409)
+    if any(not owned_group_print_key(tournament_id, group_photo_id, key) for key in keys if key != photo.storage_key):
+        raise PhotoRejected("Group photograph could not be deleted", status_code=409)
+    store = get_object_store()
+    for key in keys:
+        store.delete(key)
+    for printed in prints:
+        session.delete(printed)
+    session.delete(photo)
+    session.flush()
+
+
+def save_group_photo(
+    session: Session,
+    *,
+    tournament_id: int,
+    client_upload_id: str,
+    image_bytes: bytes,
+    photographer_user_id: Optional[int],
+) -> TournamentGroupPhoto:
+    """Store one tournament group photograph. This does not text anyone."""
+    client_upload_id = client_upload_id.strip()
+    existing = session.exec(
+        select(TournamentGroupPhoto).where(TournamentGroupPhoto.client_upload_id == client_upload_id)
+    ).first()
+    if existing and existing.tournament_id != tournament_id:
+        raise PhotoRejected("This upload already belongs to another tournament", status_code=409)
+    if existing:
+        return existing
+
+    new_key = group_object_key(tournament_id, client_upload_id)
+    store = get_object_store()
+    store.put_jpeg(new_key, image_bytes)
+    if store.head_size(new_key) != len(image_bytes):
+        store.delete(new_key)
+        raise PhotoStorageUnavailable("Uploaded photograph could not be verified")
+    photo = TournamentGroupPhoto(
+        tournament_id=tournament_id,
+        storage_key=new_key,
+        content_type="image/jpeg",
+        byte_size=len(image_bytes),
+        photographer_user_id=photographer_user_id,
+        client_upload_id=client_upload_id,
+        captured_at=datetime.utcnow(),
+        reviewed=False,
+    )
+    session.add(photo)
+    try:
+        session.flush()
+    except Exception:
+        store.delete(new_key)
+        raise
+    return photo
 
 
 def save_official_photo(

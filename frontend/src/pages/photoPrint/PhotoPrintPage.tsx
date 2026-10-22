@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getAuthToken } from '../../api/client'
-import { officialTeamPhotoContentUrl } from '../../api/photography'
+import { deleteGroupPhoto, groupPhotoContentUrl, officialTeamPhotoContentUrl } from '../../api/photography'
 import {
   applyPhotoPrintToAll,
+  downloadGroupPhotoPrintFile,
   downloadPhotoPrintFile,
   downloadPhotoPrintPackage,
   exportPhotoPrints,
   loadPhotoPrintWorkspace,
   photoPrintLogoUrl,
+  resetGroupPhotoPrintOverride,
   resetPhotoPrintOverride,
+  reviewGroupPhotoPrint,
   reviewPhotoPrint,
   saveBlob,
+  saveGroupPhotoPrintOverride,
   savePhotoPrintDefault,
   savePhotoPrintOverride,
   uploadPhotoPrintLogo,
+  type PhotoPrintPhoto,
   type PhotoPrintWorkspace,
 } from '../../api/photoPrint'
 import {
@@ -38,6 +43,27 @@ import './photoPrint.css'
 
 type GalleryFilter = 'all' | 'edited' | 'review'
 
+function photoKey(photo: { photo_kind?: string; team_id?: number | null; group_photo_id?: number | null }) {
+  return photo.photo_kind === 'group' ? `group:${photo.group_photo_id}` : `team:${photo.team_id}`
+}
+
+function splitPhotoKeys(keys: string[]) {
+  const team_ids: number[] = []
+  const group_photo_ids: number[] = []
+  for (const key of keys) {
+    if (key.startsWith('group:')) group_photo_ids.push(Number(key.slice(6)))
+    else team_ids.push(Number(key.startsWith('team:') ? key.slice(5) : key))
+  }
+  return { team_ids, group_photo_ids }
+}
+
+function photoContentUrl(tournamentId: number, photo: PhotoPrintPhoto) {
+  if (photo.photo_kind === 'group' && photo.group_photo_id) {
+    return groupPhotoContentUrl(tournamentId, photo.group_photo_id, photo.version)
+  }
+  return officialTeamPhotoContentUrl(photo.team_id || 0, photo.version)
+}
+
 async function authorizedBlob(url: string): Promise<string> {
   const token = getAuthToken()
   const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
@@ -53,7 +79,7 @@ export default function PhotoPrintPage() {
   const [filter, setFilter] = useState<GalleryFilter>('all')
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
-  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [settings, setSettings] = useState<WatermarkSettings | null>(null)
   const [zoom, setZoom] = useState(100)
   const printSize = PRINT_SIZE
@@ -62,7 +88,7 @@ export default function PhotoPrintPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
-  const [images, setImages] = useState<Record<number, string>>({})
+  const [images, setImages] = useState<Record<string, string>>({})
   const [logoSrc, setLogoSrc] = useState<string | null>(null)
   const [logoVersion, setLogoVersion] = useState(0)
   const [removeLogoBackground, setRemoveLogoBackground] = useState(true)
@@ -98,7 +124,7 @@ export default function PhotoPrintPage() {
       .then((data) => {
         setWorkspace(data)
         setSettings(data.default_settings)
-        setSelectedIds(data.photos.map((photo) => photo.team_id))
+        setSelectedIds(data.photos.map((photo) => photoKey(photo)))
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Could not open the print center'))
   }, [tid])
@@ -119,29 +145,30 @@ export default function PhotoPrintPage() {
   useEffect(() => {
     if (!current) return
     setSettings(current.has_override ? current.settings : workspace?.default_settings || current.settings)
-  }, [current?.team_id, current?.has_override, current?.version])
+  }, [current ? photoKey(current) : '', current?.has_override, current?.version])
 
-  const loadedImages = useRef<Map<number, string>>(new Map())
+  const loadedImages = useRef<Map<string, string>>(new Map())
   useEffect(() => {
     let cancelled = false
     photos.forEach((photo) => {
-      if (loadedImages.current.get(photo.team_id) === photo.version) return
-      authorizedBlob(officialTeamPhotoContentUrl(photo.team_id, photo.version))
+      const key = photoKey(photo)
+      if (loadedImages.current.get(key) === photo.version) return
+      authorizedBlob(photoContentUrl(tid, photo))
         .then((url) => {
           if (cancelled) {
             URL.revokeObjectURL(url)
             return
           }
-          loadedImages.current.set(photo.team_id, photo.version)
+          loadedImages.current.set(key, photo.version)
           setImages((prev) => {
-            const previous = prev[photo.team_id]
+            const previous = prev[key]
             if (previous) URL.revokeObjectURL(previous)
-            return { ...prev, [photo.team_id]: url }
+            return { ...prev, [key]: url }
           })
         })
         .catch(() => {
-          if (loadedImages.current.get(photo.team_id) === photo.version) {
-            loadedImages.current.delete(photo.team_id)
+          if (loadedImages.current.get(key) === photo.version) {
+            loadedImages.current.delete(key)
           }
         })
     })
@@ -176,7 +203,7 @@ export default function PhotoPrintPage() {
     const observer = new ResizeObserver(update)
     observer.observe(node)
     return () => observer.disconnect()
-  }, [current?.team_id, zoom, images, settings?.crop_mode])
+  }, [current ? photoKey(current) : '', zoom, images, settings?.crop_mode])
 
   const patch = (partial: Partial<WatermarkSettings>) => {
     setSettings((prev) => ({ ...(prev || defaultWatermarkSettings(workspace?.tournament_name || '')), ...partial }))
@@ -216,14 +243,20 @@ export default function PhotoPrintPage() {
 
   const savePhoto = () => run(async () => {
     if (!settings || !current) return
-    await savePhotoPrintOverride(tid, current.team_id, settings)
+    if (current.photo_kind === 'group' && current.group_photo_id) {
+      await saveGroupPhotoPrintOverride(tid, current.group_photo_id, settings)
+    } else if (current.team_id) {
+      await savePhotoPrintOverride(tid, current.team_id, settings)
+    }
     await refresh()
     setNotice('This photograph keeps its own watermark.')
   })
 
   const resetPhoto = () => run(async () => {
     if (!current) return
-    const reset = await resetPhotoPrintOverride(tid, current.team_id)
+    const reset = current.photo_kind === 'group' && current.group_photo_id
+      ? await resetGroupPhotoPrintOverride(tid, current.group_photo_id)
+      : await resetPhotoPrintOverride(tid, current.team_id || 0)
     setSettings(reset.settings)
     await refresh()
     setNotice('This photograph uses the tournament default again.')
@@ -231,13 +264,18 @@ export default function PhotoPrintPage() {
 
   const markReviewed = (reviewed: boolean) => run(async () => {
     if (!current) return
-    await reviewPhotoPrint(tid, current.team_id, reviewed)
+    if (current.photo_kind === 'group' && current.group_photo_id) {
+      await reviewGroupPhotoPrint(tid, current.group_photo_id, reviewed)
+    } else if (current.team_id) {
+      await reviewPhotoPrint(tid, current.team_id, reviewed)
+    }
     await refresh()
   })
 
-  const packageFor = (teamIds: number[], acknowledge: boolean) => run(async () => {
+  const packageFor = (keys: string[], acknowledge: boolean) => run(async () => {
+    const selection = splitPhotoKeys(keys)
     const result = await downloadPhotoPrintPackage(tid, {
-      team_ids: teamIds,
+      ...selection,
       print_size: printSize,
       quantity,
       acknowledge_low_resolution: acknowledge,
@@ -248,26 +286,37 @@ export default function PhotoPrintPage() {
     await refresh()
   })
 
+  const deleteCurrentGroup = () => run(async () => {
+    if (!current || current.photo_kind !== 'group' || !current.group_photo_id) return
+    await deleteGroupPhoto(tid, current.group_photo_id)
+    setSelectedIds((prev) => prev.filter((id) => id !== photoKey(current)))
+    await refresh()
+    setNotice('Group photo deleted. Official team photographs were not changed.')
+  })
+
   const downloadCurrent = () => run(async () => {
     if (!current) return
     const low = current.low_resolution_sizes.includes(printSize)
+    const selection = splitPhotoKeys([photoKey(current)])
     await exportPhotoPrints(tid, {
-      team_ids: [current.team_id],
+      ...selection,
       print_size: printSize,
       quantity,
       acknowledge_low_resolution: low,
     })
-    const file = await downloadPhotoPrintFile(tid, current.team_id, printSize)
+    const file = current.photo_kind === 'group' && current.group_photo_id
+      ? await downloadGroupPhotoPrintFile(tid, current.group_photo_id, printSize)
+      : await downloadPhotoPrintFile(tid, current.team_id || 0, printSize)
     saveBlob(file.blob, file.filename)
     setNotice(`${file.filename} downloaded. The original photograph was not changed.`)
   })
 
   const orderWalgreens = () => run(async () => {
-    const ids = selectedIds.filter((id) => photos.some((photo) => photo.team_id === id))
+    const ids = selectedIds.filter((id) => photos.some((photo) => photoKey(photo) === id))
     if (!ids.length) throw new Error('Select at least one photograph')
-    const low = photos.some((photo) => ids.includes(photo.team_id) && photo.low_resolution_sizes.includes(printSize))
+    const low = photos.some((photo) => ids.includes(photoKey(photo)) && photo.low_resolution_sizes.includes(printSize))
     const result = await downloadPhotoPrintPackage(tid, {
-      team_ids: ids,
+      ...splitPhotoKeys(ids),
       print_size: printSize,
       quantity,
       acknowledge_low_resolution: low,
@@ -363,7 +412,7 @@ export default function PhotoPrintPage() {
       height: Math.max(logoHeight + stackGap + textHeight, 24),
     })
     : null
-  const selectedPhotos = photos.filter((photo) => selectedIds.includes(photo.team_id))
+  const selectedPhotos = photos.filter((photo) => selectedIds.includes(photoKey(photo)))
   const lowSelected = selectedPhotos.filter((photo) => photo.low_resolution_sizes.includes(printSize))
 
   return (
@@ -377,6 +426,7 @@ export default function PhotoPrintPage() {
       <div className="photo-print-progress">
         <span>Teams {workspace?.totals.teams ?? 0}</span>
         <span>Official photos {workspace?.totals.with_photos ?? 0}</span>
+        {(workspace?.totals.group_photos ?? 0) > 0 && <span>Group photos {workspace?.totals.group_photos}</span>}
         <span>Reviewed {workspace?.totals.reviewed ?? 0}</span>
         <span>Ready for printing {workspace?.totals.ready ?? 0}</span>
         <span>Needing attention {workspace?.totals.needs_attention ?? 0}</span>
@@ -394,21 +444,21 @@ export default function PhotoPrintPage() {
           </div>
           <div className="photo-print-list">
             {filtered.map((photo, photoIndex) => (
-              <div key={photo.team_id} className={current?.team_id === photo.team_id ? 'photo-print-card selected' : 'photo-print-card'}>
+              <div key={photoKey(photo)} className={current && photoKey(current) === photoKey(photo) ? 'photo-print-card selected' : 'photo-print-card'}>
                 <input
                   type="checkbox"
-                  checked={selectedIds.includes(photo.team_id)}
+                  checked={selectedIds.includes(photoKey(photo))}
                   aria-label={`Select ${photo.player_names.join(' and ')}`}
                   onChange={(event) => {
-                    setSelectedIds((prev) => event.target.checked ? [...prev, photo.team_id] : prev.filter((id) => id !== photo.team_id))
+                    setSelectedIds((prev) => event.target.checked ? [...prev, photoKey(photo)] : prev.filter((id) => id !== photoKey(photo)))
                   }}
                 />
                 <button type="button" onClick={() => setIndex(photoIndex)} style={{ display: 'contents' }}>
-                  {images[photo.team_id] ? <img src={images[photo.team_id]} alt="" /> : <span className="photo-print-thumb-fallback" />}
+                  {images[photoKey(photo)] ? <img src={images[photoKey(photo)]} alt="" /> : <span className="photo-print-thumb-fallback" />}
                   <span>
                     <strong>{photo.player_names.filter((name) => name !== 'Partner not on file').join(' / ')}</strong>
                     <div style={{ fontSize: 11, color: '#607d8b' }}>
-                      {photo.has_override ? 'Edited' : 'Tournament default'}
+                      {photo.photo_kind === 'group' ? 'Group Photo' : photo.has_override ? 'Edited' : 'Tournament default'}
                       {photo.reviewed ? ' · Reviewed' : ' · Awaiting review'}
                     </div>
                   </span>
@@ -428,10 +478,10 @@ export default function PhotoPrintPage() {
           </div>
           {current && settings && (
             <div ref={frameRef} className="photo-print-frame" style={{ width: `min(100%, calc(4in * ${zoom / 100}))`, aspectRatio: '2 / 3' }}>
-              {images[current.team_id]
+              {images[photoKey(current)]
                 ? (
                   <img
-                    src={images[current.team_id]}
+                    src={images[photoKey(current)]}
                     alt={current.player_names.join(' and ')}
                     onPointerDown={onDragCrop}
                     style={{
@@ -632,7 +682,10 @@ export default function PhotoPrintPage() {
         {error && <span style={{ color: '#c62828' }}>{error}</span>}
         {notice && <span>{notice}</span>}
         <button type="button" disabled={busy || !current} onClick={downloadCurrent}>Download Current Photo</button>
-        <button type="button" disabled={busy || photos.length === 0} onClick={() => packageFor(photos.map((photo) => photo.team_id), photos.some((photo) => photo.low_resolution_sizes.includes(printSize)))}>Download All Photos as ZIP</button>
+        {current?.photo_kind === 'group' && (
+          <button type="button" disabled={busy} onClick={deleteCurrentGroup}>Delete Group Photo</button>
+        )}
+        <button type="button" disabled={busy || photos.length === 0} onClick={() => packageFor(photos.map((photo) => photoKey(photo)), photos.some((photo) => photo.low_resolution_sizes.includes(printSize)))}>Download All Photos as ZIP</button>
         <button type="button" disabled={busy || selectedIds.length === 0} onClick={() => packageFor(selectedIds, lowSelected.length > 0)}>Export Selected Photos</button>
         <button type="button" disabled={busy || selectedIds.length === 0} onClick={() => setReviewOpen(true)}>Generate Print Package</button>
         <button type="button" className="photo-print-walgreens" disabled={busy || selectedIds.length === 0} onClick={orderWalgreens}>Order Prints at Walgreens</button>
@@ -644,7 +697,7 @@ export default function PhotoPrintPage() {
             <p>{selectedPhotos.length} photographs · {printSize} · quantity {quantity}. Walgreens has not confirmed an order.</p>
             <ul>
               {selectedPhotos.map((photo) => (
-                <li key={photo.team_id}>
+                <li key={photoKey(photo)}>
                   {photo.player_names.filter((name) => name !== 'Partner not on file').join(' / ')}
                   {photo.low_resolution_sizes.includes(printSize) ? ' — below 300 DPI, export will enlarge it' : ''}
                   {photo.reviewed ? '' : ' — not reviewed'}

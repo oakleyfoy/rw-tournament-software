@@ -8,8 +8,11 @@ export interface SessionCapture {
   error?: string
 }
 
+export type PhotoMode = 'team' | 'group'
+
 export interface PhotographerSessionState {
   tournamentId: number | null
+  photoMode: PhotoMode
   selectedTeamId: number | null
   captures: SessionCapture[]
   selectedLocalId: string | null
@@ -20,6 +23,7 @@ export interface PhotographerSessionState {
 
 export const initialPhotographerSession: PhotographerSessionState = {
   tournamentId: null,
+  photoMode: 'team',
   selectedTeamId: null,
   captures: [],
   selectedLocalId: null,
@@ -30,6 +34,9 @@ export const initialPhotographerSession: PhotographerSessionState = {
 
 export type PhotographerAction =
   | { type: 'selectTournament'; tournamentId: number }
+  | { type: 'chooseTeamPhoto' }
+  | { type: 'chooseGroupPhoto' }
+  | { type: 'beginTeamSearch' }
   | { type: 'selectTeam'; teamId: number }
   | { type: 'addCapture'; capture: SessionCapture }
   | { type: 'uploadProgress'; localId: string; progress: number }
@@ -50,9 +57,48 @@ export function photographerReducer(
   switch (action.type) {
     case 'selectTournament':
       return { ...initialPhotographerSession, tournamentId: action.tournamentId }
+    case 'chooseTeamPhoto':
+      if (state.confirming || state.captures.some((capture) => capture.status === 'uploading')) return state
+      return {
+        ...state,
+        photoMode: 'team',
+        phase: 'search',
+        selectedTeamId: null,
+        captures: [],
+        selectedLocalId: null,
+        confirming: false,
+      }
+    case 'chooseGroupPhoto':
+      if (state.confirming || state.captures.some((capture) => capture.status === 'uploading')) return state
+      if (state.photoMode === 'group' && state.phase === 'capture' && state.captures.length > 0) return state
+      return {
+        ...state,
+        photoMode: 'group',
+        selectedTeamId: null,
+        captures: [],
+        selectedLocalId: null,
+        confirming: false,
+        phase: 'capture',
+        confirmationMessage: null,
+      }
+    case 'beginTeamSearch':
+      if (state.confirming || state.captures.some((capture) => capture.status === 'uploading' || capture.status === 'ready' || capture.status === 'failed')) {
+        return state
+      }
+      if (state.photoMode === 'team' && state.phase === 'search') return state
+      return {
+        ...state,
+        photoMode: 'team',
+        phase: 'search',
+        selectedTeamId: null,
+        captures: [],
+        selectedLocalId: null,
+        confirming: false,
+      }
     case 'selectTeam':
       return {
         ...state,
+        photoMode: 'team',
         selectedTeamId: action.teamId,
         captures: [],
         selectedLocalId: null,
@@ -61,7 +107,7 @@ export function photographerReducer(
         confirmationMessage: null,
       }
     case 'addCapture': {
-      if (state.selectedTeamId == null) return state
+      if (state.photoMode !== 'group' && state.selectedTeamId == null) return state
       if (state.captures.some((capture) => capture.clientUploadId === action.capture.clientUploadId)) {
         return state
       }
@@ -129,14 +175,16 @@ export function photographerReducer(
       return {
         ...initialPhotographerSession,
         tournamentId: state.tournamentId,
+        photoMode: 'team',
         phase: 'search',
-        confirmationMessage: `Saved for ${action.teamLabel}`,
+        confirmationMessage: state.photoMode === 'group' ? 'Saved group photo' : `Saved for ${action.teamLabel}`,
       }
     case 'confirmFailed':
       return { ...state, confirming: false }
     case 'backToSearch':
       return {
         ...state,
+        photoMode: 'team',
         phase: 'search',
         selectedTeamId: null,
         captures: [],
