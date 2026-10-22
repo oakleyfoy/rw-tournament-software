@@ -12,7 +12,8 @@ import os
 from PIL import Image, ImageOps
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
-MAX_EDGE = 1600
+MAX_EDGE = 3000
+THUMB_EDGE = 480
 
 
 def register_heif_support() -> bool:
@@ -54,7 +55,7 @@ def process_image(raw: bytes) -> bytes:
             image = image.convert("RGB")
         image.thumbnail((MAX_EDGE, MAX_EDGE), Image.Resampling.LANCZOS)
         out = io.BytesIO()
-        image.save(out, format="JPEG", quality=82, optimize=True)
+        image.save(out, format="JPEG", quality=90, optimize=True, subsampling=0)
     except PhotoRejected:
         raise
     except Exception as exc:
@@ -65,6 +66,31 @@ def process_image(raw: bytes) -> bytes:
     if not data:
         raise PhotoRejected("Photograph could not be saved")
     return data
+
+
+def make_display_thumbnail(raw: bytes) -> bytes:
+    """Small JPEG for Check-In Desk and Score Entry. The original bytes are not changed."""
+    if not raw:
+        raise PhotoRejected("Photograph file is empty")
+    try:
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(raw)))
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image.thumbnail((THUMB_EDGE, THUMB_EDGE), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        image.save(out, format="JPEG", quality=75, optimize=True)
+    except Exception as exc:
+        raise PhotoRejected("Photograph thumbnail could not be created") from exc
+    data = out.getvalue()
+    if not data:
+        raise PhotoRejected("Photograph thumbnail could not be created")
+    return data
+
+
+def display_thumb_key(storage_key: str) -> str | None:
+    if not storage_key.endswith(".jpg") or storage_key.endswith("-thumb.jpg") or ".." in storage_key:
+        return None
+    return storage_key[:-4] + "-thumb.jpg"
 
 
 def official_object_key(tournament_id: int, team_id: int, unique_id: str) -> str:
@@ -82,7 +108,7 @@ class MemoryObjectStore:
         self.fail_next_put = False
         self.fail_next_delete = False
 
-    def put_jpeg(self, key: str, data: bytes) -> None:
+    def put_jpeg(self, key: str, data: bytes, content_type: str = "image/jpeg") -> None:
         if self.fail_next_put:
             self.fail_next_put = False
             raise PhotoStorageUnavailable("Team photograph storage is unavailable")
@@ -158,14 +184,14 @@ class R2ObjectStore:
         )
         return cls(client, bucket)
 
-    def put_jpeg(self, key: str, data: bytes) -> None:
+    def put_jpeg(self, key: str, data: bytes, content_type: str = "image/jpeg") -> None:
         self._call(
             "upload",
             lambda: self.client.put_object(
                 Bucket=self.bucket,
                 Key=key,
                 Body=data,
-                ContentType="image/jpeg",
+                ContentType=content_type,
             ),
         )
 

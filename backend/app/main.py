@@ -18,6 +18,7 @@ from app.db_schema_patch import (
     ensure_event_columns,
     ensure_opening_slot_release_table,
     ensure_match_checkin_reset_column,
+    ensure_team_photo_print_tables,
     ensure_schedule_slot_columns,
     ensure_sms_log_columns,
     ensure_sms_phone_list_columns,
@@ -51,6 +52,7 @@ from app.routes import (
     schedule_sanity,
     sms,
     team_import,
+    team_photo_print,
     team_photos,
     teams,
     time_windows,
@@ -183,6 +185,7 @@ app.include_router(schedule_sanity.router, prefix="/api", tags=["schedule"], dep
 # Include teams router
 app.include_router(teams.router, prefix="/api", tags=["teams"], dependencies=_protected_deps)
 app.include_router(team_photos.router)
+app.include_router(team_photo_print.router)
 
 # Post-draw staff corrections (move division / edit WF R1 matchup)
 app.include_router(
@@ -258,6 +261,7 @@ def on_startup():
     ensure_tournament_time_window_columns(engine)
     ensure_schedule_slot_columns(engine)
     ensure_match_checkin_reset_column(engine)
+    ensure_team_photo_print_tables(engine)
     start_first_match_runner_if_enabled()
 
     # Print all registered routes for debugging (full path stack)

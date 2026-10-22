@@ -27,6 +27,7 @@ import { getCurrentTheme, applyTheme } from './utils/settings'
 import { getAuthToken, getAuthRole } from './api/client'
 import LoginPage from './pages/LoginPage'
 import PhotographerPage from './pages/PhotographerPage'
+import PhotoPrintPage from './pages/photoPrint/PhotoPrintPage'
 
 function RequireAuthLayout() {
   const location = useLocation()
@@ -35,7 +36,8 @@ function RequireAuthLayout() {
   if (!token) {
     return <Navigate to="/login" replace state={{ from: location }} />
   }
-  if (role === 'photographer' && !location.pathname.startsWith('/photography')) {
+  const photographerPath = location.pathname.startsWith('/photography') || location.pathname.endsWith('/photo-print')
+  if (role === 'photographer' && !photographerPath) {
     return <Navigate to="/photography" replace />
   }
   return <Outlet />
@@ -75,6 +77,7 @@ function App() {
           <Route path="/events/:eventId/who-knows-who" element={<WhoKnowsWho />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/photography" element={<PhotographerPage />} />
+          <Route path="/tournaments/:tournamentId/photo-print" element={<PhotoPrintPage />} />
           {/* Staff desk */}
           <Route path="/desk/t/:tournamentId" element={<TournamentDeskPage />} />
           <Route path="/desk/t/:tournamentId/board" element={<TournamentDeskBoardPage />} />

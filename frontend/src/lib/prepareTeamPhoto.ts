@@ -1,4 +1,4 @@
-export function fitPhotoDimensions(width: number, height: number, maxEdge = 1600): { width: number; height: number } {
+export function fitPhotoDimensions(width: number, height: number, maxEdge = 3000): { width: number; height: number } {
   const longest = Math.max(width, height, 1)
   const scale = Math.min(1, maxEdge / longest)
   return {
@@ -29,7 +29,7 @@ export async function prepareTeamPhoto(file: File): Promise<{ blob: Blob; client
       canvas.toBlob((value) => {
         if (value) resolve(value)
         else reject(new Error('Could not compress photograph'))
-      }, 'image/jpeg', 0.82)
+      }, 'image/jpeg', 0.92)
     })
     return { blob, clientUploadId }
   } catch {

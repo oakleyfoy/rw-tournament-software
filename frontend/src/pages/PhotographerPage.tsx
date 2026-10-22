@@ -224,7 +224,14 @@ export default function PhotographerPage() {
       <div style={{ maxWidth: 560, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
           <h1 style={{ margin: 0, fontSize: 22, color: '#1a237e' }}>Team Photos</h1>
-          <button type="button" onClick={logout} style={secondaryButton}>Log out</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {session.tournamentId && (
+              <button type="button" onClick={() => navigate(`/tournaments/${session.tournamentId}/photo-print`)} style={secondaryButton}>
+                Watermark & Print
+              </button>
+            )}
+            <button type="button" onClick={logout} style={secondaryButton}>Log out</button>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
           {['Search', 'Pictures', 'Select', 'Save'].map((label) => (

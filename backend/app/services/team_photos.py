@@ -16,7 +16,9 @@ from app.models.team_photo import TeamOfficialPhoto, TeamPhotoCapture
 from app.services.team_photo_storage import (
     PhotoRejected,
     PhotoStorageUnavailable,
+    display_thumb_key,
     get_object_store,
+    make_display_thumbnail,
     official_object_key,
 )
 
@@ -60,6 +62,9 @@ def delete_official_photo(session: Session, *, tournament_id: int, team_id: int)
             keys.append(capture.storage_key)
     if photo.storage_key not in keys:
         keys.append(photo.storage_key)
+    thumb_key = display_thumb_key(photo.storage_key)
+    if thumb_key and thumb_key not in keys:
+        keys.append(thumb_key)
     if any(not _owned_photo_key(tournament_id, team_id, key) for key in keys):
         raise PhotoRejected("Official photograph could not be deleted", status_code=409)
     store = get_object_store()
@@ -160,6 +165,14 @@ def save_official_photo(
         if previous_key != new_key:
             store.delete(new_key)
         raise PhotoStorageUnavailable("Uploaded photograph could not be verified")
+    thumb_key = display_thumb_key(new_key)
+    if thumb_key:
+        try:
+            store.put_jpeg(thumb_key, make_display_thumbnail(image_bytes))
+        except (PhotoRejected, PhotoStorageUnavailable):
+            if previous_key != new_key:
+                store.delete(new_key)
+            raise
 
     now = datetime.utcnow()
     if existing is None:

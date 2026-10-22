@@ -21,7 +21,9 @@ from app.services.team_photo_search import search_tournament_teams
 from app.services.team_photo_storage import (
     PhotoRejected,
     PhotoStorageUnavailable,
+    display_thumb_key,
     get_object_store,
+    make_display_thumbnail,
     process_image,
 )
 from app.services.team_photos import delete_official_photo, save_official_photo
@@ -222,6 +224,7 @@ async def set_official_photo(
         raise
     if result.delete_after_commit:
         _discard_new_object(result.delete_after_commit)
+        _discard_new_object(display_thumb_key(result.delete_after_commit))
     session.refresh(result.photo)
     return _photo_response(result.photo)
 
@@ -276,4 +279,48 @@ def official_photo_content(
         content=data,
         media_type="image/jpeg",
         headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.get("/teams/{team_id}/official/thumb")
+def official_photo_thumb(
+    team_id: int,
+    user: UserAccount = Depends(require_photo_user),
+    session: Session = Depends(get_session),
+):
+    """Small display copy for Check-In Desk and Score Entry. The original object is not rewritten."""
+    team = session.get(Team, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    event = session.get(Event, team.event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Team not found")
+    _assert_can_photograph(session, user, event.tournament_id)
+    photo = _official_or_404(session, team_id)
+    if photo.team_id != team_id or photo.tournament_id != event.tournament_id:
+        raise HTTPException(status_code=404, detail="No official team photo")
+    store = get_object_store()
+    thumb_key = display_thumb_key(photo.storage_key)
+    try:
+        thumb = None
+        if thumb_key:
+            try:
+                thumb = store.get_bytes(thumb_key)
+            except FileNotFoundError:
+                thumb = None
+        if thumb is None:
+            original = store.get_bytes(photo.storage_key)
+            thumb = make_display_thumbnail(original)
+            if store.get_bytes(photo.storage_key) != original:
+                raise HTTPException(status_code=500, detail="Official photograph was not left unchanged")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="No official team photo") from exc
+    except PhotoRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except PhotoStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=thumb,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=300"},
     )

@@ -45,6 +45,10 @@ export function officialTeamPhotoContentUrl(teamId: number, version: string): st
   return `${API_BASE_URL}/photography/teams/${teamId}/official/content?v=${encodeURIComponent(version)}`
 }
 
+export function officialTeamPhotoThumbUrl(teamId: number, version: string): string {
+  return `${API_BASE_URL}/photography/teams/${teamId}/official/thumb?v=${encodeURIComponent(version)}`
+}
+
 async function readError(response: Response): Promise<string> {
   try {
     const body = await response.json()

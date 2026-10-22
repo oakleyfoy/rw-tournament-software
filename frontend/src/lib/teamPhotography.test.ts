@@ -15,7 +15,7 @@ function capture(id: string, status: SessionCapture['status'] = 'uploading'): Se
 
 describe('photograph preparation', () => {
   it('compresses large images down to the maximum edge', () => {
-    expect(fitPhotoDimensions(3200, 1600)).toEqual({ width: 1600, height: 800 })
+    expect(fitPhotoDimensions(4000, 2000)).toEqual({ width: 3000, height: 1500 })
     expect(fitPhotoDimensions(400, 800)).toEqual({ width: 400, height: 800 })
   })
 })

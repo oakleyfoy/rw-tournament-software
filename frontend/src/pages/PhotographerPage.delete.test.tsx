@@ -18,6 +18,8 @@ vi.mock('../api/photography', () => ({
   postOfficialTeamPhoto: vi.fn(),
   officialTeamPhotoContentUrl: (teamId: number, version: string) =>
     `/api/photography/teams/${teamId}/official/content?v=${encodeURIComponent(version)}`,
+  officialTeamPhotoThumbUrl: (teamId: number, version: string) =>
+    `/api/photography/teams/${teamId}/official/thumb?v=${encodeURIComponent(version)}`,
 }))
 
 vi.mock('../lib/prepareTeamPhoto', () => ({

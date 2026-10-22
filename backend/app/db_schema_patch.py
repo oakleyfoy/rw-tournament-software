@@ -1103,3 +1103,18 @@ def ensure_match_checkin_reset_column(engine: Engine) -> None:
         import logging
 
         logging.getLogger(__name__).warning("Failed to ensure match check-in reset column: %s", exc)
+
+
+def ensure_team_photo_print_tables(engine: Engine) -> None:
+    """Create watermark and print tables without rewriting official photographs."""
+    try:
+        from app.models.team_photo_print import TeamPhotoPrint, TeamPhotoWatermark, TournamentPhotoWatermark
+
+        with engine.begin() as conn:
+            TournamentPhotoWatermark.__table__.create(conn, checkfirst=True)
+            TeamPhotoWatermark.__table__.create(conn, checkfirst=True)
+            TeamPhotoPrint.__table__.create(conn, checkfirst=True)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure team photo print tables: %s", exc)

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { getAuthToken } from '../api/client'
-import { officialTeamPhotoContentUrl } from '../api/photography'
+import { officialTeamPhotoThumbUrl } from '../api/photography'
 
 export interface TeamPhotoContextValue {
   photos: Record<number, string>
@@ -84,7 +84,7 @@ export function TeamPhotoThumb({
       setFailed(false)
       return
     }
-    const url = officialTeamPhotoContentUrl(teamId, version)
+    const url = officialTeamPhotoThumbUrl(teamId, version)
     const cached = objectUrlCache.get(url)
     if (cached) {
       setSrc(cached)

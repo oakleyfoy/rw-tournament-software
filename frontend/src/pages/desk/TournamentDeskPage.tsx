@@ -11417,6 +11417,22 @@ export default function TournamentDeskPage() {
           >
             Team Photos
           </button>
+          <button
+            type="button"
+            onClick={() => navigate(`/tournaments/${tid}/photo-print`)}
+            style={{
+              background: 'rgba(255,255,255,0.15)',
+              border: '1px solid rgba(255,255,255,0.35)',
+              color: '#fff',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+              borderRadius: 4,
+              padding: '6px 10px',
+            }}
+          >
+            Watermark & Print
+          </button>
           <DeskRwOsRefresh
             importId={rwOsImportId}
             onApplied={async () => {

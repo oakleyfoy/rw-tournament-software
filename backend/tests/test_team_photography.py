@@ -294,7 +294,8 @@ def test_capture_selection_replacement_and_team_isolation(client: TestClient, se
     unchanged = session.exec(select(TeamOfficialPhoto)).one()
     assert unchanged.storage_key == current_key
     assert unchanged.last_client_upload_id == "upload-best-02"
-    assert get_object_store().objects.keys() == {current_key}
+    from app.services.team_photo_storage import display_thumb_key
+    assert set(get_object_store().objects) == {current_key, display_thumb_key(current_key)}
 
     replaced = _save(client, admin, tournament_id, team_id, "upload-replace", _jpeg(color="blue"))
     assert replaced.status_code == 200, replaced.text
@@ -309,7 +310,8 @@ def test_capture_selection_replacement_and_team_isolation(client: TestClient, se
     assert photos[0].last_client_upload_id == "upload-replace"
     assert photos[0].storage_key == official_object_key(tournament_id, team_id, "upload-replace")
     assert current_key not in get_object_store().objects
-    assert list(get_object_store().objects) == [photos[0].storage_key]
+    assert display_thumb_key(current_key) not in get_object_store().objects
+    assert set(get_object_store().objects) == {photos[0].storage_key, display_thumb_key(photos[0].storage_key)}
     session.expire_all()
     assert session.get(Team, team_id).name == "Jane Doe / Amy Lee"
 
@@ -552,6 +554,37 @@ def test_unconfigured_r2_does_not_store_a_local_photograph(client: TestClient, s
     assert response.status_code == 503
     session.expire_all()
     assert session.exec(select(TeamOfficialPhoto)).all() == []
+
+
+def test_new_uploads_keep_3000px_and_store_a_separate_thumbnail(client: TestClient, session: Session):
+    from app.services.team_photo_storage import MAX_EDGE, display_thumb_key, process_image
+
+    large = _jpeg(width=4000, height=2000, color="blue")
+    processed = process_image(large)
+    with Image.open(io.BytesIO(processed)) as image:
+        assert max(image.size) == MAX_EDGE
+        assert image.size == (3000, 1500)
+    untouched = _jpeg(width=64, height=40)
+    with Image.open(io.BytesIO(process_image(untouched))) as image:
+        assert image.size == (64, 40)
+
+    admin = _bootstrap_admin(client)
+    roster = _seed_roster(session)
+    saved = _save(client, admin, roster["tournament_id"], roster["jane_amy"], "upload-large-01", large)
+    assert saved.status_code == 200, saved.text
+    session.expire_all()
+    photo = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_amy"])).one()
+    original = get_object_store().get_bytes(photo.storage_key)
+    with Image.open(io.BytesIO(original)) as image:
+        assert max(image.size) == 3000
+    thumb = client.get(f"/api/photography/teams/{roster['jane_amy']}/official/thumb", headers=admin)
+    assert thumb.status_code == 200
+    with Image.open(io.BytesIO(thumb.content)) as image:
+        assert max(image.size) <= 480
+    assert get_object_store().get_bytes(photo.storage_key) == original
+    thumb_key = display_thumb_key(photo.storage_key)
+    assert thumb_key and thumb_key != photo.storage_key
+    assert get_object_store().get_bytes(thumb_key) == thumb.content
 
 
 def test_heic_upload_is_stored_as_jpeg(client: TestClient, session: Session):

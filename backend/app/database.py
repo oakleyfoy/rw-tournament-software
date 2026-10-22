@@ -84,6 +84,11 @@ def init_db() -> None:
         TeamOfficialPhoto,
         TeamPhotoCapture,
     )
+    from app.models.team_photo_print import (  # noqa: F401
+        TeamPhotoPrint,
+        TeamPhotoWatermark,
+        TournamentPhotoWatermark,
+    )
     from app.models.team_player import TeamPlayer  # noqa: F401
     from app.models.temporary_player_lookup import TemporaryPlayerLookup  # noqa: F401
     from app.models.tournament import Tournament  # noqa: F401
