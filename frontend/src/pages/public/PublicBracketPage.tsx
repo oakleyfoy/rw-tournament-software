@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicBracket, BracketResponse, BracketMatchBox } from '../../api/client'
+import PublicMobileDraw from './PublicMobileDraw'
+import './publicMobileDraw.css'
 
 const REFRESH_MS = 15000
 
@@ -525,6 +527,7 @@ export default function PublicBracketPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
+  const [showFullDraw, setShowFullDraw] = useState(false)
   const [isPhoneViewport, setIsPhoneViewport] = useState(() =>
     typeof window !== 'undefined' && window.innerWidth <= PHONE_BRACKET_MAX_WIDTH
   )
@@ -632,10 +635,26 @@ export default function PublicBracketPage() {
 
   if (!data) return null
 
+  if (tid && eid && phoneMode && !showFullDraw) {
+    return (
+      <PublicMobileDraw
+        tournamentId={tid}
+        eventId={eid}
+        tournamentName={data.tournament_name}
+        eventName={data.event_name}
+        formatLabel={data.division_label}
+        divisionCode={dc}
+        divisionLabel={data.division_label}
+        backHref={`/t/${tid}/draws`}
+        onShowFullDraw={() => setShowFullDraw(true)}
+      />
+    )
+  }
+
   const headerText = `${data.event_name} — ${data.division_label}`.toUpperCase()
 
   return (
-    <div className="bracket-print-root" style={{
+    <div className={`bracket-print-root${phoneMode && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
       minHeight: captureMode ? 'auto' : '100vh',
       height: tvMode ? '100vh' : undefined,
@@ -643,6 +662,11 @@ export default function PublicBracketPage() {
       display: tvMode ? 'flex' : undefined,
       flexDirection: tvMode ? 'column' : undefined,
     }}>
+      {phoneMode && showFullDraw && (
+        <button type="button" className="public-mobile-return" onClick={() => setShowFullDraw(false)}>
+          Match cards
+        </button>
+      )}
       {versionId && !captureMode && !tvMode && (
         <div className="no-print" style={{
           padding: '8px 20px',

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import PublicWaterfallPage, {
@@ -12,10 +12,12 @@ vi.mock('../../api/client', async () => {
   return {
     ...actual,
     getPublicWaterfall: vi.fn(),
+    getPublicSchedule: vi.fn(),
+    getPublicTeamDirectory: vi.fn(),
   }
 })
 
-import { getPublicWaterfall, PublicWaterfallResponse } from '../../api/client'
+import { getPublicWaterfall, getPublicSchedule, getPublicTeamDirectory, PublicWaterfallResponse } from '../../api/client'
 
 const sample: PublicWaterfallResponse = {
   tournament_name: 'Amelia Island',
@@ -116,6 +118,21 @@ describe('waterfall phone layout', () => {
 
   it('renders stacked match names on a phone-width canvas', async () => {
     vi.mocked(getPublicWaterfall).mockResolvedValue(sample)
+    vi.mocked(getPublicSchedule).mockResolvedValue({
+      status: 'OK',
+      tournament_name: 'Amelia Island',
+      published_version_id: 1,
+      matches: [],
+      events: [],
+      divisions: [],
+      days: [],
+      show_court_info: true,
+    })
+    vi.mocked(getPublicTeamDirectory).mockResolvedValue({
+      status: 'OK',
+      tournament_name: 'Amelia Island',
+      teams: [],
+    })
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
 
     render(
@@ -126,11 +143,29 @@ describe('waterfall phone layout', () => {
       </MemoryRouter>
     )
 
-    await waitFor(() => {
-      expect(screen.getByText('Heather Herman / Barry Herman')).toBeInTheDocument()
-    })
+    expect(await screen.findByLabelText('Find your team')).toBeTruthy()
+    expect(screen.queryByText('↓ Loser Path')).toBeNull()
+    screen.getByRole('button', { name: 'Full Draw' }).click()
+    expect(await screen.findByText('Heather Herman / Barry Herman')).toBeTruthy()
     expect(screen.getByText('↓ Loser Path')).toBeInTheDocument()
     expect(screen.getByText('↓ Winner Path')).toBeInTheDocument()
     expect(screen.getAllByText(/Winner to Division I/).length).toBeGreaterThan(0)
+  })
+
+  it('keeps the desktop waterfall bracket at a wide viewport', async () => {
+    vi.mocked(getPublicWaterfall).mockResolvedValue(sample)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 })
+
+    render(
+      <MemoryRouter initialEntries={['/t/9/draws/19/waterfall']}>
+        <Routes>
+          <Route path="/t/:tournamentId/draws/:eventId/waterfall" element={<PublicWaterfallPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText('Heather Herman / Barry Herman')).toBeTruthy()
+    expect(screen.getByText('WF Round 1')).toBeTruthy()
+    expect(screen.queryByLabelText('Find your team')).toBeNull()
   })
 })

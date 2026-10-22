@@ -3044,6 +3044,34 @@ export async function getPublicSchedule(
   return fetchJson<PublicScheduleResponse>(url)
 }
 
+export interface PublicTeamDirectoryItem {
+  team_id: number
+  event_id: number
+  event_name: string
+  seed: number | null
+  full_name: string
+  players: string[]
+  photo_version: string | null
+}
+
+export interface PublicTeamDirectoryResponse {
+  status: string
+  tournament_name: string
+  teams: PublicTeamDirectoryItem[]
+}
+
+export async function getPublicTeamDirectory(
+  tournamentId: number
+): Promise<PublicTeamDirectoryResponse> {
+  return fetchJson<PublicTeamDirectoryResponse>(
+    `${API_BASE_URL}/public/tournaments/${tournamentId}/teams`
+  )
+}
+
+export function publicTeamPhotoUrl(tournamentId: number, teamId: number, version: string): string {
+  return `${API_BASE_URL}/public/tournaments/${tournamentId}/teams/${teamId}/photo?v=${encodeURIComponent(version)}`
+}
+
 // ── Desk Runtime Console ─────────────────────────────────────────────
 
 export interface DeskMatchItem {

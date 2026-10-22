@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicRoundRobin, RoundRobinResponse, RRMatchBox, RRPool, RRPoolStandings } from '../../api/client'
+import PublicMobileDraw from './PublicMobileDraw'
+import './publicMobileDraw.css'
 
 const REFRESH_MS = 15000
 
@@ -638,6 +640,8 @@ export default function PublicRoundRobinPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
+  const [showFullDraw, setShowFullDraw] = useState(false)
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280))
 
   useEffect(() => {
     if (!tid || !eid) return
@@ -674,6 +678,12 @@ export default function PublicRoundRobinPage() {
       window.clearInterval(timer)
     }
   }, [tid, eid, versionId])
+
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   const handlePrint = useCallback(() => {
     injectPrintStyles()
@@ -760,10 +770,25 @@ export default function PublicRoundRobinPage() {
 
   if (!data) return null
 
+  if (tid && eid && viewportWidth <= 768 && !captureMode && !tvMode && !showFullDraw) {
+    return (
+      <PublicMobileDraw
+        tournamentId={tid}
+        eventId={eid}
+        tournamentName={data.tournament_name}
+        eventName={data.event_name}
+        formatLabel="Round robin"
+        onlyStage="RR"
+        backHref={`/t/${tid}/draws`}
+        onShowFullDraw={() => setShowFullDraw(true)}
+      />
+    )
+  }
+
   const headerText = `${data.event_name} Round Robin${tvSinglePool ? ` ${tvSinglePool.pool_label}` : ''}`.toUpperCase()
 
   return (
-    <div className="rr-print-root" style={{
+    <div className={`rr-print-root${viewportWidth <= 768 && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
       minHeight: captureMode ? 'auto' : '100vh',
       height: tvMode ? '100vh' : undefined,
@@ -771,6 +796,11 @@ export default function PublicRoundRobinPage() {
       display: tvMode ? 'flex' : undefined,
       flexDirection: tvMode ? 'column' : undefined,
     }}>
+      {viewportWidth <= 768 && showFullDraw && !captureMode && !tvMode && (
+        <button type="button" className="public-mobile-return" onClick={() => setShowFullDraw(false)}>
+          Match cards
+        </button>
+      )}
       {/* Nav */}
       <div className="no-print" style={{
         padding: '8px 20px',

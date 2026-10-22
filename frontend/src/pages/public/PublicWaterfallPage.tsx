@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getPublicWaterfall, PublicWaterfallResponse, PublicMatchBox } from '../../api/client'
+import PublicMobileDraw from './PublicMobileDraw'
+import './publicMobileDraw.css'
 
 const REFRESH_MS = 15000
 
@@ -896,10 +898,18 @@ export default function PublicWaterfallPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
+  const [showFullDraw, setShowFullDraw] = useState(false)
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280))
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const [canvasWidth, setCanvasWidth] = useState<number>(() =>
     typeof window !== 'undefined' ? Math.max(window.innerWidth - 16, 320) : PHONE_WATERFALL_MAX_WIDTH
   )
+
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   useEffect(() => {
     if (!tid || !eid) return
@@ -1108,10 +1118,24 @@ export default function PublicWaterfallPage() {
 
   if (!data) return null
 
+  if (tid && eid && viewportWidth <= PHONE_WATERFALL_MAX_WIDTH && !captureMode && !tvMode && !displayFitMode && !showFullDraw) {
+    return (
+      <PublicMobileDraw
+        tournamentId={tid}
+        eventId={eid}
+        tournamentName={data.tournament_name}
+        eventName={data.event_name}
+        formatLabel="Waterfall"
+        backHref={`/t/${tid}/draws`}
+        onShowFullDraw={() => setShowFullDraw(true)}
+      />
+    )
+  }
+
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
 
   return (
-    <div className="print-root" style={{
+    <div className={`print-root${viewportWidth <= PHONE_WATERFALL_MAX_WIDTH && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || displayFitMode || tvMode ? '#fff' : '#f8f9fa',
       minHeight: captureMode || displayFitMode ? 'auto' : '100vh',
       height: tvMode ? '100vh' : undefined,
@@ -1119,6 +1143,11 @@ export default function PublicWaterfallPage() {
       display: tvMode ? 'flex' : undefined,
       flexDirection: tvMode ? 'column' : undefined,
     }}>
+      {viewportWidth <= PHONE_WATERFALL_MAX_WIDTH && showFullDraw && !captureMode && !tvMode && !displayFitMode && (
+        <button type="button" className="public-mobile-return" onClick={() => setShowFullDraw(false)}>
+          Match cards
+        </button>
+      )}
       {versionId && !captureMode && !displayFitMode && !tvMode && (
         <div className="no-print" style={{
           padding: '8px 20px',

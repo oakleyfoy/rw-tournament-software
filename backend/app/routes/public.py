@@ -5,9 +5,11 @@ No auth required. Used by public-facing bracket/waterfall pages.
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -15,10 +17,19 @@ from app.database import get_session
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
+from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
+from app.models.team_photo import TeamOfficialPhoto
+from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
+from app.services.team_photo_storage import (
+    PhotoStorageUnavailable,
+    display_thumb_key,
+    get_object_store,
+    make_display_thumbnail,
+)
 from app.services.assignment_ownership import load_owned_matches_for_version
 from app.services.court_assignment_mode import is_preassigned
 from app.services.draw_plan_rules import pool_config
@@ -1968,4 +1979,148 @@ def public_schedule(
         divisions=division_list,
         days=day_options,
         show_court_info=response_show_court,
+    )
+
+
+class PublicTeamDirectoryItem(BaseModel):
+    team_id: int
+    event_id: int
+    event_name: str
+    seed: Optional[int] = None
+    full_name: str
+    players: List[str]
+    photo_version: Optional[str] = None
+
+
+class PublicTeamDirectoryResponse(BaseModel):
+    status: str = "OK"
+    tournament_name: str
+    teams: List[PublicTeamDirectoryItem]
+
+
+def _public_player_names(team: Team, linked_names: List[str]) -> List[str]:
+    """Names players can search. Phone numbers and emails are never included."""
+    raw = " ".join((team.name or "").split())
+    if "/" in raw:
+        parts = [part.strip() for part in raw.split("/") if part.strip()]
+    elif "&" in raw:
+        parts = [part.strip() for part in raw.split("&") if part.strip()]
+    else:
+        parts = [raw] if raw else []
+    names: List[str] = []
+    for part in parts:
+        cleaned = re.sub(r"\s+-\s+[A-Z]{2}$", "", part).strip()
+        cleaned = re.sub(r",\s*[^,]+,\s*[A-Z]{2}$", "", cleaned).strip()
+        if cleaned and cleaned not in names:
+            names.append(cleaned)
+    for extra in linked_names:
+        cleaned = " ".join((extra or "").split())
+        if cleaned and cleaned not in names:
+            names.append(cleaned)
+    return names
+
+
+@router.get(
+    "/public/tournaments/{tournament_id}/teams",
+    response_model=Union[PublicTeamDirectoryResponse, NotPublishedResponse],
+)
+def public_team_directory(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+):
+    """Searchable public team names and photo versions. No contact details."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    if not _get_public_version(session, tournament_id):
+        return NotPublishedResponse()
+
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    event_map = {event.id: event for event in events if event.id is not None}
+    event_ids = list(event_map)
+    teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all() if event_ids else []
+    team_ids = [team.id for team in teams if team.id is not None]
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))).all() if team_ids else []
+    player_ids = list({link.player_id for link in links})
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all() if player_ids else []
+    player_names = {player.id: player.full_name for player in players if player.id is not None}
+    names_by_team: Dict[int, List[str]] = {}
+    for link in links:
+        name = player_names.get(link.player_id)
+        if name:
+            names_by_team.setdefault(link.team_id, []).append(name)
+    photos = session.exec(
+        select(TeamOfficialPhoto).where(TeamOfficialPhoto.tournament_id == tournament_id)
+    ).all()
+    photo_versions = {
+        photo.team_id: photo.updated_at.isoformat() if photo.updated_at else None
+        for photo in photos
+    }
+
+    items = []
+    for team in teams:
+        if team.id is None:
+            continue
+        event = event_map.get(team.event_id)
+        items.append(
+            PublicTeamDirectoryItem(
+                team_id=team.id,
+                event_id=team.event_id,
+                event_name=event.name if event else "",
+                seed=team.seed,
+                full_name=team.name,
+                players=_public_player_names(team, names_by_team.get(team.id, [])),
+                photo_version=photo_versions.get(team.id),
+            )
+        )
+    items.sort(key=lambda item: (item.event_name, item.full_name))
+    return PublicTeamDirectoryResponse(tournament_name=tournament.name, teams=items)
+
+
+@router.get("/public/tournaments/{tournament_id}/teams/{team_id}/photo")
+def public_team_photo(
+    tournament_id: int,
+    team_id: int,
+    session: Session = Depends(get_session),
+):
+    """Small public thumbnail for a team that already has an official photograph."""
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament or not _get_public_version(session, tournament_id):
+        raise HTTPException(status_code=404, detail="Team photo is not available")
+    team = session.get(Team, team_id)
+    event = session.get(Event, team.event_id) if team else None
+    if not team or not event or event.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Team photo is not available")
+    photo = session.exec(
+        select(TeamOfficialPhoto).where(
+            TeamOfficialPhoto.tournament_id == tournament_id,
+            TeamOfficialPhoto.team_id == team_id,
+        )
+    ).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Team photo is not available")
+    store = get_object_store()
+    thumb_key = display_thumb_key(photo.storage_key)
+    try:
+        thumb = None
+        if thumb_key:
+            try:
+                thumb = store.get_bytes(thumb_key)
+            except FileNotFoundError:
+                thumb = None
+        if thumb is None:
+            original = store.get_bytes(photo.storage_key)
+            thumb = make_display_thumbnail(original)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Team photo is not available") from exc
+    except PhotoStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Team photo is temporarily unavailable") from exc
+    version = photo.updated_at.isoformat() if photo.updated_at else ""
+    return Response(
+        content=thumb,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "public, max-age=60",
+            "ETag": f'"{version}"',
+        },
     )
