@@ -30,9 +30,9 @@ class Player(SQLModel, table=True):
     email: Optional[str] = Field(default=None, index=True)
 
     # Consent model:
-    # - unknown: imported or created without explicit SMS consent action
+    # - unknown: no separate opt-in row; operational texts are still allowed
     # - opted_in: explicit consent captured
-    # - opted_out: explicit STOP/opt-out captured
+    # - opted_out: explicit STOP/opt-out captured; blocks operational texts
     sms_consent_status: str = Field(default="unknown", index=True)
     sms_consent_source: Optional[str] = Field(default=None)
     sms_consent_updated_at: Optional[datetime] = Field(default=None)

@@ -1,17 +1,17 @@
 """Queue and send one photo text per eligible player for each photo session.
 
-The photograph, the team roster, and tournament SMS consent all live in this
-app. War Campaign's outbox sends registration and invoice messages and has no
-team-photo record, so this uses the existing Twilio sender and SmsLog. It does
-not change match, check-in, or registration texts.
+The photograph and the team roster live in this app. War Campaign's outbox
+sends registration and invoice messages and has no team-photo record, so this
+uses the existing Twilio sender and SmsLog. It does not change match, check-in,
+or registration texts.
 
-A notice is written in the same transaction as the official photo. The send
-happens later, on the photo worker, so the camera flow does not wait on Twilio.
-Consent is read again at send time. Missing or unknown consent is not treated
-as permission. A retake keeps the same photo session and does not create
-another automatic text. Deleting the official photo revokes its link and
-cancels notices that have not been accepted by the provider. The next
-successful save opens a new session and can text again.
+A registered player with a valid mobile number is eligible for this operational
+text. unknown and team_phone_sync are not refusals. STOP and opted_out are
+read again at send time and still block that player and that number. A retake
+keeps the same photo session and does not create another automatic text.
+Deleting the official photo revokes its link and cancels notices that have not
+been accepted by the provider. The next successful save opens a new session
+and can text again.
 
 Link policy: the token issued for a session keeps working after a retake and
 shows the current official JPEG. Deleting the photo revokes it. A later
@@ -329,14 +329,17 @@ def _phone_opted_out(session: Session, tournament_id: int, phone: str) -> bool:
 
 
 def _consent_decision(session: Session, notice: TeamPhotoSmsNotice) -> tuple[str, Optional[str], Optional[str]]:
+    """Allow a registered player unless this player or this number is opted out.
+
+    opted_in is not required. unknown and team_phone_sync stay eligible.
+    This does not write the player row.
+    """
     player = session.get(Player, notice.player_id) if notice.player_id else None
     status = (player.sms_consent_status or "unknown").lower() if player else "unknown"
     source = player.sms_consent_source if player else None
     phone = notice.phone_e164 or ""
     if status == "opted_out" or (phone and _phone_opted_out(session, notice.tournament_id, phone)):
         return STATUS_SKIPPED_OPT_OUT, "opted_out", source
-    if status != "opted_in":
-        return STATUS_SKIPPED_NO_CONSENT, status or "unknown", source
     return "", status, source
 
 

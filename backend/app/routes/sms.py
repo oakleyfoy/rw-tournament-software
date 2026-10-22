@@ -1435,12 +1435,12 @@ def _is_phone_send_allowed(
     phone_e164: str,
 ) -> tuple[bool, str]:
     """
-    Determine if SMS can be sent to a phone number.
+    Determine if an operational tournament text can be sent to a phone number.
 
-    Backward-compatible policy:
-    - If no Player record exists for the phone, allow send (legacy team-phone flow).
-    - If Player exists with opted_out status, block send.
-    - Otherwise allow send.
+    A registered player does not need sms_consent_status opted_in. unknown,
+    including a team_phone_sync source, remains eligible. STOP and opted_out
+    block the number. A phone with no Player row stays eligible for the legacy
+    team-field flow. This does not write consent.
     """
     players = session.exec(
         select(Player).where(

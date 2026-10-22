@@ -2,8 +2,9 @@
 
 Registration stores an explicit Terms_Conditions acceptance. That acceptance
 covers event updates and operational alerts, which includes a team-photo link.
-It is not applied unless the snapshot carries that acceptance. A later STOP
-or opted_out status is left unchanged. This module does not send messages.
+Recording it on a Player row is audit detail. Operational tournament texts do
+not wait for that record. A later STOP or opted_out status is left unchanged.
+This module does not send messages.
 """
 
 from __future__ import annotations

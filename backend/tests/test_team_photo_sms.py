@@ -191,18 +191,35 @@ def test_both_opted_out_sends_nothing(client: TestClient, session: Session, monk
     assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_OPT_OUT"}
 
 
-def test_missing_consent_sends_nothing(client: TestClient, session: Session, monkeypatch):
+def test_unknown_registered_players_receive_live_photo_texts(client: TestClient, session: Session, monkeypatch):
     monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
     monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
     monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
     reset_memory_store()
     headers = _login(client)
     roster = _roster(session, p1_consent="unknown", p2_consent="unknown")
+    for player_id in roster["players"]:
+        player = session.get(Player, player_id)
+        player.sms_consent_source = "team_phone_sync"
+        session.add(player)
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=roster["tournament_id"],
+            texts_enabled=True,
+            delivery_mode="live",
+        )
+    )
+    session.commit()
     assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-unknown", _jpeg()).status_code == 200
     calls: list[dict] = []
-    dispatch_team_photo_notices(session, send=_sender(calls))
-    assert calls == []
-    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_NO_CONSENT"}
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 2
+    assert {call["to"] for call in calls} == {"+15555550101", "+15555550102"}
+    assert set(_statuses(session, roster["team_id"]).values()) == {"SENT"}
+    session.expire_all()
+    for player_id in roster["players"]:
+        player = session.get(Player, player_id)
+        assert player.sms_consent_status == "unknown"
+        assert player.sms_consent_source == "team_phone_sync"
 
 
 def test_invalid_number_is_skipped(client: TestClient, session: Session, monkeypatch):
@@ -1000,7 +1017,7 @@ def test_opted_in_players_text_legacy_team_phones_through_redirect(
         assert player.sms_consent_status == "opted_in"
 
 
-def test_unknown_consent_does_not_text_legacy_team_phones(
+def test_unknown_consent_texts_legacy_team_phones_through_redirect(
     client: TestClient, session: Session, monkeypatch
 ):
     monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
@@ -1008,7 +1025,11 @@ def test_unknown_consent_does_not_text_legacy_team_phones(
     monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
     reset_memory_store()
     headers = _login(client)
-    roster = _roster(session, p1_phone=None, p2_phone=None, p1_consent="unknown", p2_consent="unknown")
+    roster = _roster(session, p1_phone=None, p2_phone=None, p1_consent="unknown", p2_consent="opted_out")
+    for player_id, source in zip(roster["players"], ("team_phone_sync", "twilio_stop")):
+        player = session.get(Player, player_id)
+        player.sms_consent_source = source
+        session.add(player)
     _legacy_team_phones(session, roster)
     session.add(
         TournamentSmsSettings(
@@ -1021,10 +1042,17 @@ def test_unknown_consent_does_not_text_legacy_team_phones(
     session.commit()
     assert _save(client, headers, roster["tournament_id"], roster["team_id"], "upload-legacy-unknown", _jpeg()).status_code == 200
     calls: list[dict] = []
-    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 0
-    assert calls == []
-    assert set(_statuses(session, roster["team_id"]).values()) == {"SKIPPED_NO_CONSENT"}
-    assert _photo_logs(session, roster["tournament_id"]) == []
+    assert dispatch_team_photo_notices(session, send=_sender(calls)) == 1
+    assert [call["to"] for call in calls] == ["+15555550999"]
+    statuses = _statuses(session, roster["team_id"])
+    assert statuses["+15555550101"] == "SENT"
+    assert statuses["+15555550102"] == "SKIPPED_OPT_OUT"
+    session.expire_all()
+    for player_id in roster["players"]:
+        player = session.get(Player, player_id)
+        assert player.phone_e164 is None
+    assert session.get(Player, roster["players"][0]).sms_consent_status == "unknown"
+    assert session.get(Player, roster["players"][1]).sms_consent_status == "opted_out"
 
 
 def test_registration_consent_and_legacy_phones_redirect_without_exposing_numbers(
