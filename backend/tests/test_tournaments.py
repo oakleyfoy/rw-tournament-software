@@ -24,6 +24,7 @@ from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
+from app.routes.tournaments import _record_start_over_baseline_assignments
 
 
 def test_create_tournament_auto_creates_days(client: TestClient):
@@ -415,6 +416,89 @@ def test_duplicate_tournament_deep_copies_snapshot(client: TestClient, session: 
     cloned_templates = session.exec(select(SmsTemplate).where(SmsTemplate.tournament_id == duplicated_id)).all()
     assert len(cloned_templates) == 1
     assert cloned_templates[0].template_body == "Custom on deck"
+
+
+def test_baseline_snapshot_keeps_the_latest_row_when_a_match_is_assigned_twice(session: Session):
+    source = Tournament(
+        name="Duplicate Assignment Source",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 5),
+        end_date=date(2026, 11, 7),
+    )
+    session.add(source)
+    session.flush()
+    event = Event(tournament_id=source.id, category="mixed", name="Mixed A", team_count=2)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=source.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+    early_slot = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 11, 6),
+        start_time=time(7, 0),
+        end_time=time(8, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    later_slot = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 11, 6),
+        start_time=time(8, 0),
+        end_time=time(9, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add_all([early_slot, later_slot])
+    session.flush()
+    match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_A_R1_M01",
+        match_type="WF",
+        round_number=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+    )
+    session.add(match)
+    session.flush()
+
+    _record_start_over_baseline_assignments(
+        session,
+        tournament_id=source.id,
+        assignments=[
+            MatchAssignment(
+                schedule_version_id=version.id,
+                match_id=match.id,
+                slot_id=early_slot.id,
+                assigned_at=datetime(2026, 9, 1, 12, 0),
+                assigned_by="SEQUENCE_V1",
+            ),
+            MatchAssignment(
+                schedule_version_id=version.id,
+                match_id=match.id,
+                slot_id=later_slot.id,
+                assigned_at=datetime(2026, 9, 30, 0, 11),
+                assigned_by="SEQUENCE_V1",
+            ),
+        ],
+    )
+    session.commit()
+
+    rows = session.exec(
+        select(StartOverBaselineAssignment).where(StartOverBaselineAssignment.tournament_id == source.id)
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].match_id == match.id
+    assert rows[0].slot_id == later_slot.id
 
 
 def test_duplicate_tournament_copies_towel_lookup(client: TestClient, session: Session):

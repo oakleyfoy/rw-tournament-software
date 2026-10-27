@@ -56,12 +56,32 @@ def _normalize_clone_team_name(value: Optional[str]) -> str:
     return raw.casefold()
 
 
+def _assignment_is_newer(candidate: MatchAssignment, current: MatchAssignment) -> bool:
+    candidate_at = candidate.assigned_at or datetime.min
+    current_at = current.assigned_at or datetime.min
+    if candidate_at != current_at:
+        return candidate_at > current_at
+    return (candidate.id or 0) > (current.id or 0)
+
+
+def _one_assignment_per_match(assignments: List[MatchAssignment]) -> List[MatchAssignment]:
+    """Keep the latest row when one match was assigned more than once."""
+    chosen: Dict[Tuple[int, int], MatchAssignment] = {}
+    for assignment in assignments:
+        key = (assignment.schedule_version_id, assignment.match_id)
+        current = chosen.get(key)
+        if current is None or _assignment_is_newer(assignment, current):
+            chosen[key] = assignment
+    return list(chosen.values())
+
+
 def _record_start_over_baseline_assignments(
     session: Session,
     *,
     tournament_id: int,
     assignments: List[MatchAssignment],
 ) -> None:
+    assignments = _one_assignment_per_match(assignments)
     if not assignments:
         return
     version_ids = sorted({a.schedule_version_id for a in assignments})
@@ -1633,18 +1653,30 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             cloned_match.source_match_b_id = match_id_map.get(old_b_id) if old_b_id else None
             session.add(cloned_match)
 
+        mapped_assignments: List[MatchAssignment] = []
         for assignment in source_assignments:
             mapped_version_id = version_id_map.get(assignment.schedule_version_id)
             mapped_match_id = match_id_map.get(assignment.match_id)
             mapped_slot_id = slot_id_map.get(assignment.slot_id)
             if mapped_version_id is None or mapped_match_id is None or mapped_slot_id is None:
                 continue
+            mapped_assignments.append(
+                MatchAssignment(
+                    schedule_version_id=mapped_version_id,
+                    match_id=mapped_match_id,
+                    slot_id=mapped_slot_id,
+                    assigned_at=assignment.assigned_at,
+                    assigned_by=assignment.assigned_by,
+                    locked=assignment.locked,
+                )
+            )
+        for assignment in _one_assignment_per_match(mapped_assignments):
             create_owned_assignment(
                 session,
                 tournament_id=new_tournament.id,
-                schedule_version_id=mapped_version_id,
-                match_id=mapped_match_id,
-                slot_id=mapped_slot_id,
+                schedule_version_id=assignment.schedule_version_id,
+                match_id=assignment.match_id,
+                slot_id=assignment.slot_id,
                 assigned_at=assignment.assigned_at,
                 assigned_by=assignment.assigned_by,
                 locked=assignment.locked,
