@@ -9226,6 +9226,7 @@ function CheckInCourtBoardCard({
       <div
         data-ready-court={canReceiveReady ? row.court : undefined}
         style={{
+          alignSelf: 'start',
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
           borderRadius: 8,
           overflow: 'hidden',
@@ -9273,8 +9274,8 @@ function CheckInCourtBoardCard({
 
   return (
     <div
-      data-ready-court={canReceiveReady ? row.court : undefined}
       style={{
+      alignSelf: 'start',
       border: isOver ? '2px solid #1565c0' : `1px solid ${tint?.border || '#c8e6c9'}`,
       borderRadius: 8,
       overflow: 'hidden',
@@ -10434,6 +10435,7 @@ export default function TournamentDeskPage() {
       const court = nativeDragOverCourt
       void (async () => {
         handleNativeReadyDragEnd()
+        // Only an Open Courts card is a drop target. A miss or a busy court leaves the match where it was.
         if (matchId != null && court) {
           await handleAssignReadyMatchToCourt(matchId, court)
         }
@@ -11510,7 +11512,7 @@ export default function TournamentDeskPage() {
                       {currentCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>No active courts in this view yet.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 8, alignItems: 'start' }}>
                           {currentCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
@@ -11535,7 +11537,7 @@ export default function TournamentDeskPage() {
                       {openCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>All courts currently have an assignment or are hidden by status.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 8, alignItems: 'start' }}>
                           {openCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}

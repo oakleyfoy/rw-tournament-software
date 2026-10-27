@@ -309,6 +309,81 @@ def test_event_id_filter(client, session):
     assert len(body["events"]) == 2
 
 
+def test_event_filter_lists_only_that_events_divisions(client, session):
+    """Choosing Mixed lists Mixed brackets, not Women's divisions."""
+    t, v, ev1, ev2, _m1, _m2 = _setup_published_tournament(session)
+    session.add_all([
+        Match(
+            tournament_id=t.id,
+            event_id=ev1.id,
+            schedule_version_id=v.id,
+            match_code="WOM_BWW_QF_1",
+            match_type="MAIN",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            placeholder_side_a="Seed 1",
+            placeholder_side_b="Seed 8",
+        ),
+        Match(
+            tournament_id=t.id,
+            event_id=ev1.id,
+            schedule_version_id=v.id,
+            match_code="WOM_BWL_QF_1",
+            match_type="MAIN",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=2,
+            duration_minutes=60,
+            placeholder_side_a="Seed 4",
+            placeholder_side_b="Seed 5",
+        ),
+        Match(
+            tournament_id=t.id,
+            event_id=ev2.id,
+            schedule_version_id=v.id,
+            match_code="MIX_B1_QF_1",
+            match_type="MAIN",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            placeholder_side_a="Seed 1",
+            placeholder_side_b="Seed 8",
+        ),
+        Match(
+            tournament_id=t.id,
+            event_id=ev2.id,
+            schedule_version_id=v.id,
+            match_code="MIX_B2_QF_1",
+            match_type="MAIN",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=2,
+            duration_minutes=60,
+            placeholder_side_a="Seed 9",
+            placeholder_side_b="Seed 16",
+        ),
+    ])
+    session.commit()
+
+    mixed = client.get(f"/api/public/tournaments/{t.id}/schedule?event_id={ev2.id}")
+    assert mixed.status_code == 200
+    assert mixed.json()["divisions"] == ["Bracket 1", "Bracket 2"]
+
+    womens = client.get(f"/api/public/tournaments/{t.id}/schedule?event_id={ev1.id}")
+    assert womens.status_code == 200
+    assert womens.json()["divisions"] == ["Division I", "Division II"]
+
+    # A chosen bracket stays in the list so the other brackets for that event remain selectable.
+    one_bracket = client.get(
+        f"/api/public/tournaments/{t.id}/schedule?event_id={ev2.id}&division=Bracket%201"
+    )
+    assert one_bracket.status_code == 200
+    assert one_bracket.json()["divisions"] == ["Bracket 1", "Bracket 2"]
+
+
 def test_day_filter(client, session):
     """day filter returns only matches from that day_index."""
     t, v, ev1, ev2, m1, m2 = _setup_published_tournament(session)

@@ -1891,7 +1891,6 @@ def public_schedule(
 
     # Build flat list
     items: List[ScheduleMatchItem] = []
-    all_divisions: set = set()
     all_event_options: Dict[int, str] = {}
     all_day_options: Dict[int, str] = {}
 
@@ -1902,8 +1901,6 @@ def public_schedule(
 
         stage = _STAGE_MAP.get(m.match_type, m.match_type)
         div_name = _derive_division(m.match_code or "", m.match_type or "")
-        if div_name:
-            all_divisions.add(div_name)
 
         a = assignment_map.get(m.id)
         slot = slot_map.get(a.slot_id) if a else None
@@ -1985,7 +1982,7 @@ def public_schedule(
             )
         )
 
-    # Compute filter options from full (unfiltered) set
+    # Event and day pickers stay complete. Division/bracket choices follow the selected event.
     event_options = sorted(
         [ScheduleEventOption(event_id=eid, event_name=en) for eid, en in all_event_options.items()],
         key=lambda x: x.event_name,
@@ -1994,12 +1991,17 @@ def public_schedule(
         [ScheduleDayOption(day_index=di, label=dl) for di, dl in all_day_options.items()],
         key=lambda x: x.day_index,
     )
-    division_list = sorted(all_divisions)
 
-    # Apply filters
     filtered = items
     if event_id is not None:
         filtered = [m for m in filtered if m.event_id == event_id]
+    division_names = {m.division_name for m in filtered if m.division_name}
+    division_order = list(_DIV_LABELS.values()) + list(_POOL_LABELS.values())
+    division_list = sorted(
+        division_names,
+        key=lambda name: (division_order.index(name) if name in division_order else len(division_order), name),
+    )
+
     if division:
         filtered = [m for m in filtered if m.division_name and m.division_name.upper() == division.upper()]
     if day is not None:

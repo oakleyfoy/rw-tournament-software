@@ -272,7 +272,10 @@ export default function PublicSchedulePage() {
       }}>
         <select
           value={eventFilter ?? ''}
-          onChange={e => setEventFilter(e.target.value ? parseInt(e.target.value, 10) : null)}
+          onChange={e => {
+            setEventFilter(e.target.value ? parseInt(e.target.value, 10) : null)
+            setDivisionFilter(null)
+          }}
           style={{
             padding: '6px 10px',
             borderRadius: 4,

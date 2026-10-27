@@ -52,6 +52,7 @@ describe('Check-In Desk layout changes', () => {
     expect(css).toMatch(/@media \(min-width:\s*1100px\)[\s\S]*repeat\(4/)
     expect(page).toContain("gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)'")
     expect(page).toContain("gridTemplateColumns: 'repeat(10, minmax(0, 1fr))'")
+    expect(page.match(/data-ready-court=/g)).toHaveLength(1)
     expect(page).toContain("gridTemplateColumns: 'auto auto auto auto auto'")
     expect(page).toContain('surface="check-in-desk"')
     expect(page).toContain("'assigned-court'")
