@@ -946,8 +946,8 @@ def test_finalize_does_not_auto_start_next_day_match(client, session):
     assert (m3_obj.runtime_status or "SCHEDULED") == "SCHEDULED"
 
 
-def test_finalize_does_not_auto_start_future_same_day_match(client, session):
-    """Finalizing a match should not auto-start a same-day match whose slot is in the future."""
+def test_finalize_starts_the_next_match_on_an_open_court_before_its_slot(client, session):
+    """An open court starts the next match. The scheduled clock does not hold it."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
 
     draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
@@ -977,7 +977,7 @@ def test_finalize_does_not_auto_start_future_same_day_match(client, session):
     assert slot1 is not None
     assert slot3 is not None
 
-    # Force both slots into a far-future day to ensure slot start has not arrived.
+    # The next slot is still in the future. An open court starts it anyway.
     future_day = date(2099, 1, 1)
     slot1.day_date = future_day
     slot1.start_time = time(9, 0)
@@ -988,7 +988,7 @@ def test_finalize_does_not_auto_start_future_same_day_match(client, session):
     session.add(slot1)
     session.add(slot3)
 
-    # Give the downstream match concrete teams so only the time guard prevents auto-start.
+    # Give the downstream match concrete teams so the open court can start it.
     m3_obj = session.get(Match, m3["match_id"])
     assert m3_obj is not None
     m3_obj.team_a_id = teams[0].id
@@ -1002,10 +1002,10 @@ def test_finalize_does_not_auto_start_future_same_day_match(client, session):
     )
     assert fin_resp.status_code == 200
     body = fin_resp.json()
-    assert body["auto_started"] is None
+    assert body["auto_started"]["match_id"] == m3["match_id"]
 
     session.refresh(m3_obj)
-    assert (m3_obj.runtime_status or "SCHEDULED") == "SCHEDULED"
+    assert (m3_obj.runtime_status or "SCHEDULED") == "IN_PROGRESS"
 
 
 def test_finalize_does_not_auto_start_in_checkin_management_mode(client, session):
@@ -5070,7 +5070,7 @@ def test_desk_team_list_hides_seeded_copy_of_the_same_partnership(client, sessio
     )
     session.add(tournament)
     session.flush()
-    event = Event(tournament_id=tournament.id, category="womens", name="Women's B", team_count=16)
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's B", team_count=32)
     session.add(event)
     session.flush()
     version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
@@ -5122,4 +5122,51 @@ def test_desk_team_list_hides_seeded_copy_of_the_same_partnership(client, sessio
     assert names.count("Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia") == 1
     assert not any(name.endswith("(5)") for name in names)
     assert "Traci / peg" in names
+
+
+def test_desk_team_list_stops_at_the_event_draw_size(client, session):
+    tournament = Tournament(
+        name="Draw Size",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 8),
+    )
+    session.add(tournament)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's A", team_count=2)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    first = Team(event_id=event.id, name="Nikki / Connie", display_name="Nikki / Connie", seed=1, rating=8.5)
+    second = Team(event_id=event.id, name="Shea / Heather", display_name="Shea / Heather", seed=2, rating=8.5)
+    partner_row = Team(event_id=event.id, name="Jami / Mindy", display_name="Jami / Mindy", seed=None, rating=7)
+    high_seed = Team(event_id=event.id, name="Kipsy / Gina", display_name="Kipsy / Gina", seed=3, rating=7)
+    session.add_all([first, second, partner_row, high_seed])
+    session.flush()
+    session.add(
+        Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WA_R1",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=partner_row.id,
+            team_b_id=high_seed.id,
+            placeholder_side_a="A",
+            placeholder_side_b="B",
+        )
+    )
+    session.commit()
+
+    response = client.get(f"/api/desk/tournaments/{tournament.id}/teams")
+    assert response.status_code == 200, response.text
+    names = [item["name"] for item in response.json()]
+    assert names == ["Nikki / Connie", "Shea / Heather"]
 

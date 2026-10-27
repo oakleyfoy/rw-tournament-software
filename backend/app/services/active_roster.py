@@ -42,12 +42,31 @@ def _roster_keep_rank(team: Team, on_a_match: set) -> tuple:
     )
 
 
-def visible_roster_teams(teams: list[Team], matches: list) -> list[Team]:
+def _fits_event_draw(group: list[Team], on_a_match: set, draw_size: int) -> list[Team]:
+    """Keep the draw, and only fill a missing seed from a team that is on a match."""
+    seeded = [team for team in group if team.seed is not None and 1 <= team.seed <= draw_size]
+    used = {team.seed for team in seeded}
+    open_slots = draw_size - len(used)
+    if open_slots <= 0:
+        return seeded
+    fillers = sorted(
+        (team for team in group if team.seed is None and team.id in on_a_match),
+        key=lambda team: (team.rating is None, -(team.rating or 0), team.id or 0),
+    )
+    return seeded + fillers[:open_slots]
+
+
+def visible_roster_teams(
+    teams: list[Team],
+    matches: list,
+    draw_sizes: dict | None = None,
+) -> list[Team]:
     """Teams that belong on the desk and on Watermark & Print.
 
     Withdrawn teams stay out. Once an event has a draw, a team with no seed
     and no match is a leftover partner row, not a team in that event.
     A second row of the same partnership, including a " (5)" copy, stays out.
+    A drawn event also stays at its draw size, so a partner row cannot become seed 33.
     """
     events_with_matches = {match.event_id for match in matches}
     on_a_match = {
@@ -73,4 +92,18 @@ def visible_roster_teams(teams: list[Team], matches: list) -> list[Team]:
         if current is None or _roster_keep_rank(team, on_a_match) < _roster_keep_rank(current, on_a_match):
             chosen[key] = team
     kept_ids = {team.id for team in chosen.values()}
-    return [team for team in visible if not _roster_identity(team) or team.id in kept_ids]
+    roster = [team for team in visible if not _roster_identity(team) or team.id in kept_ids]
+    if not draw_sizes:
+        return roster
+
+    by_event: dict = {}
+    for team in roster:
+        by_event.setdefault(team.event_id, []).append(team)
+    allowed_ids: set = set()
+    for event_id, group in by_event.items():
+        draw_size = draw_sizes.get(event_id) or 0
+        if event_id not in events_with_matches or draw_size <= 0:
+            allowed_ids.update(team.id for team in group if team.id is not None)
+            continue
+        allowed_ids.update(team.id for team in _fits_event_draw(group, on_a_match, draw_size) if team.id is not None)
+    return [team for team in roster if team.id in allowed_ids]

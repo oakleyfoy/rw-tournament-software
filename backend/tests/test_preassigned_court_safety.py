@@ -25,7 +25,6 @@ from app.services.preassigned_dispatch import (
     OUTCOME_READY_TO_START,
     OUTCOME_WAITING_COURT,
     OUTCOME_WAITING_PRIOR,
-    OUTCOME_WAITING_TIME,
     dispatch_court,
     evaluate_eligibility,
     list_ready_assigned_matches,
@@ -367,14 +366,12 @@ def test_round2_full_flow_no_early_start(session: Session):
     m3_id = m3.id
     assignment_id = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == m3_id)).one().id
 
-    # Time not arrived — must not start early (R2 has no opening-release early auth).
+    # Queued later rounds start on an empty court even when the clock has not reached the slot.
     with patch("app.services.preassigned_dispatch.slot_start_has_arrived", return_value=False):
         elig = evaluate_eligibility(session, t, session.get(Match, m3_id))
-        assert elig.outcome == OUTCOME_WAITING_TIME
+        assert elig.outcome == OUTCOME_READY_TO_START
         ready = list_ready_assigned_matches(session, t, v)
         assert any(r.match_id == m3_id for r in ready)
-
-    with patch("app.services.preassigned_dispatch.slot_start_has_arrived", return_value=True):
         result = dispatch_court(session, t, version_id=v.id, day_date=day, court_number=12)
     assert m3_id in result.started_match_ids
     m3 = session.get(Match, m3_id)

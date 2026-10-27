@@ -9,8 +9,6 @@ import re
 from datetime import date, datetime, timezone
 from datetime import time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
-from zoneinfo import ZoneInfo
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_
@@ -1067,37 +1065,6 @@ def _is_retired_score(score_json: Optional[Dict[str, Any]]) -> bool:
     if isinstance(score_json, str):
         return "(RET" in score_json.upper()
     return False
-
-
-def _coerce_slot_start_time(value: object) -> Optional[dt_time]:
-    if isinstance(value, dt_time):
-        return value
-    if isinstance(value, str):
-        try:
-            parts = value.split(":")
-            hour = int(parts[0]) if parts else 0
-            minute = int(parts[1]) if len(parts) > 1 else 0
-            return dt_time(hour=hour, minute=minute)
-        except Exception:
-            return None
-    return None
-
-
-def _slot_start_has_arrived(tournament: Tournament, slot: ScheduleSlot) -> bool:
-    """
-    Guard auto-start: only begin matches whose scheduled slot start has arrived.
-    """
-    slot_time = _coerce_slot_start_time(slot.start_time)
-    if slot_time is None:
-        return False
-    tz_name = (tournament.timezone or "UTC").strip() or "UTC"
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        tz = ZoneInfo("UTC")
-    now_local = datetime.now(tz)
-    slot_local = datetime.combine(slot.day_date, slot_time, tzinfo=tz)
-    return slot_local <= now_local
 
 
 def _status_label_for_ready_assigned(outcome: str) -> str:
@@ -3769,7 +3736,7 @@ def finalize_match(
                 if slot_order.get(ca.slot_id, -1) <= finalized_order:
                     continue
                 next_slot = session.get(ScheduleSlot, ca.slot_id)
-                if not next_slot or not _slot_start_has_arrived(tournament, next_slot):
+                if not next_slot:
                     continue
                 next_match = session.get(Match, ca.match_id)
                 if (
@@ -5842,7 +5809,8 @@ def get_desk_teams(
     matches = session.exec(select(Match).where(Match.event_id.in_(event_ids))).all()
     events_with_matches = {match.event_id for match in matches}
     if not include_inactive:
-        teams = visible_roster_teams(teams, matches)
+        draw_sizes = {event.id: event.team_count for event in events if event.team_count}
+        teams = visible_roster_teams(teams, matches, draw_sizes)
     display_seed = _contiguous_event_seeds(teams, events_with_matches)
 
     items = []

@@ -442,7 +442,7 @@ describe('preassignedReadyVisibility', () => {
     expect(belongsInWaitingForCheckIn(round2, new Set())).toBe(true)
   })
 
-  it('keeps a round 2 match that is waiting for its scheduled time in Ready To Go only', () => {
+  it('puts a round 2 match on an open court even when its scheduled time is later', () => {
     const round2 = desk({
       match_id: 202, sort_time: '11:00', scheduled_time: '11:00 AM',
       source_match_a_id: 101, source_match_b_id: 102,
@@ -461,9 +461,8 @@ describe('preassignedReadyVisibility', () => {
       nowPlayingByCourt: {},
     })
     const placed = placePreassignedMatches(entries, [round2])
-    expect(placed.courtCards).toHaveLength(0)
-    expect(placed.readyQueue.map((entry) => entry.matchId)).toEqual([202])
-    expect(placed.readyQueue[0].statusLabel).toBe('Waiting for Scheduled Time')
+    expect(placed.courtCards.map((entry) => entry.matchId)).toEqual([202])
+    expect(placed.readyQueue).toHaveLength(0)
   })
 
   it('does not stage a later match ahead of an earlier reservation', () => {

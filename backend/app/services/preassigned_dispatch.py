@@ -703,8 +703,6 @@ def evaluate_eligibility(
                 slot_key=key,
                 is_opening=True,
             )
-        # Opening release authorizes early start for this slot.
-        time_ok = True
     else:
         if not bool(getattr(match, "court_queued", False)):
             return EligibilityResult(
@@ -717,19 +715,6 @@ def evaluate_eligibility(
                 slot_key=key,
                 is_opening=False,
             )
-        time_ok = slot_start_has_arrived(tournament, slot)
-
-    if not time_ok:
-        return EligibilityResult(
-            mid,
-            OUTCOME_WAITING_TIME,
-            "Scheduled start time has not arrived",
-            court_name=court_name,
-            scheduled_time=_format_time_label(slot.start_time),
-            day_date=slot.day_date,
-            slot_key=key,
-            is_opening=opening,
-        )
 
     closed = _closed_court_labels(session, tournament.id or 0)
     if court_name in closed:
@@ -1034,7 +1019,6 @@ def _dispatch_court_once(
                 if eligibility.outcome in (
                     OUTCOME_WAITING_CHECKIN,
                     OUTCOME_WAITING_RELEASE,
-                    OUTCOME_WAITING_TIME,
                     OUTCOME_WAITING_PARTICIPANTS,
                 ):
                     if (match.runtime_status or "SCHEDULED").upper() == "SCHEDULED":

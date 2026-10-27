@@ -223,14 +223,18 @@ function hasEarlierReservation(entry: PreassignedReadyEntry, matches: DeskMatchI
 function canStageOnOpenCourt(entry: PreassignedReadyEntry): boolean {
   if (entry.courtOccupied) return false
   if (entry.statusLabel === 'Waiting for Court') return false
-  if (entry.statusLabel === 'Waiting for Scheduled Time') return false
-  return entry.statusLabel === 'Waiting for Release' || entry.statusLabel === 'Ready — Assigned Court'
+  return (
+    entry.statusLabel === 'Waiting for Release' ||
+    entry.statusLabel === 'Ready — Assigned Court' ||
+    entry.statusLabel === 'Waiting for Scheduled Time'
+  )
 }
 
 /**
  * One primary location per preassigned match.
  * Free court awaiting opening release → assigned court card.
- * Occupied court, earlier reservation, or scheduled-time wait → Ready To Go only.
+ * Occupied court or an earlier reservation → Ready To Go only.
+ * A scheduled time does not keep a match off an open court.
  */
 export function placePreassignedMatches(
   entries: PreassignedReadyEntry[],
