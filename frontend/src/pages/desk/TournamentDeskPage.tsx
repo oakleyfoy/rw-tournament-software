@@ -10863,10 +10863,9 @@ export default function TournamentDeskPage() {
     )
   ))
 
-  const releaseSlotKey = data.active_checkin_slot_key || focusSlotKey || null
-  const releaseTimeLabel = releaseSlotKey
-    ? (slotLabelByKey.get(releaseSlotKey) || releaseSlotKey.split('|')[1] || '')
-    : ''
+  const waitingCheckInSlot = visibleWaitingGroups[0] ?? null
+  const releaseSlotKey = waitingCheckInSlot?.key || null
+  const releaseTimeLabel = waitingCheckInSlot?.label || ''
 
   const handleCheckInTimeSlot = async () => {
     if (!tid || !data || !releaseSlotKey) return

@@ -36,6 +36,7 @@ describe('Check-In Desk layout changes', () => {
   it('places Check In Time Slot beside Waiting For Check-In and Put courts on beside Assigned Court', () => {
     expect(page).toContain('className="checkin-waiting-header"')
     expect(page).toContain('Waiting For Check-In')
+    expect(page).toContain('const waitingCheckInSlot = visibleWaitingGroups[0]')
     expect(page).toContain('Check In ${releaseTimeLabel')
     expect(page).toContain('Put courts on')
     expect(page).not.toContain('Release Opening Matches')
