@@ -1062,6 +1062,39 @@ def ensure_tournament_import_columns(engine: Engine) -> None:
         logging.getLogger(__name__).warning("Failed to ensure tournament_import columns: %s", exc)
 
 
+def ensure_match_court_queued_column(engine: Engine) -> None:
+    """Add court_queued on startup. Existing matches stay unqueued."""
+    try:
+        from app.models.match import Match
+
+        table = Match.__table__.name
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+            existing = _get_existing_columns_sqlite(engine, table)
+            if "court_queued" in existing:
+                return
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN court_queued INTEGER NOT NULL DEFAULT 0;"))
+            return
+        existing = _get_existing_columns_postgres(engine, table)
+        if not existing or "court_queued" in existing:
+            return
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS court_queued BOOLEAN NOT NULL DEFAULT FALSE;")
+            )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure match court_queued column: %s", exc)
+
+
 def ensure_match_checkin_reset_column(engine: Engine) -> None:
     """Add checkin_reset_pending on startup.
 

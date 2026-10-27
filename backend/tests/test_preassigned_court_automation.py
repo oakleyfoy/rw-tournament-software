@@ -143,6 +143,7 @@ def _setup_automation(session: Session, *, draft: bool = True):
             source_match_a_id=source_a,
             source_match_b_id=source_b,
             runtime_status="SCHEDULED",
+            court_queued=round_index >= 2,
         )
         session.add(match)
         session.flush()
@@ -254,6 +255,14 @@ def test_late_checkin_after_release_auto_starts(client, session: Session):
         )
         assert r.status_code == 200
 
+    session.refresh(session.get(Match, m2.id))
+    assert session.get(Match, m2.id).runtime_status == "SCHEDULED"
+
+    slot_key_b = slot_key_for_slot(ctx["slot_b"])
+    client.post(
+        f"/api/desk/tournaments/{t.id}/opening-release",
+        json={"version_id": v.id, "day_date": ctx["day"].isoformat(), "slot_key": slot_key_b},
+    )
     session.refresh(session.get(Match, m2.id))
     assert session.get(Match, m2.id).runtime_status == "IN_PROGRESS"
 

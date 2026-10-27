@@ -144,6 +144,7 @@ def _seed_two_court12_matches(session: Session):
         placeholder_side_a="A",
         placeholder_side_b="B",
         runtime_status="SCHEDULED",
+        court_queued=True,
     )
     m2 = Match(
         tournament_id=t.id,
@@ -160,6 +161,7 @@ def _seed_two_court12_matches(session: Session):
         placeholder_side_a="A",
         placeholder_side_b="B",
         runtime_status="SCHEDULED",
+        court_queued=True,
     )
     session.add(m1)
     session.add(m2)

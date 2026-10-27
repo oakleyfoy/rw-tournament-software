@@ -122,7 +122,10 @@ def arm_checkin_reset_if_not_ready(session: Session, match: Match) -> None:
         return
     if match_fully_checked_in(session, match):
         return
+    match.court_queued = False
     if bool(getattr(match, "checkin_reset_pending", False)):
+        session.add(match)
+        session.commit()
         return
     match.checkin_reset_pending = True
     session.add(match)

@@ -438,7 +438,8 @@ describe('preassignedReadyVisibility', () => {
     expect(placed.courtCards).toHaveLength(0)
     expect(placed.readyQueue.map((entry) => entry.matchId)).toEqual([202])
     expect(placed.readyQueue[0].statusLabel).toBe('Waiting for Court')
-    expect(belongsInWaitingForCheckIn(round2, new Set())).toBe(false)
+    expect(belongsInWaitingForCheckIn(round2, new Set([202]))).toBe(false)
+    expect(belongsInWaitingForCheckIn(round2, new Set())).toBe(true)
   })
 
   it('keeps a round 2 match that is waiting for its scheduled time in Ready To Go only', () => {

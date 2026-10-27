@@ -4,7 +4,6 @@ import {
   belongsInWaitingForCheckIn,
   buildPreassignedReadyEntries,
   mergeReadyQueueWithPreassigned,
-  placePreassignedMatches,
   preassignedEntryToReadyQueueItem,
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
@@ -39,9 +38,9 @@ import {
   deskRemapCourts,
   deskCheckInPlayer,
   deskCheckInTeam,
-  previewOpeningRelease,
-  releaseOpeningSlot,
-  assignReadyMatchToSlot,
+  checkInTimeSlot,
+  putCourtsOn,
+  placeMatchOnCourt,
   bulkPauseInProgress,
   bulkDelayAfter,
   bulkResumePaused,
@@ -61,7 +60,6 @@ import {
   CheckInMatchItem,
   ReadyQueueResponse,
   ReadyQueueItem,
-  OpeningReleasePreview,
   AvailableCourtSlot,
   MatchCheckInSideState,
   PlayerCheckInState,
@@ -9147,30 +9145,6 @@ function SmsAdminTab({
   )
 }
 
-function courtDisplayFromSnapshotSlot(slot: SnapshotSlot): string {
-  const label = String(slot.court_label || slot.court_number || '').trim()
-  if (!label) return 'Court'
-  return label.toLowerCase().startsWith('court') ? label : `Court ${label}`
-}
-
-function resolveReadyAssignSlotId(
-  availableSlotsForCourt: Array<{ slot_id: number }>,
-  draggedSlot: SnapshotSlot | null,
-  allSlots: SnapshotSlot[],
-  targetCourt: string,
-): number | null {
-  if (draggedSlot) {
-    const sameTimeSlot = allSlots.find((slot) => (
-      slot.is_active &&
-      slot.day_date === draggedSlot.day_date &&
-      (slot.start_time || '').slice(0, 5) === (draggedSlot.start_time || '').slice(0, 5) &&
-      courtDisplayFromSnapshotSlot(slot) === targetCourt
-    ))
-    if (sameTimeSlot) return sameTimeSlot.slot_id
-  }
-  return availableSlotsForCourt[0]?.slot_id ?? null
-}
-
 function resolveCheckInBoardCourts(data: DeskSnapshotResponse): string[] {
   if (data.checkin_board_courts && data.checkin_board_courts.length > 0) {
     return data.checkin_board_courts
@@ -9195,6 +9169,7 @@ type CheckInCourtBoardRowData = {
   elapsedLabel: string | null
   availableSlotsForCourt: AvailableCourtSlot[]
   availabilityWarning?: string | null
+  stackedQueue: Array<{ key: string; label: string; rq: ReadyQueueItem }>
 }
 
 function CheckInCourtBoardCard({
@@ -9202,22 +9177,46 @@ function CheckInCourtBoardCard({
   onOpenMatch,
   slotTintIndex,
   nativeDragOverCourt,
+  onStackDragStart,
 }: {
   row: CheckInCourtBoardRowData
   focusSlotLabel?: string | null
   onOpenMatch: (m: DeskMatchItem) => void
   slotTintIndex: number | null
   nativeDragOverCourt: string | null
+  onStackDragStart?: (event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => void
 }) {
   const match = row.displayMatch
   // Tint by scheduled start (day + time) so staff can spot long-running early slots at a glance.
   const tint = match ? getTimeSlotTint(match) : getSlotTint(slotTintIndex)
-  const canReceiveReady =
-    row.lane === 'open' &&
-    !match &&
-    !row.isClosed &&
-    row.availableSlotsForCourt.length > 0
+  const canReceiveReady = !row.isClosed
   const isOver = canReceiveReady && nativeDragOverCourt === row.court
+  const stackedQueue = row.stackedQueue || []
+  const queueList = stackedQueue.length > 0 ? (
+    <div style={{ display: 'grid', gap: 4, padding: 6, background: '#f8f5ff', borderTop: '1px solid #ede7f6' }}>
+      {stackedQueue.map((item) => (
+        <div
+          key={item.key}
+          onPointerDown={onStackDragStart ? ((event) => onStackDragStart(event, item.rq)) : undefined}
+          style={{
+            cursor: onStackDragStart ? 'grab' : 'default',
+            border: '1px solid #d1c4e9',
+            borderRadius: 6,
+            padding: '4px 6px',
+            background: '#fff',
+            fontSize: 10,
+            lineHeight: 1.3,
+            touchAction: 'none',
+            userSelect: 'none',
+          }}
+        >
+          <div style={{ fontWeight: 800, color: '#5e35b1' }}>{item.label}</div>
+          <div style={{ fontWeight: 700 }}>{item.rq.team1_display}</div>
+          <div style={{ color: '#90a4ae' }}>vs {item.rq.team2_display}</div>
+        </div>
+      ))}
+    </div>
+  ) : null
 
   const headerBg = tint?.accent || '#1a237e'
   const footerBg = tint?.bg || '#eef4ff'
@@ -9267,13 +9266,16 @@ function CheckInCourtBoardCard({
         }}>
           {canReceiveReady ? 'Drag a ready match here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
         </div>
+        {queueList}
       </div>
     )
   }
 
   return (
-    <div style={{
-      border: `1px solid ${tint?.border || '#c8e6c9'}`,
+    <div
+      data-ready-court={canReceiveReady ? row.court : undefined}
+      style={{
+      border: isOver ? '2px solid #1565c0' : `1px solid ${tint?.border || '#c8e6c9'}`,
       borderRadius: 8,
       overflow: 'hidden',
       boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
@@ -9378,6 +9380,7 @@ function CheckInCourtBoardCard({
           }}
         />
       )}
+      {queueList}
     </div>
   )
 }
@@ -9432,7 +9435,17 @@ function ReadyQueueCheckInSide({
           />
         ) : (
           <span key={`${side}-name`} style={{ minWidth: 0, fontSize: compact ? 11 : 13, fontWeight: 700, color: '#1a1a1a' }}>
-            <TeamPhotoNameRow teamId={teamId} name={name} size={compact ? 16 : 18} surface={photoSurface} />
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+              {slots.map((player, slotIndex) => player?.towel_color ? (
+                <TowelColorPill
+                  key={`${side}-towel-${player.player_id || slotIndex}`}
+                  colorName={player.towel_color}
+                  reportUrl={player.report_url}
+                  labelMode="swatch"
+                />
+              ) : null)}
+              <TeamPhotoNameRow teamId={teamId} name={name} size={compact ? 16 : 18} surface={photoSurface} />
+            </span>
           </span>
         )
       })}
@@ -9701,9 +9714,9 @@ export default function TournamentDeskPage() {
     proceed: () => Promise<void>
   } | null>(null)
   const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
-  const [openingReleasePreview, setOpeningReleasePreview] = useState<OpeningReleasePreview | null>(null)
-  const [openingReleaseBusy, setOpeningReleaseBusy] = useState(false)
-  const [openingReleaseError, setOpeningReleaseError] = useState<string | null>(null)
+  const [slotCheckInBusy, setSlotCheckInBusy] = useState(false)
+  const [putCourtsBusy, setPutCourtsBusy] = useState(false)
+  const [courtActionError, setCourtActionError] = useState<string | null>(null)
   const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
@@ -10301,20 +10314,6 @@ export default function TournamentDeskPage() {
     return `${minutes}:${String(seconds).padStart(2, '0')}`
   }, [clockNowMs, parseApiTimestampMs])
 
-  const handleAssignReadyMatch = useCallback(async (matchId: number, slotId: number) => {
-    if (!tid || !data) return
-    try {
-      const snap = await assignReadyMatchToSlot(tid, {
-        version_id: data.version_id,
-        match_id: matchId,
-        slot_id: slotId,
-      })
-      setData(snap)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to assign ready match')
-    }
-  }, [tid, data])
-
   const handleResetReadyMatch = useCallback(async (matchId: number) => {
     if (!tid || !data) return
     const match = (data.checkin_matches || []).find((cm) => cm.match_id === matchId)
@@ -10450,183 +10449,20 @@ export default function TournamentDeskPage() {
     y: number
   } | null>(null)
   const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
-    if (!data) return
-
-    const draggedMatch = data.matches.find((m) => m.match_id === matchId) || null
-    const draggedSlot = draggedMatch?.slot_id != null
-      ? data.slots.find((s) => s.slot_id === draggedMatch.slot_id) || null
-      : null
-
-    const slotSectionMap = new Map<
-      string,
-      {
-        key: string
-        label: string
-        order: string
-        matches: DeskMatchItem[]
-        checkinRows: CheckInMatchItem[]
-        assignedMatchIds: Set<number>
-        slotIds: Set<number>
-      }
-    >()
-    const formatTimeLabel = (t: string): string => {
-      const hhmm = (t || '').slice(0, 5)
-      const [hhRaw, mmRaw] = hhmm.split(':')
-      const hh = parseInt(hhRaw || '0', 10)
-      const mm = parseInt(mmRaw || '0', 10)
-      const ampm = hh < 12 ? 'AM' : 'PM'
-      const h12 = hh % 12 || 12
-      return `${h12}:${String(mm).padStart(2, '0')} ${ampm}`
-    }
-    const slotById = new Map<number, SnapshotSlot>((data.slots || []).map((s) => [s.slot_id, s]))
-    const hasBackendSlotContract = (data.checkin_slot_options || []).length > 0
-    if (hasBackendSlotContract) {
-      ;(data.checkin_slot_options || []).forEach((opt) => {
-        const assignedMatchIds = new Set<number>()
-        ;(opt.slot_ids || []).forEach((slotId) => {
-          const snapshotSlot = slotById.get(slotId)
-          if (snapshotSlot?.assigned_match_id != null) {
-            assignedMatchIds.add(snapshotSlot.assigned_match_id)
-          }
-        })
-        slotSectionMap.set(opt.slot_key, {
-          key: opt.slot_key,
-          label: opt.label,
-          order: opt.slot_key,
-          matches: [],
-          checkinRows: (data.checkin_slot_rows?.[opt.slot_key] || []).slice().sort((a, b) => a.match_number - b.match_number),
-          assignedMatchIds,
-          slotIds: new Set<number>(opt.slot_ids || []),
-        })
+    if (!tid || !data) return
+    setError(null)
+    try {
+      const snap = await placeMatchOnCourt(tid, {
+        version_id: data.version_id,
+        match_id: matchId,
+        court_name: court,
       })
-    } else {
-      ;(data.slots || [])
-        .slice()
-        .sort((a, b) => {
-          const ka = `${a.day_date}|${a.start_time}`
-          const kb = `${b.day_date}|${b.start_time}`
-          return ka.localeCompare(kb)
-        })
-        .forEach((s) => {
-          const key = `${s.day_date}|${(s.start_time || '').slice(0, 5)}`
-          if (!slotSectionMap.has(key)) {
-            slotSectionMap.set(key, {
-              key,
-              label: `${s.day_date} ${formatTimeLabel(s.start_time || '00:00')}`,
-              order: key,
-              matches: [],
-              checkinRows: [],
-              assignedMatchIds: new Set<number>(),
-              slotIds: new Set<number>(),
-            })
-          }
-          if (s.slot_id != null) {
-            slotSectionMap.get(key)!.slotIds.add(s.slot_id)
-          }
-          if (s.assigned_match_id != null) {
-            slotSectionMap.get(key)!.assignedMatchIds.add(s.assigned_match_id)
-          }
-        })
-
-      ;(data.checkin_matches || []).forEach((cm) => {
-        let key = ''
-        let label = ''
-        if (cm.slot_id != null && slotById.has(cm.slot_id)) {
-          const s = slotById.get(cm.slot_id)!
-          key = `${s.day_date}|${(s.start_time || '').slice(0, 5)}`
-          label = `${s.day_date} ${formatTimeLabel(s.start_time || '00:00')}`
-        } else {
-          key = `checkin|${cm.day_label}|${(cm.sort_time || '').slice(0, 5)}`
-          label = `${cm.day_label} ${cm.scheduled_time || ''}`.trim()
-        }
-        if (!slotSectionMap.has(key)) {
-          slotSectionMap.set(key, {
-            key,
-            label,
-            order: key,
-            matches: [],
-            checkinRows: [],
-            assignedMatchIds: new Set<number>(),
-            slotIds: new Set<number>(),
-          })
-        }
-        if (cm.slot_id != null) {
-          slotSectionMap.get(key)!.slotIds.add(cm.slot_id)
-        }
-        slotSectionMap.get(key)!.assignedMatchIds.add(cm.match_id)
-      })
+      setData(snap)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to place match on court')
     }
+  }, [tid, data])
 
-    const slotSections = Array.from(slotSectionMap.values()).sort((a, b) => a.order.localeCompare(b.order))
-    const slotOrderByKey = new Map<string, number>()
-    const slotKeyBySlotId = new Map<number, string>()
-    const slotKeyByMatchId = new Map<number, string>()
-    slotSections.forEach((section, index) => {
-      slotOrderByKey.set(section.key, index)
-      section.slotIds.forEach((slotId) => {
-        slotKeyBySlotId.set(slotId, section.key)
-      })
-      section.assignedMatchIds.forEach((assignedMatchId) => {
-        if (!slotKeyByMatchId.has(assignedMatchId)) {
-          slotKeyByMatchId.set(assignedMatchId, section.key)
-        }
-      })
-    })
-    ;(data.checkin_matches || []).forEach((cm) => {
-      if (cm.slot_id != null) {
-        const slotKey = slotKeyBySlotId.get(cm.slot_id)
-        if (slotKey) {
-          slotKeyByMatchId.set(cm.match_id, slotKey)
-        }
-      }
-    })
-
-    const boardCourts = resolveCheckInBoardCourts(data)
-    const rawNowPlayingByCourt = new Map<string, DeskMatchItem | undefined>()
-    boardCourts.forEach((boardCourt) => {
-      rawNowPlayingByCourt.set(boardCourt, data.now_playing_by_court[boardCourt])
-    })
-    const courtBoardRows = boardCourts.map((boardCourt) => {
-      const now = data.now_playing_by_court[boardCourt]
-      const courtLabel = boardCourt.replace(/^Court\s+/i, '')
-      const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
-      const visibleReadyAssignSlots = data.available_slots
-      const availableSlotsForCourt = visibleReadyAssignSlots.filter((slot) => slot.court_name === boardCourt)
-      return {
-        court: boardCourt,
-        now,
-        isClosed,
-        availableSlotsForCourt,
-      }
-    })
-
-    const targetRow = courtBoardRows.find((r) => r.court === court)
-    const rawNowPlaying = rawNowPlayingByCourt.get(court)
-    if (rawNowPlaying) {
-      setError('That court is occupied right now.')
-      return
-    }
-    if (targetRow?.now) {
-      setError('That court already has a match assigned.')
-      return
-    }
-    const slotId = resolveReadyAssignSlotId(
-      targetRow?.availableSlotsForCourt || [],
-      draggedSlot,
-      data.slots || [],
-      court,
-    )
-    if (!slotId) {
-      const activeTime = data.active_checkin_slot_key
-        ? formatTimeLabel(data.active_checkin_slot_key.split('|')[1] || '')
-        : draggedSlot
-          ? formatTimeLabel(draggedSlot.start_time)
-          : 'current'
-      setError(`${court} is not available for the ${activeTime} schedule slot.`)
-      return
-    }
-    await handleAssignReadyMatch(matchId, slotId)
-  }, [data, courtStates, handleAssignReadyMatch])
 
   const handlePointerDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
@@ -11062,32 +10898,15 @@ export default function TournamentDeskPage() {
     effectiveSelectedCheckInSlotKey === 'all' ||
     (entry.slotKey || slotKeyByMatchId.get(entry.matchId)) === effectiveSelectedCheckInSlotKey
   ))
-  const preassignedPlacement = placePreassignedMatches(preassignedReadyEntries, data.matches || [])
-  const preassignedCourtByCourt = new Map<string, (typeof preassignedPlacement.courtCards)[number]>()
-  const preassignedCourtOverflow: typeof preassignedPlacement.courtCards = []
-  for (const entry of preassignedPlacement.courtCards) {
-    const occupant = (data.now_playing_by_court || {})[entry.courtName]
-    const liveBlocks = Boolean(
-      occupant &&
-      occupant.match_id !== entry.matchId &&
-      (occupant.status === 'IN_PROGRESS' || occupant.status === 'PAUSED'),
-    )
-    if (liveBlocks || preassignedCourtByCourt.has(entry.courtName)) {
-      preassignedCourtOverflow.push({
-        ...entry,
-        courtOccupied: true,
-        statusLabel: 'Waiting for Court',
-      })
-    } else {
-      preassignedCourtByCourt.set(entry.courtName, entry)
-    }
-  }
-  const preassignedReadyQueueEntries = [
-    ...preassignedPlacement.readyQueue,
-    ...preassignedCourtOverflow,
-  ]
+  const visiblePreassigned = preassignedReadyEntries.filter((entry) => {
+    const laterRound = Boolean(entry.deskMatch.source_match_a_id || entry.deskMatch.source_match_b_id)
+    if (laterRound && !entry.checkinMatch?.match_ready) return false
+    return true
+  })
+  const stackedPreassigned = visiblePreassigned.filter((entry) => entry.courtQueued && entry.courtOccupied)
+  const preassignedReadyQueueEntries = visiblePreassigned.filter((entry) => !(entry.courtQueued && entry.courtOccupied))
   const preassignedOperationalIds = new Set<number>([
-    ...Array.from(preassignedCourtByCourt.values()).map((entry) => entry.matchId),
+    ...stackedPreassigned.map((entry) => entry.matchId),
     ...preassignedReadyQueueEntries.map((entry) => entry.matchId),
   ])
   const visibleWaitingGroups = waitingBoardGroups
@@ -11112,52 +10931,38 @@ export default function TournamentDeskPage() {
   ))
 
   const releaseSlotKey = data.active_checkin_slot_key || focusSlotKey || null
-  const releaseDayDate = releaseSlotKey ? releaseSlotKey.split('|')[0] : null
   const releaseTimeLabel = releaseSlotKey
     ? (slotLabelByKey.get(releaseSlotKey) || releaseSlotKey.split('|')[1] || '')
     : ''
 
-  const handlePreviewOpeningRelease = async () => {
-    if (!tid || !data || !releaseSlotKey || !releaseDayDate) return
-    setOpeningReleaseError(null)
-    setOpeningReleaseBusy(true)
+  const handleCheckInTimeSlot = async () => {
+    if (!tid || !data || !releaseSlotKey) return
+    setCourtActionError(null)
+    setSlotCheckInBusy(true)
     try {
-      const preview = await previewOpeningRelease(tid, {
+      const resp = await checkInTimeSlot(tid, {
         version_id: data.version_id,
-        day_date: releaseDayDate,
         slot_key: releaseSlotKey,
       })
-      setOpeningReleasePreview(preview)
+      applyReadyQueueResponse(resp)
     } catch (e) {
-      setOpeningReleaseError(e instanceof Error ? e.message : 'Failed to load release preview')
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to check in this time slot')
     } finally {
-      setOpeningReleaseBusy(false)
+      setSlotCheckInBusy(false)
     }
   }
 
-  const handleConfirmOpeningRelease = async () => {
-    if (!tid || !data || !releaseSlotKey || !releaseDayDate) return
-    setOpeningReleaseBusy(true)
-    setOpeningReleaseError(null)
+  const handlePutCourtsOn = async () => {
+    if (!tid || !data) return
+    setCourtActionError(null)
+    setPutCourtsBusy(true)
     try {
-      const result = await releaseOpeningSlot(tid, {
-        version_id: data.version_id,
-        day_date: releaseDayDate,
-        slot_key: releaseSlotKey,
-      })
-      setOpeningReleasePreview(null)
-      if (result.errors?.length) {
-        setBulkToast(`Released; ${result.started_match_ids.length} started. ${result.errors.join('; ')}`)
-      } else {
-        setBulkToast(
-          `Opening slot released — ${result.started_match_ids.length} started, ${result.waiting_match_ids.length} waiting for court`,
-        )
-      }
-      await loadSnapshot(data.version_id)
+      const snap = await putCourtsOn(tid, { version_id: data.version_id })
+      setData(snap)
     } catch (e) {
-      setOpeningReleaseError(e instanceof Error ? e.message : 'Release failed')
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to put courts on')
     } finally {
-      setOpeningReleaseBusy(false)
+      setPutCourtsBusy(false)
     }
   }
 
@@ -11173,10 +10978,41 @@ export default function TournamentDeskPage() {
     const onDeck = onDeckRaw && !readyMatchIds.has(onDeckRaw.match_id) ? onDeckRaw : undefined
     const courtLabel = court.replace(/^Court\s+/i, '')
     const isClosed = Boolean(courtStates[courtLabel]?.is_closed)
-    const staged = preassignedCourtByCourt.get(court)
-    const preassignedDesk = staged && !now ? staged.deskMatch : null
-    const displayMatch = now || preassignedDesk || null
-    const preassignedStatusLabel = now ? null : (staged?.statusLabel || null)
+    const displayMatch = now || null
+    const preassignedStatusLabel = null
+    const stackedQueue = [
+      ...stackedPreassigned
+        .filter((entry) => entry.courtName === court)
+        .map((entry) => ({
+          key: `pre-${entry.matchId}`,
+          sortKey: entry.sortTime || '',
+          label: `#${entry.matchNumber}${entry.scheduledTime ? ` · ${entry.scheduledTime}` : ''}`,
+          rq: preassignedEntryToReadyQueueItem(entry),
+        })),
+      ...(data.matches || [])
+        .filter((match) => (
+          match.court_name === court &&
+          match.court_queued &&
+          (match.court_assignment_mode || '').toUpperCase() !== 'PREASSIGNED' &&
+          !['IN_PROGRESS', 'PAUSED', 'FINAL'].includes((match.status || '').toUpperCase())
+        ))
+        .map((match) => ({
+          key: `dyn-${match.match_id}`,
+          sortKey: match.sort_time || '',
+          label: `#${match.match_number}${match.scheduled_time ? ` · ${match.scheduled_time}` : ''}`,
+          rq: {
+            match_id: match.match_id,
+            match_number: match.match_number,
+            match_code: match.match_code,
+            event_name: match.event_name,
+            day_label: match.day_label,
+            scheduled_time: match.scheduled_time,
+            ready_at: null,
+            team1_display: match.team1_display,
+            team2_display: match.team2_display,
+          },
+        })),
+    ].sort((a, b) => a.sortKey.localeCompare(b.sortKey) || a.rq.match_number - b.rq.match_number)
     const matchSlotKey = displayMatch ? (slotKeyByMatchId.get(displayMatch.match_id) || null) : null
     const matchSlotIndex = matchSlotKey != null ? (slotOrderByKey.get(matchSlotKey) ?? null) : null
     const availableSlotsForCourt = visibleReadyAssignSlots.filter(
@@ -11197,10 +11033,6 @@ export default function TournamentDeskPage() {
         slotStateLabel = 'Assigned'
         slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
       }
-    } else if (preassignedDesk) {
-      lane = 'current'
-      slotStateLabel = preassignedStatusLabel || 'Assigned'
-      slotStateColor = { bg: '#ede7f6', color: '#5e35b1' }
     } else if (!isClosed && availableSlotsForCourt.length > 0) {
       slotStateLabel = 'Open'
       slotStateColor = { bg: '#e8f5e9', color: '#2e7d32' }
@@ -11224,6 +11056,7 @@ export default function TournamentDeskPage() {
       elapsedLabel: formatElapsedLabel(displayMatch?.started_at, displayMatch?.completed_at),
       availableSlotsForCourt,
       availabilityWarning: checkInWarningByCourt.get(court) || null,
+      stackedQueue,
     }
   })
 
@@ -11737,90 +11570,6 @@ export default function TournamentDeskPage() {
                       ))}
                     </div>
                   )}
-                  {openingReleasePreview && (
-                    <div style={{
-                      border: '1px solid #9fa8da',
-                      borderRadius: 8,
-                      backgroundColor: '#fff',
-                      padding: '12px 14px',
-                    }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: '#283593', marginBottom: 8 }}>
-                        Confirm Opening Release — {openingReleasePreview.scheduled_time_label || releaseTimeLabel}
-                      </div>
-                      <div style={{ fontSize: 12, color: '#5c6bc0', marginBottom: 8 }}>
-                        {openingReleasePreview.scope_note ||
-                          'Releases all PREASSIGNED WF Round 1 matches in this time slot. DYNAMIC_CHECKIN events are excluded.'}
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, marginBottom: 10 }}>
-                        {[
-                          ['Ready', openingReleasePreview.ready_count],
-                          ['Missing check-in', openingReleasePreview.awaiting_checkin_count],
-                          ['Courts available', openingReleasePreview.courts_available_count],
-                          ['Courts occupied', openingReleasePreview.courts_occupied_count],
-                        ].map(([label, value]) => (
-                          <div key={String(label)} style={{ border: '1px solid #e8eaf6', borderRadius: 6, padding: '8px 10px', background: '#f8f9ff' }}>
-                            <div style={{ fontSize: 11, color: '#7986cb', fontWeight: 700 }}>{label}</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#1a237e' }}>{value}</div>
-                          </div>
-                        ))}
-                      </div>
-                      {(openingReleasePreview.events || []).length > 0 && (
-                        <div style={{ marginBottom: 10, border: '1px solid #e8eaf6', borderRadius: 6, padding: '8px 10px', background: '#fafbff' }}>
-                          <div style={{ fontSize: 11, fontWeight: 800, color: '#3949ab', marginBottom: 6 }}>
-                            Events included ({openingReleasePreview.events.length})
-                          </div>
-                          {openingReleasePreview.events.map((ev) => (
-                            <div key={ev.event_id} style={{ fontSize: 12, color: '#37474f', marginBottom: 4 }}>
-                              <strong>{ev.event_name}</strong>
-                              {` — ${ev.ready_count} ready, ${ev.awaiting_checkin_count} missing check-in`}
-                              {ev.match_ids?.length ? ` (matches ${ev.match_ids.join(', ')})` : ''}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {openingReleasePreview.already_released && (
-                        <div style={{ fontSize: 12, color: '#ef6c00', marginBottom: 8 }}>
-                          This slot was already released — confirming will re-dispatch eligible matches.
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button
-                          type="button"
-                          disabled={openingReleaseBusy}
-                          onClick={() => void handleConfirmOpeningRelease()}
-                          style={{
-                            padding: '8px 14px',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            borderRadius: 6,
-                            border: 'none',
-                            backgroundColor: '#2e7d32',
-                            color: '#fff',
-                            cursor: openingReleaseBusy ? 'not-allowed' : 'pointer',
-                          }}
-                        >
-                          Confirm Release
-                        </button>
-                        <button
-                          type="button"
-                          disabled={openingReleaseBusy}
-                          onClick={() => setOpeningReleasePreview(null)}
-                          style={{
-                            padding: '8px 14px',
-                            fontSize: 13,
-                            fontWeight: 600,
-                            borderRadius: 6,
-                            border: '1px solid #ccc',
-                            backgroundColor: '#f5f5f5',
-                            color: '#555',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
                       On Court
@@ -11838,6 +11587,7 @@ export default function TournamentDeskPage() {
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={row.slotTintIndex}
                               nativeDragOverCourt={nativeDragOverCourt}
+                              onStackDragStart={handlePointerDragStart}
                             />
                           ))}
                         </div>
@@ -11862,6 +11612,7 @@ export default function TournamentDeskPage() {
                               onOpenMatch={setDrawerMatch}
                               slotTintIndex={null}
                               nativeDragOverCourt={nativeDragOverCourt}
+                              onStackDragStart={handlePointerDragStart}
                             />
                           ))}
                         </div>
@@ -11873,28 +11624,28 @@ export default function TournamentDeskPage() {
                     <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                       <div className="checkin-waiting-header">
                         <div className="checkin-waiting-header-title">Waiting For Check-In</div>
-                        {releaseSlotKey && releaseDayDate && (
+                        {releaseSlotKey && (
                           <div className="checkin-waiting-header-actions">
                             <button
                               type="button"
-                              disabled={openingReleaseBusy || !isDraft}
-                              onClick={() => void handlePreviewOpeningRelease()}
+                              disabled={slotCheckInBusy || !isDraft}
+                              onClick={() => void handleCheckInTimeSlot()}
                               style={{
                                 padding: '8px 14px',
                                 fontSize: 13,
                                 fontWeight: 700,
                                 borderRadius: 6,
                                 border: '1px solid #3949ab',
-                                backgroundColor: openingReleaseBusy || !isDraft ? '#c5cae9' : '#3949ab',
+                                backgroundColor: slotCheckInBusy || !isDraft ? '#c5cae9' : '#3949ab',
                                 color: '#fff',
-                                cursor: openingReleaseBusy || !isDraft ? 'not-allowed' : 'pointer',
+                                cursor: slotCheckInBusy || !isDraft ? 'not-allowed' : 'pointer',
                                 whiteSpace: 'nowrap',
                               }}
                             >
-                              {openingReleaseBusy ? 'Working…' : 'Release Opening Matches'}
+                              {slotCheckInBusy ? 'Working…' : `Check In ${releaseTimeLabel || 'Time Slot'}`}
                             </button>
-                            {openingReleaseError && (
-                              <div style={{ fontSize: 11, color: '#c62828', textAlign: 'right' }}>{openingReleaseError}</div>
+                            {courtActionError && (
+                              <div style={{ fontSize: 11, color: '#c62828', textAlign: 'right' }}>{courtActionError}</div>
                             )}
                           </div>
                         )}
@@ -11964,8 +11715,26 @@ export default function TournamentDeskPage() {
 
                     <div style={{ display: 'grid', gap: 14 }}>
                       <div style={{ border: '1px solid #d1c4e9', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                        <div style={{ padding: '10px 12px', borderBottom: '1px solid #ede7f6', fontSize: 14, fontWeight: 800, color: '#5e35b1', backgroundColor: '#faf5ff' }}>
-                          Ready To Go — Assigned Court
+                        <div style={{ padding: '10px 12px', borderBottom: '1px solid #ede7f6', fontSize: 14, fontWeight: 800, color: '#5e35b1', backgroundColor: '#faf5ff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span>Ready To Go — Assigned Court</span>
+                          <button
+                            type="button"
+                            disabled={putCourtsBusy || !isDraft || preassignedReadyQueueEntries.length === 0}
+                            onClick={() => void handlePutCourtsOn()}
+                            style={{
+                              padding: '8px 14px',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              borderRadius: 6,
+                              border: 'none',
+                              backgroundColor: putCourtsBusy || !isDraft || preassignedReadyQueueEntries.length === 0 ? '#d1c4e9' : '#5e35b1',
+                              color: '#fff',
+                              cursor: putCourtsBusy || !isDraft || preassignedReadyQueueEntries.length === 0 ? 'not-allowed' : 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {putCourtsBusy ? 'Working…' : 'Put courts on'}
+                          </button>
                         </div>
                         <div style={{ padding: 12 }}>
                           {preassignedReadyQueueEntries.length === 0 ? (

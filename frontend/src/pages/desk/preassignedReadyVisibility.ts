@@ -35,6 +35,7 @@ export type PreassignedReadyEntry = {
   checkinMatch: CheckInMatchItem | null
   slotKey: string | null
   isOpening: boolean
+  courtQueued: boolean
 }
 
 const LIVE_STATUSES = new Set(['IN_PROGRESS', 'PAUSED'])
@@ -101,6 +102,7 @@ export function buildPreassignedReadyEntries(args: {
         checkinMatch: checkinById.get(row.match_id) || null,
         slotKey: row.slot_key,
         isOpening: row.is_opening,
+        courtQueued: Boolean(row.court_queued),
       })
     }
     entries.sort((a, b) => {
@@ -156,6 +158,7 @@ export function buildPreassignedReadyEntries(args: {
       checkinMatch: cm,
       slotKey: null,
       isOpening: false,
+      courtQueued: Boolean(desk.court_queued),
     })
   }
 
@@ -266,7 +269,7 @@ export function placePreassignedMatches(
   return { courtCards, readyQueue }
 }
 
-/** Opening check-in stays. Later preassigned rounds and already-placed matches do not. */
+/** Waiting For Check-In keeps any match that is not already on a court or in Ready To Go. */
 export function belongsInWaitingForCheckIn(
   match: Pick<
     DeskMatchItem,
@@ -283,8 +286,5 @@ export function belongsInWaitingForCheckIn(
   const status = (match.status || '').toUpperCase()
   if (status === 'IN_PROGRESS' || status === 'PAUSED' || status === 'FINAL') return false
   if (operationalMatchIds.has(match.match_id)) return false
-  if (match.checkin_reset_pending) return true
-  const mode = (match.court_assignment_mode || '').toUpperCase()
-  if (mode === 'PREASSIGNED' && (match.source_match_a_id || match.source_match_b_id)) return false
   return true
 }

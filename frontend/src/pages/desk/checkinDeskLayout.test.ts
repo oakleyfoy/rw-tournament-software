@@ -32,16 +32,12 @@ describe('Check-In Desk layout changes', () => {
     expect(page.match(/Dynamic Ready To Go/g)).toHaveLength(1)
   })
 
-  it('places Release Opening Matches beside Waiting For Check-In and removes the opening banner', () => {
+  it('places Check In Time Slot beside Waiting For Check-In and Put courts on beside Assigned Court', () => {
     expect(page).toContain('className="checkin-waiting-header"')
     expect(page).toContain('Waiting For Check-In')
-    expect(page).toContain('Release Opening Matches')
-
-    // Exactly one Release Opening Matches button markup in the page
-    const releaseMatches = page.match(/Release Opening Matches/g) || []
-    expect(releaseMatches).toHaveLength(1)
-
-    // Opening round information banner fully removed
+    expect(page).toContain('Check In ${releaseTimeLabel')
+    expect(page).toContain('Put courts on')
+    expect(page).not.toContain('Release Opening Matches')
     expect(page).not.toContain('Opening WF Round 1')
     expect(page).not.toContain('Release fully checked-in preassigned matches for this opening slot')
   })
@@ -52,7 +48,6 @@ describe('Check-In Desk layout changes', () => {
 
   it('keeps the four-column desk grids when team photos are shown', () => {
     expect(css).toMatch(/@media \(min-width:\s*1100px\)[\s\S]*repeat\(4/)
-    expect(page).toContain("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'")
     expect(page).toContain("gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)'")
     expect(page).toContain("gridTemplateColumns: 'repeat(10, minmax(0, 1fr))'")
     expect(page).toContain("gridTemplateColumns: 'auto auto auto auto auto'")

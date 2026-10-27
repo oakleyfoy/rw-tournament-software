@@ -119,6 +119,7 @@ def _wf_match(session, t, ev, v, code, slot, team_a, team_b, round_index=1, sour
         source_match_a_id=source_a,
         source_match_b_id=source_b,
         runtime_status="SCHEDULED",
+        court_queued=round_index >= 2,
     )
     session.add(m)
     session.flush()
@@ -146,6 +147,8 @@ def test_concurrent_dispatch_two_matches_one_court_only_one_starts(session: Sess
     # with time arrived so both would race if prior-check + lock failed).
     m1.round_index = 2
     m2.round_index = 2
+    m1.court_queued = True
+    m2.court_queued = True
     session.add_all([m1, m2])
     session.commit()
 
@@ -327,6 +330,12 @@ def test_late_checkin_occupied_and_available(client, session: Session):
             json={"version_id": v.id, "side": side, "checked_in": True},
         )
         assert r.status_code == 200
+    session.expire_all()
+    assert session.get(Match, m2.id).runtime_status == "SCHEDULED"
+    client.post(
+        f"/api/desk/tournaments/{t.id}/opening-release",
+        json={"version_id": v.id, "day_date": day.isoformat(), "slot_key": slot_key},
+    )
     session.expire_all()
     assert session.get(Match, m2.id).runtime_status == "IN_PROGRESS"
     a2 = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == m2.id)).one()

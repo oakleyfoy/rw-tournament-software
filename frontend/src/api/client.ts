@@ -3102,6 +3102,7 @@ export interface DeskMatchItem {
   winner_display: string | null
   winner_team_id?: number | null
   checkin_reset_pending?: boolean
+  court_queued?: boolean
   duration_minutes?: number | null
   team1_defaulted?: boolean | null
   team2_defaulted?: boolean | null
@@ -3201,6 +3202,7 @@ export interface ReadyAssignedItem {
   waiting_for_court: boolean
   slot_key: string | null
   is_opening: boolean
+  court_queued?: boolean
   dispatch_outcome: string
 }
 
@@ -3532,6 +3534,36 @@ export async function setDeskManagementMode(
   return fetchJson<DeskManagementModeResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/management-mode`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  )
+}
+
+export async function checkInTimeSlot(
+  tournamentId: number,
+  payload: { version_id: number; slot_key: string }
+): Promise<ReadyQueueResponse> {
+  return fetchJson<ReadyQueueResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/checkin/slot`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function putCourtsOn(
+  tournamentId: number,
+  payload: { version_id: number }
+): Promise<DeskSnapshotResponse> {
+  return fetchJson<DeskSnapshotResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/checkin/put-courts-on`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  )
+}
+
+export async function placeMatchOnCourt(
+  tournamentId: number,
+  payload: { version_id: number; match_id: number; court_name: string }
+): Promise<DeskSnapshotResponse> {
+  return fetchJson<DeskSnapshotResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/checkin/place`,
+    { method: 'POST', body: JSON.stringify(payload) }
   )
 }
 

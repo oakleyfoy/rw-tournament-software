@@ -8,6 +8,8 @@ from datetime import time
 from sqlmodel import Session, select
 
 from app.models.match import Match
+from app.models.schedule_version import ScheduleVersion
+from app.services.preassigned_dispatch import put_courts_on
 from app.models.schedule_slot import ScheduleSlot
 from app.models.tournament import Tournament
 from app.models.match_assignment import MatchAssignment
@@ -457,8 +459,12 @@ def test_later_round_waterfall_reset_holds_until_both_teams_check_in(client, ses
     )
     assert other_side.status_code == 200
     session.expire_all()
+    held_ready = session.get(Match, later.id)
+    assert held_ready.checkin_reset_pending is False
+    assert held_ready.runtime_status == "SCHEDULED"
+    put_courts_on(session, session.get(Tournament, tournament.id), session.get(ScheduleVersion, version.id))
+    session.expire_all()
     started = session.get(Match, later.id)
-    assert started.checkin_reset_pending is False
     assert started.runtime_status == "IN_PROGRESS"
     available = _snapshot(client, tournament.id, version.id)
     assert later.id not in {row["match_id"] for row in available["checkin_matches"]}
@@ -645,6 +651,10 @@ def test_unchecking_one_ready_side_returns_later_round_to_waiting(client, sessio
     session.expire_all()
     again = session.get(Match, later.id)
     assert again.checkin_reset_pending is False
+    assert again.runtime_status == "SCHEDULED"
+    put_courts_on(session, session.get(Tournament, tournament.id), session.get(ScheduleVersion, version.id))
+    session.expire_all()
+    again = session.get(Match, later.id)
     assert again.runtime_status == "IN_PROGRESS"
     assert again.team_a_id == team_a
     assert again.team_b_id == team_b

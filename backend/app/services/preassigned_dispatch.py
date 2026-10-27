@@ -692,9 +692,31 @@ def evaluate_eligibility(
                 slot_key=key,
                 is_opening=True,
             )
+        if not bool(getattr(match, "court_queued", False)):
+            return EligibilityResult(
+                mid,
+                OUTCOME_WAITING_RELEASE,
+                "Not put on a court yet",
+                court_name=court_name,
+                scheduled_time=_format_time_label(slot.start_time),
+                day_date=slot.day_date,
+                slot_key=key,
+                is_opening=True,
+            )
         # Opening release authorizes early start for this slot.
         time_ok = True
     else:
+        if not bool(getattr(match, "court_queued", False)):
+            return EligibilityResult(
+                mid,
+                OUTCOME_WAITING_RELEASE,
+                "Not put on a court yet",
+                court_name=court_name,
+                scheduled_time=_format_time_label(slot.start_time),
+                day_date=slot.day_date,
+                slot_key=key,
+                is_opening=False,
+            )
         time_ok = slot_start_has_arrived(tournament, slot)
 
     if not time_ok:
@@ -1311,6 +1333,13 @@ def release_opening_slot(
         session.commit()
 
     preview = preview_opening_release(session, tournament, version, day_date=day_date, slot_key=slot_key)
+    for match_id in preview.ready_match_ids:
+        ready_match = session.get(Match, match_id)
+        if ready_match is None:
+            continue
+        ready_match.court_queued = True
+        session.add(ready_match)
+    session.commit()
     aggregate = DispatchResult()
     # Dispatch ready matches court-by-court in schedule order.
     court_seen: Set[int] = set()
@@ -1349,6 +1378,81 @@ def release_opening_slot(
         aggregate.skipped.extend(part.skipped)
         aggregate.errors.extend(part.errors)
     return existing, aggregate
+
+
+def put_courts_on(
+    session: Session,
+    tournament: Tournament,
+    version: ScheduleVersion,
+) -> DispatchResult:
+    """Queue every fully checked-in preassigned match, then start the ones whose court is free.
+
+    Matches whose court is already playing stay queued. A later score starts the next one.
+    """
+    schema_err = _require_schema_ready(session)
+    if schema_err:
+        raise PreassignedSchemaNotReady(schema_err)
+
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
+    courts: Set[Tuple[date, int]] = set()
+    for match in matches:
+        if (match.match_type or "").upper() != "WF":
+            continue
+        if (match.runtime_status or "SCHEDULED").upper() in DONE_OR_LIVE:
+            continue
+        if match.team_a_id is None or match.team_b_id is None:
+            continue
+        if is_subsequent_waterfall(match) and not _feeders_final(session, match):
+            continue
+        if not match_fully_checked_in(session, match):
+            continue
+        slot = _assignment_slot(session, match)
+        if slot is None:
+            continue
+        event = session.get(Event, match.event_id) if match.event_id else None
+        if not is_preassigned(event, slot.day_date):
+            continue
+        match.court_queued = True
+        session.add(match)
+        if is_opening_waterfall(match):
+            key = slot_key_for_slot(slot)
+            if not _slot_released(
+                session,
+                version_id=version.id,
+                day_date=slot.day_date,
+                slot_key=key,
+            ):
+                session.add(
+                    OpeningSlotRelease(
+                        tournament_id=tournament.id,  # type: ignore[arg-type]
+                        schedule_version_id=version.id,  # type: ignore[arg-type]
+                        day_date=slot.day_date,
+                        slot_key=key,
+                        released_at=datetime.utcnow(),
+                        released_by="put_courts_on",
+                    )
+                )
+                session.flush()
+        if version.id is not None:
+            courts.add((slot.day_date, slot.court_number))
+    session.commit()
+
+    aggregate = DispatchResult()
+    for day_date, court_number in sorted(courts, key=lambda row: (row[0].isoformat(), row[1])):
+        if version.id is None:
+            continue
+        part = dispatch_court(
+            session,
+            tournament,
+            version_id=version.id,
+            day_date=day_date,
+            court_number=court_number,
+        )
+        aggregate.started_match_ids.extend(part.started_match_ids)
+        aggregate.waiting_match_ids.extend(part.waiting_match_ids)
+        aggregate.skipped.extend(part.skipped)
+        aggregate.errors.extend(part.errors)
+    return aggregate
 
 
 def list_ready_assigned_matches(

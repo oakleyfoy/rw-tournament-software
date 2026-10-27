@@ -18,6 +18,7 @@ from app.db_schema_patch import (
     ensure_event_columns,
     ensure_opening_slot_release_table,
     ensure_match_checkin_reset_column,
+    ensure_match_court_queued_column,
     ensure_team_photo_print_tables,
     ensure_team_photo_sms_session_columns,
     ensure_team_photo_sms_tables,
@@ -266,6 +267,7 @@ def on_startup():
     ensure_tournament_time_window_columns(engine)
     ensure_schedule_slot_columns(engine)
     ensure_match_checkin_reset_column(engine)
+    ensure_match_court_queued_column(engine)
     ensure_team_photo_print_tables(engine)
     ensure_team_photo_sms_tables(engine)
     ensure_team_photo_sms_session_columns(engine)

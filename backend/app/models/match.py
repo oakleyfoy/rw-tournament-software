@@ -58,6 +58,9 @@ class Match(SQLModel, table=True):
     # Set only by Back To Waiting for Check-In. Later-round dispatch ignores it
     # unless this match was explicitly reset.
     checkin_reset_pending: bool = Field(default=False)
+    # Staff sent this match to a court queue with Put courts on or a drag.
+    # Check-in alone does not set it, and a start will not happen until it is set.
+    court_queued: bool = Field(default=False)
 
     # Relationships
     tournament: "Tournament" = Relationship(back_populates="matches")
