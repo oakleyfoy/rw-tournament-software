@@ -5059,3 +5059,67 @@ def test_desk_team_list_hides_leftover_teams_once_the_draw_exists(client, sessio
         "Waiting / Pair": None,
     }
 
+
+def test_desk_team_list_hides_seeded_copy_of_the_same_partnership(client, session):
+    tournament = Tournament(
+        name="Copied Partnership",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 8),
+    )
+    session.add(tournament)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's B", team_count=16)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    original = Team(
+        event_id=event.id,
+        name="Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia",
+        display_name="Donna / Karen",
+        seed=17,
+        rating=7,
+        player1_cellphone="6785300581",
+        player2_cellphone="4046800335",
+    )
+    numbered_copy = Team(
+        event_id=event.id,
+        name="Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia (5)",
+        display_name="Donna / Karen",
+        seed=42,
+        rating=7,
+        player1_cellphone="6785300581",
+        player2_cellphone="4046800335",
+    )
+    opponent = Team(event_id=event.id, name="Traci / peg", display_name="Traci / peg", seed=5, rating=7)
+    session.add_all([original, numbered_copy, opponent])
+    session.flush()
+    session.add(
+        Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WOM_B_R1",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=numbered_copy.id,
+            team_b_id=opponent.id,
+            placeholder_side_a="A",
+            placeholder_side_b="B",
+        )
+    )
+    session.commit()
+
+    response = client.get(f"/api/desk/tournaments/{tournament.id}/teams")
+    assert response.status_code == 200, response.text
+    names = [item["name"] for item in response.json()]
+    assert names.count("Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia") == 1
+    assert not any(name.endswith("(5)") for name in names)
+    assert "Traci / peg" in names
+

@@ -1400,21 +1400,28 @@ def _team_targets_from_current_roster(
     targets: List[dict] = []
     seen_phones: set[str] = set()
     for slot, player_name in ((1, p1_name), (2, p2_name)):
+        slot_phone = _team_slot_phone(team, slot)
         player = resolve_roster_player_for_slot(
             players=players,
             links=links,
             team_id=team.id,
             slot_name=player_name,
-            slot_phone=_team_slot_phone(team, slot),
+            slot_phone=slot_phone,
             slot_email=_team_slot_email(team, slot),
         )
-        if not player or not player.phone_e164:
-            continue
-        try:
-            phone = format_e164(str(player.phone_e164))
-        except (TypeError, ValueError):
-            continue
-        if phone in seen_phones:
+        phone = slot_phone
+        player_id = None
+        player_label = player_name
+        if player is not None and player.phone_e164:
+            try:
+                player_phone = format_e164(str(player.phone_e164))
+            except (TypeError, ValueError):
+                player_phone = None
+            if player_phone and (phone is None or player_phone == phone):
+                phone = player_phone
+                player_id = player.id
+                player_label = player.display_name or player.full_name or player_name
+        if not phone or phone in seen_phones:
             continue
         seen_phones.add(phone)
         targets.append(
@@ -1422,8 +1429,8 @@ def _team_targets_from_current_roster(
                 "phone": phone,
                 "team_id": team.id,
                 "team_name": team.name,
-                "player_id": player.id,
-                "player_name": player.display_name or player.full_name,
+                "player_id": player_id,
+                "player_name": player_label,
             }
         )
     return targets

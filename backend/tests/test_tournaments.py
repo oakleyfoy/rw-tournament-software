@@ -881,6 +881,69 @@ def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: 
     assert cloned_teams[0].seed == 1
 
 
+def test_duplicate_tournament_collapses_seeded_partnership_copies(client: TestClient, session: Session):
+    source = Tournament(
+        name="Seeded Copy Source",
+        location="Nowhere",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 8),
+    )
+    session.add(source)
+    session.flush()
+    event = Event(tournament_id=source.id, category="womens", name="Women's B", team_count=2)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=source.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    original = Team(
+        event_id=event.id,
+        name="Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia",
+        display_name="Donna / Karen",
+        seed=17,
+    )
+    numbered = Team(
+        event_id=event.id,
+        name="Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia (5)",
+        display_name="Donna / Karen",
+        seed=42,
+    )
+    session.add_all([original, numbered])
+    session.flush()
+    session.add(
+        Match(
+            tournament_id=source.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WOM_B_R1",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=numbered.id,
+            placeholder_side_a="A",
+            placeholder_side_b="B",
+        )
+    )
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201, resp.text
+    duplicated_id = resp.json()["id"]
+    cloned_event = session.exec(
+        select(Event).where(Event.tournament_id == duplicated_id, Event.name == "Women's B")
+    ).first()
+    assert cloned_event is not None
+    cloned_teams = session.exec(select(Team).where(Team.event_id == cloned_event.id)).all()
+    assert len(cloned_teams) == 1
+    assert cloned_teams[0].name == "Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia"
+    assert cloned_teams[0].seed == 17
+    cloned_match = session.exec(select(Match).where(Match.tournament_id == duplicated_id)).one()
+    assert cloned_match.team_a_id == cloned_teams[0].id
+
+
 def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient, session: Session):
     source = Tournament(
         name="Dup Phone Source",

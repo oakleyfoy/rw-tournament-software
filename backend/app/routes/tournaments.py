@@ -56,6 +56,13 @@ def _normalize_clone_team_name(value: Optional[str]) -> str:
     return raw.casefold()
 
 
+def _clone_team_priority(team: Team) -> tuple:
+    """Copy the unsuffixed partnership before its numbered duplicate."""
+    name = (team.name or "").strip()
+    has_suffix = bool(re.search(r"\s+\(\d+\)$", name))
+    return (1 if has_suffix else 0, team.seed if team.seed is not None else 10**9, team.id or 0)
+
+
 def _assignment_is_newer(candidate: MatchAssignment, current: MatchAssignment) -> bool:
     candidate_at = candidate.assigned_at or datetime.min
     current_at = current.assigned_at or datetime.min
@@ -1383,7 +1390,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         used_team_name_keys_by_event: dict[int, set[str]] = {}
         used_team_seeds_by_event: dict[int, set[int]] = {}
         canonical_team_id_by_event_and_name: dict[tuple[int, str], int] = {}
-        for team in source_teams:
+        for team in sorted(source_teams, key=_clone_team_priority):
             if team.id is None:
                 continue
             mapped_event_id = event_id_map.get(team.event_id)
@@ -1394,7 +1401,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             base_name = (team.name or "").strip() or f"Team {team.id}"
             normalized_base_name = _normalize_clone_team_name(base_name)
             canonical_key = (mapped_event_id, normalized_base_name) if normalized_base_name else None
-            if canonical_key and team.seed is None:
+            if canonical_key:
                 canonical_team_id = canonical_team_id_by_event_and_name.get(canonical_key)
                 if canonical_team_id is not None:
                     team_id_map[team.id] = canonical_team_id  # type: ignore[index]
