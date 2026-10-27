@@ -85,27 +85,34 @@ def _record_start_over_baseline_assignments(
     if not assignments:
         return
     version_ids = sorted({a.schedule_version_id for a in assignments})
-    existing = session.exec(
-        select(StartOverBaselineAssignment).where(
-            StartOverBaselineAssignment.tournament_id == tournament_id,
-            StartOverBaselineAssignment.schedule_version_id.in_(version_ids),  # type: ignore[arg-type]
-        )
-    ).all()
+    # A later query would flush these inserts early and abort the copy.
+    with session.no_autoflush:
+        existing = session.exec(
+            select(StartOverBaselineAssignment).where(
+                StartOverBaselineAssignment.tournament_id == tournament_id,
+                StartOverBaselineAssignment.schedule_version_id.in_(version_ids),  # type: ignore[arg-type]
+            )
+        ).all()
     for row in existing:
         session.delete(row)
     session.flush()
     for assignment in assignments:
-        session.add(
-            StartOverBaselineAssignment(
-                tournament_id=tournament_id,
-                schedule_version_id=assignment.schedule_version_id,
-                match_id=assignment.match_id,
-                slot_id=assignment.slot_id,
-                assigned_at=assignment.assigned_at,
-                assigned_by=assignment.assigned_by,
-                locked=assignment.locked,
-            )
-        )
+        try:
+            with session.begin_nested():
+                session.add(
+                    StartOverBaselineAssignment(
+                        tournament_id=tournament_id,
+                        schedule_version_id=assignment.schedule_version_id,
+                        match_id=assignment.match_id,
+                        slot_id=assignment.slot_id,
+                        assigned_at=assignment.assigned_at,
+                        assigned_by=assignment.assigned_by,
+                        locked=assignment.locked,
+                    )
+                )
+                session.flush()
+        except IntegrityError:
+            continue
 
 
 class TournamentCreate(BaseModel):

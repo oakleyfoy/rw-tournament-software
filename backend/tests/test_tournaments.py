@@ -501,6 +501,89 @@ def test_baseline_snapshot_keeps_the_latest_row_when_a_match_is_assigned_twice(s
     assert rows[0].slot_id == later_slot.id
 
 
+def test_baseline_snapshot_skips_a_match_already_claimed_by_another_tournament(session: Session):
+    source = Tournament(
+        name="Baseline Owner",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 5),
+        end_date=date(2026, 11, 7),
+    )
+    other = Tournament(
+        name="Other Copy",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 5),
+        end_date=date(2026, 11, 7),
+    )
+    session.add(source)
+    session.add(other)
+    session.flush()
+    event = Event(tournament_id=source.id, category="mixed", name="Mixed A", team_count=2)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=source.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+    slot = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 11, 6),
+        start_time=time(7, 0),
+        end_time=time(8, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add(slot)
+    session.flush()
+    match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="MIX_A_R1_M01",
+        match_type="WF",
+        round_number=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+    )
+    session.add(match)
+    session.flush()
+    session.add(
+        StartOverBaselineAssignment(
+            tournament_id=source.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            slot_id=slot.id,
+            assigned_at=datetime(2026, 9, 30, 0, 11),
+            assigned_by="SEQUENCE_V1",
+            locked=False,
+        )
+    )
+    session.commit()
+
+    _record_start_over_baseline_assignments(
+        session,
+        tournament_id=other.id,
+        assignments=[
+            MatchAssignment(
+                schedule_version_id=version.id,
+                match_id=match.id,
+                slot_id=slot.id,
+                assigned_at=datetime(2026, 9, 30, 0, 11),
+                assigned_by="SEQUENCE_V1",
+            )
+        ],
+    )
+    session.commit()
+
+    rows = session.exec(select(StartOverBaselineAssignment)).all()
+    assert len(rows) == 1
+    assert rows[0].tournament_id == source.id
+
+
 def test_duplicate_tournament_copies_towel_lookup(client: TestClient, session: Session):
     """Duplicate should copy desk towel rows and point them at the cloned players."""
     source = Tournament(
