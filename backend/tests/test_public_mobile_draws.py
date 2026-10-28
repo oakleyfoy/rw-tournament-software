@@ -4,7 +4,7 @@ from datetime import date
 from io import BytesIO
 
 from PIL import Image
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models.event import Event
 from app.models.match import Match
@@ -83,6 +83,48 @@ def test_public_directory_is_searchable_and_hides_private_fields(client, session
     assert "email" not in raw
     assert "storage_key" not in raw
     assert "+1555" not in raw
+
+
+def test_public_directory_collapses_clone_and_city_variants(client, session: Session):
+    tournament, keep = _published(session)
+    event = session.exec(select(Event).where(Event.tournament_id == tournament.id)).first()
+    event.team_count = 8
+    session.add(event)
+    other_event = Event(
+        tournament_id=tournament.id,
+        category="women",
+        name="Women's B",
+        team_count=4,
+    )
+    session.add(other_event)
+    session.flush()
+    clones = [
+        Team(event_id=event.id, name="Paula Cherniak / Cory Lites", seed=3),
+        Team(event_id=event.id, name="Paula Cherniak / Cory Lites, Brookhaven, GA (2)", seed=None),
+        Team(event_id=event.id, name="Paula Cherniak / Cory Lites, Brookhaven, GA (3)", seed=None),
+        Team(event_id=event.id, name="Paula Cherniak / Cory Lites, Brookhaven, GA (4)", seed=None),
+        Team(event_id=event.id, name="Paula Cherniak / Cory Lites, Brookhaven, GA (5)", seed=None),
+        Team(event_id=other_event.id, name="Paula Cherniak / Cory Lites", seed=1),
+        Team(event_id=event.id, name="Inactive Paula / Partner (9)", seed=None, is_defaulted=True),
+    ]
+    for team in clones:
+        session.add(team)
+    session.commit()
+
+    response = client.get(f"/api/public/tournaments/{tournament.id}/teams")
+    assert response.status_code == 200
+    paula = [
+        item
+        for item in response.json()["teams"]
+        if any("Paula" in name for name in item["players"])
+        or "Paula" in item["full_name"]
+    ]
+    assert len(paula) == 2
+    assert {item["event_name"] for item in paula} == {"Mixed A", "Women's B"}
+    mixed = next(item for item in paula if item["event_name"] == "Mixed A")
+    assert mixed["team_id"] == clones[0].id
+    assert mixed["players"] == ["Paula Cherniak", "Cory Lites"]
+    assert all("(2)" not in name and "Brookhaven" not in name for name in mixed["players"])
 
 
 def test_public_photo_uses_the_existing_thumbnail_after_it_is_saved(client, session: Session, monkeypatch):

@@ -13,6 +13,10 @@ import re
 from app.models.team import Team
 
 _CLONE_SUFFIX = re.compile(r"\s+\(\d+\)$")
+_CITY_STATE = re.compile(r",\s*[^,]+,\s*[A-Z]{2}$", re.IGNORECASE)
+_CITY_FULL_STATE = re.compile(r",\s*[^,]+,\s*[A-Za-z][A-Za-z]+(?:\s+[A-Za-z]+)?$")
+_STATE_ONLY = re.compile(r",\s*[A-Z]{2}$", re.IGNORECASE)
+_DASH_STATE = re.compile(r"\s+-\s+[A-Z]{2}$", re.IGNORECASE)
 
 
 def team_is_active(team: Team) -> bool:
@@ -28,8 +32,43 @@ def _plain_team_name(value: str | None) -> str:
         raw = trimmed
 
 
+def _strip_player_location_noise(value: str | None) -> str:
+    """Strip clone suffixes and city/state tails from one player segment."""
+    raw = " ".join((value or "").strip().split())
+    while True:
+        cleaned = _CLONE_SUFFIX.sub("", raw).strip()
+        cleaned = _CITY_STATE.sub("", cleaned).strip()
+        cleaned = _CITY_FULL_STATE.sub("", cleaned).strip()
+        cleaned = _STATE_ONLY.sub("", cleaned).strip()
+        cleaned = _DASH_STATE.sub("", cleaned).strip()
+        if cleaned == raw:
+            return cleaned.casefold()
+        raw = cleaned
+
+
+def _partnership_identity(value: str | None) -> str:
+    """Stable partnership key ignoring (N) copies and city/state formatting."""
+    raw = _CLONE_SUFFIX.sub("", " ".join((value or "").strip().split())).strip()
+    if not raw:
+        return ""
+    if "/" in raw:
+        parts = [part.strip() for part in raw.split("/") if part.strip()]
+    elif "&" in raw:
+        parts = [part.strip() for part in raw.split("&") if part.strip()]
+    else:
+        parts = [raw]
+    sides = sorted(_strip_player_location_noise(part) for part in parts if part)
+    sides = [side for side in sides if side]
+    return " / ".join(sides)
+
+
 def _roster_identity(team: Team) -> str:
-    return _plain_team_name(team.name) or _plain_team_name(team.display_name)
+    return (
+        _partnership_identity(team.name)
+        or _partnership_identity(team.display_name)
+        or _plain_team_name(team.name)
+        or _plain_team_name(team.display_name)
+    )
 
 
 def _roster_keep_rank(team: Team, on_a_match: set) -> tuple:

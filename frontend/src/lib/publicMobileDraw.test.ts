@@ -171,5 +171,9 @@ describe('public mobile draw', () => {
       full_name: 'Heather Robinson, Cumming, GA / Shea Butler, Johns Island, SC',
       players: ['Heather Robinson', 'Shea Butler', 'HR'],
     })).toEqual(['Heather Robinson', 'Shea Butler'])
+    expect(rosterNames({
+      full_name: 'Paula Cherniak / Cory Lites, Brookhaven, GA (2)',
+      players: ['Paula Cherniak / Cory Lites, Brookhaven, GA (2)'],
+    })).toEqual(['Paula Cherniak', 'Cory Lites'])
   })
 })

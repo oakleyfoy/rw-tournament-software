@@ -182,17 +182,32 @@ export function opponentName(match: MobileMatch, teamId: number | null, options?
 }
 
 export function shortPlayerName(value: string): string {
-  return value
-    .trim()
-    .replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/i, '')
-    .replace(/\s+-\s+[A-Z]{2}\s*$/i, '')
-    .trim()
+  let cleaned = value.trim()
+  let previous = ''
+  while (cleaned !== previous) {
+    previous = cleaned
+    cleaned = cleaned
+      .replace(/\s+\(\d+\)$/i, '')
+      .replace(/,\s*[^,]+,\s*[A-Z]{2}\s*$/i, '')
+      .replace(/,\s*[^,]+,\s*[A-Za-z][A-Za-z]+(?:\s+[A-Za-z]+)?\s*$/i, '')
+      .replace(/,\s*[A-Z]{2}\s*$/i, '')
+      .replace(/\s+-\s+[A-Z]{2}\s*$/i, '')
+      .trim()
+  }
+  return cleaned
 }
 
 export function rosterNames(team: Pick<MobileTeam, 'full_name' | 'players'>): string[] {
-  const named = (team.players || []).map(shortPlayerName).filter(Boolean).slice(0, 2)
-  if (named.length) return named
-  return shortPlayerName(team.full_name).split(/\s*\/\s*|\s+&\s+/).map((part) => part.trim()).filter(Boolean).slice(0, 2)
+  const fromPlayers = (team.players || [])
+    .flatMap((value) => shortPlayerName(value).split(/\s*\/\s*|\s+&\s+/))
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (fromPlayers.length) return fromPlayers.slice(0, 2)
+  return shortPlayerName(team.full_name)
+    .split(/\s*\/\s*|\s+&\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 2)
 }
 
 export function displaySideLabel(name: string | null | undefined, options?: { keepPoolSeeds?: boolean }): string {

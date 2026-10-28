@@ -2063,6 +2063,7 @@ class PublicTeamDirectoryResponse(BaseModel):
 def _public_player_names(team: Team, linked_names: List[str]) -> List[str]:
     """Names players can search. Phone numbers and emails are never included."""
     raw = " ".join((team.name or "").split())
+    raw = re.sub(r"\s+\(\d+\)$", "", raw).strip()
     if "/" in raw:
         parts = [part.strip() for part in raw.split("/") if part.strip()]
     elif "&" in raw:
@@ -2071,12 +2072,20 @@ def _public_player_names(team: Team, linked_names: List[str]) -> List[str]:
         parts = [raw] if raw else []
     names: List[str] = []
     for part in parts:
-        cleaned = re.sub(r"\s+-\s+[A-Z]{2}$", "", part).strip()
-        cleaned = re.sub(r",\s*[^,]+,\s*[A-Z]{2}$", "", cleaned).strip()
+        cleaned = re.sub(r"\s+\(\d+\)$", "", part).strip()
+        cleaned = re.sub(r"\s+-\s+[A-Z]{2}$", "", cleaned).strip()
+        cleaned = re.sub(r",\s*[^,]+,\s*[A-Z]{2}$", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(
+            r",\s*[^,]+,\s*[A-Za-z][A-Za-z]+(?:\s+[A-Za-z]+)?$",
+            "",
+            cleaned,
+        ).strip()
+        cleaned = re.sub(r",\s*[A-Z]{2}$", "", cleaned, flags=re.IGNORECASE).strip()
         if cleaned and cleaned not in names:
             names.append(cleaned)
     for extra in linked_names:
         cleaned = " ".join((extra or "").split())
+        cleaned = re.sub(r"\s+\(\d+\)$", "", cleaned).strip()
         if cleaned and cleaned not in names:
             names.append(cleaned)
     return names
@@ -2094,13 +2103,27 @@ def public_team_directory(
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    if not _get_public_version(session, tournament_id):
+    version = _get_public_version(session, tournament_id)
+    if not version:
         return NotPublishedResponse()
 
     events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
     event_map = {event.id: event for event in events if event.id is not None}
     event_ids = list(event_map)
     teams = session.exec(select(Team).where(Team.event_id.in_(event_ids))).all() if event_ids else []
+    matches = []
+    if version.id is not None:
+        matches = list(
+            session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
+        )
+    draw_sizes = {
+        event.id: int(event.team_count or 0)
+        for event in events
+        if event.id is not None
+    }
+    from app.services.active_roster import visible_roster_teams
+
+    teams = visible_roster_teams(list(teams), matches, draw_sizes)
     team_ids = [team.id for team in teams if team.id is not None]
     links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))).all() if team_ids else []
     player_ids = list({link.player_id for link in links})
