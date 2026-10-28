@@ -18,13 +18,11 @@ import {
 import {
   drawPathWithTeamHighlight,
   drawTargetsForTeam,
-  hometownSummary,
   hubOpponentLabel,
   matchResultLabel,
   opponentFullNameFromMatch,
   opponentPlayerLines,
   publicTournamentHubPath,
-  teamHubStatus,
 } from '../../lib/tournamentHub'
 import { HubPhotoDialog, HubTeamPhoto } from './HubTeamPhoto'
 import './publicTournamentHub.css'
@@ -131,10 +129,6 @@ export default function PublicTournamentTeamPage() {
     () => (Number.isFinite(selectedTeamId) ? buildTeamJourney(selectedTeamId, matches) : null),
     [selectedTeamId, matches],
   )
-  const status = useMemo(
-    () => (Number.isFinite(selectedTeamId) ? teamHubStatus(selectedTeamId, matches) : null),
-    [selectedTeamId, matches],
-  )
   const drawTargets = useMemo(
     () => (team ? drawTargetsForTeam(tid, team, matches, events) : []),
     [tid, team, matches, events],
@@ -162,7 +156,7 @@ export default function PublicTournamentTeamPage() {
     return <div className="hub-page"><p className="hub-error" role="alert">{error}</p></div>
   }
 
-  if (!team || !journey || !status) {
+  if (!team || !journey) {
     return (
       <div className="hub-page">
         <Link className="hub-back" to={publicTournamentHubPath(tid)}>Back to search</Link>
@@ -212,19 +206,11 @@ export default function PublicTournamentTeamPage() {
           large
           onEnlarge={team.photo_version ? () => setEnlargedTeamId(team.team_id) : undefined}
         />
-        <div>
-          <h1 className="hub-team-names">{rosterNames(team).join(' / ')}</h1>
-          {hometownSummary(team.full_name) && (
-            <div className="hub-hometown" data-testid="hub-own-hometown">{hometownSummary(team.full_name)}</div>
-          )}
-        </div>
+        <h1 className="hub-team-names">{rosterNames(team).join(' / ')}</h1>
       </div>
 
       <p className="hub-kicker" style={{ marginTop: 18 }}>Division</p>
       <p className="hub-division">{team.event_name}</p>
-
-      <p className="hub-kicker" style={{ marginTop: 18 }}>Current Status</p>
-      <span className="hub-status" data-testid="hub-team-status">{status.label}</span>
 
       <section className="hub-card" aria-label="Next match">
         <h2>Next Match</h2>
