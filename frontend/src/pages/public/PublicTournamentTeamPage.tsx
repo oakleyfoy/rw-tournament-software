@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   getPublicDrawsList,
@@ -23,6 +23,7 @@ import {
   opponentFullNameFromMatch,
   opponentPlayerLines,
   publicTournamentHubPath,
+  publicTournamentTeamPath,
 } from '../../lib/tournamentHub'
 import { HubPhotoDialog, HubTeamPhoto } from './HubTeamPhoto'
 import './publicTournamentHub.css'
@@ -60,6 +61,33 @@ function OpponentNameBlock({
         </div>
       ))}
     </div>
+  )
+}
+
+function TeamHotLink({
+  tournamentId,
+  teamId,
+  className,
+  testId,
+  children,
+}: {
+  tournamentId: number
+  teamId: number | null | undefined
+  className?: string
+  testId?: string
+  children: ReactNode
+}) {
+  if (teamId == null || !Number.isFinite(teamId) || teamId <= 0) {
+    return <div className={className}>{children}</div>
+  }
+  return (
+    <Link
+      className={`hub-team-link ${className || ''}`.trim()}
+      to={publicTournamentTeamPath(tournamentId, teamId)}
+      data-testid={testId || `hub-team-link-${teamId}`}
+    >
+      {children}
+    </Link>
   )
 }
 
@@ -219,17 +247,18 @@ export default function PublicTournamentTeamPage() {
         <h2>Next Match</h2>
         {next ? (
           <>
-            <div className="hub-opponent-row">
-              <HubTeamPhoto
-                tournamentId={tid}
-                team={nextOpponent}
-                onEnlarge={nextOpponent?.photo_version ? () => setEnlargedTeamId(nextOpponent.team_id) : undefined}
-              />
+            <TeamHotLink
+              tournamentId={tid}
+              teamId={nextOpponentId}
+              className="hub-opponent-row"
+              testId={nextOpponentId != null ? `hub-team-link-${nextOpponentId}` : undefined}
+            >
+              <HubTeamPhoto tournamentId={tid} team={nextOpponent} />
               <OpponentNameBlock
                 fullName={nextOpponentFullName}
                 fallbackLabel={hubOpponentLabel(next, team.team_id)}
               />
-            </div>
+            </TeamHotLink>
             <div className="hub-meta">
               <span>{roundLabel(next)}</span>
               <span>{timeText(next)}</span>
@@ -258,7 +287,11 @@ export default function PublicTournamentTeamPage() {
                       const theirOppFull = theirOpp?.full_name || opponentFullNameFromMatch(match, nextOpponentId)
                       return (
                         <div key={match.match_id} className="hub-opponent-history-item">
-                          <div className="hub-history-main">
+                          <TeamHotLink
+                            tournamentId={tid}
+                            teamId={theirOppId}
+                            className="hub-history-main"
+                          >
                             <HubTeamPhoto tournamentId={tid} team={theirOpp} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <OpponentNameBlock
@@ -272,7 +305,7 @@ export default function PublicTournamentTeamPage() {
                                 {result && <span className={result === 'Win' ? 'hub-win' : 'hub-loss'}>{result}</span>}
                               </div>
                             </div>
-                          </div>
+                          </TeamHotLink>
                         </div>
                       )
                     })}
@@ -300,7 +333,11 @@ export default function PublicTournamentTeamPage() {
           const opponentFull = opponent?.full_name || opponentFullNameFromMatch(match, team.team_id)
           return (
             <div key={match.match_id} className="hub-history-item">
-              <div className="hub-history-main">
+              <TeamHotLink
+                tournamentId={tid}
+                teamId={oppId}
+                className="hub-history-main"
+              >
                 <HubTeamPhoto tournamentId={tid} team={opponent} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="hub-history-top">
@@ -316,7 +353,7 @@ export default function PublicTournamentTeamPage() {
                     {match.score_display && <span>{match.score_display}</span>}
                   </div>
                 </div>
-              </div>
+              </TeamHotLink>
             </div>
           )
         })}

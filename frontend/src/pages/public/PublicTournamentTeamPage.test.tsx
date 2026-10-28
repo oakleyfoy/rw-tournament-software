@@ -145,13 +145,93 @@ describe('PublicTournamentTeamPage', () => {
     expect(screen.getByTestId('hub-photo-20')).toBeTruthy()
     expect(screen.getByText('Destin, FL')).toBeTruthy()
     expect(screen.getByText('Atlanta, GA')).toBeTruthy()
+    expect(screen.getByTestId('hub-team-link-20')).toHaveAttribute('href', '/t/3/hub/teams/20')
     expect(screen.getByTestId('hub-opponent-past-matches')).toHaveTextContent('Opponent\'s past matches')
     expect(screen.getByTestId('hub-opponent-past-matches')).toHaveTextContent('Eve Ray')
     expect(screen.getByTestId('hub-opponent-past-matches')).toHaveTextContent('Orlando, FL')
     expect(screen.getByTestId('hub-opponent-past-matches')).toHaveTextContent('8-3')
     expect(screen.getByTestId('hub-opponent-past-matches')).toHaveTextContent('Win')
+    expect(screen.getByTestId('hub-team-link-30')).toHaveAttribute('href', '/t/3/hub/teams/30')
 
     fireEvent.click(screen.getByTestId('hub-view-draw-position'))
     expect(await screen.findByTestId('draw-location')).toHaveTextContent('/t/3/draws/7/waterfall?team=10&view=draw')
+  })
+
+  it('opens another team page from a hot link without searching', async () => {
+    vi.mocked(getPublicTeamDirectory).mockResolvedValue({
+      status: 'OK',
+      tournament_name: 'Amelia Island',
+      teams: [
+        {
+          team_id: 10,
+          event_id: 7,
+          event_name: "Women's A",
+          seed: 1,
+          full_name: 'Ada Smith, Cumming, GA / Bea Jones, Johns Island, SC',
+          players: ['Ada Smith', 'Bea Jones'],
+          photo_version: null,
+        },
+        {
+          team_id: 20,
+          event_id: 7,
+          event_name: "Women's A",
+          seed: 2,
+          full_name: 'Cara Lee, Destin, FL / Dee Chen, Atlanta, GA',
+          players: ['Cara Lee', 'Dee Chen'],
+          photo_version: null,
+        },
+      ],
+    })
+    vi.mocked(getPublicSchedule).mockResolvedValue({
+      status: 'OK',
+      tournament_name: 'Amelia Island',
+      published_version_id: 1,
+      show_court_info: true,
+      events: [],
+      divisions: [],
+      days: [],
+      matches: [
+        {
+          match_id: 41,
+          match_number: 41,
+          match_code: 'EVT_WF_R1_01',
+          stage: 'WF',
+          event_id: 7,
+          event_name: "Women's A",
+          division_name: null,
+          day_index: 1,
+          day_label: 'Friday, June 5',
+          scheduled_time: '9:00 AM',
+          sort_time: '09:00',
+          court_name: 'Court 2',
+          status: 'SCHEDULED',
+          team1_display: 'Ada / Bea',
+          team2_display: 'Cara / Dee',
+          team1_full_name: 'Ada Smith, Cumming, GA / Bea Jones, Johns Island, SC',
+          team2_full_name: 'Cara Lee, Destin, FL / Dee Chen, Atlanta, GA',
+          score_display: null,
+          winner_team_id: null,
+          team_a_id: 10,
+          team_b_id: 20,
+        },
+      ],
+    })
+    vi.mocked(getPublicDrawsList).mockResolvedValue({
+      tournament_name: 'Amelia Island',
+      events: [],
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/t/3/hub/teams/10']}>
+        <Routes>
+          <Route path="/t/:tournamentId/hub/teams/:teamId" element={<PublicTournamentTeamPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('hub-team-link-20')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('hub-team-link-20'))
+    expect(await screen.findByText('Cara Lee / Dee Chen')).toBeTruthy()
+    expect(screen.getByText("Women's A")).toBeTruthy()
   })
 })
