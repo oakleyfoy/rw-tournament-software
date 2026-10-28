@@ -33,7 +33,16 @@ describe('PublicTournamentTeamPage', () => {
           seed: 1,
           full_name: 'Ada Smith / Bea Jones',
           players: ['Ada Smith', 'Bea Jones'],
-          photo_version: null,
+          photo_version: 'photo-10',
+        },
+        {
+          team_id: 20,
+          event_id: 7,
+          event_name: "Women's A",
+          seed: 2,
+          full_name: 'Cara Lee / Dee Chen',
+          players: ['Cara Lee', 'Dee Chen'],
+          photo_version: 'photo-20',
         },
       ],
     })
@@ -96,6 +105,8 @@ describe('PublicTournamentTeamPage', () => {
     )
 
     expect(await screen.findByText('Ada Smith / Bea Jones')).toBeTruthy()
+    expect(screen.getByTestId('hub-photo-10')).toBeTruthy()
+    expect(screen.getByTestId('hub-photo-20')).toBeTruthy()
     expect(screen.getByTestId('hub-team-status')).toHaveTextContent('Court assigned')
     expect(screen.getByText('Cara Lee / Dee Chen')).toBeTruthy()
 

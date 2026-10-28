@@ -23,9 +23,16 @@ import {
   publicTournamentHubPath,
   teamHubStatus,
 } from '../../lib/tournamentHub'
+import { HubPhotoDialog, HubTeamPhoto } from './HubTeamPhoto'
 import './publicTournamentHub.css'
 
 const REFRESH_MS = 15000
+
+function opponentTeamId(match: ScheduleMatchItem, teamId: number): number | null {
+  if (match.team_a_id === teamId) return match.team_b_id
+  if (match.team_b_id === teamId) return match.team_a_id
+  return null
+}
 
 export default function PublicTournamentTeamPage() {
   const { tournamentId, teamId } = useParams<{ tournamentId: string; teamId: string }>()
@@ -42,6 +49,7 @@ export default function PublicTournamentTeamPage() {
   const [notPublished, setNotPublished] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [choosingDraw, setChoosingDraw] = useState(false)
+  const [enlargedTeamId, setEnlargedTeamId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!Number.isFinite(tid) || tid <= 0) return
@@ -86,6 +94,7 @@ export default function PublicTournamentTeamPage() {
     }
   }, [tid])
 
+  const teamMap = useMemo(() => new Map(teams.map((item) => [item.team_id, item])), [teams])
   const team = useMemo(
     () => teams.find((item) => item.team_id === selectedTeamId) || null,
     [teams, selectedTeamId],
@@ -102,6 +111,7 @@ export default function PublicTournamentTeamPage() {
     () => (team ? drawTargetsForTeam(tid, team, matches, events) : []),
     [tid, team, matches, events],
   )
+  const enlargedTeam = enlargedTeamId == null ? null : teamMap.get(enlargedTeamId) || null
 
   if (!Number.isFinite(tid) || tid <= 0 || !Number.isFinite(selectedTeamId)) {
     return <div className="hub-page"><p className="hub-error" role="alert">Team not found.</p></div>
@@ -148,6 +158,8 @@ export default function PublicTournamentTeamPage() {
 
   const previous = journey.completed.slice().reverse()
   const next = journey.next
+  const nextOpponentId = next ? opponentTeamId(next, team.team_id) : null
+  const nextOpponent = nextOpponentId == null ? null : teamMap.get(nextOpponentId) || null
 
   return (
     <div className="hub-page" data-testid="tournament-hub-team">
@@ -155,7 +167,15 @@ export default function PublicTournamentTeamPage() {
       <p className="hub-kicker">{tournamentName}</p>
 
       <p className="hub-kicker" style={{ marginTop: 18 }}>Team</p>
-      <h1 className="hub-team-names">{rosterNames(team).join(' / ')}</h1>
+      <div className="hub-team-header">
+        <HubTeamPhoto
+          tournamentId={tid}
+          team={team}
+          large
+          onEnlarge={team.photo_version ? () => setEnlargedTeamId(team.team_id) : undefined}
+        />
+        <h1 className="hub-team-names">{rosterNames(team).join(' / ')}</h1>
+      </div>
 
       <p className="hub-kicker" style={{ marginTop: 18 }}>Division</p>
       <p className="hub-division">{team.event_name}</p>
@@ -167,7 +187,14 @@ export default function PublicTournamentTeamPage() {
         <h2>Next Match</h2>
         {next ? (
           <>
-            <div className="hub-opponent">{hubOpponentLabel(next, team.team_id)}</div>
+            <div className="hub-opponent-row">
+              <HubTeamPhoto
+                tournamentId={tid}
+                team={nextOpponent}
+                onEnlarge={nextOpponent?.photo_version ? () => setEnlargedTeamId(nextOpponent.team_id) : undefined}
+              />
+              <div className="hub-opponent">{hubOpponentLabel(next, team.team_id)}</div>
+            </div>
             <div className="hub-meta">
               <span>{roundLabel(next)}</span>
               <span>{timeText(next)}</span>
@@ -194,15 +221,22 @@ export default function PublicTournamentTeamPage() {
         )}
         {previous.map((match) => {
           const result = matchResultLabel(match, team.team_id)
+          const oppId = opponentTeamId(match, team.team_id)
+          const opponent = oppId == null ? null : teamMap.get(oppId) || null
           return (
             <div key={match.match_id} className="hub-history-item">
-              <div className="hub-history-top">
-                <span>{hubOpponentLabel(match, team.team_id)}</span>
-                {result && <span className={result === 'Win' ? 'hub-win' : 'hub-loss'}>{result}</span>}
-              </div>
-              <div className="hub-meta">
-                <span>{roundLabel(match)}</span>
-                {match.score_display && <span>{match.score_display}</span>}
+              <div className="hub-history-main">
+                <HubTeamPhoto tournamentId={tid} team={opponent} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="hub-history-top">
+                    <span>{hubOpponentLabel(match, team.team_id)}</span>
+                    {result && <span className={result === 'Win' ? 'hub-win' : 'hub-loss'}>{result}</span>}
+                  </div>
+                  <div className="hub-meta">
+                    <span>{roundLabel(match)}</span>
+                    {match.score_display && <span>{match.score_display}</span>}
+                  </div>
+                </div>
               </div>
             </div>
           )
@@ -242,6 +276,14 @@ export default function PublicTournamentTeamPage() {
             </div>
           )}
         </section>
+      )}
+
+      {enlargedTeam?.photo_version && (
+        <HubPhotoDialog
+          tournamentId={tid}
+          team={enlargedTeam}
+          onClose={() => setEnlargedTeamId(null)}
+        />
       )}
     </div>
   )

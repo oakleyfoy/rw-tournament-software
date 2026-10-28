@@ -97,6 +97,99 @@
   color: inherit;
 }
 
+.hub-photo,
+.hub-photo-fallback {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #e8eaf6;
+}
+
+.hub-photo.large,
+.hub-photo-fallback.large {
+  width: 96px;
+  height: 96px;
+  border-radius: 16px;
+}
+
+.hub-photo-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1a237e;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.hub-photo-fallback.large {
+  font-size: 28px;
+}
+
+.hub-photo-enlarge {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 16px;
+  min-height: 0;
+}
+
+.hub-team-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.hub-team-header .hub-team-names {
+  margin: 0;
+}
+
+.hub-opponent-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hub-history-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hub-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(15, 23, 42, 0.82);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.hub-dialog img {
+  max-width: min(92vw, 520px);
+  max-height: 75vh;
+  border-radius: 12px;
+  object-fit: contain;
+  background: #111;
+}
+
+.hub-dialog button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: #1a237e;
+  font-weight: 800;
+  padding: 8px 16px;
+}
+
 .hub-result strong {
   display: block;
   font-size: 16px;
@@ -222,6 +315,8 @@
 }
 
 .hub-history-item {
+  display: grid;
+  gap: 6px;
   padding: 12px 0;
   border-top: 1px solid #eef1f6;
 }

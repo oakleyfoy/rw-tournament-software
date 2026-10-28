@@ -28,7 +28,7 @@ describe('PublicTournamentHubPage', () => {
           seed: 1,
           full_name: 'Ada Smith / Bea Jones',
           players: ['Ada Smith', 'Bea Jones'],
-          photo_version: null,
+          photo_version: 'photo-10',
         },
         {
           team_id: 11,
@@ -80,6 +80,7 @@ describe('PublicTournamentHubPage', () => {
 
     fireEvent.change(screen.getByTestId('hub-team-search'), { target: { value: 'bea' } })
     expect(await screen.findByText('Ada Smith / Bea Jones')).toBeTruthy()
+    expect(screen.getByTestId('hub-photo-10')).toBeTruthy()
     expect(screen.queryByText('Ada Smith / Kim Park')).toBeNull()
 
     fireEvent.change(screen.getByTestId('hub-team-search'), { target: { value: 'ada' } })

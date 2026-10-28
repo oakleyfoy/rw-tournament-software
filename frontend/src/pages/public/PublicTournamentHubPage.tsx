@@ -9,6 +9,7 @@ import {
 } from '../../api/client'
 import { rosterNames, searchPublicTeams } from '../../lib/publicMobileDraw'
 import { publicTournamentTeamPath } from '../../lib/tournamentHub'
+import { HubTeamPhoto } from './HubTeamPhoto'
 import './publicTournamentHub.css'
 
 const REFRESH_MS = 15000
@@ -134,6 +135,7 @@ export default function PublicTournamentHubPage() {
               data-testid={`hub-result-${team.team_id}`}
               onClick={() => navigate(publicTournamentTeamPath(tid, team.team_id))}
             >
+              <HubTeamPhoto tournamentId={tid} team={team} />
               <span>
                 <strong>{rosterNames(team).join(' / ')}</strong>
                 <small>{team.event_name}</small>
