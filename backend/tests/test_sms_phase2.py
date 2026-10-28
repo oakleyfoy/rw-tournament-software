@@ -1529,6 +1529,92 @@ def test_sms_status(client, session, setup_tournament_with_teams):
     assert data["teams_with_phones"] == 2  # team1 and team2
 
 
+def test_sms_status_counts_phones_on_the_draw_only(client, session):
+    """Partner rows past the draw are not part of the phone count."""
+    from app.models.event import Event
+    from app.models.match import Match
+    from app.models.schedule_version import ScheduleVersion
+    from app.models.team import Team
+    from app.models.tournament import Tournament
+
+    tournament = Tournament(
+        name="Draw Phone Count",
+        location="Test",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 8),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+
+    event = Event(
+        tournament_id=tournament.id,
+        name="Women's A",
+        category="womens",
+        team_count=2,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft", notes="Desk Draft")
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    def add_team(name: str, seed, p1: str, p2: str):
+        team = Team(
+            event_id=event.id,
+            name=name,
+            display_name=name,
+            seed=seed,
+            p1_cell=p1,
+            p2_cell=p2,
+        )
+        session.add(team)
+        return team
+
+    on_draw_a = add_team("Ada / Bea", 1, "9015550101", "9015550102")
+    add_team("Cara / Dee", 2, "9015550103", "9015550104")
+    add_team("Extra / Seed", 3, "9015550191", "9015550192")
+    add_team("Gina / Sarah", None, "9015550193", "9015550194")
+    session.commit()
+    session.refresh(on_draw_a)
+
+    session.add(
+        Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WOM_BWW_QF_1",
+            match_type="MAIN",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=on_draw_a.id,
+            placeholder_side_a="Seed 1",
+            placeholder_side_b="Seed 2",
+        )
+    )
+    session.commit()
+
+    resp = client.get(f"/api/tournaments/{tournament.id}/sms/status")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_teams"] == 2
+    assert data["phone_slots"] == 4
+    assert data["phones_on_file"] == 4
+
+    preview = client.post(
+        f"/api/tournaments/{tournament.id}/sms/preview/blast",
+        json={"message": "Draw only"},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["total_messages"] == 4
+
+
 def test_sync_player_contacts_populates_player_lookup(client, session, setup_tournament_with_teams):
     """Player lookup should populate only after explicit player-contact sync."""
     tournament, _, _ = setup_tournament_with_teams

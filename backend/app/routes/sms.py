@@ -279,6 +279,8 @@ class SmsStatusResponse(BaseModel):
     tournament_has_settings: bool
     total_teams: int
     teams_with_phones: int
+    phone_slots: int = 0
+    phones_on_file: int = 0
 
 
 class SmsWebhookResponse(BaseModel):
@@ -531,20 +533,49 @@ def _get_tournament_or_404(session: Session, tournament_id: int) -> Tournament |
 
 
 def _get_all_teams_for_tournament(session: Session, tournament_id: int) -> List[Team]:
-    """Get all teams across all events in a tournament."""
-    from app.models.event import Event
-
+    """Teams on the draw. Leftover partner rows and seeds past the draw stay out."""
     events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
-    event_ids = [e.id for e in events]
+    event_ids = [e.id for e in events if e.id is not None]
     if not event_ids:
         return []
 
-    from app.services.active_roster import team_is_active
+    from app.services.active_roster import visible_roster_teams
 
     teams = session.exec(
         select(Team).where(Team.event_id.in_(event_ids))  # type: ignore
     ).all()
-    return [team for team in teams if team_is_active(team)]
+    matches = session.exec(
+        select(Match).where(Match.event_id.in_(event_ids))  # type: ignore
+    ).all()
+    draw_sizes = {event.id: event.team_count for event in events if event.id is not None and event.team_count}
+    return visible_roster_teams(list(teams), list(matches), draw_sizes)
+
+
+def _draw_phone_coverage(
+    session: Session,
+    tournament_id: int,
+    teams: List[Team],
+    *,
+    player_contacts_only: bool,
+) -> tuple[int, int]:
+    """Player numbers on the draw, and how many of those numbers are on file."""
+    slots = 0
+    on_file = 0
+    for team in teams:
+        targets = _team_sms_targets(
+            session=session,
+            tournament_id=tournament_id,
+            team=team,
+            player_contacts_only=player_contacts_only,
+        )
+        on_file += len(targets)
+        names = _team_player_names(team)
+        present = 0
+        for slot, name in ((1, names[0]), (2, names[1])):
+            if (name or "").strip() or _team_slot_phone(team, slot):
+                present += 1
+        slots += max(present, len(targets))
+    return slots, on_file
 
 
 def _resolve_match_lookup_version(
@@ -1832,10 +1863,7 @@ def _get_teams_for_event(
     if not event or event.tournament_id != tournament_id:
         raise HTTPException(404, f"Event {event_id} not found in tournament")
 
-    from app.services.active_roster import team_is_active
-
-    teams = session.exec(select(Team).where(Team.event_id == event_id)).all()
-    return [team for team in teams if team_is_active(team)]
+    return [team for team in _get_all_teams_for_tournament(session, tournament_id) if team.event_id == event_id]
 
 
 def _get_teams_for_division(
@@ -1881,12 +1909,11 @@ def _get_teams_for_division(
             ),
         )
 
-    from app.services.active_roster import team_is_active
-
-    teams = session.exec(
-        select(Team).where(Team.event_id.in_(matched_event_ids))  # type: ignore
-    ).all()
-    return [team for team in teams if team_is_active(team)]
+    return [
+        team
+        for team in _get_all_teams_for_tournament(session, tournament_id)
+        if team.event_id in matched_event_ids
+    ]
 
 
 def _preview_for_teams(
@@ -2102,6 +2129,12 @@ def get_sms_status(
             player_contacts_only=player_contacts_only,
         )
     )
+    phone_slots, phones_on_file = _draw_phone_coverage(
+        session,
+        tournament_id,
+        teams,
+        player_contacts_only=player_contacts_only,
+    )
 
     settings = session.exec(
         select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
@@ -2113,6 +2146,8 @@ def get_sms_status(
         tournament_has_settings=settings is not None,
         total_teams=len(teams),
         teams_with_phones=teams_with_phones,
+        phone_slots=phone_slots,
+        phones_on_file=phones_on_file,
     )
 
 

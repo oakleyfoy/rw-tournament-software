@@ -4477,6 +4477,8 @@ export interface SmsStatusResponse {
   tournament_has_settings: boolean
   total_teams: number
   teams_with_phones: number
+  phone_slots?: number
+  phones_on_file?: number
 }
 
 export interface SmsSendResult {

@@ -7454,6 +7454,8 @@ function SmsAdminTab({
     tournament_has_settings: boolean
     total_teams: number
     teams_with_phones: number
+    phone_slots?: number
+    phones_on_file?: number
   } | null>(null)
   const [tournamentTimezone, setTournamentTimezone] = useState<string | null>(null)
 
@@ -8330,7 +8332,7 @@ function SmsAdminTab({
             <strong>From #:</strong> {status?.from_number || '—'}
           </div>
           <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
-            <strong>Teams:</strong> {status?.teams_with_phones}/{status?.total_teams} with phones
+            <strong>Phones:</strong> {status?.phones_on_file ?? 0}/{status?.phone_slots ?? 0}
           </div>
           <div style={{ border: '1px solid #e6e6e6', borderRadius: 8, padding: '8px 10px' }}>
             <strong>Settings row:</strong> {status?.tournament_has_settings ? 'Yes' : 'No (defaults)'}
