@@ -11178,6 +11178,44 @@ export default function TournamentDeskPage() {
             }}
           />
           <button
+            type="button"
+            onClick={() => {
+              if (!tid) return
+              window.open(`/desk/t/${tid}/display/court-assigned`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Court Assigned
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!tid) return
+              window.open(`/desk/t/${tid}/display/dynamic`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Dynamic Screen
+          </button>
+          <button
             onClick={() => {
               if (!tid) return
               window.open(`/tournaments/${tid}/tournament-qr`, '_blank', 'noopener,noreferrer')
