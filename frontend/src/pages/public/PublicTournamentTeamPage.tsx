@@ -18,8 +18,11 @@ import {
 import {
   drawPathWithTeamHighlight,
   drawTargetsForTeam,
+  hometownSummary,
   hubOpponentLabel,
   matchResultLabel,
+  opponentFullNameFromMatch,
+  opponentPlayerLines,
   publicTournamentHubPath,
   teamHubStatus,
 } from '../../lib/tournamentHub'
@@ -32,6 +35,31 @@ function opponentTeamId(match: ScheduleMatchItem, teamId: number): number | null
   if (match.team_a_id === teamId) return match.team_b_id
   if (match.team_b_id === teamId) return match.team_a_id
   return null
+}
+
+function OpponentNameBlock({
+  fullName,
+  fallbackLabel,
+  compact = false,
+}: {
+  fullName: string | null | undefined
+  fallbackLabel: string
+  compact?: boolean
+}) {
+  const lines = opponentPlayerLines(fullName)
+  if (!lines.length) {
+    return <div className={compact ? 'hub-compact-name' : 'hub-opponent'}>{fallbackLabel}</div>
+  }
+  return (
+    <div className="hub-opponent-copy" data-testid="hub-opponent-with-hometown">
+      {lines.map((line) => (
+        <div key={`${line.name}-${line.hometown || 'none'}`} className={compact ? 'hub-compact-name' : 'hub-player-line'}>
+          <span>{line.name}</span>
+          {line.hometown ? <span className="hub-hometown">{line.hometown}</span> : null}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function PublicTournamentTeamPage() {
@@ -160,6 +188,16 @@ export default function PublicTournamentTeamPage() {
   const next = journey.next
   const nextOpponentId = next ? opponentTeamId(next, team.team_id) : null
   const nextOpponent = nextOpponentId == null ? null : teamMap.get(nextOpponentId) || null
+  const nextOpponentFullName = next
+    ? (nextOpponent?.full_name || opponentFullNameFromMatch(next, team.team_id))
+    : null
+  const nextOpponentJourney = nextOpponentId == null
+    ? null
+    : buildTeamJourney(nextOpponentId, matches)
+  const nextOpponentPast = (nextOpponentJourney?.completed || [])
+    .filter((match) => !next || match.match_id !== next.match_id)
+    .slice()
+    .reverse()
 
   return (
     <div className="hub-page" data-testid="tournament-hub-team">
@@ -174,7 +212,12 @@ export default function PublicTournamentTeamPage() {
           large
           onEnlarge={team.photo_version ? () => setEnlargedTeamId(team.team_id) : undefined}
         />
-        <h1 className="hub-team-names">{rosterNames(team).join(' / ')}</h1>
+        <div>
+          <h1 className="hub-team-names">{rosterNames(team).join(' / ')}</h1>
+          {hometownSummary(team.full_name) && (
+            <div className="hub-hometown" data-testid="hub-own-hometown">{hometownSummary(team.full_name)}</div>
+          )}
+        </div>
       </div>
 
       <p className="hub-kicker" style={{ marginTop: 18 }}>Division</p>
@@ -193,7 +236,10 @@ export default function PublicTournamentTeamPage() {
                 team={nextOpponent}
                 onEnlarge={nextOpponent?.photo_version ? () => setEnlargedTeamId(nextOpponent.team_id) : undefined}
               />
-              <div className="hub-opponent">{hubOpponentLabel(next, team.team_id)}</div>
+              <OpponentNameBlock
+                fullName={nextOpponentFullName}
+                fallbackLabel={hubOpponentLabel(next, team.team_id)}
+              />
             </div>
             <div className="hub-meta">
               <span>{roundLabel(next)}</span>
@@ -205,6 +251,45 @@ export default function PublicTournamentTeamPage() {
               <p className="hub-hint" style={{ textAlign: 'left', marginTop: 10 }}>
                 Opponent is not determined yet.
               </p>
+            )}
+
+            {nextOpponentId != null && (
+              <div data-testid="hub-opponent-past-matches">
+                <div className="hub-subheading">Opponent&apos;s past matches</div>
+                {nextOpponentPast.length === 0 ? (
+                  <p className="hub-hint" style={{ textAlign: 'left', margin: 0 }}>
+                    No completed matches yet for this opponent.
+                  </p>
+                ) : (
+                  <div className="hub-opponent-history">
+                    {nextOpponentPast.map((match) => {
+                      const result = matchResultLabel(match, nextOpponentId)
+                      const theirOppId = opponentTeamId(match, nextOpponentId)
+                      const theirOpp = theirOppId == null ? null : teamMap.get(theirOppId) || null
+                      const theirOppFull = theirOpp?.full_name || opponentFullNameFromMatch(match, nextOpponentId)
+                      return (
+                        <div key={match.match_id} className="hub-opponent-history-item">
+                          <div className="hub-history-main">
+                            <HubTeamPhoto tournamentId={tid} team={theirOpp} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <OpponentNameBlock
+                                fullName={theirOppFull}
+                                fallbackLabel={hubOpponentLabel(match, nextOpponentId)}
+                                compact
+                              />
+                              <div className="hub-meta">
+                                <span>{roundLabel(match)}</span>
+                                {match.score_display && <span>{match.score_display}</span>}
+                                {result && <span className={result === 'Win' ? 'hub-win' : 'hub-loss'}>{result}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             )}
           </>
         ) : (
@@ -223,13 +308,18 @@ export default function PublicTournamentTeamPage() {
           const result = matchResultLabel(match, team.team_id)
           const oppId = opponentTeamId(match, team.team_id)
           const opponent = oppId == null ? null : teamMap.get(oppId) || null
+          const opponentFull = opponent?.full_name || opponentFullNameFromMatch(match, team.team_id)
           return (
             <div key={match.match_id} className="hub-history-item">
               <div className="hub-history-main">
                 <HubTeamPhoto tournamentId={tid} team={opponent} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="hub-history-top">
-                    <span>{hubOpponentLabel(match, team.team_id)}</span>
+                    <OpponentNameBlock
+                      fullName={opponentFull}
+                      fallbackLabel={hubOpponentLabel(match, team.team_id)}
+                      compact
+                    />
                     {result && <span className={result === 'Win' ? 'hub-win' : 'hub-loss'}>{result}</span>}
                   </div>
                   <div className="hub-meta">

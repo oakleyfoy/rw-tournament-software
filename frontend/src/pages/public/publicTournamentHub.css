@@ -305,6 +305,58 @@
   color: #1b2430;
 }
 
+.hub-opponent-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.hub-player-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1b2430;
+}
+
+.hub-player-line + .hub-player-line {
+  margin-top: 4px;
+}
+
+.hub-hometown {
+  font-size: 14px;
+  font-weight: 600;
+  color: #5c6b7a;
+}
+
+.hub-subheading {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #5c6b7a;
+}
+
+.hub-opponent-history {
+  display: grid;
+  gap: 8px;
+}
+
+.hub-opponent-history-item {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f5f7fb;
+  border: 1px solid #e4e9f2;
+}
+
+.hub-compact-name {
+  font-weight: 700;
+  color: #1b2430;
+}
+
 .hub-meta {
   margin-top: 8px;
   display: flex;

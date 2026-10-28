@@ -4,6 +4,9 @@ import { searchPublicTeams } from './publicMobileDraw'
 import {
   drawPathWithTeamHighlight,
   drawTargetsForTeam,
+  hometownSummary,
+  opponentPlayerLines,
+  playerHometown,
   publicTournamentHubPath,
   teamHubStatus,
 } from './tournamentHub'
@@ -108,6 +111,18 @@ describe('tournament hub helpers', () => {
     expect(targets[0].path).toContain('/bracket/BWL')
     expect(drawPathWithTeamHighlight(targets[0].path, 10)).toContain('team=10')
     expect(drawPathWithTeamHighlight(targets[0].path, 10)).toContain('view=draw')
+  })
+
+  it('pulls hometowns from registration full names', () => {
+    expect(playerHometown('Heather Robinson, Cumming, GA')).toBe('Cumming, GA')
+    expect(playerHometown('Alex Quiros, PA')).toBe('PA')
+    expect(hometownSummary('Ada Smith, Cumming, GA / Bea Jones, Johns Island, SC')).toBe(
+      'Cumming, GA / Johns Island, SC',
+    )
+    expect(opponentPlayerLines('Cara Lee, Destin, FL / Dee Chen, Atlanta, GA')).toEqual([
+      { name: 'Cara Lee', hometown: 'Destin, FL' },
+      { name: 'Dee Chen', hometown: 'Atlanta, GA' },
+    ])
   })
 
   it('searches remain usable for roughly 120 teams', () => {

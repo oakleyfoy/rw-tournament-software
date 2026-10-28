@@ -3,6 +3,7 @@ import {
   buildTeamJourney,
   displaySideLabel,
   opponentName,
+  shortPlayerName,
   type MobileMatch,
   type TeamJourney,
 } from './publicMobileDraw'
@@ -196,4 +197,46 @@ export function matchResultLabel(match: ScheduleMatchItem, teamId: number): 'Win
 
 export function hubOpponentLabel(match: ScheduleMatchItem, teamId: number): string {
   return displaySideLabel(opponentName(match as MobileMatch, teamId))
+}
+
+/** Extract "City, ST" or "ST" from one registration player segment. */
+export function playerHometown(part: string): string | null {
+  const value = (part || '').trim()
+  if (!value) return null
+  const cityState = value.match(/,\s*([^,]+,\s*[A-Z]{2})\s*$/i)
+  if (cityState) return cityState[1].replace(/\s+/g, ' ').trim()
+  const stateOnly = value.match(/,\s*([A-Z]{2})\s*$/i)
+  if (stateOnly) return stateOnly[1].toUpperCase()
+  const dashState = value.match(/\s+-\s+([A-Z]{2})\s*$/i)
+  if (dashState) return dashState[1].toUpperCase()
+  return null
+}
+
+export interface OpponentPlayerLine {
+  name: string
+  hometown: string | null
+}
+
+/** Pair short player names with hometowns from the full registration name. */
+export function opponentPlayerLines(fullName: string | null | undefined): OpponentPlayerLine[] {
+  const raw = (fullName || '').trim()
+  if (!raw || /^tbd$/i.test(raw) || /^(Winner|Loser) of Match/i.test(raw)) return []
+  const parts = raw.split(/\s*\/\s*|\s+&\s+/).map((part) => part.trim()).filter(Boolean).slice(0, 2)
+  return parts.map((part) => ({
+    name: shortPlayerName(part),
+    hometown: playerHometown(part),
+  })).filter((line) => Boolean(line.name))
+}
+
+export function opponentFullNameFromMatch(match: ScheduleMatchItem, teamId: number): string {
+  if (match.team_a_id === teamId) return match.team2_full_name || match.team2_display || ''
+  if (match.team_b_id === teamId) return match.team1_full_name || match.team1_display || ''
+  return ''
+}
+
+export function hometownSummary(fullName: string | null | undefined): string | null {
+  const lines = opponentPlayerLines(fullName)
+  const homes = lines.map((line) => line.hometown).filter(Boolean) as string[]
+  if (!homes.length) return null
+  return homes.join(' / ')
 }
