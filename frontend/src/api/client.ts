@@ -2427,6 +2427,22 @@ export interface CombinedTeamImportResponse {
   warnings: string[]
 }
 
+export async function pullRwOsEventPlayers(
+  tournamentId: number,
+  eventId: number
+): Promise<{
+  source_tournament_id: number
+  source_event_name: string
+  imported_count: number
+  retired_count: number
+  team_names: string[]
+}> {
+  return fetchJson(
+    `${API_BASE_URL}/tournaments/${tournamentId}/events/${eventId}/teams/pull-rw-os`,
+    { method: 'POST' }
+  )
+}
+
 export async function importSeededTeams(
   tournamentId: number,
   eventId: number,

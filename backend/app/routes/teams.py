@@ -386,6 +386,14 @@ class RejectedRow(BaseModel):
     reason: str
 
 
+class RwOsRosterPullResponse(BaseModel):
+    source_tournament_id: int
+    source_event_name: str
+    imported_count: int
+    retired_count: int
+    team_names: List[str]
+
+
 class SeededImportResponse(BaseModel):
     imported_count: int
     updated_count: int
@@ -1206,6 +1214,35 @@ def import_seeded_teams(
         rejected_rows=rejected,
         warnings=warnings,
     )
+
+
+@router.post(
+    "/tournaments/{tournament_id}/events/{event_id}/teams/pull-rw-os",
+    response_model=RwOsRosterPullResponse,
+)
+def pull_rw_os_event_players(
+    tournament_id: int,
+    event_id: int,
+    session: Session = Depends(get_session),
+):
+    """Replace this event's teams with the RW-OS draw that matches the event or tournament name."""
+    from app.models.tournament import Tournament
+    from app.services.rw_os_client import RwOsClientError
+    from app.services.rw_os_event_roster import pull_event_players_from_rw_os
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        result = pull_event_players_from_rw_os(session, tournament, event)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RwOsClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return RwOsRosterPullResponse(**result)
 
 
 @router.post(

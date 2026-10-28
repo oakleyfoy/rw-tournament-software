@@ -12,6 +12,7 @@ import {
   publishScheduleVersion,
   unpublishSchedule,
   importSeededTeams,
+  pullRwOsEventPlayers,
   getEventTeams,
   ScheduleBuilderResponse,
   SchedulePlanReport,
@@ -49,6 +50,7 @@ export default function ScheduleBuilderPage() {
   const [importOpenEventId, setImportOpenEventId] = useState<number | null>(null)
   const [importText, setImportText] = useState('')
   const [importLoading, setImportLoading] = useState(false)
+  const [pullingRwOsFor, setPullingRwOsFor] = useState<number | null>(null)
   const [eventTeams, setEventTeams] = useState<Record<number, TeamListItem[]>>({})
   const [loadingTeamsFor, setLoadingTeamsFor] = useState<number | null>(null)
 
@@ -267,6 +269,24 @@ export default function ScheduleBuilderPage() {
       setImportLoading(false)
     }
   }, [tournamentId, importText, handleLoadTeams])
+
+  const handlePullRwOsPlayers = useCallback(async (eventId: number) => {
+    if (!tournamentId) return
+    setPullingRwOsFor(eventId)
+    try {
+      const result = await pullRwOsEventPlayers(tournamentId, eventId)
+      showToast(
+        `Pulled ${result.imported_count} teams from ${result.source_event_name}`,
+        'success'
+      )
+      await handleLoadTeams(eventId)
+      await loadPlanReport()
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not pull RW-OS players', 'error')
+    } finally {
+      setPullingRwOsFor(null)
+    }
+  }, [tournamentId, handleLoadTeams, loadPlanReport])
 
   if (tournamentId == null) {
     return (
@@ -628,8 +648,17 @@ export default function ScheduleBuilderPage() {
                         >
                           {importLoading ? 'Importing...' : 'Import Teams'}
                         </button>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={pullingRwOsFor === ev.event_id}
+                          onClick={() => void handlePullRwOsPlayers(ev.event_id)}
+                          style={{ fontSize: 13, padding: '6px 14px' }}
+                        >
+                          {pullingRwOsFor === ev.event_id ? 'Pulling...' : 'Pull RW-OS players'}
+                        </button>
                         <span style={{ fontSize: 11, color: '#888', alignSelf: 'center' }}>
-                          Format: seed [avoid_group] rating team_name (tab or space separated)
+                          Pull replaces this list with the RW-OS event named like this event or tournament.
+                          Paste format: seed [avoid_group] rating team_name (tab or space separated)
                         </span>
                       </div>
                     </div>
