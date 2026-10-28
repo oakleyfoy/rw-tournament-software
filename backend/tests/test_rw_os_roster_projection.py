@@ -1954,7 +1954,21 @@ def test_approve_replaces_a_copied_roster_with_the_import(client: TestClient, se
         )
         session.add(team)
         copied.append(team)
+    session.add(
+        TemporaryPlayerLookup(
+            tournament_id=imported.tournament_id,
+            source_name="Adela McCollum",
+            normalized_name="adela mccollum",
+            towel_color="Purple",
+            source=RWOS_LOOKUP_SOURCE,
+            source_team_key="wild-dunes/1",
+            lineup_slot=1,
+        )
+    )
     session.commit()
+    listed = client.get(f"/api/desk/tournaments/{imported.tournament_id}/temporary-player-lookups")
+    assert listed.status_code == 200, listed.text
+    assert all(item["source_name"] != "Adela McCollum" for item in listed.json()["items"])
 
     body = _approve(client, imported.id, {"mixed": "8"})
     projection = body["rosterProjection"]
@@ -1972,3 +1986,8 @@ def test_approve_replaces_a_copied_roster_with_the_import(client: TestClient, se
     retired = [team for team in live if team.id in {row.id for row in copied}]
     assert len(retired) == 2
     assert all(team.is_defaulted and team.seed is None and team.name.startswith("__retired_") for team in retired)
+    towels = session.exec(
+        select(TemporaryPlayerLookup).where(TemporaryPlayerLookup.tournament_id == imported.tournament_id)
+    ).all()
+    assert all(row.source_team_key != "wild-dunes/1" for row in towels)
+    assert {row.source_team_key for row in towels} == {team.team_key for team in _mixed_field(8)}

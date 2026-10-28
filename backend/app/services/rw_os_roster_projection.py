@@ -587,6 +587,36 @@ def _team_draw_lock_reason(session: Session, team: Team) -> Optional[str]:
     return None
 
 
+def _drop_orphan_copied_towel_rows(session: Session, tournament_id: int, snapshot_keys: set[str]) -> int:
+    """Remove towel rows copied from another tournament.
+
+    A duplicate copies the towel sheet with the old RW-OS team keys, and does not
+    copy those keys onto the team rows. Keep a row when its key is still on an
+    active team or in the current snapshot. A started match keeps its team, so
+    that team's colors stay.
+    """
+    live = session.exec(
+        select(Team).join(Event).where(Event.tournament_id == tournament_id)
+    ).all()
+    keep = set(snapshot_keys)
+    keep.update(team.source_team_key for team in live if team.source_team_key and team_is_active(team))
+    rows = session.exec(
+        select(TemporaryPlayerLookup).where(
+            TemporaryPlayerLookup.tournament_id == tournament_id,
+            TemporaryPlayerLookup.source_team_key.is_not(None),
+        )
+    ).all()
+    removed = 0
+    for row in rows:
+        if row.source_team_key in keep:
+            continue
+        session.delete(row)
+        removed += 1
+    if removed:
+        session.flush()
+    return removed
+
+
 def _delete_rwos_towel_rows(session: Session, tournament_id: int, team_key: str) -> int:
     rows = session.exec(
         select(TemporaryPlayerLookup).where(
@@ -1651,6 +1681,7 @@ def project_approved_roster(
     placement_candidates: list[Team] = []
     wkw_assignments: dict[int, list[tuple[int, Optional[str]]]] = {}
     active_keys = {team.team_key for team in teams}
+    _drop_orphan_copied_towel_rows(session, import_row.tournament_id, active_keys)
     vacated_slots, blocked_withdrawals = _withdraw_absent_source_teams(session, import_row, active_keys, result)
     copied_roster_event_ids = _replace_copied_roster(session, plans, events, result)
 

@@ -254,6 +254,24 @@ def _lookup_short_name_key(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
+def _active_source_team_keys(session: Session, tournament_id: int) -> set[str]:
+    """RW-OS team keys still on the active roster. Copied towel rows from another event are not in this set."""
+    from app.services.active_roster import team_is_active
+
+    teams = session.exec(
+        select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament_id)
+    ).all()
+    return {team.source_team_key for team in teams if team.source_team_key and team_is_active(team)}
+
+
+def _lookup_rows_for_current_roster(
+    rows: List[TemporaryPlayerLookup],
+    active_keys: set[str],
+) -> List[TemporaryPlayerLookup]:
+    """Hide towel rows whose RW-OS key belongs to a roster that is no longer on this tournament."""
+    return [row for row in rows if not row.source_team_key or row.source_team_key in active_keys]
+
+
 def _compute_lookup_matched_names(session: Session, tournament_id: int) -> set[str]:
     players = session.exec(select(Player).where(Player.tournament_id == tournament_id)).all()
     matched_names: set[str] = set()
@@ -1247,11 +1265,14 @@ def _build_checkin_snapshot(
         else []
     )
     player_map = {p.id: p for p in players}
-    lookup_rows = session.exec(
-        select(TemporaryPlayerLookup)
-        .where(TemporaryPlayerLookup.tournament_id == tournament.id)
-        .order_by(TemporaryPlayerLookup.updated_at.desc(), TemporaryPlayerLookup.id.desc())
-    ).all()
+    lookup_rows = _lookup_rows_for_current_roster(
+        session.exec(
+            select(TemporaryPlayerLookup)
+            .where(TemporaryPlayerLookup.tournament_id == tournament.id)
+            .order_by(TemporaryPlayerLookup.updated_at.desc(), TemporaryPlayerLookup.id.desc())
+        ).all(),
+        _active_source_team_keys(session, tournament.id),
+    )
     lookup_by_player_id: Dict[int, TemporaryPlayerLookup] = {}
     for row in lookup_rows:
         if row.player_id is not None:
@@ -3019,11 +3040,14 @@ def get_temporary_player_lookups(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    rows = session.exec(
-        select(TemporaryPlayerLookup)
-        .where(TemporaryPlayerLookup.tournament_id == tournament_id)
-        .order_by(func.lower(TemporaryPlayerLookup.source_name), TemporaryPlayerLookup.id)
-    ).all()
+    rows = _lookup_rows_for_current_roster(
+        session.exec(
+            select(TemporaryPlayerLookup)
+            .where(TemporaryPlayerLookup.tournament_id == tournament_id)
+            .order_by(func.lower(TemporaryPlayerLookup.source_name), TemporaryPlayerLookup.id)
+        ).all(),
+        _active_source_team_keys(session, tournament_id),
+    )
     matched_names = _compute_lookup_matched_names(session, tournament_id)
     return TemporaryPlayerLookupListResponse(
         tournament_id=tournament_id,
