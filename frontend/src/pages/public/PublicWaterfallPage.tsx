@@ -1,8 +1,10 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getPublicWaterfall, PublicWaterfallResponse, PublicMatchBox } from '../../api/client'
 import PublicMobileDraw from './PublicMobileDraw'
 import './publicMobileDraw.css'
+
+const HubHighlightTeamContext = createContext<number | null>(null)
 
 const REFRESH_MS = 15000
 
@@ -220,6 +222,9 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
   tvMode?: boolean
   phoneMode?: boolean
 }) {
+  const highlightTeamId = useContext(HubHighlightTeamContext)
+  const highlighted = highlightTeamId != null
+    && (box.team_a_id === highlightTeamId || box.team_b_id === highlightTeamId)
   const palette = COLORS[variant]
   const isFinal = box.status === 'FINAL'
   const isCenter = variant === 'center'
@@ -246,9 +251,12 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
   const notes = tvMode ? stripTvLocationSuffix(box.notes) : box.notes
 
   return (
-    <div style={{
-      backgroundColor: isFinal ? palette.bgFinal : palette.bg,
-      border: `1px solid ${palette.border}`,
+    <div
+      className={highlighted ? 'hub-highlight-box' : undefined}
+      data-hub-highlight={highlighted ? '1' : undefined}
+      style={{
+      backgroundColor: highlighted ? '#fff8e1' : isFinal ? palette.bgFinal : palette.bg,
+      border: highlighted ? '2px solid #f9a825' : `1px solid ${palette.border}`,
       borderRadius: 3,
       padding: `${layout.cardPaddingY}px ${layout.cardPaddingX}px`,
       width: widthOverride ?? (isCenter ? layout.centerBoxWidth : layout.sideBoxWidth),
@@ -893,12 +901,15 @@ export default function PublicWaterfallPage() {
   const captureMode = searchParams.get('capture_packet') === '1'
   const displayFitMode = searchParams.get('display_fit') === '1'
   const tvMode = searchParams.get('tv') === '1'
+  const teamParam = Number(searchParams.get('team') || '')
+  const highlightTeamId = Number.isFinite(teamParam) && teamParam > 0 ? teamParam : null
+  const openFullDrawFromHub = searchParams.get('view') === 'draw'
 
   const [data, setData] = useState<PublicWaterfallResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
-  const [showFullDraw, setShowFullDraw] = useState(false)
+  const [showFullDraw, setShowFullDraw] = useState(openFullDrawFromHub)
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280))
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const [canvasWidth, setCanvasWidth] = useState<number>(() =>
@@ -1087,6 +1098,19 @@ export default function PublicWaterfallPage() {
     ]
   }, [tvMode, tvUseFourColumns, tvRoundOneColumns, tvWinnerEntries, tvLoserEntries, tvRoundOneEntries, tvSecondRoundEntries])
 
+  useEffect(() => {
+    if (!highlightTeamId || loading || !data) return
+    if (viewportWidth <= PHONE_WATERFALL_MAX_WIDTH && !showFullDraw) return
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLElement>('[data-hub-highlight="1"]')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'center',
+      })
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [highlightTeamId, loading, data, showFullDraw, viewportWidth])
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center', color: '#666', fontSize: 16 }}>
@@ -1126,8 +1150,9 @@ export default function PublicWaterfallPage() {
         tournamentName={data.tournament_name}
         eventName={data.event_name}
         formatLabel="Waterfall"
-        backHref={`/t/${tid}/draws`}
+        backHref={`/t/${tid}/hub`}
         onShowFullDraw={() => setShowFullDraw(true)}
+        initialTeamId={highlightTeamId}
       />
     )
   }
@@ -1135,6 +1160,7 @@ export default function PublicWaterfallPage() {
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
 
   return (
+    <HubHighlightTeamContext.Provider value={highlightTeamId}>
     <div className={`print-root${viewportWidth <= PHONE_WATERFALL_MAX_WIDTH && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || displayFitMode || tvMode ? '#fff' : '#f8f9fa',
       minHeight: captureMode || displayFitMode ? 'auto' : '100vh',
@@ -1425,5 +1451,6 @@ export default function PublicWaterfallPage() {
         </div>
       </div>
     </div>
+    </HubHighlightTeamContext.Provider>
   )
 }

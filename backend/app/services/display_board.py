@@ -96,6 +96,8 @@ class DisplayMatchData:
     board_section: str
     in_next_12_hours: bool
     court: Optional[str] = None
+    started_at: Optional[str] = None
+    ready_at: Optional[str] = None
 
 
 @dataclass
@@ -324,6 +326,34 @@ def _side_checked_in(
     return True
 
 
+def _side_ready_at(
+    *,
+    match_id: int,
+    side: str,
+    team_id: Optional[int],
+    team_checkin_map: Dict[Tuple[int, str], MatchCheckIn],
+    player_checkin_map: Dict[Tuple[int, str, int], MatchPlayerCheckIn],
+    players_by_team: Dict[int, List[int]],
+) -> Optional[datetime]:
+    """Return when this side became ready, or None if not checked in."""
+    team_row = team_checkin_map.get((match_id, side))
+    if team_row and team_row.team_checked_in:
+        return team_row.checked_in_at
+    if not team_id:
+        return None
+    player_ids = players_by_team.get(team_id, [])
+    if not player_ids:
+        return None
+    times: List[datetime] = []
+    for pid in player_ids:
+        row = player_checkin_map.get((match_id, side, pid))
+        if not row or not row.checked_in:
+            return None
+        if row.checked_in_at:
+            times.append(row.checked_in_at)
+    return max(times) if times else None
+
+
 def _team_first_names(
     *,
     team_id: Optional[int],
@@ -378,6 +408,17 @@ def _sort_key(match: DisplayMatchData) -> Tuple:
 def _playing_sort_key(match: DisplayMatchData) -> Tuple:
     court_key = (match.court or "").lower()
     return (court_key, match.day_date or "", match.sort_time or "", match.match_id)
+
+
+def _waiting_sort_key(match: DisplayMatchData) -> Tuple:
+    """FIFO by both-teams-ready time, then schedule order."""
+    return (
+        match.ready_at or "9999",
+        match.day_date or "",
+        match.sort_time or "",
+        (match.event_name or "").lower(),
+        match.match_id,
+    )
 
 
 def build_display_board(
@@ -493,6 +534,22 @@ def build_display_board(
             player_checkin_map=player_checkin_map,
             players_by_team=players_by_team,
         )
+        side_a_ready = _side_ready_at(
+            match_id=match.id,
+            side="A",
+            team_id=match.team_a_id,
+            team_checkin_map=team_checkin_map,
+            player_checkin_map=player_checkin_map,
+            players_by_team=players_by_team,
+        )
+        side_b_ready = _side_ready_at(
+            match_id=match.id,
+            side="B",
+            team_id=match.team_b_id,
+            team_checkin_map=team_checkin_map,
+            player_checkin_map=player_checkin_map,
+            players_by_team=players_by_team,
+        )
 
         is_playing = runtime in PLAYING_STATUSES
         both_checked = team_a_checked and team_b_checked
@@ -505,6 +562,9 @@ def build_display_board(
             board_section = "upcoming"
 
         show_scheduled_court = is_playing or preassigned
+        ready_at_dt = None
+        if both_checked and side_a_ready and side_b_ready:
+            ready_at_dt = max(side_a_ready, side_b_ready)
 
         in_next_12_hours = (not is_playing) and (now_local_dt <= scheduled_dt < window_end)
 
@@ -528,6 +588,8 @@ def build_display_board(
             board_section=board_section,
             in_next_12_hours=in_next_12_hours,
             court=court_display(slot) if show_scheduled_court else None,
+            started_at=match.started_at.isoformat() if is_playing and match.started_at else None,
+            ready_at=ready_at_dt.isoformat() if ready_at_dt else None,
         )
 
         if board_section == "currently_playing":
@@ -542,7 +604,7 @@ def build_display_board(
             upcoming_12h.append(upcoming_copy)
 
     currently_playing.sort(key=_playing_sort_key)
-    waiting_for_court.sort(key=_sort_key)
+    waiting_for_court.sort(key=_waiting_sort_key)
     upcoming.sort(key=_sort_key)
     upcoming_12h.sort(key=_sort_key)
 
@@ -598,6 +660,10 @@ def snapshot_to_public_dict(snapshot: DisplayBoardSnapshot) -> Dict[str, Any]:
         }
         if include_court and item.court:
             payload["court"] = item.court
+        if item.started_at:
+            payload["started_at"] = item.started_at
+        if item.ready_at and item.board_section == "waiting_for_court":
+            payload["ready_at"] = item.ready_at
         return payload
 
     return {

@@ -383,3 +383,16 @@
     touch-action: pan-x pan-y pinch-zoom;
   }
 }
+
+.hub-highlight-box {
+  outline: 3px solid #f9a825 !important;
+  box-shadow: 0 0 0 4px rgba(249, 168, 37, 0.35);
+  background-color: #fff8e1 !important;
+}
+
+.hub-highlight-team {
+  background: #fff8e1;
+  outline: 2px solid #f9a825;
+  border-radius: 4px;
+  padding: 1px 4px;
+}

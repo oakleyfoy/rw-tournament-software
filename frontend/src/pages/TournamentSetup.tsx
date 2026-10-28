@@ -844,6 +844,14 @@ function TournamentSetup() {
             </button>
             <button
               className="btn btn-secondary"
+              onClick={() => navigate(`/tournaments/${tournament.id}/tournament-qr`)}
+              style={{ fontSize: '14px' }}
+              data-testid="tournament-qr-code"
+            >
+              Tournament QR Code
+            </button>
+            <button
+              className="btn btn-secondary"
               onClick={() => navigate(`/tournaments/${tournament.id}/draw-qr-board`)}
               style={{ fontSize: '14px' }}
             >
@@ -855,6 +863,20 @@ function TournamentSetup() {
               style={{ fontSize: '14px' }}
             >
               Open Court Board
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => window.open(`/desk/t/${tournament.id}/display/court-assigned`, '_blank', 'noopener,noreferrer')}
+              style={{ fontSize: '14px' }}
+            >
+              Open Court Assigned
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => window.open(`/desk/t/${tournament.id}/display/dynamic`, '_blank', 'noopener,noreferrer')}
+              style={{ fontSize: '14px' }}
+            >
+              Open Dynamic Screen
             </button>
             <button
               className="btn btn-secondary"

@@ -146,4 +146,24 @@ describe('DisplayMatchCard', () => {
     expect(card).not.toHaveTextContent("Women's B")
     expect(card).not.toHaveTextContent('WF R1')
   })
+
+  it('prefers elapsed time on court for dynamic playing cards', () => {
+    const started = '2026-06-05T14:00:00.000Z'
+    const nowMs = Date.parse(started) + 8 * 60 * 1000
+    render(
+      <DisplayMatchCard
+        match={makeMatch({
+          scheduled_time: '1:30 PM',
+          court: 'Court 7',
+          started_at: started,
+        })}
+        variant="playing"
+        nowMs={nowMs}
+        preferTimeOnCourt
+      />
+    )
+    expect(screen.getByTestId('display-time-on-court-1')).toHaveTextContent('8:00')
+    expect(screen.queryByText('1:30 PM')).not.toBeInTheDocument()
+    expect(screen.getByTestId('display-court-1')).toHaveTextContent('Court 7')
+  })
 })

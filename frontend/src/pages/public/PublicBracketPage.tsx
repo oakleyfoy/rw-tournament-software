@@ -1,8 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicBracket, BracketResponse, BracketMatchBox } from '../../api/client'
 import PublicMobileDraw from './PublicMobileDraw'
 import './publicMobileDraw.css'
+
+const HubHighlightTeamContext = createContext<number | null>(null)
 
 const REFRESH_MS = 15000
 
@@ -140,6 +142,9 @@ function MatchCard({ match, variant, showCourtInfo, phoneMode = false }: {
   showCourtInfo: boolean
   phoneMode?: boolean
 }) {
+  const highlightTeamId = useContext(HubHighlightTeamContext)
+  const highlighted = highlightTeamId != null
+    && (match.team_a_id === highlightTeamId || match.team_b_id === highlightTeamId)
   const palette = COLORS[variant]
   const isFinal = match.status === 'FINAL'
 
@@ -150,12 +155,15 @@ function MatchCard({ match, variant, showCourtInfo, phoneMode = false }: {
   const schedLine = schedParts.length > 0 ? schedParts.join(' • ') : null
 
   return (
-    <div style={{
+    <div
+      className={highlighted ? 'hub-highlight-box' : undefined}
+      data-hub-highlight={highlighted ? '1' : undefined}
+      style={{
       width: phoneMode ? '100%' : MATCH_W,
       height: phoneMode ? 'auto' : MATCH_H,
       minHeight: phoneMode ? 72 : undefined,
-      backgroundColor: isFinal ? palette.bgFinal : palette.bg,
-      border: `1px solid ${palette.border}`,
+      backgroundColor: highlighted ? '#fff8e1' : isFinal ? palette.bgFinal : palette.bg,
+      border: highlighted ? '2px solid #f9a825' : `1px solid ${palette.border}`,
       borderRadius: phoneMode ? 8 : 3,
       padding: phoneMode ? '10px 12px' : '4px 8px',
       boxSizing: 'border-box',
@@ -522,12 +530,15 @@ export default function PublicBracketPage() {
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : undefined
   const captureMode = searchParams.get('capture_packet') === '1'
   const tvMode = searchParams.get('tv') === '1'
+  const teamParam = Number(searchParams.get('team') || '')
+  const highlightTeamId = Number.isFinite(teamParam) && teamParam > 0 ? teamParam : null
+  const openFullDrawFromHub = searchParams.get('view') === 'draw'
 
   const [data, setData] = useState<BracketResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
-  const [showFullDraw, setShowFullDraw] = useState(false)
+  const [showFullDraw, setShowFullDraw] = useState(openFullDrawFromHub)
   const [isPhoneViewport, setIsPhoneViewport] = useState(() =>
     typeof window !== 'undefined' && window.innerWidth <= PHONE_BRACKET_MAX_WIDTH
   )
@@ -579,6 +590,19 @@ export default function PublicBracketPage() {
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [])
+
+  useEffect(() => {
+    if (!highlightTeamId || loading || !data) return
+    if (isPhoneViewport && !showFullDraw && !captureMode && !tvMode) return
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLElement>('[data-hub-highlight="1"]')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'center',
+      })
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [highlightTeamId, loading, data, showFullDraw, isPhoneViewport, captureMode, tvMode])
 
   const phoneMode = isPhoneViewport && !captureMode && !tvMode
 
@@ -645,8 +669,9 @@ export default function PublicBracketPage() {
         formatLabel={data.division_label}
         divisionCode={dc}
         divisionLabel={data.division_label}
-        backHref={`/t/${tid}/draws`}
+        backHref={`/t/${tid}/hub`}
         onShowFullDraw={() => setShowFullDraw(true)}
+        initialTeamId={highlightTeamId}
       />
     )
   }
@@ -654,6 +679,7 @@ export default function PublicBracketPage() {
   const headerText = `${data.event_name} — ${data.division_label}`.toUpperCase()
 
   return (
+    <HubHighlightTeamContext.Provider value={highlightTeamId}>
     <div className={`bracket-print-root${phoneMode && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
       minHeight: captureMode ? 'auto' : '100vh',
@@ -845,5 +871,6 @@ export default function PublicBracketPage() {
         </div>
       </div>
     </div>
+    </HubHighlightTeamContext.Provider>
   )
 }

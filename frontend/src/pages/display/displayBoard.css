@@ -158,6 +158,48 @@
   grid-template-columns: repeat(auto-fill, minmax(var(--display-playing-min), 1fr));
 }
 
+.display-dynamic-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: calc(100vh - 110px);
+}
+
+.display-time-on-court {
+  font-size: clamp(12px, 11cqi, 18px);
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  color: #ffe082;
+  margin-bottom: 3px;
+  line-height: 1.05;
+}
+
+.display-card-playing .display-time-on-court {
+  font-size: clamp(14px, 12cqi, 22px);
+}
+
+.display-court-assigned {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: calc(100vh - 110px);
+}
+
+.display-court-assigned-upcoming {
+  flex: 1 1 auto;
+  min-height: calc(2 * (var(--display-time-slot-min, 140px)));
+  margin-bottom: 0;
+}
+
+.display-court-assigned-upcoming .display-time-group {
+  margin-bottom: 10px;
+}
+
+.display-court-assigned-upcoming .display-time-header {
+  font-size: 22px;
+  margin-bottom: 6px;
+}
+
 .display-time-group {
   margin-bottom: 14px;
 }

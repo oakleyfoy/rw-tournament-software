@@ -2907,6 +2907,9 @@ export interface BracketMatchBox {
   time_display: string | null
   source_match_a_id: number | null
   source_match_b_id: number | null
+  team_a_id?: number | null
+  team_b_id?: number | null
+  winner_team_id?: number | null
 }
 
 export interface BracketResponse {
@@ -2945,6 +2948,9 @@ export interface RRMatchBox {
   day_display: string | null
   time_display: string | null
   winner_name: string | null
+  team_a_id?: number | null
+  team_b_id?: number | null
+  winner_team_id?: number | null
 }
 
 export interface RRPool {
@@ -5222,6 +5228,8 @@ export interface DisplayMatch {
   board_section: 'currently_playing' | 'waiting_for_court' | 'upcoming'
   in_next_12_hours: boolean
   court?: string | null
+  started_at?: string | null
+  ready_at?: string | null
 }
 
 export interface DisplayTimeGroup {
@@ -5274,5 +5282,18 @@ export interface DrawQrBoardResponse {
 
 export async function getDrawQrBoard(tournamentId: number): Promise<DrawQrBoardResponse> {
   return fetchJson<DrawQrBoardResponse>(`${API_BASE_URL}/tournaments/${tournamentId}/draw-qr-board`)
+}
+
+export interface TournamentHubQrResponse {
+  tournament_id: number
+  tournament_name: string
+  filename_slug: string
+  public_path: string
+  public_url: string
+  published: boolean
+}
+
+export async function getTournamentHubQr(tournamentId: number): Promise<TournamentHubQrResponse> {
+  return fetchJson<TournamentHubQrResponse>(`${API_BASE_URL}/tournaments/${tournamentId}/tournament-hub-qr`)
 }
 

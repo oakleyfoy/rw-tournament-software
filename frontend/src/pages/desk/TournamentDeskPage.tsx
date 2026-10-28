@@ -11180,6 +11180,24 @@ export default function TournamentDeskPage() {
           <button
             onClick={() => {
               if (!tid) return
+              window.open(`/tournaments/${tid}/tournament-qr`, '_blank', 'noopener,noreferrer')
+            }}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: 'rgba(255,255,255,0.2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: tid ? 'pointer' : 'default',
+            }}
+          >
+            Tournament QR Code
+          </button>
+          <button
+            onClick={() => {
+              if (!tid) return
               window.open(`/tournaments/${tid}/draw-qr-board`, '_blank', 'noopener,noreferrer')
             }}
             style={{

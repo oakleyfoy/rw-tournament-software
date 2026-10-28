@@ -16,14 +16,19 @@ import PublicBracketPage from './pages/public/PublicBracketPage'
 import PublicRoundRobinPage from './pages/public/PublicRoundRobinPage'
 import PublicSchedulePage from './pages/public/PublicSchedulePage'
 import PublicTeamPhotoPage from './pages/public/PublicTeamPhotoPage'
+import PublicTournamentHubPage from './pages/public/PublicTournamentHubPage'
+import PublicTournamentTeamPage from './pages/public/PublicTournamentTeamPage'
 import TournamentDeskPage from './pages/desk/TournamentDeskPage'
 import TournamentDeskBoardPage from './pages/desk/TournamentDeskBoardPage'
 import TournamentDeskCheckinBoardPage from './pages/desk/TournamentDeskCheckinBoardPage'
 import TournamentDeskDrawsDisplayPage from './pages/desk/TournamentDeskDrawsDisplayPage'
 import TournamentDeskSharedScreenPage from './pages/desk/TournamentDeskSharedScreenPage'
+import CourtAssignedPage from './pages/display/CourtAssignedPage'
 import CourtBoardPage from './pages/display/CourtBoardPage'
+import DynamicScreenPage from './pages/display/DynamicScreenPage'
 import UpcomingMatchesPage from './pages/display/UpcomingMatchesPage'
 import DrawQrBoardPage from './pages/drawQr/DrawQrBoardPage'
+import TournamentHubQrPage from './pages/tournamentHub/TournamentHubQrPage'
 import { getCurrentTheme, applyTheme } from './utils/settings'
 import { getAuthToken, getAuthRole } from './api/client'
 import LoginPage from './pages/LoginPage'
@@ -56,6 +61,8 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         {/* Public routes */}
+        <Route path="/t/:tournamentId/hub" element={<PublicTournamentHubPage />} />
+        <Route path="/t/:tournamentId/hub/teams/:teamId" element={<PublicTournamentTeamPage />} />
         <Route path="/t/:tournamentId/draws" element={<PublicDrawsPage />} />
         <Route path="/t/:tournamentId/draws/:eventId/waterfall" element={<PublicWaterfallPage />} />
         <Route path="/t/:tournamentId/draws/:eventId/bracket/:divisionCode" element={<PublicBracketPage />} />
@@ -71,6 +78,7 @@ function App() {
           <Route path="/tournaments/:id/setup" element={<TournamentSetup />} />
           <Route path="/tournaments/:id/draw-builder" element={<DrawBuilder />} />
           <Route path="/tournaments/:id/draw-qr-board" element={<DrawQrBoardPage />} />
+          <Route path="/tournaments/:id/tournament-qr" element={<TournamentHubQrPage />} />
           <Route path="/tournaments/:id/schedule-builder" element={<ScheduleBuilderPage />} />
           <Route path="/tournaments/:id/schedule" element={<SchedulePageGridV1 />} />
           <Route path="/tournaments/:id/schedule/matches" element={<MatchCardsRedirectToActive />} />
@@ -87,6 +95,8 @@ function App() {
           <Route path="/desk/t/:tournamentId/draws-display" element={<TournamentDeskDrawsDisplayPage />} />
           <Route path="/desk/t/:tournamentId/shared-screen" element={<TournamentDeskSharedScreenPage />} />
           <Route path="/desk/t/:tournamentId/display/courts" element={<CourtBoardPage />} />
+          <Route path="/desk/t/:tournamentId/display/court-assigned" element={<CourtAssignedPage />} />
+          <Route path="/desk/t/:tournamentId/display/dynamic" element={<DynamicScreenPage />} />
           <Route path="/desk/t/:tournamentId/display/upcoming" element={<UpcomingMatchesPage />} />
         </Route>
       </Routes>

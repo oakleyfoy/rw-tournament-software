@@ -12,7 +12,9 @@ from PIL import Image
 from sqlmodel import Session, select
 
 from app.models.event import Event
+from app.models.match import Match
 from app.models.player import Player
+from app.models.schedule_version import ScheduleVersion
 from app.models.team import Team
 from app.models.team_photo import TeamOfficialPhoto
 from app.models.team_photo_print import TeamPhotoPrint
@@ -110,6 +112,40 @@ def test_high_resolution_source_is_not_upscaled():
     assert rendered != data
     with Image.open(io.BytesIO(rendered)) as image:
         assert image.size == (1200, 1800)
+
+
+def test_print_workspace_counts_the_same_teams_as_the_desk(client: TestClient, session: Session):
+    admin = _bootstrap_admin(client)
+    roster = _roster(session)
+    event = session.exec(select(Event).where(Event.tournament_id == roster["tournament_id"])).one()
+    session.add(Team(event_id=event.id, name="Gina / Sarah", display_name="Gina / Sarah", seed=None))
+    session.add(Team(event_id=event.id, name="Old / Pair", display_name="Old / Pair", seed=4, is_defaulted=True))
+    version = ScheduleVersion(tournament_id=roster["tournament_id"], version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    session.add(
+        Match(
+            tournament_id=roster["tournament_id"],
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WOM_WF_R1_01",
+            match_type="WF",
+            round_number=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=roster["team_id"],
+            placeholder_side_a="TBD",
+            placeholder_side_b="TBD",
+        )
+    )
+    session.commit()
+
+    workspace = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/photo-print",
+        headers=admin,
+    )
+    assert workspace.status_code == 200, workspace.text
+    assert workspace.json()["totals"]["teams"] == 1
 
 
 def test_low_resolution_export_requires_warning_and_leaves_the_original(client: TestClient, session: Session):

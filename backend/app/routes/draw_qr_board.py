@@ -1,4 +1,4 @@
-"""Staff-only read-only Draw QR Board data API."""
+"""Staff-only read-only Draw QR Board and Tournament Hub QR data APIs."""
 
 from typing import Any, Dict
 
@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.services.draw_qr_board import DrawQrBoardError, build_draw_qr_board, snapshot_to_public_dict
+from app.services.tournament_hub_qr import build_tournament_hub_qr, hub_snapshot_to_public_dict
 
 router = APIRouter()
 
@@ -27,3 +28,21 @@ def get_draw_qr_board(
     except DrawQrBoardError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return snapshot_to_public_dict(snapshot)
+
+
+@router.get("/tournaments/{tournament_id}/tournament-hub-qr")
+def get_tournament_hub_qr(
+    tournament_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """One stable public hub URL per tournament for QR posters. Read-only."""
+    try:
+        snapshot = build_tournament_hub_qr(
+            session,
+            tournament_id,
+            request_base_url=str(request.base_url),
+        )
+    except DrawQrBoardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return hub_snapshot_to_public_dict(snapshot)

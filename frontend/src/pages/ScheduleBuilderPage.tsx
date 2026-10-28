@@ -331,6 +331,12 @@ export default function ScheduleBuilderPage() {
           </button>
           <button
             className="btn btn-secondary"
+            onClick={() => navigate(`/tournaments/${tournamentId}/tournament-qr`)}
+          >
+            Tournament QR Code
+          </button>
+          <button
+            className="btn btn-secondary"
             onClick={() => navigate(`/tournaments/${tournamentId}/draw-qr-board`)}
           >
             Print Draw QR Board

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   getPublicSchedule,
   getPublicTeamDirectory,
@@ -39,6 +39,8 @@ interface PublicMobileDrawProps {
   backHref: string
   onShowFullDraw: () => void
   refreshMs?: number
+  /** Prefill from hub deep-link (?team=). */
+  initialTeamId?: number | null
 }
 
 function TeamPhoto({
@@ -94,18 +96,29 @@ export default function PublicMobileDraw({
   backHref,
   onShowFullDraw,
   refreshMs = REFRESH_MS,
+  initialTeamId = null,
 }: PublicMobileDrawProps) {
+  const [searchParams] = useSearchParams()
+  const teamFromQuery = Number(searchParams.get('team') || '')
+  const resolvedInitialTeamId = initialTeamId
+    ?? (Number.isFinite(teamFromQuery) && teamFromQuery > 0 ? teamFromQuery : null)
   const [matches, setMatches] = useState<ScheduleMatchItem[]>([])
   const [teams, setTeams] = useState<PublicTeamDirectoryItem[]>([])
   const [showCourtInfo, setShowCourtInfo] = useState(true)
   const [query, setQuery] = useState('')
-  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
-  const [view, setView] = useState<'matches' | 'journey'>('matches')
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(resolvedInitialTeamId)
+  const [view, setView] = useState<'matches' | 'journey'>(resolvedInitialTeamId != null ? 'journey' : 'matches')
   const [round, setRound] = useState('All')
   const [detailId, setDetailId] = useState<number | null>(null)
   const [enlargedTeamId, setEnlargedTeamId] = useState<number | null>(null)
   const [notPublished, setNotPublished] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (resolvedInitialTeamId == null) return
+    setSelectedTeamId(resolvedInitialTeamId)
+    setView('journey')
+  }, [resolvedInitialTeamId])
 
   useEffect(() => {
     let cancelled = false

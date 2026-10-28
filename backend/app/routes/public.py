@@ -99,6 +99,9 @@ class BracketMatchBox(BaseModel):
     time_display: Optional[str] = None
     source_match_a_id: Optional[int] = None
     source_match_b_id: Optional[int] = None
+    team_a_id: Optional[int] = None
+    team_b_id: Optional[int] = None
+    winner_team_id: Optional[int] = None
 
 
 class BracketResponse(BaseModel):
@@ -958,6 +961,9 @@ def _build_bracket_box(
         time_display=start_time_display,
         source_match_a_id=match.source_match_a_id,
         source_match_b_id=match.source_match_b_id,
+        team_a_id=match.team_a_id,
+        team_b_id=match.team_b_id,
+        winner_team_id=match.winner_team_id,
     )
 
 
@@ -1145,6 +1151,9 @@ class RRMatchBox(BaseModel):
     day_display: Optional[str] = None
     time_display: Optional[str] = None
     winner_name: Optional[str] = None
+    team_a_id: Optional[int] = None
+    team_b_id: Optional[int] = None
+    winner_team_id: Optional[int] = None
 
 
 class RRPool(BaseModel):
@@ -1269,6 +1278,9 @@ def _build_rr_match_box(
         day_display=day_display,
         time_display=time_display,
         winner_name=winner_name,
+        team_a_id=m.team_a_id,
+        team_b_id=m.team_b_id,
+        winner_team_id=m.winner_team_id,
     )
 
 

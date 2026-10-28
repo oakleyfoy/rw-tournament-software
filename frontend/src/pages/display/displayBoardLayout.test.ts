@@ -48,6 +48,11 @@ describe('display board density layout', () => {
     expect(css).not.toMatch(/overflow-x:\s*scroll/)
   })
 
+  it('reserves upcoming court-assigned area for at least two time slots', () => {
+    expect(css).toContain('.display-court-assigned-upcoming')
+    expect(css).toContain('min-height: calc(2 * (var(--display-time-slot-min, 140px)))')
+  })
+
   it('keeps waiting slightly wider and playing larger than upcoming', () => {
     expect(WAITING_CARD_MIN_PX).toBeGreaterThanOrEqual(UPCOMING_CARD_MIN_PX)
     expect(PLAYING_CARD_MIN_PX).toBeGreaterThan(WAITING_CARD_MIN_PX)

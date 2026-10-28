@@ -368,6 +368,76 @@ def test_currently_playing_match_appears_with_court_and_time(client, session, mo
     assert "Brooks" not in playing["team_b_names"]
 
 
+def test_currently_playing_includes_started_at_for_time_on_court(client, session, monkeypatch):
+    _freeze_now(monkeypatch)
+    data = _setup_board(session)
+    playing = session.get(Match, data["playing"].id)
+    playing.started_at = datetime(2026, 6, 5, 17, 50, 0)
+    session.add(playing)
+    session.commit()
+    body = client.get(f"/api/tournaments/{data['tournament'].id}/display-board").json()
+    row = _by_id(body["currently_playing"], data["playing"].id)
+    assert row["started_at"]
+    assert "2026-06-05T17:50:00" in row["started_at"]
+    upcoming_row = _by_id(body["upcoming"], data["upcoming"].id)
+    assert "started_at" not in upcoming_row
+
+
+def test_waiting_for_court_keeps_ready_fifo_order(client, session, monkeypatch):
+    _freeze_now(monkeypatch)
+    data = _setup_board(session)
+    later_slot = _add_slot(
+        session,
+        tournament_id=data["tournament"].id,
+        version_id=data["version"].id,
+        start=time(14, 0),
+        court_number=12,
+    )
+    later_waiting = _add_match(
+        session,
+        tournament_id=data["tournament"].id,
+        event_id=data["playing"].event_id,
+        version_id=data["version"].id,
+        code="WOM_E1_WF_R1_M99",
+        team_a=session.get(Team, data["playing"].team_a_id),
+        team_b=session.get(Team, data["playing"].team_b_id),
+        slot=later_slot,
+        sequence=99,
+    )
+    earlier = datetime(2026, 6, 5, 13, 40, 0)
+    later = datetime(2026, 6, 5, 13, 50, 0)
+    for side in ("A", "B"):
+        row = session.exec(
+            select(MatchCheckIn).where(
+                MatchCheckIn.match_id == data["waiting"].id,
+                MatchCheckIn.side == side,
+            )
+        ).first()
+        row.checked_in_at = later
+        session.add(row)
+    _check_in(session, data["tournament"].id, data["version"].id, later_waiting, "A")
+    _check_in(session, data["tournament"].id, data["version"].id, later_waiting, "B")
+    for side in ("A", "B"):
+        row = session.exec(
+            select(MatchCheckIn).where(
+                MatchCheckIn.match_id == later_waiting.id,
+                MatchCheckIn.side == side,
+            )
+        ).first()
+        row.checked_in_at = earlier
+        session.add(row)
+    session.commit()
+
+    body = client.get(f"/api/tournaments/{data['tournament'].id}/display-board").json()
+    waiting_ids = _ids(body["waiting_for_court"])
+    assert waiting_ids.index(later_waiting.id) < waiting_ids.index(data["waiting"].id)
+    first = _by_id(body["waiting_for_court"], later_waiting.id)
+    second = _by_id(body["waiting_for_court"], data["waiting"].id)
+    assert first["ready_at"]
+    assert second["ready_at"]
+    assert first["ready_at"] < second["ready_at"]
+
+
 def test_completed_match_absent_from_all_board_lists(client, session, monkeypatch):
     _freeze_now(monkeypatch)
     data = _setup_board(session)

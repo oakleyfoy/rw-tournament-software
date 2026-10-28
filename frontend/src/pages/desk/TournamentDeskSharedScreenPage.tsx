@@ -235,6 +235,18 @@ export default function TournamentDeskSharedScreenPage() {
         kind: 'board',
       },
       {
+        key: 'court_assigned_display',
+        label: 'Court Assigned',
+        path: `/desk/t/${tid}/display/court-assigned`,
+        kind: 'board',
+      },
+      {
+        key: 'dynamic_screen_display',
+        label: 'Dynamic Screen',
+        path: `/desk/t/${tid}/display/dynamic`,
+        kind: 'board',
+      },
+      {
         key: 'upcoming_matches_display',
         label: 'Upcoming Matches',
         path: `/desk/t/${tid}/display/upcoming`,

@@ -58,8 +58,18 @@ function injectPrintStyles() {
 
 // ── Match card ──────────────────────────────────────────────────────────
 
-function RRMatchCard({ match, showCourtInfo }: { match: RRMatchBox; showCourtInfo: boolean }) {
+function RRMatchCard({
+  match,
+  showCourtInfo,
+  highlightTeamId = null,
+}: {
+  match: RRMatchBox
+  showCourtInfo: boolean
+  highlightTeamId?: number | null
+}) {
   const isFinal = match.status === 'FINAL'
+  const highlighted = highlightTeamId != null
+    && (match.team_a_id === highlightTeamId || match.team_b_id === highlightTeamId)
 
   const infoParts: string[] = [`Match #${match.match_id}`]
   if (showCourtInfo && match.court_label) infoParts.push(match.court_label)
@@ -69,11 +79,14 @@ function RRMatchCard({ match, showCourtInfo }: { match: RRMatchBox; showCourtInf
   if (match.time_display) schedParts.push(match.time_display)
 
   return (
-    <div style={{
-      border: '1px solid #ccc',
+    <div
+      className={highlighted ? 'hub-highlight-box' : undefined}
+      data-hub-highlight={highlighted ? '1' : undefined}
+      style={{
+      border: highlighted ? '2px solid #f9a825' : '1px solid #ccc',
       borderRadius: 3,
       padding: '6px 10px',
-      backgroundColor: '#fff',
+      backgroundColor: highlighted ? '#fff8e1' : '#fff',
       width: 280,
       fontSize: 12,
       lineHeight: 1.4,
@@ -182,7 +195,17 @@ const CD_PLACEMENT_POOL_CODE = 'CD_PLACEMENT'
 const WF10_PLACEMENT_POOL_CODE = 'WF10_PLACEMENT'
 const PLACEMENT_POOL_CODES = new Set([CD_PLACEMENT_POOL_CODE, WF10_PLACEMENT_POOL_CODE])
 
-function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventName: string; showCourtInfo: boolean }) {
+function PoolSection({
+  pool,
+  eventName,
+  showCourtInfo,
+  highlightTeamId = null,
+}: {
+  pool: RRPool
+  eventName: string
+  showCourtInfo: boolean
+  highlightTeamId?: number | null
+}) {
   const isPlacement = PLACEMENT_POOL_CODES.has(pool.pool_code)
   const title = isPlacement
     ? `${eventName} ${pool.pool_label}`.toUpperCase()
@@ -245,7 +268,12 @@ function PoolSection({ pool, eventName, showCourtInfo }: { pool: RRPool; eventNa
               </div>
             )}
             {matches.map(m => (
-              <RRMatchCard key={m.match_id} match={m} showCourtInfo={showCourtInfo} />
+              <RRMatchCard
+                key={m.match_id}
+                match={m}
+                showCourtInfo={showCourtInfo}
+                highlightTeamId={highlightTeamId}
+              />
             ))}
           </div>
         ))}
@@ -445,7 +473,13 @@ function PoolStandingsTableTv({ standings }: { standings: RRPoolStandings }) {
 
 // ── Standings table ──────────────────────────────────────────────────────
 
-function PoolStandingsTable({ standings }: { standings: RRPoolStandings }) {
+function PoolStandingsTable({
+  standings,
+  highlightTeamId = null,
+}: {
+  standings: RRPoolStandings
+  highlightTeamId?: number | null
+}) {
   if (standings.rows.length === 0) return null
 
   const th: React.CSSProperties = {
@@ -486,8 +520,17 @@ function PoolStandingsTable({ standings }: { standings: RRPoolStandings }) {
             {standings.rows.map((row, idx) => {
               const setDiff = row.sets_won - row.sets_lost
               const gameDiff = row.games_won - row.games_lost
+              const highlighted = highlightTeamId != null && row.team_id === highlightTeamId
               return (
-                <tr key={row.team_id} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: idx < 2 ? '#f1f8e9' : '#fff' }}>
+                <tr
+                  key={row.team_id}
+                  data-hub-highlight={highlighted ? '1' : undefined}
+                  style={{
+                    borderBottom: '1px solid #f0f0f0',
+                    backgroundColor: highlighted ? '#fff8e1' : idx < 2 ? '#f1f8e9' : '#fff',
+                    outline: highlighted ? '2px solid #f9a825' : undefined,
+                  }}
+                >
                   <td style={td}>{idx + 1}</td>
                   <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{row.team_display}</td>
                   <td style={{ ...td, fontWeight: 700, color: '#2e7d32' }}>{row.wins}</td>
@@ -513,7 +556,13 @@ function PoolStandingsTable({ standings }: { standings: RRPoolStandings }) {
   )
 }
 
-function StandingsSection({ standings }: { standings: RRPoolStandings[] }) {
+function StandingsSection({
+  standings,
+  highlightTeamId = null,
+}: {
+  standings: RRPoolStandings[]
+  highlightTeamId?: number | null
+}) {
   if (!standings || standings.length === 0) return null
   const hasData = standings.some(s => s.rows.some(r => r.played > 0))
   if (!hasData) return null
@@ -529,7 +578,7 @@ function StandingsSection({ standings }: { standings: RRPoolStandings[] }) {
       width: '100%',
     }}>
       {standings.map(s => (
-        <PoolStandingsTable key={s.pool_code} standings={s} />
+        <PoolStandingsTable key={s.pool_code} standings={s} highlightTeamId={highlightTeamId} />
       ))}
     </div>
   )
@@ -635,12 +684,15 @@ export default function PublicRoundRobinPage() {
   const tvMode = searchParams.get('tv') === '1'
   const versionIdParam = searchParams.get('version_id')
   const versionId = versionIdParam ? parseInt(versionIdParam, 10) : null
+  const teamParam = Number(searchParams.get('team') || '')
+  const highlightTeamId = Number.isFinite(teamParam) && teamParam > 0 ? teamParam : null
+  const openFullDrawFromHub = searchParams.get('view') === 'draw'
 
   const [data, setData] = useState<RoundRobinResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notPublished, setNotPublished] = useState(false)
-  const [showFullDraw, setShowFullDraw] = useState(false)
+  const [showFullDraw, setShowFullDraw] = useState(openFullDrawFromHub)
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280))
 
   useEffect(() => {
@@ -684,6 +736,19 @@ export default function PublicRoundRobinPage() {
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [])
+
+  useEffect(() => {
+    if (!highlightTeamId || loading || !data) return
+    if (viewportWidth <= 768 && !showFullDraw && !captureMode && !tvMode) return
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLElement>('[data-hub-highlight="1"]')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'center',
+      })
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [highlightTeamId, loading, data, showFullDraw, viewportWidth, captureMode, tvMode])
 
   const handlePrint = useCallback(() => {
     injectPrintStyles()
@@ -779,8 +844,9 @@ export default function PublicRoundRobinPage() {
         eventName={data.event_name}
         formatLabel="Round robin"
         onlyStage="RR"
-        backHref={`/t/${tid}/draws`}
+        backHref={`/t/${tid}/hub`}
         onShowFullDraw={() => setShowFullDraw(true)}
+        initialTeamId={highlightTeamId}
       />
     )
   }
@@ -870,7 +936,7 @@ export default function PublicRoundRobinPage() {
         <div style={{ padding: '16px 24px 0' }}>
           <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 720px', minWidth: 300 }}>
-              <StandingsSection standings={data.standings} />
+              <StandingsSection standings={data.standings} highlightTeamId={highlightTeamId} />
             </div>
             <StandingsHelpPanel tiebreakerNote={data.tiebreaker_note} />
           </div>
@@ -1052,7 +1118,7 @@ export default function PublicRoundRobinPage() {
                 }}>
                   {pair.map(pool => (
                     <div key={pool.pool_code} style={{ flex: '1 1 48%', minWidth: 320 }}>
-                      <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
+                      <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} highlightTeamId={highlightTeamId} />
                     </div>
                   ))}
                 </div>
@@ -1060,7 +1126,7 @@ export default function PublicRoundRobinPage() {
 
               {placementPools.map(pool => (
                 <div key={pool.pool_code} style={{ width: '100%', marginBottom: 20 }}>
-                  <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} />
+                  <PoolSection pool={pool} eventName={data.event_name} showCourtInfo={showCourtInfo} highlightTeamId={highlightTeamId} />
                 </div>
               ))}
 
