@@ -132,6 +132,19 @@ function divisionCodeFromMatch(match: MobileMatch | null): string | null {
   return null
 }
 
+function isWaterfallMatch(match: MobileMatch): boolean {
+  const stage = (match.stage || '').toUpperCase()
+  const code = (match.match_code || '').toUpperCase()
+  return stage === 'WF' || code.includes('_WF_')
+}
+
+function isRoundRobinMatch(match: MobileMatch): boolean {
+  const stage = (match.stage || '').toUpperCase()
+  const code = (match.match_code || '').toUpperCase()
+  return stage === 'RR' || code.includes('_RR_') || /_POOL[A-Z0-9]*_/.test(code)
+}
+
+/** Draws this team is currently in or has already played — not future brackets they might reach. */
 export function drawTargetsForTeam(
   tournamentId: number,
   team: Pick<PublicTeamDirectoryItem, 'team_id' | 'event_id' | 'event_name'>,
@@ -142,18 +155,30 @@ export function drawTargetsForTeam(
   if (!event) return []
 
   const journey = buildTeamJourney(team.team_id, asMobileMatches(matches))
+  // Include completed + upcoming + projected feeder slots the team already earned.
+  const relevant = journey.matches.filter((match) => match.event_id === team.event_id)
+  if (relevant.length === 0) return []
+
+  const hasWaterfall = relevant.some(isWaterfallMatch)
+  const hasRoundRobin = relevant.some(isRoundRobinMatch)
+  const bracketCodes = new Set<string>()
+  for (const match of relevant) {
+    const div = divisionCodeFromMatch(match)
+    if (div) bracketCodes.add(div)
+  }
+
   const focusMatch = journey.next || [...journey.completed].reverse()[0] || null
   const focusDiv = divisionCodeFromMatch(focusMatch)
   const targets: DrawTarget[] = []
 
-  if (event.has_waterfall) {
+  if (hasWaterfall && event.has_waterfall) {
     targets.push({
       label: `${event.name} · Waterfall`,
       path: `/t/${tournamentId}/draws/${event.event_id}/waterfall`,
       drawType: 'waterfall',
     })
   }
-  if (event.has_round_robin) {
+  if (hasRoundRobin && event.has_round_robin) {
     targets.push({
       label: `${event.name} · Round Robin`,
       path: `/t/${tournamentId}/draws/${event.event_id}/roundrobin`,
@@ -161,6 +186,7 @@ export function drawTargetsForTeam(
     })
   }
   for (const div of event.divisions || []) {
+    if (!bracketCodes.has(div.code)) continue
     targets.push({
       label: `${event.name} · ${div.label || BRACKET_DIV_LABELS[div.code] || div.code}`,
       path: `/t/${tournamentId}/draws/${event.event_id}/bracket/${div.code}`,
@@ -170,17 +196,14 @@ export function drawTargetsForTeam(
     })
   }
 
-  if (targets.length <= 1) return targets
-  if (!focusDiv) return targets
+  if (targets.length <= 1 || !focusDiv) return targets
 
   const preferred = targets.filter(
     (target) => target.drawType === 'bracket' && target.divisionCode === focusDiv,
   )
-  if (preferred.length) {
-    const rest = targets.filter((target) => !preferred.includes(target))
-    return [...preferred, ...rest]
-  }
-  return targets
+  if (!preferred.length) return targets
+  const rest = targets.filter((target) => !preferred.includes(target))
+  return [...preferred, ...rest]
 }
 
 export function drawPathWithTeamHighlight(path: string, teamId: number, openFullDraw = true): string {

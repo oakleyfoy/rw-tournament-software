@@ -101,16 +101,59 @@ describe('tournament hub helpers', () => {
     expect(status.label).toBe('Eliminated')
   })
 
-  it('prefers the bracket division that contains the team focus match', () => {
+  it('only lists draws the team is in now or already played', () => {
+    const waterfallOnly = drawTargetsForTeam(
+      9,
+      team,
+      [match({ match_id: 5, match_code: 'EVT_WF_R1_01', stage: 'WF', event_id: 1 })],
+      events,
+    )
+    expect(waterfallOnly.map((item) => item.drawType)).toEqual(['waterfall'])
+
+    const bracketOnly = drawTargetsForTeam(
+      9,
+      team,
+      [match({ match_id: 6, match_code: 'EVT_BWL_SF_01', stage: 'BRACKET', event_id: 1 })],
+      events,
+    )
+    expect(bracketOnly.map((item) => item.path)).toEqual(['/t/9/draws/1/bracket/BWL'])
+    expect(drawPathWithTeamHighlight(bracketOnly[0].path, 10)).toContain('team=10')
+    expect(drawPathWithTeamHighlight(bracketOnly[0].path, 10)).toContain('view=draw')
+  })
+
+  it('includes earned projected bracket path after a completed feeder match', () => {
     const targets = drawTargetsForTeam(
       9,
       team,
-      [match({ match_id: 5, match_code: 'EVT_BWL_SF_01', stage: 'BRACKET', event_id: 1 })],
+      [
+        match({
+          match_id: 1,
+          match_code: 'EVT_WF_R2_01',
+          stage: 'WF',
+          event_id: 1,
+          status: 'FINAL',
+          winner_team_id: 10,
+          score_display: '8-4',
+        }),
+        match({
+          match_id: 9,
+          match_code: 'EVT_BWW_QF_01',
+          stage: 'BRACKET',
+          event_id: 1,
+          team_a_id: null,
+          team_b_id: null,
+          team1_full_name: 'Winner of Match #1',
+          team2_full_name: 'Winner of Match #2',
+          status: 'UNSCHEDULED',
+          scheduled_time: null,
+          court_name: null,
+        }),
+      ],
       events,
     )
-    expect(targets[0].path).toContain('/bracket/BWL')
-    expect(drawPathWithTeamHighlight(targets[0].path, 10)).toContain('team=10')
-    expect(drawPathWithTeamHighlight(targets[0].path, 10)).toContain('view=draw')
+    expect(targets.map((item) => item.drawType).sort()).toEqual(['bracket', 'waterfall'])
+    expect(targets[0].divisionCode).toBe('BWW')
+    expect(targets.some((item) => item.divisionCode === 'BWL')).toBe(false)
   })
 
   it('pulls hometowns from registration full names', () => {
