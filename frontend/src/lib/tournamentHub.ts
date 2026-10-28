@@ -222,22 +222,52 @@ export function hubOpponentLabel(match: ScheduleMatchItem, teamId: number): stri
   return displaySideLabel(opponentName(match as MobileMatch, teamId))
 }
 
-/** Extract "City, ST" or "ST" from one registration player segment. */
-export function playerHometown(part: string): string | null {
-  const value = (part || '').trim()
-  if (!value) return null
-  const cityState = value.match(/,\s*([^,]+,\s*[A-Z]{2})\s*$/i)
-  if (cityState) return cityState[1].replace(/\s+/g, ' ').trim()
-  const stateOnly = value.match(/,\s*([A-Z]{2})\s*$/i)
-  if (stateOnly) return stateOnly[1].toUpperCase()
-  const dashState = value.match(/\s+-\s+([A-Z]{2})\s*$/i)
-  if (dashState) return dashState[1].toUpperCase()
-  return null
-}
-
 export interface OpponentPlayerLine {
   name: string
   hometown: string | null
+}
+
+/** Split one registration segment into display name + hometown (City, ST or full state). */
+export function splitPlayerRegistration(part: string): OpponentPlayerLine {
+  const value = (part || '').trim()
+  if (!value) return { name: '', hometown: null }
+
+  // Name, City, ST
+  let match = value.match(/^(.*?),\s*([^,]+),\s*([A-Z]{2})\s*$/i)
+  if (match) {
+    return {
+      name: match[1].trim(),
+      hometown: `${match[2].replace(/\s+/g, ' ').trim()}, ${match[3].toUpperCase()}`,
+    }
+  }
+
+  // Name, City, Full State Name (e.g. South Carolina)
+  match = value.match(/^(.*?),\s*([^,]+),\s*([A-Za-z][A-Za-z]+(?:\s+[A-Za-z]+)?)\s*$/)
+  if (match && !/\d/.test(match[3])) {
+    return {
+      name: match[1].trim(),
+      hometown: `${match[2].replace(/\s+/g, ' ').trim()}, ${match[3].replace(/\s+/g, ' ').trim()}`,
+    }
+  }
+
+  // Name, ST
+  match = value.match(/^(.*?),\s*([A-Z]{2})\s*$/i)
+  if (match) {
+    return { name: match[1].trim(), hometown: match[2].toUpperCase() }
+  }
+
+  // Name - ST
+  match = value.match(/^(.*?)\s+-\s+([A-Z]{2})\s*$/i)
+  if (match) {
+    return { name: match[1].trim(), hometown: match[2].toUpperCase() }
+  }
+
+  return { name: shortPlayerName(value), hometown: null }
+}
+
+/** Extract "City, ST" / full state / "ST" from one registration player segment. */
+export function playerHometown(part: string): string | null {
+  return splitPlayerRegistration(part).hometown
 }
 
 /** Pair short player names with hometowns from the full registration name. */
@@ -245,10 +275,7 @@ export function opponentPlayerLines(fullName: string | null | undefined): Oppone
   const raw = (fullName || '').trim()
   if (!raw || /^tbd$/i.test(raw) || /^(Winner|Loser) of Match/i.test(raw)) return []
   const parts = raw.split(/\s*\/\s*|\s+&\s+/).map((part) => part.trim()).filter(Boolean).slice(0, 2)
-  return parts.map((part) => ({
-    name: shortPlayerName(part),
-    hometown: playerHometown(part),
-  })).filter((line) => Boolean(line.name))
+  return parts.map(splitPlayerRegistration).filter((line) => Boolean(line.name))
 }
 
 export function opponentFullNameFromMatch(match: ScheduleMatchItem, teamId: number): string {

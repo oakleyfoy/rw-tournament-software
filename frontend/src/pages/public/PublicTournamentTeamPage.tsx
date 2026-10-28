@@ -51,8 +51,11 @@ function OpponentNameBlock({
   return (
     <div className="hub-opponent-copy" data-testid="hub-opponent-with-hometown">
       {lines.map((line) => (
-        <div key={`${line.name}-${line.hometown || 'none'}`} className={compact ? 'hub-compact-name' : 'hub-player-line'}>
-          <span>{line.name}</span>
+        <div
+          key={`${line.name}-${line.hometown || 'none'}`}
+          className={compact ? 'hub-player-line compact' : 'hub-player-line'}
+        >
+          <span className="hub-player-name">{line.name}</span>
           {line.hometown ? <span className="hub-hometown">{line.hometown}</span> : null}
         </div>
       ))}

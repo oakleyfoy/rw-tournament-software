@@ -159,12 +159,17 @@ describe('tournament hub helpers', () => {
   it('pulls hometowns from registration full names', () => {
     expect(playerHometown('Heather Robinson, Cumming, GA')).toBe('Cumming, GA')
     expect(playerHometown('Alex Quiros, PA')).toBe('PA')
+    expect(playerHometown("Tracy O'Shea, Greenville, South Carolina")).toBe('Greenville, South Carolina')
     expect(hometownSummary('Ada Smith, Cumming, GA / Bea Jones, Johns Island, SC')).toBe(
       'Cumming, GA / Johns Island, SC',
     )
     expect(opponentPlayerLines('Cara Lee, Destin, FL / Dee Chen, Atlanta, GA')).toEqual([
       { name: 'Cara Lee', hometown: 'Destin, FL' },
       { name: 'Dee Chen', hometown: 'Atlanta, GA' },
+    ])
+    expect(opponentPlayerLines("Catherine Webb, Greenville, SC / Tracy O'Shea, Greenville, South Carolina")).toEqual([
+      { name: 'Catherine Webb', hometown: 'Greenville, SC' },
+      { name: "Tracy O'Shea", hometown: 'Greenville, South Carolina' },
     ])
   })
 

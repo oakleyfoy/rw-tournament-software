@@ -314,21 +314,34 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
+  gap: 0 8px;
   font-size: 18px;
-  font-weight: 700;
   line-height: 1.3;
   color: #1b2430;
+}
+
+.hub-player-line.compact {
+  font-size: 15px;
 }
 
 .hub-player-line + .hub-player-line {
   margin-top: 4px;
 }
 
+.hub-player-name {
+  font-weight: 700;
+  color: #1b2430;
+}
+
 .hub-hometown {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: #5c6b7a;
+}
+
+.hub-player-line.compact .hub-hometown {
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .hub-subheading {
