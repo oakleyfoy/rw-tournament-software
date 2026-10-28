@@ -42,6 +42,7 @@ CONFLICT_DRAW_PROTECTION = "live_draw_protection_blocks_structural_change"
 CONFLICT_ROSTER_RECONCILIATION_BLOCKED = "roster_reconciliation_blocked"
 CONFLICT_DRAW_PLACEMENT_UNRESOLVED = "roster_draw_placement_unresolved"
 CONFLICT_ROSTER_RECONCILIATION_INCOMPLETE = "roster_reconciliation_incomplete"
+CONFLICT_COPIED_ROSTER_LOCKED = "copied_roster_locked_by_started_match"
 EMPTY_DRAW_SLOT = "TBD"
 _FEEDER_PLACEHOLDER = re.compile(r"^(?:W\(|L\(|WINNER:|LOSER:|TBD:|WFSEED:)", re.IGNORECASE)
 _SEED_PLACEHOLDER = re.compile(r"^SEED[_ ](\d+)$", re.IGNORECASE)
@@ -1076,6 +1077,148 @@ def _routed_event_ids(
     return routed_ids
 
 
+def _event_category_value(event: Event) -> str:
+    return event.category.value if isinstance(event.category, EventCategory) else str(event.category)
+
+
+def _copied_roster_markers(
+    session: Session,
+    tournament_id: int,
+    plans: list[TournamentDrawPlan],
+    events: list[Event],
+) -> list[str]:
+    """Active teams with no RW-OS key on a planned category. A duplicate leaves these behind."""
+    categories = {
+        category.value
+        for plan in plans
+        if (category := event_category_for_draw_kind(plan.draw_kind)) is not None
+    }
+    if not categories:
+        return []
+    event_ids = {
+        event.id
+        for event in events
+        if event.id is not None and _event_category_value(event) in categories
+    }
+    if not event_ids:
+        return []
+    rows = session.exec(
+        select(Team).where(Team.event_id.in_(event_ids), Team.source_team_key.is_(None))  # type: ignore[attr-defined]
+    ).all()
+    return [f"copied:{team.id}" for team in rows if team.id is not None and team_is_active(team)]
+
+
+def _plan_target_events(
+    plans: list[TournamentDrawPlan],
+    events: list[Event],
+) -> dict[int, dict[str, Any]]:
+    targets: dict[int, dict[str, Any]] = {}
+    for plan in plans:
+        for bracket in _brackets_from_plan(plan):
+            label = str(bracket.get("label") or "").strip()
+            if not label:
+                continue
+            event = _resolve_roster_event(events, plan.draw_kind, label)
+            if event is not None and event.id is not None:
+                targets[event.id] = bracket
+    return targets
+
+
+def _retire_one_copied_team(session: Session, team: Team, result: RosterProjectionResult) -> None:
+    """Drop a duplicated team that has no RW-OS key so the imported name and seed can be used."""
+    label = _team_label(team)
+    for match in _matches_for_team(session, team):
+        if match.team_a_id == team.id and match.source_match_a_id is None:
+            match.team_a_id = None
+            match.placeholder_side_a = EMPTY_DRAW_SLOT
+            session.add(match)
+        if match.team_b_id == team.id and match.source_match_b_id is None:
+            match.team_b_id = None
+            match.placeholder_side_b = EMPTY_DRAW_SLOT
+            session.add(match)
+    if team.id:
+        team.name = f"__retired_{team.id}"
+        _delete_team_avoid_edges(session, team.event_id, team.id)
+    team.display_name = None
+    team.is_defaulted = True
+    team.seed = None
+    session.add(team)
+    _record_field_change(
+        result,
+        team_key=team.source_team_key or "",
+        team_label=label,
+        field="rosterStatus",
+        label="Roster status",
+        before="Copied from another tournament",
+        after="Withdrawn",
+    )
+    result.withdrawn_teams += 1
+
+
+def _replace_copied_roster(
+    session: Session,
+    plans: list[TournamentDrawPlan],
+    events: list[Event],
+    result: RosterProjectionResult,
+) -> set[int]:
+    """Replace duplicated teams with the imported roster.
+
+    Returns event ids whose copied teams were cleared. A started match keeps that event's copy.
+    """
+    if not plans:
+        return set()
+    targets = _plan_target_events(plans, events)
+    categories = {
+        category.value
+        for plan in plans
+        if (category := event_category_for_draw_kind(plan.draw_kind)) is not None
+    }
+    candidate_ids = set(targets)
+    for event in events:
+        if event.id is not None and _event_category_value(event) in categories:
+            candidate_ids.add(event.id)
+
+    replaced: set[int] = set()
+    retired_any = False
+    for event in events:
+        if event.id not in candidate_ids:
+            continue
+        rows = session.exec(select(Team).where(Team.event_id == event.id)).all()
+        active = [team for team in rows if team_is_active(team)]
+        copied = [team for team in active if not team.source_team_key]
+        if not copied:
+            continue
+        if event.id not in targets and any(team.source_team_key for team in active):
+            continue
+        locked = [team for team in copied if _team_draw_lock_reason(session, team)]
+        if locked:
+            names = ", ".join(_team_label(team) for team in locked[:4])
+            result.conflicts.append(
+                _conflict(
+                    CONFLICT_COPIED_ROSTER_LOCKED,
+                    (
+                        f"{event.name} still lists teams copied from another tournament ({names}). "
+                        "A started match is keeping that roster."
+                    ),
+                    eventId=event.id,
+                )
+            )
+            continue
+        for team in copied:
+            _retire_one_copied_team(session, team, result)
+            retired_any = True
+        bracket = targets.get(event.id)
+        if bracket is not None:
+            size = int(bracket.get("size") or 0)
+            if size and event.team_count != size:
+                event.team_count = size
+                session.add(event)
+            replaced.add(event.id)
+    if retired_any:
+        session.flush()
+    return replaced
+
+
 def operational_roster_drift(
     session: Session,
     import_row: TournamentImport,
@@ -1128,6 +1271,8 @@ def operational_roster_drift(
 
     missing_from_event = sorted(rwos_keys - active_keys)
     extra_in_event = sorted(active_keys - rwos_keys)
+    extra_in_event.extend(_copied_roster_markers(session, import_row.tournament_id, plans, events))
+    extra_in_event = sorted(extra_in_event)
     missing_from_draw = sorted(expected_draw - draw_keys)
     extra_in_draw = sorted(key for key in draw_keys if key not in rwos_keys)
     seed_mismatches = _seed_mismatches(snapshot_teams, plans, events, live)
@@ -1211,7 +1356,7 @@ def _desired_teams_by_event(
         for snapshot_team, bracket, _rank in routed:
             label = str(bracket.get("label") or "").strip()
             event = _event_by_route(events, plan.draw_kind, label)
-            if (event is None or event.id is None) and operational_only:
+            if event is None or event.id is None:
                 event = _resolve_roster_event(events, plan.draw_kind, label)
             if event is None or event.id is None:
                 continue
@@ -1507,6 +1652,7 @@ def project_approved_roster(
     wkw_assignments: dict[int, list[tuple[int, Optional[str]]]] = {}
     active_keys = {team.team_key for team in teams}
     vacated_slots, blocked_withdrawals = _withdraw_absent_source_teams(session, import_row, active_keys, result)
+    copied_roster_event_ids = _replace_copied_roster(session, plans, events, result)
 
     for plan in plans:
         draw_teams = [team for team in teams if team.draw_kind == plan.draw_kind]
@@ -1560,7 +1706,7 @@ def project_approved_roster(
             _collect_operational_warnings(snapshot_team, result.warnings)
             label = str(bracket.get("label") or "").strip()
             event = _event_by_route(events, plan.draw_kind, label)
-            if (event is None or event.id is None) and operational_only:
+            if event is None or event.id is None:
                 event = _resolve_roster_event(events, plan.draw_kind, label)
             if event is None or event.id is None:
                 result.conflicts.append(
@@ -1622,7 +1768,7 @@ def project_approved_roster(
                 # match is refused later; draw_status alone is not a block.
                 if not operational_only and structural_mismatch and not allow_structural_rebuild:
                     continue
-                if not operational_only and protection:
+                if not operational_only and protection and event.id not in copied_roster_event_ids:
                     result.conflicts.append(
                         _conflict(
                             CONFLICT_DRAW_PROTECTION,

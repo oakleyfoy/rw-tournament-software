@@ -1922,3 +1922,53 @@ def test_refresh_withdrawals_and_replacements_keep_24_team_capacity(client: Test
     edge_ids = {edge.team_id_a for edge in edges} | {edge.team_id_b for edge in edges}
     assert new_ids <= edge_ids
     assert all(team.id not in edge_ids for team in withdrawn)
+
+
+def test_approve_replaces_a_copied_roster_with_the_import(client: TestClient, session: Session):
+    """A duplicated event keeps the other tournament's teams, with no RW-OS key.
+
+    Draw Builder lists those rows. Approving the import has to retire them and
+    write the snapshot teams, including when the copied draw is already marked final.
+    """
+    imported = _import_payload(session, 1420, _mixed_field(8))
+    event = Event(
+        tournament_id=imported.tournament_id,
+        category="mixed",
+        name="Mixed A",
+        team_count=24,
+        draw_status="final",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    copied_names = ("Mike / Dee Dee", "Mixed Team 1")
+    copied = []
+    for seed, name in enumerate(copied_names, start=1):
+        team = Team(
+            event_id=event.id,
+            name=name,
+            display_name=name,
+            seed=seed,
+            rating=8.5,
+            source_team_key=None,
+        )
+        session.add(team)
+        copied.append(team)
+    session.commit()
+
+    body = _approve(client, imported.id, {"mixed": "8"})
+    projection = body["rosterProjection"]
+    assert projection["ok"] is True, projection["conflicts"]
+    assert projection["reconciled"]["withdrawnTeams"] >= 2
+
+    session.expire_all()
+    event = session.get(Event, event.id)
+    assert event.team_count == 8
+    live = session.exec(select(Team).where(Team.event_id == event.id)).all()
+    active = [team for team in live if not team.is_defaulted]
+    assert {team.source_team_key for team in active} == {team.team_key for team in _mixed_field(8)}
+    assert sorted(team.seed for team in active) == list(range(1, 9))
+    assert all(team.display_name != "Mike / Dee Dee" for team in active)
+    retired = [team for team in live if team.id in {row.id for row in copied}]
+    assert len(retired) == 2
+    assert all(team.is_defaulted and team.seed is None and team.name.startswith("__retired_") for team in retired)
