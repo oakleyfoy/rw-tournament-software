@@ -17,6 +17,7 @@ from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
 from app.models.match_player_checkin import MatchPlayerCheckIn
+from app.models.opening_slot_release import OpeningSlotRelease
 from app.models.player import Player
 from app.models.policy_run import PolicyRun
 from app.models.schedule_slot import ScheduleSlot
@@ -1238,6 +1239,37 @@ def _is_player_checkin_conflict(exc: IntegrityError) -> bool:
     )
 
 
+def _reset_duplicated_desk_play_state(session: Session, tournament_id: int) -> None:
+    """Ensure a duplicated tournament starts the Check-In desk on the first slot."""
+    tournament = session.get(Tournament, tournament_id)
+    if tournament is not None:
+        tournament.desk_management_mode = "checkin_management"
+        session.add(tournament)
+
+    matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
+    for match in matches:
+        match.runtime_status = "SCHEDULED"
+        match.status = "scheduled"
+        match.score_json = None
+        match.winner_team_id = None
+        match.started_at = None
+        match.completed_at = None
+        match.checkin_reset_pending = False
+        match.court_queued = False
+        session.add(match)
+
+    for row in session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)).all():
+        session.delete(row)
+    for row in session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
+    ).all():
+        session.delete(row)
+    for row in session.exec(
+        select(OpeningSlotRelease).where(OpeningSlotRelease.tournament_id == tournament_id)
+    ).all():
+        session.delete(row)
+
+
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
 def duplicate_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """
@@ -1263,7 +1295,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             end_date=source_tournament.end_date,
             notes=source_tournament.notes,
             use_time_windows=source_tournament.use_time_windows,
-            desk_management_mode=source_tournament.desk_management_mode,
+            desk_management_mode="checkin_management",
             shared_screen_config_json=source_tournament.shared_screen_config_json,
             court_names=list(source_tournament.court_names or []),
             source_rw_os_tournament_id=source_tournament.source_rw_os_tournament_id,
@@ -1702,7 +1734,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 source_match_b_id=None,
                 source_a_role=match.source_a_role,
                 source_b_role=match.source_b_role,
-                status=match.status,
+                status="scheduled",
                 created_at=match.created_at,
                 runtime_status="SCHEDULED",
                 score_json=None,
@@ -1991,6 +2023,9 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         if source_public_version_id is not None:
             new_tournament.public_schedule_version_id = version_id_map.get(source_public_version_id)
             session.add(new_tournament)
+
+        # Belt-and-suspenders: never inherit mid-day Check-In / Ready To Go progress.
+        _reset_duplicated_desk_play_state(session, new_tournament.id)  # type: ignore[arg-type]
 
         session.commit()
         session.refresh(new_tournament)

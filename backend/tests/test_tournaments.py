@@ -1057,7 +1057,7 @@ def test_duplicate_tournament_keeps_playing_partner_and_stale_seeded_row(client:
     duplicated_id = resp.json()["id"]
     cloned = session.get(Tournament, duplicated_id)
     assert cloned is not None
-    assert cloned.desk_management_mode == "court_management"
+    assert cloned.desk_management_mode == "checkin_management"
     assert cloned.source_rw_os_tournament_id == 4242
     assert cloned.source_rw_os_organization_slug == "rw"
 
@@ -1085,6 +1085,112 @@ def test_duplicate_tournament_keeps_playing_partner_and_stale_seeded_row(client:
     assert (
         session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == duplicated_id)).all() == []
     )
+
+
+def test_duplicate_tournament_does_not_carry_ready_to_go_checkins(client: TestClient, session: Session):
+    """Checked-in opening matches on the source must not appear Ready To Go on the copy."""
+    from app.services.preassigned_dispatch import list_ready_assigned_matches
+
+    source = Tournament(
+        name="Checked In Source",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 7),
+        desk_management_mode="checkin_management",
+    )
+    session.add(source)
+    session.flush()
+    event = Event(
+        tournament_id=source.id,
+        category="womens",
+        name="Women's A",
+        team_count=2,
+        court_assignment_by_date_json='{"2026-11-06":"PREASSIGNED"}',
+    )
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=source.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+    team_a = Team(event_id=event.id, name="Haley / Stacey", display_name="Haley / Stacey", seed=1)
+    team_b = Team(event_id=event.id, name="Trisha / Heather", display_name="Trisha / Heather", seed=2)
+    session.add_all([team_a, team_b])
+    session.flush()
+    slot = ScheduleSlot(
+        tournament_id=source.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 11, 6),
+        start_time=time(7, 0),
+        end_time=time(8, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add(slot)
+    session.flush()
+    match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WA_WF_R1_01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=team_a.id,
+        team_b_id=team_b.id,
+        placeholder_side_a="Haley / Stacey",
+        placeholder_side_b="Trisha / Heather",
+        runtime_status="SCHEDULED",
+        status="scheduled",
+    )
+    session.add(match)
+    session.flush()
+    session.add(
+        MatchAssignment(
+            schedule_version_id=version.id,
+            match_id=match.id,
+            slot_id=slot.id,
+            assigned_by="SCHEDULE",
+        )
+    )
+    session.add(
+        MatchCheckIn(
+            tournament_id=source.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=team_a.id,
+            side="A",
+            team_checked_in=True,
+        )
+    )
+    session.add(
+        MatchCheckIn(
+            tournament_id=source.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=team_b.id,
+            side="B",
+            team_checked_in=True,
+        )
+    )
+    session.commit()
+
+    source_ready = list_ready_assigned_matches(session, source, version)
+    assert len(source_ready) == 1
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201, resp.text
+    duplicated_id = resp.json()["id"]
+    cloned = session.get(Tournament, duplicated_id)
+    assert cloned is not None
+    cloned_version = session.exec(
+        select(ScheduleVersion).where(ScheduleVersion.tournament_id == duplicated_id)
+    ).one()
+    assert session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == duplicated_id)).all() == []
+    assert list_ready_assigned_matches(session, cloned, cloned_version) == []
 
 
 def test_dedupe_match_checkins_for_copy_keeps_one_per_side():
