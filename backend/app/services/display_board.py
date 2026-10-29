@@ -662,7 +662,8 @@ def snapshot_to_public_dict(snapshot: DisplayBoardSnapshot) -> Dict[str, Any]:
             payload["court"] = item.court
         if item.started_at:
             payload["started_at"] = item.started_at
-        if item.ready_at and item.board_section == "waiting_for_court":
+        # ready_at is when both sides checked in — used for put-on / left-sort order
+        if item.ready_at:
             payload["ready_at"] = item.ready_at
         return payload
 

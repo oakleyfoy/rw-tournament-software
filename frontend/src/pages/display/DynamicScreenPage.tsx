@@ -3,6 +3,7 @@ import { DisplayBoardSection } from './DisplayBoardSection'
 import { DisplayMatchCard } from './DisplayMatchCard'
 import { DisplayLoadingState, DisplayShell } from './DisplayShell'
 import { groupDisplayMatchesByTime } from './displayTimeGroups'
+import { dynamicNextTimeGroups, dynamicTimeSlotLabel } from './dynamicNextOrder'
 import { useDisplayBoard } from './useDisplayBoard'
 import { useNowMs } from './useNowMs'
 
@@ -25,7 +26,9 @@ export default function DynamicScreenPage() {
     )
   }
 
-  const nextGroups = groupDisplayMatchesByTime(data.upcoming)
+  const playingGroups = groupDisplayMatchesByTime(data.currently_playing)
+  const nextGroups = dynamicNextTimeGroups(data.upcoming)
+  const playingEmpty = playingGroups.length === 0
   const nextEmpty = nextGroups.length === 0
 
   return (
@@ -40,24 +43,44 @@ export default function DynamicScreenPage() {
       onRefresh={refresh}
     >
       <div className="display-dynamic-screen" data-testid="dynamic-screen-board">
-        <DisplayBoardSection
-          testId="dynamic-currently-playing"
-          title="Currently Playing"
-          emptyLabel="No matches currently on court"
-          isEmpty={data.currently_playing.length === 0}
-          gridClass="display-match-grid"
-          gridTestId="dynamic-playing-grid"
+        <section
+          className={
+            playingEmpty
+              ? 'display-section display-section-compact'
+              : 'display-section'
+          }
+          data-testid="dynamic-currently-playing"
+          data-empty={playingEmpty ? 'true' : 'false'}
         >
-          {data.currently_playing.map((match) => (
-            <DisplayMatchCard
-              key={match.match_id}
-              match={match}
-              variant="playing"
-              nowMs={nowMs}
-              preferTimeOnCourt
-            />
-          ))}
-        </DisplayBoardSection>
+          <h2 className="display-section-title">Currently Playing</h2>
+          {playingEmpty ? (
+            <p className="display-empty">No matches currently on court</p>
+          ) : (
+            playingGroups.map((group) => (
+              <section
+                key={`playing-${group.sort_time}-${group.scheduled_time}`}
+                className="display-time-group"
+                data-testid={`dynamic-playing-group-${group.sort_time}`}
+              >
+                <h3 className="display-time-header">{group.scheduled_time}</h3>
+                <div
+                  className="display-match-grid"
+                  data-testid={`dynamic-playing-grid-${group.sort_time}`}
+                >
+                  {group.matches.map((match) => (
+                    <DisplayMatchCard
+                      key={match.match_id}
+                      match={match}
+                      variant="playing"
+                      nowMs={nowMs}
+                      preferTimeOnCourt
+                    />
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
+        </section>
 
         <section
           className={
@@ -74,11 +97,13 @@ export default function DynamicScreenPage() {
           ) : (
             nextGroups.map((group) => (
               <section
-                key={`${group.sort_time}-${group.scheduled_time}`}
+                key={`next-${group.sort_time}-${group.scheduled_time}`}
                 className="display-time-group"
                 data-testid={`dynamic-next-group-${group.sort_time}`}
               >
-                <h3 className="display-time-header">{group.scheduled_time}</h3>
+                <h3 className="display-time-header">
+                  {dynamicTimeSlotLabel(group.scheduled_time)}
+                </h3>
                 <div
                   className="display-match-grid"
                   data-testid={`dynamic-next-grid-${group.sort_time}`}

@@ -38,8 +38,9 @@ describe('DynamicScreenPage', () => {
       currently_playing: [
         makeMatch({
           match_id: 11,
-          scheduled_time: '1:30 PM',
-          sort_time: '13:30',
+          scheduled_time: '7:00 AM',
+          sort_time: '07:00',
+          day_date: '2026-11-06',
           board_section: 'currently_playing',
           in_next_12_hours: false,
           court: 'Court 7',
@@ -76,10 +77,12 @@ describe('DynamicScreenPage', () => {
           scheduled_time: '8:00 AM',
           sort_time: '08:00',
           day_date: '2026-11-06',
-          team_a_names: 'Checked / One',
-          team_b_names: 'Waiting / Two',
+          court: 'Court 8',
+          team_a_names: 'Julie / Paige',
+          team_b_names: 'Pam / Rebecca',
           team_a_checked_in: true,
-          team_b_checked_in: false,
+          team_b_checked_in: true,
+          ready_at: '2026-11-06T15:10:00',
         }),
         makeMatch({
           match_id: 42,
@@ -94,8 +97,21 @@ describe('DynamicScreenPage', () => {
           scheduled_time: '8:00 AM',
           sort_time: '08:00',
           day_date: '2026-11-06',
-          team_a_names: 'Same Slot / A',
-          team_b_names: 'Same Slot / B',
+          court: 'Court 2',
+          team_a_names: 'Not Ready / A',
+          team_b_names: 'Not Ready / B',
+        }),
+        makeMatch({
+          match_id: 44,
+          scheduled_time: '8:00 AM',
+          sort_time: '08:00',
+          day_date: '2026-11-06',
+          court: 'Court 1',
+          team_a_names: 'Danielle / Johnna',
+          team_b_names: 'Riley / Ashley',
+          team_a_checked_in: true,
+          team_b_checked_in: true,
+          ready_at: '2026-11-06T15:05:00',
         }),
       ],
     }
@@ -103,37 +119,38 @@ describe('DynamicScreenPage', () => {
     hookState.initialLoading = false
   })
 
-  it('shows currently playing with names, court, and time on court', () => {
+  it('shows currently playing under its time slot after the slot moves up', () => {
     renderPage()
     expect(screen.getByRole('heading', { name: 'Dynamic Screen' })).toBeInTheDocument()
     const playing = screen.getByTestId('dynamic-currently-playing')
     expect(playing).toHaveTextContent('Helen / Simone')
     expect(playing).toHaveTextContent('Court 7')
+    expect(screen.getByTestId('dynamic-playing-group-07:00')).toHaveTextContent('7:00 AM')
     expect(screen.getByTestId('display-time-on-court-11')).toHaveTextContent('15:00')
   })
 
-  it('shows next matches with checkmarks as teams check in', () => {
+  it('labels next time slots with OUT and sorts both-checked left by ready_at', () => {
     renderPage()
-    const next = screen.getByTestId('dynamic-next-matches')
-    expect(next).toHaveTextContent('Checked / One')
-    expect(next).toHaveTextContent('Waiting / Two')
-    expect(within(next).getByText('Checked / One').closest('[data-checked]')).toHaveAttribute(
+    const eight = screen.getByTestId('dynamic-next-group-08:00')
+    expect(eight).toHaveTextContent('8:00 AM OUT')
+    const cards = within(eight).getAllByTestId(/display-match-/)
+    expect(cards[0]).toHaveAttribute('data-testid', 'display-match-44')
+    expect(cards[1]).toHaveAttribute('data-testid', 'display-match-41')
+    expect(cards[2]).toHaveAttribute('data-testid', 'display-match-43')
+    expect(within(eight).getByText('Danielle / Johnna').closest('[data-checked]')).toHaveAttribute(
       'data-checked',
       'true'
     )
-    expect(within(next).getByText('Waiting / Two').closest('[data-checked]')).toHaveAttribute(
+    expect(within(eight).getByText('Julie / Paige').closest('[data-checked]')).toHaveAttribute(
       'data-checked',
-      'false'
+      'true'
     )
-    expect(screen.queryByTestId('display-court-41')).not.toBeInTheDocument()
   })
 
   it('separates next matches into time-slot sections', () => {
     renderPage()
-    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('8:00 AM')
-    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('Checked / One')
-    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('Same Slot / A')
-    expect(screen.getByTestId('dynamic-next-group-09:00')).toHaveTextContent('9:00 AM')
+    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('Julie / Paige')
+    expect(screen.getByTestId('dynamic-next-group-09:00')).toHaveTextContent('9:00 AM OUT')
     expect(screen.getByTestId('dynamic-next-group-09:00')).toHaveTextContent('Later / A')
     expect(screen.getByTestId('dynamic-next-group-08:00')).not.toHaveTextContent('Later / A')
   })

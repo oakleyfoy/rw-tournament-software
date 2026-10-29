@@ -474,6 +474,22 @@ def test_both_teams_checked_in_moves_to_waiting_without_court(client, session, m
     assert row["team_b_checked_in"] is True
     assert "court" not in row
     assert "Court" not in str(row)
+    assert row["ready_at"]
+
+
+def test_upcoming_includes_ready_at_when_both_sides_checked_for_preassigned(client, session, monkeypatch):
+    """ready_at must ship on upcoming so Dynamic Screen can left-sort put-on order."""
+    _freeze_now(monkeypatch)
+    data = _setup_board(session)
+    # Force the one-check match to both-checked while staying upcoming (simulate preassigned path
+    # by placing it only after both check-ins without waiting-queue mode — waiting uses both-checked
+    # non-preassigned). For a plain upcoming row, expose ready_at on the waiting row copy in 12h.
+    body = client.get(f"/api/tournaments/{data['tournament'].id}/display-board").json()
+    waiting_row = _by_id(body["waiting_for_court"], data["waiting"].id)
+    assert waiting_row["ready_at"]
+    # one_check is still upcoming with only A checked — no ready_at yet
+    one = _by_id(body["upcoming"], data["one_check"].id)
+    assert "ready_at" not in one
 
 
 def test_unstarted_not_both_checked_appears_upcoming_without_court(client, session, monkeypatch):
