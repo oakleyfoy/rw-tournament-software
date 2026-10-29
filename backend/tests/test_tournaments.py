@@ -955,8 +955,9 @@ def test_duplicate_tournament_keeps_seeded_partnership_copies_exact(client: Test
     assert numbered_clone.source_team_key == "donna-karen-5"
     cloned_match = session.exec(select(Match).where(Match.tournament_id == duplicated_id)).one()
     assert cloned_match.team_a_id == numbered_clone.id
-    assert cloned_match.winner_team_id == numbered_clone.id
-    assert cloned_match.court_queued is True
+    assert cloned_match.winner_team_id is None
+    assert cloned_match.runtime_status == "SCHEDULED"
+    assert cloned_match.court_queued is False
 
 
 def test_duplicate_tournament_keeps_playing_partner_and_stale_seeded_row(client: TestClient, session: Session):
@@ -1077,12 +1078,12 @@ def test_duplicate_tournament_keeps_playing_partner_and_stale_seeded_row(client:
     cloned_match = session.exec(select(Match).where(Match.tournament_id == duplicated_id)).one()
     assert cloned_match.team_a_id == by_name["Kipsy Gould / Gina Martin"].id
     assert cloned_match.team_b_id == by_name["Catherine Webb / Tracy OShea"].id
-    assert cloned_match.winner_team_id == by_name["Kipsy Gould / Gina Martin"].id
-
-    assert len(session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == duplicated_id)).all()) == 1
+    assert cloned_match.winner_team_id is None
+    assert cloned_match.runtime_status == "SCHEDULED"
+    assert cloned_match.score_json is None
+    assert session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == duplicated_id)).all() == []
     assert (
-        len(session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == duplicated_id)).all())
-        == 1
+        session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == duplicated_id)).all() == []
     )
 
 

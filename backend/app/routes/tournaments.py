@@ -1241,10 +1241,12 @@ def _is_player_checkin_conflict(exc: IntegrityError) -> bool:
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
 def duplicate_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """
-    Exact deep-duplicate of a tournament at click time.
+    Exact deep-duplicate of tournament setup at click time.
 
-    Copies every operational row as-is (including partnership copies, match
-    results, check-ins, photos, and RW-OS import/draw-plan state). Unique-index
+    Copies teams (including partnership copies), draws, schedule, assignments,
+    photos, towels, and RW-OS import/draw-plan state. Desk play state starts
+    clean: no check-ins, no opening-slot releases, no scores/winners, so the
+    Check-In board matches a fresh day on the same draw. Unique-index
     collisions only rename/clear the conflicting field; teams are never merged.
     """
     try:
@@ -1322,18 +1324,19 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         source_official_photos = session.exec(
             select(TeamOfficialPhoto).where(TeamOfficialPhoto.tournament_id == tournament_id)
         ).all()
-        source_match_checkins = session.exec(
-            select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)
-        ).all()
-        source_player_checkins = session.exec(
-            select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
-        ).all()
         source_imports = session.exec(
             select(TournamentImport).where(TournamentImport.tournament_id == tournament_id)
         ).all()
         source_draw_plans = session.exec(
             select(TournamentDrawPlan).where(TournamentDrawPlan.tournament_id == tournament_id)
         ).all()
+
+        event_has_wf: Dict[int, bool] = {}
+        for match in source_matches:
+            if match.event_id is None:
+                continue
+            if (match.match_type or "").upper() == "WF":
+                event_has_wf[match.event_id] = True
 
         source_version_ids = [v.id for v in source_versions if v.id is not None]
 
@@ -1664,6 +1667,20 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             mapped_version_id = version_id_map.get(match.schedule_version_id)
             if mapped_event_id is None or mapped_version_id is None:
                 continue
+            # Fresh desk: keep R1 (and non-feeder) team slots; clear advanced
+            # slots that only exist because play already happened on the source.
+            team_a_id = team_id_map.get(match.team_a_id) if match.team_a_id else None
+            team_b_id = team_id_map.get(match.team_b_id) if match.team_b_id else None
+            has_wf = event_has_wf.get(match.event_id, False)
+            is_wf_round_one = (match.match_type or "").upper() == "WF" and int(match.round_index or 1) == 1
+            if has_wf and not is_wf_round_one:
+                team_a_id = None
+                team_b_id = None
+            else:
+                if match.source_match_a_id is not None:
+                    team_a_id = None
+                if match.source_match_b_id is not None:
+                    team_b_id = None
             cloned = Match(
                 tournament_id=new_tournament.id,  # type: ignore[arg-type]
                 event_id=mapped_event_id,
@@ -1676,8 +1693,8 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 duration_minutes=match.duration_minutes,
                 consolation_tier=match.consolation_tier,
                 placement_type=match.placement_type,
-                team_a_id=team_id_map.get(match.team_a_id) if match.team_a_id else None,
-                team_b_id=team_id_map.get(match.team_b_id) if match.team_b_id else None,
+                team_a_id=team_a_id,
+                team_b_id=team_b_id,
                 placeholder_side_a=match.placeholder_side_a,
                 placeholder_side_b=match.placeholder_side_b,
                 preferred_day=match.preferred_day,
@@ -1687,13 +1704,13 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 source_b_role=match.source_b_role,
                 status=match.status,
                 created_at=match.created_at,
-                runtime_status=match.runtime_status,
-                score_json=match.score_json,
-                winner_team_id=team_id_map.get(match.winner_team_id) if match.winner_team_id else None,
-                started_at=match.started_at,
-                completed_at=match.completed_at,
-                checkin_reset_pending=bool(getattr(match, "checkin_reset_pending", False)),
-                court_queued=bool(getattr(match, "court_queued", False)),
+                runtime_status="SCHEDULED",
+                score_json=None,
+                winner_team_id=None,
+                started_at=None,
+                completed_at=None,
+                checkin_reset_pending=False,
+                court_queued=False,
             )
             session.add(cloned)
             session.flush()
@@ -1916,56 +1933,6 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                     updated_at=photo.updated_at,
                 )
             )
-
-        for checkin in _dedupe_match_checkins_for_copy(list(source_match_checkins)):
-            mapped_version_id = version_id_map.get(checkin.schedule_version_id)
-            mapped_match_id = match_id_map.get(checkin.match_id)
-            if mapped_version_id is None or mapped_match_id is None:
-                continue
-            try:
-                with session.begin_nested():
-                    session.add(
-                        MatchCheckIn(
-                            tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                            schedule_version_id=mapped_version_id,
-                            match_id=mapped_match_id,
-                            team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
-                            side=(checkin.side or "").upper() or checkin.side,
-                            team_checked_in=checkin.team_checked_in,
-                            checked_in_at=checkin.checked_in_at,
-                            updated_at=checkin.updated_at,
-                        )
-                    )
-                    session.flush()
-            except IntegrityError as exc:
-                if not _is_match_checkin_conflict(exc):
-                    raise
-
-        for checkin in _dedupe_player_checkins_for_copy(list(source_player_checkins)):
-            mapped_version_id = version_id_map.get(checkin.schedule_version_id)
-            mapped_match_id = match_id_map.get(checkin.match_id)
-            mapped_player_id = player_id_map.get(checkin.player_id)
-            if mapped_version_id is None or mapped_match_id is None or mapped_player_id is None:
-                continue
-            try:
-                with session.begin_nested():
-                    session.add(
-                        MatchPlayerCheckIn(
-                            tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                            schedule_version_id=mapped_version_id,
-                            match_id=mapped_match_id,
-                            team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
-                            player_id=mapped_player_id,
-                            side=(checkin.side or "").upper() or checkin.side,
-                            checked_in=checkin.checked_in,
-                            checked_in_at=checkin.checked_in_at,
-                            updated_at=checkin.updated_at,
-                        )
-                    )
-                    session.flush()
-            except IntegrityError as exc:
-                if not _is_player_checkin_conflict(exc):
-                    raise
 
         import_id_map: dict[int, int] = {}
         for imported in source_imports:
