@@ -1195,6 +1195,49 @@ def _is_towel_lookup_identity_conflict(exc: IntegrityError) -> bool:
     return "temporary_player_lookup" in message and "source_team_key" in message and "lineup_slot" in message
 
 
+def _checkin_stamp(row) -> Tuple[datetime, int]:
+    value = getattr(row, "updated_at", None) or getattr(row, "checked_in_at", None) or datetime.min
+    if getattr(value, "tzinfo", None) is not None:
+        value = value.replace(tzinfo=None)
+    return (value, getattr(row, "id", None) or 0)
+
+
+def _dedupe_match_checkins_for_copy(rows: List[MatchCheckIn]) -> List[MatchCheckIn]:
+    """Keep one check-in per version/match/side (source may predate the unique index)."""
+    chosen: Dict[Tuple[int, int, str], MatchCheckIn] = {}
+    for row in rows:
+        key = (row.schedule_version_id, row.match_id, (row.side or "").upper())
+        current = chosen.get(key)
+        if current is None or _checkin_stamp(row) >= _checkin_stamp(current):
+            chosen[key] = row
+    return list(chosen.values())
+
+
+def _dedupe_player_checkins_for_copy(rows: List[MatchPlayerCheckIn]) -> List[MatchPlayerCheckIn]:
+    """Keep one player check-in per version/match/side/player."""
+    chosen: Dict[Tuple[int, int, str, int], MatchPlayerCheckIn] = {}
+    for row in rows:
+        key = (row.schedule_version_id, row.match_id, (row.side or "").upper(), row.player_id)
+        current = chosen.get(key)
+        if current is None or _checkin_stamp(row) >= _checkin_stamp(current):
+            chosen[key] = row
+    return list(chosen.values())
+
+
+def _is_match_checkin_conflict(exc: IntegrityError) -> bool:
+    message = str(exc).lower()
+    return "matchcheckin" in message and (
+        "schedule_version_id" in message or "uq_matchcheckin_version_match_side" in message
+    )
+
+
+def _is_player_checkin_conflict(exc: IntegrityError) -> bool:
+    message = str(exc).lower()
+    return "matchplayercheckin" in message and (
+        "schedule_version_id" in message or "uq_matchplayercheckin_version_match_side_player" in message
+    )
+
+
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
 def duplicate_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """
@@ -1874,43 +1917,55 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 )
             )
 
-        for checkin in source_match_checkins:
+        for checkin in _dedupe_match_checkins_for_copy(list(source_match_checkins)):
             mapped_version_id = version_id_map.get(checkin.schedule_version_id)
             mapped_match_id = match_id_map.get(checkin.match_id)
             if mapped_version_id is None or mapped_match_id is None:
                 continue
-            session.add(
-                MatchCheckIn(
-                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                    schedule_version_id=mapped_version_id,
-                    match_id=mapped_match_id,
-                    team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
-                    side=checkin.side,
-                    team_checked_in=checkin.team_checked_in,
-                    checked_in_at=checkin.checked_in_at,
-                    updated_at=checkin.updated_at,
-                )
-            )
+            try:
+                with session.begin_nested():
+                    session.add(
+                        MatchCheckIn(
+                            tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                            schedule_version_id=mapped_version_id,
+                            match_id=mapped_match_id,
+                            team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
+                            side=(checkin.side or "").upper() or checkin.side,
+                            team_checked_in=checkin.team_checked_in,
+                            checked_in_at=checkin.checked_in_at,
+                            updated_at=checkin.updated_at,
+                        )
+                    )
+                    session.flush()
+            except IntegrityError as exc:
+                if not _is_match_checkin_conflict(exc):
+                    raise
 
-        for checkin in source_player_checkins:
+        for checkin in _dedupe_player_checkins_for_copy(list(source_player_checkins)):
             mapped_version_id = version_id_map.get(checkin.schedule_version_id)
             mapped_match_id = match_id_map.get(checkin.match_id)
             mapped_player_id = player_id_map.get(checkin.player_id)
             if mapped_version_id is None or mapped_match_id is None or mapped_player_id is None:
                 continue
-            session.add(
-                MatchPlayerCheckIn(
-                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                    schedule_version_id=mapped_version_id,
-                    match_id=mapped_match_id,
-                    team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
-                    player_id=mapped_player_id,
-                    side=checkin.side,
-                    checked_in=checkin.checked_in,
-                    checked_in_at=checkin.checked_in_at,
-                    updated_at=checkin.updated_at,
-                )
-            )
+            try:
+                with session.begin_nested():
+                    session.add(
+                        MatchPlayerCheckIn(
+                            tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                            schedule_version_id=mapped_version_id,
+                            match_id=mapped_match_id,
+                            team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
+                            player_id=mapped_player_id,
+                            side=(checkin.side or "").upper() or checkin.side,
+                            checked_in=checkin.checked_in,
+                            checked_in_at=checkin.checked_in_at,
+                            updated_at=checkin.updated_at,
+                        )
+                    )
+                    session.flush()
+            except IntegrityError as exc:
+                if not _is_player_checkin_conflict(exc):
+                    raise
 
         import_id_map: dict[int, int] = {}
         for imported in source_imports:

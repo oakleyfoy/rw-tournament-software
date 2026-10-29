@@ -24,7 +24,10 @@ from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
-from app.routes.tournaments import _record_start_over_baseline_assignments
+from app.routes.tournaments import (
+    _dedupe_match_checkins_for_copy,
+    _record_start_over_baseline_assignments,
+)
 
 
 def test_create_tournament_auto_creates_days(client: TestClient):
@@ -1081,6 +1084,45 @@ def test_duplicate_tournament_keeps_playing_partner_and_stale_seeded_row(client:
         len(session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == duplicated_id)).all())
         == 1
     )
+
+
+def test_dedupe_match_checkins_for_copy_keeps_one_per_side():
+    older = MatchCheckIn(
+        tournament_id=1,
+        schedule_version_id=9,
+        match_id=100,
+        team_id=1,
+        side="A",
+        team_checked_in=False,
+        updated_at=datetime(2026, 10, 27, 10, 0, 0),
+    )
+    older.id = 1
+    newer = MatchCheckIn(
+        tournament_id=1,
+        schedule_version_id=9,
+        match_id=100,
+        team_id=2,
+        side="a",
+        team_checked_in=True,
+        updated_at=datetime(2026, 10, 27, 19, 0, 0),
+    )
+    newer.id = 2
+    other = MatchCheckIn(
+        tournament_id=1,
+        schedule_version_id=9,
+        match_id=100,
+        team_id=3,
+        side="B",
+        team_checked_in=True,
+        updated_at=datetime(2026, 10, 27, 11, 0, 0),
+    )
+    other.id = 3
+    kept = _dedupe_match_checkins_for_copy([older, newer, other])
+    assert len(kept) == 2
+    by_side = {(row.side or "").upper(): row for row in kept}
+    assert by_side["A"].team_checked_in is True
+    assert by_side["A"].id == 2
+    assert by_side["B"].id == 3
 
 
 def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient, session: Session):
