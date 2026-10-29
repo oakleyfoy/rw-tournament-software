@@ -2,6 +2,7 @@ import { useParams } from 'react-router-dom'
 import { DisplayBoardSection } from './DisplayBoardSection'
 import { DisplayMatchCard } from './DisplayMatchCard'
 import { DisplayLoadingState, DisplayShell } from './DisplayShell'
+import { groupDisplayMatchesByTime } from './displayTimeGroups'
 import { useDisplayBoard } from './useDisplayBoard'
 import { useNowMs } from './useNowMs'
 
@@ -23,6 +24,9 @@ export default function DynamicScreenPage() {
       </div>
     )
   }
+
+  const nextGroups = groupDisplayMatchesByTime(data.upcoming)
+  const nextEmpty = nextGroups.length === 0
 
   return (
     <DisplayShell
@@ -55,18 +59,38 @@ export default function DynamicScreenPage() {
           ))}
         </DisplayBoardSection>
 
-        <DisplayBoardSection
-          testId="dynamic-next-matches"
-          title="Next Matches"
-          emptyLabel="No upcoming matches"
-          isEmpty={data.upcoming.length === 0}
-          gridClass="display-match-grid"
-          gridTestId="dynamic-next-grid"
+        <section
+          className={
+            nextEmpty
+              ? 'display-section display-section-compact'
+              : 'display-section'
+          }
+          data-testid="dynamic-next-matches"
+          data-empty={nextEmpty ? 'true' : 'false'}
         >
-          {data.upcoming.map((match) => (
-            <DisplayMatchCard key={match.match_id} match={match} variant="upcoming" />
-          ))}
-        </DisplayBoardSection>
+          <h2 className="display-section-title">Next Matches</h2>
+          {nextEmpty ? (
+            <p className="display-empty">No upcoming matches</p>
+          ) : (
+            nextGroups.map((group) => (
+              <section
+                key={`${group.sort_time}-${group.scheduled_time}`}
+                className="display-time-group"
+                data-testid={`dynamic-next-group-${group.sort_time}`}
+              >
+                <h3 className="display-time-header">{group.scheduled_time}</h3>
+                <div
+                  className="display-match-grid"
+                  data-testid={`dynamic-next-grid-${group.sort_time}`}
+                >
+                  {group.matches.map((match) => (
+                    <DisplayMatchCard key={match.match_id} match={match} variant="upcoming" />
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
+        </section>
 
         <DisplayBoardSection
           testId="dynamic-waiting-for-court"

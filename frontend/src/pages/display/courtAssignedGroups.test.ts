@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { COURT_ASSIGNED_MIN_TIME_SLOTS, courtAssignedTimeGroups } from './courtAssignedGroups'
+import {
+  COURT_ASSIGNED_MIN_TIME_SLOTS,
+  courtAssignedGroupsFromUpcoming,
+  courtAssignedTimeGroups,
+} from './courtAssignedGroups'
 import { makeMatch } from './displayBoardFixture'
 
 describe('courtAssignedTimeGroups', () => {
@@ -34,5 +38,39 @@ describe('courtAssignedTimeGroups', () => {
 
   it('targets at least two time slots on the TV layout', () => {
     expect(COURT_ASSIGNED_MIN_TIME_SLOTS).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('courtAssignedGroupsFromUpcoming', () => {
+  it('includes past-scheduled court-assigned matches still in upcoming', () => {
+    const groups = courtAssignedGroupsFromUpcoming([
+      makeMatch({
+        match_id: 8,
+        scheduled_time: '8:00 AM',
+        sort_time: '08:00',
+        day_date: '2026-11-06',
+        court: 'Court 1',
+        team_a_names: 'Ready / One',
+      }),
+      makeMatch({
+        match_id: 9,
+        scheduled_time: '9:00 AM',
+        sort_time: '09:00',
+        day_date: '2026-11-06',
+        team_a_names: 'No Court Yet',
+      }),
+      makeMatch({
+        match_id: 10,
+        scheduled_time: '9:00 AM',
+        sort_time: '09:00',
+        day_date: '2026-11-06',
+        court: 'Court 3',
+        team_a_names: 'Next / Slot',
+      }),
+    ])
+
+    expect(groups.map((g) => g.sort_time)).toEqual(['08:00', '09:00'])
+    expect(groups[0].matches.map((m) => m.match_id)).toEqual([8])
+    expect(groups[1].matches.map((m) => m.match_id)).toEqual([10])
   })
 })

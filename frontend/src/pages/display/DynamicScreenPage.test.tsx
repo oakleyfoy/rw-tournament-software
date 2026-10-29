@@ -73,10 +73,29 @@ describe('DynamicScreenPage', () => {
       upcoming: [
         makeMatch({
           match_id: 41,
+          scheduled_time: '8:00 AM',
+          sort_time: '08:00',
+          day_date: '2026-11-06',
           team_a_names: 'Checked / One',
           team_b_names: 'Waiting / Two',
           team_a_checked_in: true,
           team_b_checked_in: false,
+        }),
+        makeMatch({
+          match_id: 42,
+          scheduled_time: '9:00 AM',
+          sort_time: '09:00',
+          day_date: '2026-11-06',
+          team_a_names: 'Later / A',
+          team_b_names: 'Later / B',
+        }),
+        makeMatch({
+          match_id: 43,
+          scheduled_time: '8:00 AM',
+          sort_time: '08:00',
+          day_date: '2026-11-06',
+          team_a_names: 'Same Slot / A',
+          team_b_names: 'Same Slot / B',
         }),
       ],
     }
@@ -106,7 +125,17 @@ describe('DynamicScreenPage', () => {
       'data-checked',
       'false'
     )
-    expect(next).not.toHaveTextContent('Court')
+    expect(screen.queryByTestId('display-court-41')).not.toBeInTheDocument()
+  })
+
+  it('separates next matches into time-slot sections', () => {
+    renderPage()
+    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('8:00 AM')
+    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('Checked / One')
+    expect(screen.getByTestId('dynamic-next-group-08:00')).toHaveTextContent('Same Slot / A')
+    expect(screen.getByTestId('dynamic-next-group-09:00')).toHaveTextContent('9:00 AM')
+    expect(screen.getByTestId('dynamic-next-group-09:00')).toHaveTextContent('Later / A')
+    expect(screen.getByTestId('dynamic-next-group-08:00')).not.toHaveTextContent('Later / A')
   })
 
   it('moves both-checked matches into waiting and keeps ready order', () => {

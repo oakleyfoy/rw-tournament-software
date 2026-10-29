@@ -2,13 +2,16 @@ import { useParams } from 'react-router-dom'
 import { DisplayBoardSection } from './DisplayBoardSection'
 import { DisplayMatchCard } from './DisplayMatchCard'
 import { DisplayLoadingState, DisplayShell } from './DisplayShell'
-import { COURT_ASSIGNED_MIN_TIME_SLOTS, courtAssignedTimeGroups } from './courtAssignedGroups'
+import { COURT_ASSIGNED_MIN_TIME_SLOTS, courtAssignedGroupsFromUpcoming } from './courtAssignedGroups'
 import { useDisplayBoard } from './useDisplayBoard'
+import { useNowMs } from './useNowMs'
 
 export default function CourtAssignedPage() {
   const { tournamentId } = useParams<{ tournamentId: string }>()
   const tid = Number(tournamentId)
   const { data, error, initialLoading, refreshing, refresh } = useDisplayBoard(tid)
+  const hasLivePlaying = Boolean(data?.currently_playing.some((match) => match.started_at))
+  const nowMs = useNowMs(hasLivePlaying)
 
   if (initialLoading && !data) {
     return <DisplayLoadingState />
@@ -22,7 +25,7 @@ export default function CourtAssignedPage() {
     )
   }
 
-  const assignedGroups = courtAssignedTimeGroups(data.upcoming_12h_groups)
+  const assignedGroups = courtAssignedGroupsFromUpcoming(data.upcoming)
   const upcomingEmpty = assignedGroups.length === 0
 
   return (
@@ -50,7 +53,13 @@ export default function CourtAssignedPage() {
           gridTestId="court-assigned-playing-grid"
         >
           {data.currently_playing.map((match) => (
-            <DisplayMatchCard key={match.match_id} match={match} variant="playing" />
+            <DisplayMatchCard
+              key={match.match_id}
+              match={match}
+              variant="playing"
+              nowMs={nowMs}
+              preferTimeOnCourt
+            />
           ))}
         </DisplayBoardSection>
 
