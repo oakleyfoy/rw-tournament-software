@@ -5143,8 +5143,8 @@ def test_desk_team_list_stops_at_the_event_draw_size(client, session):
     first = Team(event_id=event.id, name="Nikki / Connie", display_name="Nikki / Connie", seed=1, rating=8.5)
     second = Team(event_id=event.id, name="Shea / Heather", display_name="Shea / Heather", seed=2, rating=8.5)
     partner_row = Team(event_id=event.id, name="Jami / Mindy", display_name="Jami / Mindy", seed=None, rating=7)
-    high_seed = Team(event_id=event.id, name="Kipsy / Gina", display_name="Kipsy / Gina", seed=3, rating=7)
-    session.add_all([first, second, partner_row, high_seed])
+    leftover = Team(event_id=event.id, name="Unused / Pair", display_name="Unused / Pair", seed=None, rating=7)
+    session.add_all([first, second, partner_row, leftover])
     session.flush()
     session.add(
         Match(
@@ -5157,8 +5157,8 @@ def test_desk_team_list_stops_at_the_event_draw_size(client, session):
             round_index=1,
             sequence_in_round=1,
             duration_minutes=60,
-            team_a_id=partner_row.id,
-            team_b_id=high_seed.id,
+            team_a_id=first.id,
+            team_b_id=second.id,
             placeholder_side_a="A",
             placeholder_side_b="B",
         )
@@ -5169,4 +5169,77 @@ def test_desk_team_list_stops_at_the_event_draw_size(client, session):
     assert response.status_code == 200, response.text
     names = [item["name"] for item in response.json()]
     assert names == ["Nikki / Connie", "Shea / Heather"]
+    assert "Jami / Mindy" not in names
+    assert "Unused / Pair" not in names
+
+
+def test_desk_team_list_keeps_playing_team_over_stale_seeded_partner(client, session):
+    """Full seeded roster must not hide the partnership that actually played."""
+    tournament = Tournament(
+        name="Partner Change",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 8),
+    )
+    session.add(tournament)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's A", team_count=2)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    stale = Team(
+        event_id=event.id,
+        name="Gina Martin, Albemarle, NC / Sarah Moore, Denton, NC",
+        display_name="Gina / Sarah",
+        seed=1,
+        rating=7,
+    )
+    opponent = Team(
+        event_id=event.id,
+        name="Catherine Webb / Tracy OShea",
+        display_name="Catherine / Tracy",
+        seed=2,
+        rating=6.5,
+    )
+    playing = Team(
+        event_id=event.id,
+        name="Kipsy Gould, Albemarle, NC / Gina Martin, Albemarle, NC",
+        display_name="Kipsy / Gina",
+        seed=None,
+        rating=7,
+    )
+    session.add_all([stale, opponent, playing])
+    session.flush()
+    session.add(
+        Match(
+            tournament_id=tournament.id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code="WA_R1",
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=1,
+            duration_minutes=60,
+            team_a_id=playing.id,
+            team_b_id=opponent.id,
+            placeholder_side_a="A",
+            placeholder_side_b="B",
+            winner_team_id=playing.id,
+            score_a=8,
+            score_b=1,
+            status="completed",
+        )
+    )
+    session.commit()
+
+    response = client.get(f"/api/desk/tournaments/{tournament.id}/teams")
+    assert response.status_code == 200, response.text
+    names = [item["name"] for item in response.json()]
+    assert "Kipsy Gould, Albemarle, NC / Gina Martin, Albemarle, NC" in names
+    assert "Catherine Webb / Tracy OShea" in names
+    assert "Gina Martin, Albemarle, NC / Sarah Moore, Denton, NC" not in names
 

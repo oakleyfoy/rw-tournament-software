@@ -82,17 +82,29 @@ def _roster_keep_rank(team: Team, on_a_match: set) -> tuple:
 
 
 def _fits_event_draw(group: list[Team], on_a_match: set, draw_size: int) -> list[Team]:
-    """Keep the draw, and only fill a missing seed from a team that is on a match."""
-    seeded = [team for team in group if team.seed is not None and 1 <= team.seed <= draw_size]
-    used = {team.seed for team in seeded}
-    open_slots = draw_size - len(used)
-    if open_slots <= 0:
-        return seeded
-    fillers = sorted(
-        (team for team in group if team.seed is None and team.id in on_a_match),
-        key=lambda team: (team.rating is None, -(team.rating or 0), team.id or 0),
+    """Keep every team on a match; fill remaining draw slots from seeded roster rows.
+
+    A full seeded RW-OS list must not hide a partnership that is already in the
+    draw (partner changes, late replacements, unseeded playing rows).
+    """
+    playing = [team for team in group if team.id in on_a_match]
+    playing_ids = {team.id for team in playing if team.id is not None}
+    if len(playing) >= draw_size:
+        return playing
+    used_seeds = {team.seed for team in playing if team.seed is not None}
+    seeded = sorted(
+        (
+            team
+            for team in group
+            if team.id not in playing_ids
+            and team.seed is not None
+            and 1 <= team.seed <= draw_size
+            and team.seed not in used_seeds
+        ),
+        key=lambda team: (team.seed or 0, team.id or 0),
     )
-    return seeded + fillers[:open_slots]
+    open_slots = draw_size - len(playing)
+    return playing + seeded[:open_slots]
 
 
 def visible_roster_teams(
