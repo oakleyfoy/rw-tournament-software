@@ -45,7 +45,7 @@ export default function DynamicScreenPage() {
           title="Currently Playing"
           emptyLabel="No matches currently on court"
           isEmpty={data.currently_playing.length === 0}
-          gridClass="display-playing-grid"
+          gridClass="display-match-grid"
           gridTestId="dynamic-playing-grid"
         >
           {data.currently_playing.map((match) => (

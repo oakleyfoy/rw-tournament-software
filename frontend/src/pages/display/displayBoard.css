@@ -185,6 +185,22 @@
   min-height: calc(100vh - 110px);
 }
 
+/* Match upcoming density so ~12 courts stay on one row. */
+.display-court-assigned .display-card-playing,
+.display-dynamic-screen .display-card-playing {
+  padding: 5px 6px;
+}
+
+.display-court-assigned .display-card-playing .display-team,
+.display-dynamic-screen .display-card-playing .display-team {
+  font-size: clamp(11px, 12.5cqi, 16px);
+}
+
+.display-court-assigned .display-card-playing .display-time-on-court,
+.display-dynamic-screen .display-card-playing .display-time-on-court {
+  font-size: clamp(12px, 11cqi, 18px);
+}
+
 .display-court-assigned-upcoming {
   flex: 1 1 auto;
   min-height: calc(2 * (var(--display-time-slot-min, 140px)));
