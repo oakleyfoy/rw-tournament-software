@@ -876,12 +876,13 @@ def test_duplicate_tournament_handles_duplicate_team_names_within_event(client: 
     assert cloned_event is not None
 
     cloned_teams = session.exec(select(Team).where(Team.event_id == cloned_event.id)).all()
-    assert len(cloned_teams) == 1
-    assert cloned_teams[0].name == "Dee Dee / Dennis"
-    assert cloned_teams[0].seed == 1
+    assert len(cloned_teams) == 2
+    assert {team.name for team in cloned_teams} == {"Dee Dee / Dennis", "Dee Dee / Dennis (2)"}
+    seeded = next(team for team in cloned_teams if team.name == "Dee Dee / Dennis")
+    assert seeded.seed == 1
 
 
-def test_duplicate_tournament_collapses_seeded_partnership_copies(client: TestClient, session: Session):
+def test_duplicate_tournament_keeps_seeded_partnership_copies_exact(client: TestClient, session: Session):
     source = Tournament(
         name="Seeded Copy Source",
         location="Nowhere",
@@ -902,12 +903,14 @@ def test_duplicate_tournament_collapses_seeded_partnership_copies(client: TestCl
         name="Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia",
         display_name="Donna / Karen",
         seed=17,
+        source_team_key="donna-karen",
     )
     numbered = Team(
         event_id=event.id,
         name="Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia (5)",
         display_name="Donna / Karen",
         seed=42,
+        source_team_key="donna-karen-5",
     )
     session.add_all([original, numbered])
     session.flush()
@@ -925,6 +928,9 @@ def test_duplicate_tournament_collapses_seeded_partnership_copies(client: TestCl
             team_a_id=numbered.id,
             placeholder_side_a="A",
             placeholder_side_b="B",
+            runtime_status="FINAL",
+            winner_team_id=numbered.id,
+            court_queued=True,
         )
     )
     session.commit()
@@ -937,11 +943,144 @@ def test_duplicate_tournament_collapses_seeded_partnership_copies(client: TestCl
     ).first()
     assert cloned_event is not None
     cloned_teams = session.exec(select(Team).where(Team.event_id == cloned_event.id)).all()
-    assert len(cloned_teams) == 1
-    assert cloned_teams[0].name == "Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia"
-    assert cloned_teams[0].seed == 17
+    assert len(cloned_teams) == 2
+    by_name = {team.name: team for team in cloned_teams}
+    assert by_name["Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia"].seed == 17
+    assert by_name["Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia"].source_team_key == "donna-karen"
+    numbered_clone = by_name["Donna Meyer, Atlanta, Georgia / Karen Leff, Atlanta, Georgia (5)"]
+    assert numbered_clone.seed == 42
+    assert numbered_clone.source_team_key == "donna-karen-5"
     cloned_match = session.exec(select(Match).where(Match.tournament_id == duplicated_id)).one()
-    assert cloned_match.team_a_id == cloned_teams[0].id
+    assert cloned_match.team_a_id == numbered_clone.id
+    assert cloned_match.winner_team_id == numbered_clone.id
+    assert cloned_match.court_queued is True
+
+
+def test_duplicate_tournament_keeps_playing_partner_and_stale_seeded_row(client: TestClient, session: Session):
+    """Partner changes must survive duplicate: both roster row and match team stay distinct."""
+    source = Tournament(
+        name="Partner Change Source",
+        location="Wild Dunes",
+        timezone="America/New_York",
+        start_date=date(2026, 11, 6),
+        end_date=date(2026, 11, 8),
+        desk_management_mode="court_management",
+        source_rw_os_tournament_id=4242,
+        source_rw_os_organization_slug="rw",
+    )
+    session.add(source)
+    session.flush()
+    event = Event(tournament_id=source.id, category="womens", name="Women's A", team_count=2)
+    session.add(event)
+    session.flush()
+    version = ScheduleVersion(tournament_id=source.id, version_number=1, status="final")
+    session.add(version)
+    session.flush()
+    stale = Team(
+        event_id=event.id,
+        name="Gina Martin / Sarah Moore",
+        display_name="Gina / Sarah",
+        seed=21,
+        source_team_key="gina-sarah",
+    )
+    playing = Team(
+        event_id=event.id,
+        name="Kipsy Gould / Gina Martin",
+        display_name="Kipsy / Gina",
+        seed=None,
+        source_team_key="kipsy-gina",
+    )
+    opponent = Team(
+        event_id=event.id,
+        name="Catherine Webb / Tracy OShea",
+        display_name="Catherine / Tracy",
+        seed=32,
+        source_team_key="catherine-tracy",
+    )
+    session.add_all([stale, playing, opponent])
+    session.flush()
+    player = Player(tournament_id=source.id, full_name="Kipsy Gould", phone_e164="+17045550121")
+    session.add(player)
+    session.flush()
+    session.add(TeamPlayer(team_id=playing.id, player_id=player.id, lineup_slot=1))
+    match = Match(
+        tournament_id=source.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WA_R1_21",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=21,
+        duration_minutes=60,
+        team_a_id=playing.id,
+        team_b_id=opponent.id,
+        placeholder_side_a="Kipsy / Gina",
+        placeholder_side_b="Catherine / Tracy",
+        runtime_status="FINAL",
+        winner_team_id=playing.id,
+        status="complete",
+    )
+    session.add(match)
+    session.flush()
+    session.add(
+        MatchCheckIn(
+            tournament_id=source.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=playing.id,
+            side="A",
+            team_checked_in=True,
+        )
+    )
+    session.add(
+        MatchPlayerCheckIn(
+            tournament_id=source.id,
+            schedule_version_id=version.id,
+            match_id=match.id,
+            team_id=playing.id,
+            player_id=player.id,
+            side="A",
+            checked_in=True,
+        )
+    )
+    source.public_schedule_version_id = version.id
+    session.add(source)
+    session.commit()
+
+    resp = client.post(f"/api/tournaments/{source.id}/duplicate")
+    assert resp.status_code == 201, resp.text
+    duplicated_id = resp.json()["id"]
+    cloned = session.get(Tournament, duplicated_id)
+    assert cloned is not None
+    assert cloned.desk_management_mode == "court_management"
+    assert cloned.source_rw_os_tournament_id == 4242
+    assert cloned.source_rw_os_organization_slug == "rw"
+
+    cloned_event = session.exec(
+        select(Event).where(Event.tournament_id == duplicated_id, Event.name == "Women's A")
+    ).one()
+    cloned_teams = session.exec(select(Team).where(Team.event_id == cloned_event.id)).all()
+    by_name = {team.name: team for team in cloned_teams}
+    assert set(by_name) == {
+        "Gina Martin / Sarah Moore",
+        "Kipsy Gould / Gina Martin",
+        "Catherine Webb / Tracy OShea",
+    }
+    assert by_name["Gina Martin / Sarah Moore"].seed == 21
+    assert by_name["Gina Martin / Sarah Moore"].source_team_key == "gina-sarah"
+    assert by_name["Kipsy Gould / Gina Martin"].source_team_key == "kipsy-gina"
+
+    cloned_match = session.exec(select(Match).where(Match.tournament_id == duplicated_id)).one()
+    assert cloned_match.team_a_id == by_name["Kipsy Gould / Gina Martin"].id
+    assert cloned_match.team_b_id == by_name["Catherine Webb / Tracy OShea"].id
+    assert cloned_match.winner_team_id == by_name["Kipsy Gould / Gina Martin"].id
+
+    assert len(session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == duplicated_id)).all()) == 1
+    assert (
+        len(session.exec(select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == duplicated_id)).all())
+        == 1
+    )
 
 
 def test_duplicate_tournament_handles_duplicate_player_phones(client: TestClient, session: Session):

@@ -27,11 +27,12 @@ from app.models.sms_template import SmsTemplate
 from app.models.start_over_baseline_assignment import StartOverBaselineAssignment
 from app.models.team import Team
 from app.models.team_avoid_edge import TeamAvoidEdge
+from app.models.team_photo import TeamOfficialPhoto
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
-from app.models.tournament_import import TournamentImport
+from app.models.tournament_import import TournamentDrawPlan, TournamentImport
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.models.tournament_time_window import TournamentTimeWindow
 from app.services.assignment_ownership import create_owned_assignment, validate_assignment_ownership
@@ -48,19 +49,9 @@ _PRINT_CATEGORY_LABEL = {
 }
 
 
-def _normalize_clone_team_name(value: Optional[str]) -> str:
-    raw = " ".join((value or "").strip().split())
-    if not raw:
-        return ""
-    raw = re.sub(r"\s+\(\d+\)$", "", raw).strip()
-    return raw.casefold()
-
-
-def _clone_team_priority(team: Team) -> tuple:
-    """Copy the unsuffixed partnership before its numbered duplicate."""
-    name = (team.name or "").strip()
-    has_suffix = bool(re.search(r"\s+\(\d+\)$", name))
-    return (1 if has_suffix else 0, team.seed if team.seed is not None else 10**9, team.id or 0)
+def _clone_team_sort_key(team: Team) -> tuple:
+    """Stable source order so every team row is copied before match remaps."""
+    return (team.event_id or 0, team.id or 0)
 
 
 def _assignment_is_newer(candidate: MatchAssignment, current: MatchAssignment) -> bool:
@@ -1207,24 +1198,18 @@ def _is_towel_lookup_identity_conflict(exc: IntegrityError) -> bool:
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
 def duplicate_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """
-    Deep-duplicate a tournament snapshot.
+    Exact deep-duplicate of a tournament at click time.
 
-    Copies tournament configuration and operational state, including:
-    - tournament fields (courts, dates, timezone, notes)
-    - days + time windows
-    - events + teams + avoid edges
-    - players + team_player links
-    - schedule versions + slots + matches + assignments
-    - match/slot locks + policy runs
-    - court state + SMS settings/templates
-    - towel lookup rows (desk towel list)
+    Copies every operational row as-is (including partnership copies, match
+    results, check-ins, photos, and RW-OS import/draw-plan state). Unique-index
+    collisions only rename/clear the conflicting field; teams are never merged.
     """
     try:
         source_tournament = session.get(Tournament, tournament_id)
         if not source_tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
 
-        # 1) Create destination tournament shell.
+        # 1) Create destination tournament shell (exact config snapshot).
         new_tournament = Tournament(
             name=f"{source_tournament.name} (Copy)",
             location=source_tournament.location,
@@ -1233,7 +1218,11 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             end_date=source_tournament.end_date,
             notes=source_tournament.notes,
             use_time_windows=source_tournament.use_time_windows,
+            desk_management_mode=source_tournament.desk_management_mode,
+            shared_screen_config_json=source_tournament.shared_screen_config_json,
             court_names=list(source_tournament.court_names or []),
+            source_rw_os_tournament_id=source_tournament.source_rw_os_tournament_id,
+            source_rw_os_organization_slug=source_tournament.source_rw_os_organization_slug,
         )
         session.add(new_tournament)
         session.flush()
@@ -1287,6 +1276,21 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             if source_team_ids
             else []
         )
+        source_official_photos = session.exec(
+            select(TeamOfficialPhoto).where(TeamOfficialPhoto.tournament_id == tournament_id)
+        ).all()
+        source_match_checkins = session.exec(
+            select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)
+        ).all()
+        source_player_checkins = session.exec(
+            select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.tournament_id == tournament_id)
+        ).all()
+        source_imports = session.exec(
+            select(TournamentImport).where(TournamentImport.tournament_id == tournament_id)
+        ).all()
+        source_draw_plans = session.exec(
+            select(TournamentDrawPlan).where(TournamentDrawPlan.tournament_id == tournament_id)
+        ).all()
 
         source_version_ids = [v.id for v in source_versions if v.id is not None]
 
@@ -1387,31 +1391,19 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             session.add(new_tournament)
 
         team_id_map: dict[int, int] = {}
-        used_team_name_keys_by_event: dict[int, set[str]] = {}
-        used_team_seeds_by_event: dict[int, set[int]] = {}
-        canonical_team_id_by_event_and_name: dict[tuple[int, str], int] = {}
-        for team in sorted(source_teams, key=_clone_team_priority):
+        for team in sorted(source_teams, key=_clone_team_sort_key):
             if team.id is None:
                 continue
             mapped_event_id = event_id_map.get(team.event_id)
             if mapped_event_id is None:
                 continue
-            used_name_keys = used_team_name_keys_by_event.setdefault(mapped_event_id, set())
-            used_seeds = used_team_seeds_by_event.setdefault(mapped_event_id, set())
+            # Exact snapshot: keep every source team row, including (N) copies and
+            # source_team_key. Only mutate name/seed/key when a unique index forces it.
             base_name = (team.name or "").strip() or f"Team {team.id}"
-            normalized_base_name = _normalize_clone_team_name(base_name)
-            canonical_key = (mapped_event_id, normalized_base_name) if normalized_base_name else None
-            if canonical_key:
-                canonical_team_id = canonical_team_id_by_event_and_name.get(canonical_key)
-                if canonical_team_id is not None:
-                    team_id_map[team.id] = canonical_team_id  # type: ignore[index]
-                    continue
-            suffix = 2
             candidate_name = base_name
-            while candidate_name.casefold() in used_name_keys:
-                candidate_name = f"{base_name} ({suffix})"
-                suffix += 1
-            candidate_seed = team.seed if team.seed is not None and team.seed not in used_seeds else None
+            candidate_seed = team.seed
+            candidate_source_key = team.source_team_key
+            suffix = 2
 
             cloned: Optional[Team] = None
             while True:
@@ -1434,6 +1426,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                     p2_email=team.p2_email,
                     is_defaulted=team.is_defaulted,
                     notes=team.notes,
+                    source_team_key=candidate_source_key,
                     created_at=team.created_at,
                 )
                 try:
@@ -1451,16 +1444,16 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                     if ("team.event_id, team.seed" in msg or "uq_event_seed" in msg) and candidate_seed is not None:
                         candidate_seed = None
                         continue
+                    if (
+                        "team.event_id, team.source_team_key" in msg or "uq_event_source_team_key" in msg
+                    ) and candidate_source_key is not None:
+                        candidate_source_key = f"{candidate_source_key}__copy_{team.id}"
+                        continue
                     raise
 
             if cloned is None:
                 raise HTTPException(status_code=500, detail="Failed to clone team row")
-            used_name_keys.add(candidate_name.casefold())
-            if candidate_seed is not None:
-                used_seeds.add(candidate_seed)
             team_id_map[team.id] = cloned.id  # type: ignore[index]
-            if canonical_key:
-                canonical_team_id_by_event_and_name.setdefault(canonical_key, cloned.id)  # type: ignore[arg-type]
 
         for edge in source_avoid_edges:
             mapped_event_id = event_id_map.get(edge.event_id)
@@ -1656,6 +1649,8 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 winner_team_id=team_id_map.get(match.winner_team_id) if match.winner_team_id else None,
                 started_at=match.started_at,
                 completed_at=match.completed_at,
+                checkin_reset_pending=bool(getattr(match, "checkin_reset_pending", False)),
+                court_queued=bool(getattr(match, "court_queued", False)),
             )
             session.add(cloned)
             session.flush()
@@ -1860,6 +1855,114 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 existing_template.is_active = template.is_active
                 existing_template.updated_at = template.updated_at
                 session.add(existing_template)
+
+        for photo in source_official_photos:
+            mapped_team_id = team_id_map.get(photo.team_id)
+            if mapped_team_id is None:
+                continue
+            session.add(
+                TeamOfficialPhoto(
+                    team_id=mapped_team_id,
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    storage_key=photo.storage_key,
+                    content_type=photo.content_type,
+                    byte_size=photo.byte_size,
+                    photographer_user_id=photo.photographer_user_id,
+                    last_client_upload_id=photo.last_client_upload_id,
+                    captured_at=photo.captured_at,
+                    updated_at=photo.updated_at,
+                )
+            )
+
+        for checkin in source_match_checkins:
+            mapped_version_id = version_id_map.get(checkin.schedule_version_id)
+            mapped_match_id = match_id_map.get(checkin.match_id)
+            if mapped_version_id is None or mapped_match_id is None:
+                continue
+            session.add(
+                MatchCheckIn(
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    schedule_version_id=mapped_version_id,
+                    match_id=mapped_match_id,
+                    team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
+                    side=checkin.side,
+                    team_checked_in=checkin.team_checked_in,
+                    checked_in_at=checkin.checked_in_at,
+                    updated_at=checkin.updated_at,
+                )
+            )
+
+        for checkin in source_player_checkins:
+            mapped_version_id = version_id_map.get(checkin.schedule_version_id)
+            mapped_match_id = match_id_map.get(checkin.match_id)
+            mapped_player_id = player_id_map.get(checkin.player_id)
+            if mapped_version_id is None or mapped_match_id is None or mapped_player_id is None:
+                continue
+            session.add(
+                MatchPlayerCheckIn(
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    schedule_version_id=mapped_version_id,
+                    match_id=mapped_match_id,
+                    team_id=team_id_map.get(checkin.team_id) if checkin.team_id else None,
+                    player_id=mapped_player_id,
+                    side=checkin.side,
+                    checked_in=checkin.checked_in,
+                    checked_in_at=checkin.checked_in_at,
+                    updated_at=checkin.updated_at,
+                )
+            )
+
+        import_id_map: dict[int, int] = {}
+        for imported in source_imports:
+            if imported.id is None:
+                continue
+            cloned_import = TournamentImport(
+                tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                organization_slug=imported.organization_slug,
+                source_tournament_id=imported.source_tournament_id,
+                event_name=imported.event_name,
+                event_date=imported.event_date,
+                imported_at=imported.imported_at,
+                source_updated_at=imported.source_updated_at,
+                source_version=imported.source_version,
+                source_team_count=imported.source_team_count,
+                source_hash=imported.source_hash,
+                snapshot_json=imported.snapshot_json,
+                waitlist_json=imported.waitlist_json,
+                validation_status=imported.validation_status,
+                validation_issues_json=imported.validation_issues_json,
+                refresh_diff_json=imported.refresh_diff_json,
+                plan_status=imported.plan_status,
+                forecast_json=imported.forecast_json,
+                approved_source_hash=imported.approved_source_hash,
+                approved_at=imported.approved_at,
+                created_at=imported.created_at,
+                updated_at=imported.updated_at,
+            )
+            session.add(cloned_import)
+            session.flush()
+            import_id_map[imported.id] = cloned_import.id  # type: ignore[index]
+
+        for plan in source_draw_plans:
+            mapped_import_id = import_id_map.get(plan.import_id)
+            if mapped_import_id is None:
+                continue
+            session.add(
+                TournamentDrawPlan(
+                    import_id=mapped_import_id,
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    draw_kind=plan.draw_kind,
+                    draw_label=plan.draw_label,
+                    team_count=plan.team_count,
+                    option_key=plan.option_key,
+                    is_recommended=plan.is_recommended,
+                    approved=plan.approved,
+                    option_json=plan.option_json,
+                    brackets_json=plan.brackets_json,
+                    created_at=plan.created_at,
+                    updated_at=plan.updated_at,
+                )
+            )
 
         # Preserve the source tournament's public version pointer if possible.
         source_public_version_id = source_tournament.public_schedule_version_id
