@@ -1590,6 +1590,9 @@ def _send_to_phone_targets(
     send_sms: Optional[Callable[..., dict]] = None,
 ) -> SmsSendResponse:
     """Send to explicit phone targets with consent + dedupe + delivery-mode protections."""
+    # Reading an expired row after commit opens a new write transaction.
+    # Keep the loaded values in memory so the Twilio call cannot re-lock the desk.
+    session.expire_on_commit = False
     twilio = get_twilio_service()
     normalized_message = _normalize_sms_message(message)
     settings = session.exec(
@@ -1684,6 +1687,10 @@ def _send_to_phone_targets(
                 logger.exception("SMS send rollback failed for tournament=%s", tournament_id)
             _clear_sms_roster_cache(session)
             raise
+        # A commit that expires rows can reopen a write transaction as soon as
+        # any attribute is read. Drop that transaction before Twilio is called.
+        if session.in_transaction():
+            session.rollback()
 
     for target in targets:
         texts_still_on, current_mode = _current_send_gate(session, tournament_id)

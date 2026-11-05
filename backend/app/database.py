@@ -40,12 +40,41 @@ engine: Engine = create_engine(
     connect_args=_connect_args,
 )
 
-if _is_sqlite and SQLITE_BEGIN_IMMEDIATE:
+_configured_sqlite_engines: set[int] = set()
 
-    @event.listens_for(engine, "begin")
+
+def configure_sqlite_concurrency(target: Engine, enabled: bool | None = None) -> None:
+    """Own SQLite transactions so commit actually drops the write lock.
+
+    Production issues BEGIN IMMEDIATE on every transaction. Reading a row
+    after commit starts another one. If that transaction is still open while
+    Twilio is called, check-in and scoring wait out the rest of the blast.
+    """
+    use_immediate = SQLITE_BEGIN_IMMEDIATE if enabled is None else enabled
+    if not str(target.url).startswith("sqlite") or not use_immediate:
+        return
+    marker = id(target)
+    if marker in _configured_sqlite_engines:
+        return
+    _configured_sqlite_engines.add(marker)
+
+    @event.listens_for(target, "connect")
+    def _sqlite_connect(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]
+        dbapi_connection.isolation_level = None
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SEC * 1000)}")
+        finally:
+            cursor.close()
+
+    @event.listens_for(target, "begin")
     def _sqlite_begin_immediate(conn) -> None:  # type: ignore[no-untyped-def]
         """Serialize writers at transaction start (SQLite has no row-level locks)."""
         conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+
+configure_sqlite_concurrency(engine)
 
 
 def get_session() -> Generator[Session, None, None]:
