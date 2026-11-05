@@ -1779,6 +1779,11 @@ def _send_to_phone_targets(
         delivery_phone = redirect_phone if is_redirect else phone
         outbound_body = _redirect_body(phone, normalized_message) if is_redirect else normalized_message
 
+        # The live database is SQLite with BEGIN IMMEDIATE, so any open
+        # transaction locks the whole file. Release it before the provider
+        # call or check-in, scoring, and court assignment wait on every text.
+        _persist_sms_log()
+
         deliver = send_sms or twilio.send_sms
         send_result = deliver(
             delivery_phone,

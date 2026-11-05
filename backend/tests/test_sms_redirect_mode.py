@@ -91,6 +91,14 @@ def test_redirect_mode_requires_valid_phone(client, session, setup_tournament_wi
 def test_redirect_mode_sends_all_to_test_number(client, session, setup_tournament_with_teams, monkeypatch):
     tournament, _, _ = setup_tournament_with_teams
     captured: list[tuple[str, str]] = []
+    commits = {"n": 0}
+    original_commit = Session.commit
+
+    def _counting_commit(self, *args, **kwargs):
+        commits["n"] += 1
+        return original_commit(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "commit", _counting_commit)
 
     class _CaptureTwilio:
         is_configured = False
@@ -98,6 +106,8 @@ def test_redirect_mode_sends_all_to_test_number(client, session, setup_tournamen
 
         def send_sms(self, to: str, body: str, *, status_callback_url=None):
             captured.append((to, body))
+            # The database lock must be released before Twilio is called.
+            assert commits["n"] > commits_before_send[0]
             return {"sid": f"SM{len(captured)}", "status": "sent", "error": None}
 
     monkeypatch.setattr("app.routes.sms.get_twilio_service", lambda: _CaptureTwilio())
@@ -114,6 +124,7 @@ def test_redirect_mode_sends_all_to_test_number(client, session, setup_tournamen
     assert set_resp.json()["redirect_phone"] == "+19703092022"
     assert set_resp.json()["test_mode"] is False
 
+    commits_before_send = [commits["n"]]
     resp = client.post(
         f"/api/tournaments/{tournament.id}/sms/blast",
         json={"message": "Court assigned now"},
