@@ -67,6 +67,7 @@ import {
   type RwOsRosterSnapshotDiff,
 } from './draw-builder/RwOsRosterRefreshCard'
 import EditWfMatchupModal from './draw-builder/EditWfMatchupModal'
+import { savedFinalWaterfall } from './draw-builder/finalWaterfallTemplate'
 import { isActiveTeam } from '../utils/activeTeam'
 import { showToast } from '../utils/toast'
 import {
@@ -771,7 +772,8 @@ function DrawBuilder() {
           (savedTemplate === 'WF_TO_POOLS_4' && n === 16) // Legacy support
         )
         
-        if (isValidTemplate) {
+        const keptFinalWaterfall = savedFinalWaterfall(event.draw_status, savedTemplate, savedWfRounds)
+        if (isValidTemplate || keptFinalWaterfall) {
           templateType = savedTemplate
           wfRounds = savedWfRounds
         } else if (validFamily) {
@@ -1706,8 +1708,7 @@ function DrawBuilder() {
               (scheduleVersions.find((v) => v.id === calendarScheduleVersionId)?.status || '').toLowerCase() === 'final' && (
                 <div style={{ fontSize: '13px', color: '#856404' }}>The active calendar version is finalized; swaps are blocked.</div>
               )}
-            {calendarScheduleVersionId != null &&
-              (scheduleVersions.find((v) => v.id === calendarScheduleVersionId)?.status || '').toLowerCase() !== 'final' && (
+            {calendarScheduleVersionId != null && (
                 <>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px', alignItems: 'center' }}>
                     <button
