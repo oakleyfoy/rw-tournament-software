@@ -7911,6 +7911,10 @@ function SmsAdminTab({
       setError("Type SEND to confirm broad-audience send")
       return
     }
+    if (deliveryMode !== savedDeliveryMode) {
+      setError('Save Delivery Mode before sending. The selected mode is not saved, so this send would still use the last saved mode.')
+      return
+    }
     setSending(true)
     setError(null)
     try {
@@ -8299,9 +8303,8 @@ function SmsAdminTab({
   }
   const checkinTemplateRows = templates.filter(row => activeCheckinTemplateTypes.has(row.message_type))
   const textsEnabled = settingsDraft?.texts_enabled ?? true
-  const activeDeliveryMode: 'live' | 'allowlist' | 'redirect' =
-    settingsDraft?.delivery_mode
-    || (settingsDraft?.test_mode ? 'allowlist' : 'live')
+  const activeDeliveryMode: 'live' | 'allowlist' | 'redirect' = savedDeliveryMode
+  const deliveryModeUnsaved = deliveryMode !== savedDeliveryMode
   const visibleLogs = logs.filter(l => {
     const status = String(l.status || '').trim().toLowerCase()
     if (status === 'blocked_test_mode') return false
@@ -8430,6 +8433,11 @@ function SmsAdminTab({
             <div style={{ marginTop: 4, fontWeight: 400, color: '#6d4c41' }}>
               Original player numbers are never contacted. Each intended recipient still produces a separately logged test message.
             </div>
+          </div>
+        )}
+        {deliveryModeUnsaved && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #c62828', borderRadius: 6, backgroundColor: '#ffebee', fontSize: 12, color: '#b71c1c', maxWidth: 820, fontWeight: 700 }}>
+            Delivery mode is not saved. Sends still use {savedDeliveryMode === 'redirect' ? 'REDIRECT ALL' : savedDeliveryMode === 'allowlist' ? 'ALLOWLIST ONLY' : 'LIVE'} until you click Save Delivery Mode.
           </div>
         )}
         {settingsDraft && (
@@ -8900,15 +8908,15 @@ function SmsAdminTab({
           </button>
           <button
             onClick={handleSend}
-            disabled={sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk}
+            disabled={sending || previewing || !textsEnabled || deliveryModeUnsaved || !message.trim() || !hasValidTarget || !confirmOk}
             style={{
               padding: '7px 14px',
               fontWeight: 700,
-              backgroundColor: (sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk) ? '#9fa8da' : '#1a237e',
+              backgroundColor: (sending || previewing || !textsEnabled || deliveryModeUnsaved || !message.trim() || !hasValidTarget || !confirmOk) ? '#9fa8da' : '#1a237e',
               color: '#fff',
               border: 'none',
               borderRadius: 4,
-              cursor: (sending || previewing || !textsEnabled || !message.trim() || !hasValidTarget || !confirmOk) ? 'not-allowed' : 'pointer',
+              cursor: (sending || previewing || !textsEnabled || deliveryModeUnsaved || !message.trim() || !hasValidTarget || !confirmOk) ? 'not-allowed' : 'pointer',
             }}
           >
             {sending ? 'Sending…' : 'Send'}

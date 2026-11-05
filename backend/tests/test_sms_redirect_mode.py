@@ -203,6 +203,43 @@ def test_texts_enabled_off_blocks_redirect(client, session, setup_tournament_wit
     assert sent_targets == []
 
 
+def test_turning_texts_off_stops_an_in_progress_redirect_blast(
+    client, session, setup_tournament_with_teams, monkeypatch
+):
+    tournament, _, _ = setup_tournament_with_teams
+    sent_targets: list[str] = []
+
+    class _CaptureTwilio:
+        is_configured = False
+
+        def send_sms(self, to: str, body: str, *, status_callback_url=None):
+            sent_targets.append(to)
+            if len(sent_targets) == 1:
+                settings = session.exec(
+                    select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament.id)
+                ).one()
+                settings.texts_enabled = False
+                session.add(settings)
+                session.commit()
+            return {"sid": f"SM{len(sent_targets)}", "status": "sent", "error": None}
+
+    monkeypatch.setattr("app.routes.sms.get_twilio_service", lambda: _CaptureTwilio())
+    client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={"delivery_mode": "redirect", "redirect_phone": "9703092022", "texts_enabled": True},
+    )
+
+    resp = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": "Stop this blast"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] == 1
+    assert data["redirected"] == 1
+    assert sent_targets == ["+19703092022"]
+
+
 def test_allowlist_mode_unchanged(client, session, setup_tournament_with_teams):
     tournament, _, _ = setup_tournament_with_teams
     client.patch(

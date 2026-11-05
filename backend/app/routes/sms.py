@@ -711,6 +711,17 @@ def _sync_delivery_mode_flags(settings: TournamentSmsSettings) -> None:
     settings.test_mode = mode == SMS_DELIVERY_MODE_ALLOWLIST
 
 
+def _current_send_gate(session: Session, tournament_id: int) -> tuple[bool, str]:
+    """Re-read texts on/off and delivery mode so an in-progress blast can be stopped."""
+    row = session.exec(
+        select(TournamentSmsSettings).where(TournamentSmsSettings.tournament_id == tournament_id)
+    ).first()
+    if row is not None:
+        session.refresh(row)
+    enabled = row is None or bool(getattr(row, "texts_enabled", True))
+    return enabled, _resolve_delivery_mode(row)
+
+
 def _redirect_body(intended_phone: str, message: str) -> str:
     """Prefix redirected bodies so the operator can identify the intended recipient."""
     header = f"[TEST redirect — intended {intended_phone}]"
@@ -1634,7 +1645,30 @@ def _send_to_phone_targets(
     skipped_test_mode_count = 0
     redirected_count = 0
 
+    def _persist_sms_log() -> None:
+        try:
+            session.commit()
+        except Exception:
+            logger.exception("SMS send commit failed for tournament=%s type=%s", tournament_id, message_type)
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("SMS send rollback failed for tournament=%s", tournament_id)
+            _clear_sms_roster_cache(session)
+            raise
+
     for target in targets:
+        texts_still_on, current_mode = _current_send_gate(session, tournament_id)
+        if not texts_still_on or current_mode != delivery_mode:
+            logger.warning(
+                "Stopping SMS send for tournament=%s type=%s texts_enabled=%s mode=%s->%s",
+                tournament_id,
+                message_type,
+                texts_still_on,
+                delivery_mode,
+                current_mode,
+            )
+            break
         phone = target["phone"]
         team_id = target.get("team_id")
         team_name = target.get("team_name")
@@ -1685,6 +1719,7 @@ def _send_to_phone_targets(
                     sent_at=datetime.now(timezone.utc),
                 )
             )
+            _persist_sms_log()
             results.append(
                 SmsSendResult(
                     phone=phone,
@@ -1724,6 +1759,7 @@ def _send_to_phone_targets(
                     sent_at=datetime.now(timezone.utc),
                 )
             )
+            _persist_sms_log()
             results.append(
                 SmsSendResult(
                     phone=phone,
@@ -1777,6 +1813,7 @@ def _send_to_phone_targets(
                 sent_at=datetime.now(timezone.utc),
             )
         )
+        _persist_sms_log()
         results.append(
             SmsSendResult(
                 phone=delivery_phone if is_redirect else phone,
@@ -1791,16 +1828,7 @@ def _send_to_phone_targets(
             )
         )
 
-    try:
-        session.commit()
-    except Exception:
-        logger.exception("SMS send commit failed for tournament=%s type=%s", tournament_id, message_type)
-        try:
-            session.rollback()
-        except Exception:
-            logger.exception("SMS send rollback failed for tournament=%s", tournament_id)
-        _clear_sms_roster_cache(session)
-        raise
+    _persist_sms_log()
     return SmsSendResponse(
         total=len(results),
         sent=sent_count,
