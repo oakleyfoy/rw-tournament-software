@@ -722,6 +722,29 @@ def _current_send_gate(session: Session, tournament_id: int) -> tuple[bool, str]
     return enabled, _resolve_delivery_mode(row)
 
 
+_ALREADY_SENT_STATUSES = {"queued", "sent", "delivered", "sent_redirect"}
+
+
+def _phones_already_sent_blast(session: Session, tournament_id: int, message: str) -> set[str]:
+    """Phones that already accepted this exact tournament blast."""
+    rows = session.exec(
+        select(SmsLog).where(
+            SmsLog.tournament_id == tournament_id,
+            SmsLog.message_type == "tournament_blast",
+            SmsLog.message_body == message,
+        )
+    ).all()
+    phones: set[str] = set()
+    for row in rows:
+        if (row.status or "").lower() not in _ALREADY_SENT_STATUSES:
+            continue
+        if row.phone_number:
+            phones.add(row.phone_number)
+        if row.intended_phone_number:
+            phones.add(row.intended_phone_number)
+    return phones
+
+
 def _redirect_body(intended_phone: str, message: str) -> str:
     """Prefix redirected bodies so the operator can identify the intended recipient."""
     header = f"[TEST redirect — intended {intended_phone}]"
@@ -1644,6 +1667,11 @@ def _send_to_phone_targets(
     skipped_dedupe_count = 0
     skipped_test_mode_count = 0
     redirected_count = 0
+    already_sent_phones = (
+        _phones_already_sent_blast(session, tournament_id, normalized_message)
+        if message_type == "tournament_blast"
+        else set()
+    )
 
     def _persist_sms_log() -> None:
         try:
@@ -1674,6 +1702,23 @@ def _send_to_phone_targets(
         team_name = target.get("team_name")
         player_id = target.get("player_id")
         player_name = target.get("player_name")
+
+        if phone in already_sent_phones:
+            skipped_dedupe_count += 1
+            results.append(
+                SmsSendResult(
+                    phone=phone,
+                    team_id=team_id,
+                    team_name=team_name,
+                    player_id=player_id,
+                    player_name=player_name,
+                    status="deduped",
+                    error="Already sent this tournament text",
+                    intended_phone=phone,
+                    delivery_phone=None,
+                )
+            )
+            continue
 
         if dedupe_key:
             existing = _existing_dedupe_log(

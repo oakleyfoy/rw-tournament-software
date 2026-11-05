@@ -415,6 +415,45 @@ def test_redirect_respects_intended_consent(client, session, setup_tournament_wi
     assert any("intended +15551112222" in body for body in captured)
 
 
+def test_repeat_tournament_blast_skips_numbers_already_sent(
+    client, session, setup_tournament_with_teams, monkeypatch
+):
+    tournament, _, _ = setup_tournament_with_teams
+    sent_targets: list[str] = []
+
+    class _CaptureTwilio:
+        is_configured = False
+
+        def send_sms(self, to: str, body: str, *, status_callback_url=None):
+            sent_targets.append(to)
+            return {"sid": f"SM{len(sent_targets)}", "status": "sent", "error": None}
+
+    monkeypatch.setattr("app.routes.sms.get_twilio_service", lambda: _CaptureTwilio())
+    client.patch(
+        f"/api/tournaments/{tournament.id}/sms/settings",
+        json={"delivery_mode": "live", "texts_enabled": True},
+    )
+    message = "Video link for the tournament"
+    first = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": message},
+    )
+    assert first.status_code == 200
+    assert first.json()["sent"] == 3
+    assert len(sent_targets) == 3
+
+    second = client.post(
+        f"/api/tournaments/{tournament.id}/sms/blast",
+        json={"message": message},
+    )
+    assert second.status_code == 200
+    data = second.json()
+    assert data["sent"] == 0
+    assert data["skipped_dedupe"] == 3
+    assert len(sent_targets) == 3
+    assert all(row["status"] == "deduped" for row in data["results"])
+
+
 def test_mutually_exclusive_modes_via_api(client, session, setup_tournament_with_teams):
     tournament, _, _ = setup_tournament_with_teams
 
