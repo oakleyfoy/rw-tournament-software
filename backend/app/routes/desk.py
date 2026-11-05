@@ -254,6 +254,92 @@ def _lookup_short_name_key(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
+def _person_name_tokens(value: Optional[str]) -> List[str]:
+    """Person-name tokens. A city after a full name is ignored, and 'Last, First' is flipped."""
+    raw = " ".join((value or "").strip().split())
+    if not raw:
+        return []
+    if "," in raw:
+        segments = [segment.strip() for segment in raw.split(",") if segment.strip()]
+        if len(segments) >= 2:
+            first_words = segments[0].split()
+            second_words = segments[1].split()
+            if len(first_words) == 1 and second_words:
+                raw = f"{second_words[0]} {first_words[0]}"
+            elif first_words:
+                raw = segments[0]
+    return [token for token in _normalize_lookup_name(raw).split() if token]
+
+
+def _towel_names_compatible(candidate: Optional[str], lookup_name: Optional[str]) -> bool:
+    """Same person for a towel. First name alone is not enough when both sides have a last name."""
+    left = _person_name_tokens(candidate)
+    right = _person_name_tokens(lookup_name)
+    if not left or not right or left[0] != right[0]:
+        return False
+    if len(left) >= 2 and len(right) >= 2:
+        return left[-1] == right[-1]
+    return True
+
+
+def _ambiguous_person_short_names(labels: List[str]) -> set[str]:
+    """First names that belong to more than one distinct person (first + last)."""
+    identities_by_short: Dict[str, set[str]] = {}
+    for label in labels:
+        tokens = _person_name_tokens(label)
+        if len(tokens) < 2:
+            continue
+        identities_by_short.setdefault(tokens[0], set()).add(f"{tokens[0]} {tokens[-1]}")
+    return {short_name for short_name, identities in identities_by_short.items() if len(identities) > 1}
+
+
+def _known_person_labels(players: List[Player], teams: List[Team]) -> List[str]:
+    labels: List[str] = []
+    for player in players:
+        labels.extend([player.display_name or "", player.full_name or ""])
+    for team in teams:
+        for field in (team.display_name, team.name):
+            labels.extend(_split_team_player_names(field))
+    return labels
+
+
+def _lookup_row_fits_player(row: TemporaryPlayerLookup, player: Player) -> bool:
+    names = [name for name in (player.full_name, player.display_name) if (name or "").strip()]
+    if not names:
+        return True
+    specific = [name for name in names if len(_person_name_tokens(name)) >= 2]
+    lookup_name = row.source_name or row.normalized_name
+    return any(_towel_names_compatible(name, lookup_name) for name in (specific or names))
+
+
+def _lookup_row_for_names(
+    names: List[str],
+    lookup_by_name: Dict[str, TemporaryPlayerLookup],
+    unique_lookup_by_short_name: Dict[str, TemporaryPlayerLookup],
+    ambiguous_short_names: set[str],
+) -> Optional[TemporaryPlayerLookup]:
+    for name in names:
+        if not (name or "").strip():
+            continue
+        for alias in _lookup_name_keys(name):
+            if len(alias.split()) < 2:
+                continue
+            row = lookup_by_name.get(alias)
+            if row is not None and _towel_names_compatible(name, row.source_name or row.normalized_name):
+                return row
+    for name in names:
+        if not (name or "").strip():
+            continue
+        short_alias = _lookup_short_name_key(name)
+        if not short_alias or short_alias in ambiguous_short_names:
+            continue
+        row = unique_lookup_by_short_name.get(short_alias)
+        if row is None or not _towel_names_compatible(name, row.source_name or row.normalized_name):
+            continue
+        return row
+    return None
+
+
 def _active_source_team_keys(session: Session, tournament_id: int) -> set[str]:
     """RW-OS team keys still on the active roster. Copied towel rows from another event are not in this set."""
     from app.services.active_roster import team_is_active
@@ -464,6 +550,8 @@ def _resolve_lookup_player_ids(
         for short_alias in [_lookup_short_name_key(name)]
         if short_alias
     }
+    ambiguous_short_names = _ambiguous_person_short_names(_known_person_labels(list(players), teams))
+    player_by_id = {player.id: player for player in players if player.id is not None}
 
     resolved: List[Dict[str, Optional[str]]] = []
     for row in rows:
@@ -484,12 +572,22 @@ def _resolve_lookup_player_ids(
             }
             if len(matched_ids) == 1:
                 player_id = next(iter(matched_ids))
-            elif normalized_short_name:
+            elif normalized_short_name and normalized_short_name not in ambiguous_short_names:
                 short_name_matches = {
                     player_id_match for player_id_match in players_by_short_name.get(normalized_short_name, [])
                 }
                 if len(short_name_matches) == 1:
-                    player_id = next(iter(short_name_matches))
+                    matched_player = player_by_id.get(next(iter(short_name_matches)))
+                    if matched_player is not None and _lookup_row_fits_player(
+                        TemporaryPlayerLookup(
+                            tournament_id=tournament_id,
+                            source_name=row.get("source_name") or "",
+                            normalized_name=normalized_name,
+                            towel_color=row.get("towel_color") or "",
+                        ),
+                        matched_player,
+                    ):
+                        player_id = matched_player.id
 
         resolved.append(
             {
@@ -1273,10 +1371,10 @@ def _build_checkin_snapshot(
         ).all(),
         _active_source_team_keys(session, tournament.id),
     )
-    lookup_by_player_id: Dict[int, TemporaryPlayerLookup] = {}
+    lookup_rows_by_player_id: Dict[int, List[TemporaryPlayerLookup]] = {}
     for row in lookup_rows:
         if row.player_id is not None:
-            lookup_by_player_id.setdefault(row.player_id, row)
+            lookup_rows_by_player_id.setdefault(row.player_id, []).append(row)
     lookup_by_name: Dict[str, TemporaryPlayerLookup] = {}
     for row in lookup_rows:
         for alias in _lookup_name_keys(row.source_name or row.normalized_name):
@@ -1291,6 +1389,19 @@ def _build_checkin_snapshot(
         for short_alias, rows in lookup_rows_by_short_name.items()
         if len({row.id for row in rows if row.id is not None}) == 1
     }
+    from app.services.active_roster import team_is_active
+
+    tournament_players = session.exec(select(Player).where(Player.tournament_id == tournament.id)).all()
+    tournament_teams = [
+        team
+        for team in session.exec(
+            select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament.id)
+        ).all()
+        if team_is_active(team)
+    ]
+    ambiguous_short_names = _ambiguous_person_short_names(
+        _known_person_labels(list(tournament_players), tournament_teams)
+    )
 
     team_checkins = (
         session.exec(
@@ -1364,50 +1475,29 @@ def _build_checkin_snapshot(
                 chk = player_checkin_map.get((m.id, side_key, pid))
                 checked = bool(chk and chk.checked_in)
                 checked_at = chk.checked_in_at if chk else None
-                lookup_row = lookup_by_player_id.get(pid)
+                lookup_row = next(
+                    (
+                        row
+                        for row in lookup_rows_by_player_id.get(pid, [])
+                        if p is None or _lookup_row_fits_player(row, p)
+                    ),
+                    None,
+                )
                 if lookup_row is None and p is not None:
-                    lookup_row = next(
-                        (
-                            lookup_by_name[alias]
-                            for source in (p.display_name, p.full_name)
-                            for alias in _lookup_name_keys(source)
-                            if alias in lookup_by_name
-                        ),
-                        None,
-                    )
-                if lookup_row is None and p is not None:
-                    lookup_row = next(
-                        (
-                            unique_lookup_by_short_name[short_alias]
-                            for source in (p.display_name, p.full_name)
-                            for short_alias in [_lookup_short_name_key(source)]
-                            if short_alias and short_alias in unique_lookup_by_short_name
-                        ),
-                        None,
+                    lookup_row = _lookup_row_for_names(
+                        [p.full_name or "", p.display_name or ""],
+                        lookup_by_name,
+                        unique_lookup_by_short_name,
+                        ambiguous_short_names,
                     )
                 if lookup_row is None:
                     slot_index = len(player_states)
                     if slot_index < len(slot_name_candidates):
-                        lookup_row = next(
-                            (
-                                lookup_by_name[alias]
-                                for candidate in slot_name_candidates[slot_index]
-                                for alias in _lookup_name_keys(candidate)
-                                if alias in lookup_by_name
-                            ),
-                            None,
-                        )
-                if lookup_row is None:
-                    slot_index = len(player_states)
-                    if slot_index < len(slot_name_candidates):
-                        lookup_row = next(
-                            (
-                                unique_lookup_by_short_name[short_alias]
-                                for candidate in slot_name_candidates[slot_index]
-                                for short_alias in [_lookup_short_name_key(candidate)]
-                                if short_alias and short_alias in unique_lookup_by_short_name
-                            ),
-                            None,
+                        lookup_row = _lookup_row_for_names(
+                            slot_name_candidates[slot_index],
+                            lookup_by_name,
+                            unique_lookup_by_short_name,
+                            ambiguous_short_names,
                         )
                 if checked and checked_at:
                     side_player_times.append(checked_at)
@@ -1424,14 +1514,11 @@ def _build_checkin_snapshot(
 
             if not player_states:
                 for slot_candidates in slot_name_candidates:
-                    lookup_row = next(
-                        (
-                            lookup_by_name[alias]
-                            for candidate in slot_candidates
-                            for alias in _lookup_name_keys(candidate)
-                            if alias in lookup_by_name
-                        ),
-                        None,
+                    lookup_row = _lookup_row_for_names(
+                        slot_candidates,
+                        lookup_by_name,
+                        unique_lookup_by_short_name,
+                        ambiguous_short_names,
                     )
                     fallback_name = slot_candidates[0] if slot_candidates else None
                     if not fallback_name:

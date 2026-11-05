@@ -3925,6 +3925,80 @@ def test_temporary_player_lookup_matches_unique_short_name_updates_checkin_snaps
     assert side_a_player["towel_color"] == "Lime"
 
 
+def test_shared_first_name_does_not_copy_towel_color(client, session):
+    t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
+    lisa_jones = Player(
+        tournament_id=t.id,
+        full_name="Lisa Jones, Atlanta, GA",
+        display_name="Lisa",
+    )
+    lisa_smith = Player(
+        tournament_id=t.id,
+        full_name="Lisa Smith, Miami, FL",
+        display_name="Lisa",
+    )
+    session.add_all([lisa_jones, lisa_smith])
+    session.flush()
+    session.add_all(
+        [
+            TeamPlayer(team_id=teams[0].id, player_id=lisa_jones.id, lineup_slot=1),
+            TeamPlayer(team_id=teams[3].id, player_id=lisa_smith.id, lineup_slot=1),
+        ]
+    )
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    jones_only = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={"raw_text": "Player Name\tTowel Color\tReport URL\nLisa Jones\tBlue\t\n"},
+    )
+    assert jones_only.status_code == 200
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    jones = next(p for p in match_state["side_a"]["players"] if p["player_id"] == lisa_jones.id)
+    smith = next(p for p in match_state["side_b"]["players"] if p["player_id"] == lisa_smith.id)
+    assert jones["towel_color"] == "Blue"
+    assert smith["towel_color"] is None
+
+    import_resp = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups/import",
+        json={
+            "raw_text": (
+                "Player Name\tTowel Color\tReport URL\n"
+                "Lisa Jones\tBlue\t\n"
+                "Lisa Smith\tPink\t\n"
+            )
+        },
+    )
+    assert import_resp.status_code == 200
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    assert snap.status_code == 200
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    jones = next(p for p in match_state["side_a"]["players"] if p["player_id"] == lisa_jones.id)
+    smith = next(p for p in match_state["side_b"]["players"] if p["player_id"] == lisa_smith.id)
+    assert jones["towel_color"] == "Blue"
+    assert smith["towel_color"] == "Pink"
+
+    only_jones = client.post(
+        f"/api/desk/tournaments/{t.id}/temporary-player-lookups",
+        json={"source_name": "Lisa", "towel_color": "Orange", "report_url": ""},
+    )
+    assert only_jones.status_code == 200
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot", params={"version_id": v.id})
+    match_state = next(m for m in snap.json()["checkin_matches"] if m["match_id"] == matches[0].id)
+    jones = next(p for p in match_state["side_a"]["players"] if p["player_id"] == lisa_jones.id)
+    smith = next(p for p in match_state["side_b"]["players"] if p["player_id"] == lisa_smith.id)
+    assert jones["towel_color"] == "Blue"
+    assert smith["towel_color"] == "Pink"
+
+
 def test_temporary_player_lookup_uses_lineup_slot_to_match_visible_short_names(client, session):
     t, v, _ev, teams, matches, _slots = _setup_draft_for_move(session)
     teams[0].display_name = "Mayada / Kristin"
