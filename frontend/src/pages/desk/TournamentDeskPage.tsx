@@ -9,7 +9,6 @@ import {
 import './checkinDeskLayout.css'
 import { TeamPhotoNameRow, TeamPhotoProvider, TeamPhotoThumb, useTeamPhotos } from '../../components/TeamPhotoThumb'
 import { uploadAndSetOfficialTeamPhoto } from '../../api/photography'
-import { useOfficialTeamPhotoPolling } from '../../lib/useOfficialTeamPhotoPolling'
 import {
   getEvents,
   getTournament,
@@ -9677,7 +9676,7 @@ export default function TournamentDeskPage() {
   const [slotCheckInBusy, setSlotCheckInBusy] = useState(false)
   const [putCourtsBusy, setPutCourtsBusy] = useState(false)
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
-  const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
+  const teamPhotoLive = { versions: {} as Record<number, string>, refresh: async () => undefined, showSaved: (_teamId: number, _version: string) => undefined }
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {

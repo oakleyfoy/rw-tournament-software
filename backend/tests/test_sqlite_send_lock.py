@@ -29,7 +29,7 @@ def _other_writer_blocked(db_path: Path) -> bool:
         engine = _file_engine(db_path)
         try:
             with Session(engine) as session:
-                session.exec(text("select 1"))
+                session.exec(text("update note set id = id"))
                 session.commit()
         except Exception:
             blocked["value"] = True

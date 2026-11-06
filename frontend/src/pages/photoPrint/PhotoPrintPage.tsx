@@ -149,33 +149,32 @@ export default function PhotoPrintPage() {
 
   const loadedImages = useRef<Map<string, string>>(new Map())
   useEffect(() => {
+    if (!current) return
+    const key = photoKey(current)
+    if (loadedImages.current.get(key) === current.version) return
     let cancelled = false
-    photos.forEach((photo) => {
-      const key = photoKey(photo)
-      if (loadedImages.current.get(key) === photo.version) return
-      authorizedBlob(photoContentUrl(tid, photo))
-        .then((url) => {
-          if (cancelled) {
-            URL.revokeObjectURL(url)
-            return
-          }
-          loadedImages.current.set(key, photo.version)
-          setImages((prev) => {
-            const previous = prev[key]
-            if (previous) URL.revokeObjectURL(previous)
-            return { ...prev, [key]: url }
-          })
+    authorizedBlob(photoContentUrl(tid, current))
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        loadedImages.current.set(key, current.version)
+        setImages((prev) => {
+          const previous = prev[key]
+          if (previous) URL.revokeObjectURL(previous)
+          return { ...prev, [key]: url }
         })
-        .catch(() => {
-          if (loadedImages.current.get(key) === photo.version) {
-            loadedImages.current.delete(key)
-          }
-        })
-    })
+      })
+      .catch(() => {
+        if (loadedImages.current.get(key) === current.version) {
+          loadedImages.current.delete(key)
+        }
+      })
     return () => {
       cancelled = true
     }
-  }, [photos])
+  }, [tid, current ? photoKey(current) : '', current?.version])
 
   useEffect(() => {
     if (!workspace?.has_custom_logo) {

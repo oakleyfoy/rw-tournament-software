@@ -142,9 +142,7 @@ def test_public_photo_uses_the_existing_thumbnail_after_it_is_saved(client, sess
     session.commit()
 
     missing = client.get(f"/api/public/tournaments/{tournament.id}/teams/{team.id}/photo")
-    assert missing.status_code == 200
-    assert missing.headers["content-type"].startswith("image/jpeg")
-    assert "max-age=60" in missing.headers["cache-control"]
+    assert missing.status_code == 404
 
     directory = client.get(f"/api/public/tournaments/{tournament.id}/teams")
     listed = next(item for item in directory.json()["teams"] if item["team_id"] == team.id)

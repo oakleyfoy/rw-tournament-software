@@ -15,7 +15,8 @@ export function HubTeamPhoto({
 }) {
   const [broken, setBroken] = useState(false)
   const name = team?.full_name || 'Team'
-  const version = team?.photo_version
+  // Player pages do not load photographs. Printing uses the print center.
+  const version = null
   if (!team || !version || broken) {
     return (
       <span
@@ -62,14 +63,8 @@ export function HubPhotoDialog({
   team: Pick<PublicTeamDirectoryItem, 'team_id' | 'full_name' | 'photo_version'>
   onClose: () => void
 }) {
-  if (!team.photo_version) return null
-  return (
-    <div className="hub-dialog" role="dialog" aria-modal="true" aria-label="Team photograph">
-      <button type="button" onClick={onClose}>Close</button>
-      <img
-        src={publicTeamPhotoUrl(tournamentId, team.team_id, team.photo_version)}
-        alt={team.full_name}
-      />
-    </div>
-  )
+  void tournamentId
+  void team
+  void onClose
+  return null
 }

@@ -56,7 +56,7 @@ function TeamPhoto({
 }) {
   const [broken, setBroken] = useState(false)
   const name = team?.full_name || 'Team'
-  const version = team?.photo_version
+  const version = null
   if (!team || !version || broken) {
     return <span className={large ? 'public-photo-fallback large' : 'public-photo-fallback'} aria-hidden="true">{teamInitials(name)}</span>
   }
@@ -111,6 +111,7 @@ export default function PublicMobileDraw({
   const [round, setRound] = useState('All')
   const [detailId, setDetailId] = useState<number | null>(null)
   const [enlargedTeamId, setEnlargedTeamId] = useState<number | null>(null)
+  void enlargedTeamId
   const [notPublished, setNotPublished] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -354,15 +355,6 @@ export default function PublicMobileDraw({
         </article>
       )}
 
-      {enlargedTeamId != null && teamMap.get(enlargedTeamId)?.photo_version && (
-        <div className="public-dialog" role="dialog" aria-modal="true" aria-label="Team photograph">
-          <button type="button" onClick={() => setEnlargedTeamId(null)}>Close</button>
-          <img
-            src={publicTeamPhotoUrl(tournamentId, enlargedTeamId, teamMap.get(enlargedTeamId)!.photo_version!)}
-            alt={teamMap.get(enlargedTeamId)!.full_name}
-          />
-        </div>
-      )}
     </div>
   )
 }

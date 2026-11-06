@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import os
-import threading
 
 from PIL import Image, ImageOps
 
@@ -103,42 +102,12 @@ def display_thumb_key(storage_key: str) -> str | None:
     return storage_key[:-4] + "-thumb.jpg"
 
 
-_thumb_guard = threading.Lock()
-_thumb_build_locks: dict[str, threading.Lock] = {}
-
-
-def _thumb_build_lock(key: str) -> threading.Lock:
-    with _thumb_guard:
-        lock = _thumb_build_locks.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _thumb_build_locks[key] = lock
-        return lock
-
-
 def load_display_thumb(storage_key: str) -> bytes:
-    """Return the small desk thumbnail.
-
-    The camera file is opened only when that small file is missing, and only
-    one request at a time may do it. Every desk asking for the same new photo
-    must not each decode the full picture or the server runs out of memory.
-    """
+    """Return the small stored thumbnail. Never open the camera file here."""
     thumb_key = display_thumb_key(storage_key)
     if not thumb_key:
         raise FileNotFoundError(storage_key)
-    store = get_object_store()
-    try:
-        return store.get_bytes(thumb_key)
-    except FileNotFoundError:
-        pass
-    with _thumb_build_lock(storage_key):
-        try:
-            return store.get_bytes(thumb_key)
-        except FileNotFoundError:
-            original = store.get_bytes(storage_key)
-            thumb = make_display_thumbnail(original)
-            store.put_jpeg(thumb_key, thumb)
-            return thumb
+    return get_object_store().get_bytes(thumb_key)
 
 
 def official_object_key(tournament_id: int, team_id: int, unique_id: str) -> str:
@@ -187,6 +156,9 @@ class MemoryObjectStore:
         if key not in self.objects:
             raise FileNotFoundError(key)
         return self.objects[key]
+
+    def get_prefix(self, key: str, limit: int = 262144) -> bytes:
+        return self.get_bytes(key)[:limit]
 
     def delete(self, key: str | None) -> None:
         if self.fail_next_delete:
@@ -278,6 +250,19 @@ class R2ObjectStore:
             raise PhotoStorageUnavailable("Team photograph storage is unavailable") from exc
         body = response["Body"].read()
         return body
+
+    def get_prefix(self, key: str, limit: int = 262144) -> bytes:
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=key,
+                Range=f"bytes=0-{max(0, limit - 1)}",
+            )
+        except Exception as exc:
+            if _missing_object(exc):
+                raise FileNotFoundError(key) from exc
+            raise PhotoStorageUnavailable("Team photograph storage is unavailable") from exc
+        return response["Body"].read()
 
     def delete(self, key: str | None) -> None:
         if not key:

@@ -136,6 +136,70 @@ def _image_size(data: bytes) -> tuple[int, int]:
         return image.size
 
 
+def _jpeg_header_size(data: bytes) -> tuple[int, int]:
+    """Read JPEG pixel size from the file header. Does not decode the picture."""
+    if len(data) < 4 or data[:2] != b"\xff\xd8":
+        return 0, 0
+    sof = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+    index = 2
+    while index + 3 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        while index < len(data) and data[index] == 0xFF:
+            index += 1
+        if index >= len(data):
+            break
+        marker = data[index]
+        index += 1
+        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 1 >= len(data):
+            break
+        length = int.from_bytes(data[index:index + 2], "big")
+        if marker in sof and index + 7 < len(data):
+            height = int.from_bytes(data[index + 3:index + 5], "big")
+            width = int.from_bytes(data[index + 5:index + 7], "big")
+            return width, height
+        if length < 2:
+            break
+        index += length
+    return 0, 0
+
+
+def _attach_photo_sizes(payload: dict) -> None:
+    """Fill print warnings after the database lock is released."""
+    try:
+        store = get_object_store()
+    except PhotoStorageUnavailable:
+        return
+    for item in payload.get("photos") or []:
+        width = height = 0
+        try:
+            width, height = _jpeg_header_size(store.get_prefix(item.get("version") or ""))
+        except Exception:
+            width, height = 0, 0
+        settings = item.get("settings") or {}
+        low_sizes = []
+        target_w, target_h = print_pixels(PRINT_SIZE, width, height)
+        crop_mode = settings.get("crop_mode") or "fit"
+        if width and height and source_needs_upscale(width, height, target_w, target_h, crop_mode):
+            low_sizes.append(PRINT_SIZE)
+        crop_warning = crop_cuts_photo(width, height, crop_mode)
+        reviewed = bool(item.get("reviewed"))
+        item["source_width"] = width
+        item["source_height"] = height
+        item["low_resolution_sizes"] = low_sizes
+        item["crop_warning"] = crop_warning
+        item["needs_attention"] = (not reviewed) or bool(low_sizes) or crop_warning
+    photos = payload.get("photos") or []
+    totals = payload.get("totals") or {}
+    totals["reviewed"] = sum(1 for item in photos if item["reviewed"])
+    totals["ready"] = sum(1 for item in photos if item["reviewed"] and not item["low_resolution_sizes"])
+    totals["needs_attention"] = sum(1 for item in photos if item["needs_attention"])
+    payload["totals"] = totals
+
+
 def _http_photo_error(exc: Exception) -> HTTPException:
     if isinstance(exc, PhotoRejected):
         return HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -158,17 +222,12 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
     ).all()
     override_by_team = {row.team_id: row for row in overrides}
     default = _stored_settings(session, tournament)
-    store = get_object_store()
     items = []
     for photo in photos:
         team = team_by_id.get(photo.team_id)
         if team is None:
             continue
-        try:
-            source = store.get_bytes(photo.storage_key)
-            width, height = _image_size(source)
-        except Exception:
-            width, height = 0, 0
+        width, height = 0, 0
         override = override_by_team.get(photo.team_id)
         settings = default
         has_override = bool(override and override.settings_json)
@@ -202,7 +261,7 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
             }
         )
     items.sort(key=lambda item: " ".join(item["player_names"]).lower())
-    group_items = _group_photo_items(session, tournament, default, store)
+    group_items = _group_photo_items(session, tournament, default)
     team_photo_count = len(items)
     items.extend(group_items)
     team_count = len(team_by_id)
@@ -233,7 +292,7 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
     }
 
 
-def _group_photo_items(session: Session, tournament: Tournament, default: dict, store) -> list[dict]:
+def _group_photo_items(session: Session, tournament: Tournament, default: dict) -> list[dict]:
     photos = session.exec(
         select(TournamentGroupPhoto)
         .where(TournamentGroupPhoto.tournament_id == tournament.id)
@@ -242,11 +301,7 @@ def _group_photo_items(session: Session, tournament: Tournament, default: dict, 
     items = []
     for index, photo in enumerate(photos, start=1):
         label = f"Group Photo {index}"
-        try:
-            source = store.get_bytes(photo.storage_key)
-            width, height = _image_size(source)
-        except Exception:
-            width, height = 0, 0
+        width, height = 0, 0
         settings = default
         has_override = bool(photo.settings_json)
         if has_override:
@@ -300,7 +355,12 @@ def photo_print_workspace(
     session: Session = Depends(get_session),
 ):
     tournament = _assert_can_photograph(session, user, tournament_id)
-    return _workspace(session, tournament)
+    payload = _workspace(session, tournament)
+    session.commit()
+    if session.in_transaction():
+        session.rollback()
+    _attach_photo_sizes(payload)
+    return payload
 
 
 @router.put("/tournaments/{tournament_id}/photo-print/default")

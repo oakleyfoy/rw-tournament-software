@@ -74,6 +74,6 @@ describe('photo print workspace', () => {
     expect(screen.getByRole('button', { name: 'Apply to All Photos' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Order Prints at Walgreens' })).toBeTruthy()
     expect(screen.queryByText('9')).toBeNull()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Resize watermark' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Resize wording' })).toBeTruthy())
   })
 })

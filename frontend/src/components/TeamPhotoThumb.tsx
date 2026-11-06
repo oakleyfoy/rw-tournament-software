@@ -82,6 +82,9 @@ export function TeamPhotoThumb({
   surface?: string
   frame?: 'square' | 'card'
 }) {
+  // Check-in, scoring, and player pages do not load photographs.
+  // The print center is the only place those files are opened.
+  if (surface !== 'photographer') return null
   const { photos } = useTeamPhotos()
   const version = teamId != null ? photos[teamId] : undefined
   const [src, setSrc] = useState<string | null>(null)

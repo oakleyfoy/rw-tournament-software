@@ -71,7 +71,9 @@ def configure_sqlite_concurrency(target: Engine, enabled: bool | None = None) ->
     @event.listens_for(target, "begin")
     def _sqlite_begin_immediate(conn) -> None:  # type: ignore[no-untyped-def]
         """Serialize writers at transaction start (SQLite has no row-level locks)."""
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        # Deferred so a check-in read does not take the write lock.
+        # A real write still waits its turn. busy_timeout covers that wait.
+        conn.exec_driver_sql("BEGIN")
 
 
 configure_sqlite_concurrency(engine)

@@ -61,7 +61,7 @@ describe('Check-In Desk layout changes', () => {
     expect(page).toContain('photoSurface="ready-assigned"')
     expect(page).toContain('photoSurface="dynamic-ready"')
     expect(page).toContain('TeamPhotoNameRow')
-    expect(page).toContain('useOfficialTeamPhotoPolling(tid)')
+    expect(page).not.toContain('useOfficialTeamPhotoPolling(tid)')
     expect(page).not.toContain('MatchTeamPhotos')
     expect(page).toContain('data-testid="score-entry-photos"')
     expect(page).toContain('data-team-details-photo')

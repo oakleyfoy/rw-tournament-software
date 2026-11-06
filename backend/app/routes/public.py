@@ -24,7 +24,6 @@ from app.models.team import Team
 from app.models.team_photo import TeamOfficialPhoto
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
-from app.services.team_photo_storage import PhotoStorageUnavailable, load_display_thumb
 from app.services.assignment_ownership import load_owned_matches_for_version
 from app.services.court_assignment_mode import is_preassigned
 from app.services.draw_plan_rules import pool_config
@@ -2159,36 +2158,6 @@ def public_team_photo(
     team_id: int,
     session: Session = Depends(get_session),
 ):
-    """Small public thumbnail for a team that already has an official photograph."""
-    tournament = session.get(Tournament, tournament_id)
-    if not tournament or not _get_public_version(session, tournament_id):
-        raise HTTPException(status_code=404, detail="Team photo is not available")
-    team = session.get(Team, team_id)
-    event = session.get(Event, team.event_id) if team else None
-    if not team or not event or event.tournament_id != tournament_id:
-        raise HTTPException(status_code=404, detail="Team photo is not available")
-    photo = session.exec(
-        select(TeamOfficialPhoto).where(
-            TeamOfficialPhoto.tournament_id == tournament_id,
-            TeamOfficialPhoto.team_id == team_id,
-        )
-    ).first()
-    if not photo:
-        raise HTTPException(status_code=404, detail="Team photo is not available")
-    storage_key = photo.storage_key
-    version = photo.updated_at.isoformat() if photo.updated_at else ""
-    session.commit()
-    try:
-        thumb = load_display_thumb(storage_key)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Team photo is not available") from exc
-    except PhotoStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail="Team photo is temporarily unavailable") from exc
-    return Response(
-        content=thumb,
-        media_type="image/jpeg",
-        headers={
-            "Cache-Control": "public, max-age=60",
-            "ETag": f'"{version}"',
-        },
-    )
+    """Player pages do not load photographs. Printing uses the print center."""
+    del tournament_id, team_id, session
+    raise HTTPException(status_code=404, detail="Team photo is not shown on player pages")
