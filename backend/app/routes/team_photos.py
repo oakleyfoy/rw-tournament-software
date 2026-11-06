@@ -24,7 +24,6 @@ from app.services.team_photo_storage import (
     PhotoStorageUnavailable,
     display_thumb_key,
     get_object_store,
-    make_display_thumbnail,
     owned_group_key,
     process_image,
 )
@@ -515,20 +514,10 @@ def official_photo_thumb(
         raise HTTPException(status_code=404, detail="No official team photo")
     storage_key = photo.storage_key
     session.commit()
-    store = get_object_store()
-    thumb_key = display_thumb_key(storage_key)
     try:
-        thumb = None
-        if thumb_key:
-            try:
-                thumb = store.get_bytes(thumb_key)
-            except FileNotFoundError:
-                thumb = None
-        if thumb is None:
-            original = store.get_bytes(storage_key)
-            thumb = make_display_thumbnail(original)
-            if store.get_bytes(storage_key) != original:
-                raise HTTPException(status_code=500, detail="Official photograph was not left unchanged")
+        from app.services.team_photo_storage import load_display_thumb
+
+        thumb = load_display_thumb(storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="No official team photo") from exc
     except PhotoRejected as exc:

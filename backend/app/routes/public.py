@@ -24,12 +24,7 @@ from app.models.team import Team
 from app.models.team_photo import TeamOfficialPhoto
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
-from app.services.team_photo_storage import (
-    PhotoStorageUnavailable,
-    display_thumb_key,
-    get_object_store,
-    make_display_thumbnail,
-)
+from app.services.team_photo_storage import PhotoStorageUnavailable, load_display_thumb
 from app.services.assignment_ownership import load_owned_matches_for_version
 from app.services.court_assignment_mode import is_preassigned
 from app.services.draw_plan_rules import pool_config
@@ -2183,18 +2178,8 @@ def public_team_photo(
     storage_key = photo.storage_key
     version = photo.updated_at.isoformat() if photo.updated_at else ""
     session.commit()
-    store = get_object_store()
-    thumb_key = display_thumb_key(storage_key)
     try:
-        thumb = None
-        if thumb_key:
-            try:
-                thumb = store.get_bytes(thumb_key)
-            except FileNotFoundError:
-                thumb = None
-        if thumb is None:
-            original = store.get_bytes(storage_key)
-            thumb = make_display_thumbnail(original)
+        thumb = load_display_thumb(storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Team photo is not available") from exc
     except PhotoStorageUnavailable as exc:

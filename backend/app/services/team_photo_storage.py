@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 
 from PIL import Image, ImageOps
 
@@ -100,6 +101,44 @@ def display_thumb_key(storage_key: str) -> str | None:
     if not storage_key.endswith(".jpg") or storage_key.endswith("-thumb.jpg") or ".." in storage_key:
         return None
     return storage_key[:-4] + "-thumb.jpg"
+
+
+_thumb_guard = threading.Lock()
+_thumb_build_locks: dict[str, threading.Lock] = {}
+
+
+def _thumb_build_lock(key: str) -> threading.Lock:
+    with _thumb_guard:
+        lock = _thumb_build_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _thumb_build_locks[key] = lock
+        return lock
+
+
+def load_display_thumb(storage_key: str) -> bytes:
+    """Return the small desk thumbnail.
+
+    The camera file is opened only when that small file is missing, and only
+    one request at a time may do it. Every desk asking for the same new photo
+    must not each decode the full picture or the server runs out of memory.
+    """
+    thumb_key = display_thumb_key(storage_key)
+    if not thumb_key:
+        raise FileNotFoundError(storage_key)
+    store = get_object_store()
+    try:
+        return store.get_bytes(thumb_key)
+    except FileNotFoundError:
+        pass
+    with _thumb_build_lock(storage_key):
+        try:
+            return store.get_bytes(thumb_key)
+        except FileNotFoundError:
+            original = store.get_bytes(storage_key)
+            thumb = make_display_thumbnail(original)
+            store.put_jpeg(thumb_key, thumb)
+            return thumb
 
 
 def official_object_key(tournament_id: int, team_id: int, unique_id: str) -> str:
