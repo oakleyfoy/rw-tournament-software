@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { MatchTeamPhotos, TeamPhotoNameRow, TeamPhotoProvider } from './TeamPhotoThumb'
+import { MatchTeamPhotos, TeamPhotoNameRow, TeamPhotoProvider, TeamPhotoThumb } from './TeamPhotoThumb'
 import { TeamSearchResultButton } from './TeamSearchResultButton'
 
 describe('team photo operational rendering', () => {
@@ -39,6 +39,33 @@ describe('team photo operational rendering', () => {
     expect(screen.getAllByTestId('team-photo-placeholder')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'View larger team photo' }))
     expect(screen.getByRole('dialog', { name: 'Official team photo' })).toBeInTheDocument()
+  })
+
+  it('uses the full official photo on the photographer card when the thumbnail is unavailable', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(String(url))
+      if (String(url).includes('/official/content')) {
+        return new Response('', { status: 404 })
+      }
+      return new Response(new Blob(['photo'], { type: 'image/jpeg' }), { status: 200 })
+    }))
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:card-photo'),
+      revokeObjectURL: vi.fn(),
+    })
+    window.localStorage.setItem('rw_auth_token', 'token')
+    render(
+      <TeamPhotoProvider value={{ photos: { 11: 'team-photos/1/11/full.jpg' }, refresh: async () => undefined, tournamentId: 1 }}>
+        <TeamPhotoThumb teamId={11} frame="card" surface="photographer" />
+      </TeamPhotoProvider>,
+    )
+    const photo = await screen.findByTestId('team-photo')
+    expect(photo).toHaveAttribute('data-photo-frame', 'card')
+    expect(photo).toHaveAttribute('data-photo-version', 'team-photos/1/11/full.jpg')
+    expect(urls.some((url) => url.includes('/official/content'))).toBe(true)
+    expect(urls.some((url) => url.includes('/official/thumb'))).toBe(true)
   })
 })
 

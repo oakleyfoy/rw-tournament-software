@@ -95,7 +95,11 @@ def search_tournament_teams(session: Session, tournament_id: int, query: str, li
     official_rows = session.exec(
         select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id.in_(team_ids))  # type: ignore[attr-defined]
     ).all()
-    official_team_ids = {row.team_id for row in official_rows}
+    official_versions = {
+        row.team_id: row.storage_key
+        for row in official_rows
+        if row.storage_key
+    }
 
     hits: list[dict] = []
     for team in teams:
@@ -115,7 +119,8 @@ def search_tournament_teams(session: Session, tournament_id: int, query: str, li
                 "player_names": names,
                 "avoid_group": team.avoid_group,
                 "source_team_key": team.source_team_key,
-                "has_official_photo": team.id in official_team_ids,
+                "has_official_photo": team.id in official_versions,
+                "official_photo_version": official_versions.get(team.id),
             }
         )
 

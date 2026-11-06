@@ -221,6 +221,56 @@ def test_search_either_partner_partial_names_and_duplicates(client: TestClient, 
     ).json() == []
 
 
+def test_saved_photo_stays_visible_when_its_tournament_pointer_is_stale(client: TestClient, session: Session):
+    """The picture follows the team. A stale tournament id must not hide it."""
+    admin = _bootstrap_admin(client)
+    roster = _seed_roster(session)
+    saved = _save(client, admin, roster["tournament_id"], roster["jane_amy"], "upload-visible-1", _jpeg())
+    assert saved.status_code == 200, saved.text
+    session.expire_all()
+    photo = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["jane_amy"])).one()
+    photo.tournament_id = roster["other_tournament_id"]
+    session.add(photo)
+    session.commit()
+
+    listed = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/official-photos",
+        headers=admin,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["team_id"] == roster["jane_amy"]
+    assert listed.json()[0]["version"] == photo.storage_key
+
+    found = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/search",
+        headers=admin,
+        params={"q": "Amy"},
+    )
+    assert found.status_code == 200, found.text
+    assert found.json()[0]["has_official_photo"] is True
+    assert found.json()[0]["official_photo_version"] == photo.storage_key
+
+    content = client.get(f"/api/photography/teams/{roster['jane_amy']}/official/content", headers=admin)
+    assert content.status_code == 200
+    assert content.headers["content-type"].startswith("image/jpeg")
+    thumb = client.get(f"/api/photography/teams/{roster['jane_amy']}/official/thumb", headers=admin)
+    assert thumb.status_code == 200
+
+    other = client.get(
+        f"/api/photography/tournaments/{roster['other_tournament_id']}/official-photos",
+        headers=admin,
+    )
+    assert roster["jane_amy"] not in [row["team_id"] for row in other.json()]
+    missing = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/teams/search",
+        headers=admin,
+        params={"q": "Sue"},
+    )
+    sue = next(hit for hit in missing.json() if hit["team_id"] == roster["jane_sue"])
+    assert sue["has_official_photo"] is False
+    assert sue["official_photo_version"] is None
+
+
 def test_capture_selection_replacement_and_team_isolation(client: TestClient, session: Session):
     admin = _bootstrap_admin(client)
     roster = _seed_roster(session)

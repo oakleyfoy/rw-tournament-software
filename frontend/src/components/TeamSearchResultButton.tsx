@@ -7,6 +7,7 @@ export interface PhotoTeamSearchHit {
   avoid_group?: string | null
   source_team_key?: string | null
   has_official_photo: boolean
+  official_photo_version?: string | null
 }
 
 export function TeamSearchResultButton({

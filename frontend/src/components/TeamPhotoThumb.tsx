@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { getAuthToken } from '../api/client'
-import { officialTeamPhotoThumbUrl } from '../api/photography'
+import { officialTeamPhotoContentUrl, officialTeamPhotoThumbUrl } from '../api/photography'
 
 export interface TeamPhotoContextValue {
   photos: Record<number, string>
@@ -33,27 +33,30 @@ export function useTeamPhotos(): TeamPhotoContextValue {
 
 const objectUrlCache = new Map<string, string>()
 
-function Placeholder({ size, surface }: { size: number; surface?: string }) {
+function Placeholder({ size, surface, frame }: { size: number; surface?: string; frame: 'square' | 'card' }) {
+  const icon = frame === 'card' ? 72 : Math.max(10, size - 8)
   return (
     <span
       data-testid="team-photo-placeholder"
       data-photo-surface={surface}
+      data-photo-frame={frame}
       title="No team photo"
       aria-label="No team photo"
       style={{
-        width: size,
-        height: size,
-        borderRadius: 4,
+        width: frame === 'card' ? '100%' : size,
+        height: frame === 'card' ? 220 : size,
+        borderRadius: frame === 'card' ? 8 : 4,
         background: '#eceff1',
         border: '1px solid #cfd8dc',
-        display: 'inline-flex',
+        display: frame === 'card' ? 'flex' : 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
         color: '#90a4ae',
+        boxSizing: 'border-box',
       }}
     >
-      <svg width={Math.max(10, size - 8)} height={Math.max(10, size - 8)} viewBox="0 0 24 24" aria-hidden>
+      <svg width={icon} height={icon} viewBox="0 0 24 24" aria-hidden>
         <circle cx="12" cy="8" r="3.2" fill="currentColor" />
         <path d="M5 19c1.2-3.2 3.4-4.8 7-4.8S17.8 15.8 19 19" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       </svg>
@@ -61,14 +64,23 @@ function Placeholder({ size, surface }: { size: number; surface?: string }) {
   )
 }
 
+function photoSources(teamId: number, version: string, frame: 'square' | 'card'): string[] {
+  const thumb = officialTeamPhotoThumbUrl(teamId, version)
+  const content = officialTeamPhotoContentUrl(teamId, version)
+  // The photographer card needs the stored photograph. The desk keeps the small thumb.
+  return frame === 'card' ? [content, thumb] : [thumb]
+}
+
 export function TeamPhotoThumb({
   teamId,
   size = 28,
   surface,
+  frame = 'square',
 }: {
   teamId?: number | null
   size?: number
   surface?: string
+  frame?: 'square' | 'card'
 }) {
   const { photos } = useTeamPhotos()
   const version = teamId != null ? photos[teamId] : undefined
@@ -82,10 +94,11 @@ export function TeamPhotoThumb({
       setSrc(null)
       setLoadedVersion(null)
       setFailed(false)
+      setOpen(false)
       return
     }
-    const url = officialTeamPhotoThumbUrl(teamId, version)
-    const cached = objectUrlCache.get(url)
+    const urls = photoSources(teamId, version, frame)
+    const cached = urls.map((url) => objectUrlCache.get(url)).find((url): url is string => Boolean(url))
     if (cached) {
       setSrc(cached)
       setLoadedVersion(version)
@@ -94,33 +107,42 @@ export function TeamPhotoThumb({
     }
     let cancelled = false
     const token = getAuthToken()
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((response) => (response.ok ? response.blob() : null))
-      .then((blob) => {
-        if (cancelled) return
-        if (!blob) {
-          setFailed(true)
-          setSrc(null)
-          setLoadedVersion(null)
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+    const load = async () => {
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, { headers })
+          if (!response.ok) continue
+          const blob = await response.blob()
+          if (cancelled) return
+          if (!blob.size) continue
+          const objectUrl = URL.createObjectURL(blob)
+          objectUrlCache.set(url, objectUrl)
+          if (cancelled) return
+          setSrc(objectUrl)
+          setLoadedVersion(version)
+          setFailed(false)
           return
+        } catch {
+          // Try the other stored copy of this same official photo.
         }
-        const objectUrl = URL.createObjectURL(blob)
-        objectUrlCache.set(url, objectUrl)
-        setSrc(objectUrl)
-        setLoadedVersion(version)
-        setFailed(false)
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true)
-      })
+      }
+      if (!cancelled) {
+        setFailed(true)
+        setSrc(null)
+        setLoadedVersion(null)
+      }
+    }
+    void load()
     return () => {
       cancelled = true
     }
-  }, [teamId, version])
+  }, [frame, teamId, version])
 
   if (!version || failed || !src || loadedVersion !== version) {
-    return <Placeholder size={size} surface={surface} />
+    return <Placeholder size={size} surface={surface} frame={frame} />
   }
+  const card = frame === 'card'
   return (
     <>
       <span
@@ -139,23 +161,36 @@ export function TeamPhotoThumb({
           setOpen(true)
         }}
         style={{
+          display: card ? 'block' : 'inline-flex',
+          width: card ? '100%' : undefined,
           padding: 0,
           border: 0,
           background: 'transparent',
           lineHeight: 0,
           cursor: 'pointer',
           flexShrink: 0,
+          touchAction: 'manipulation',
         }}
       >
         <img
           data-testid="team-photo"
           data-photo-surface={surface}
+          data-photo-frame={frame}
           data-photo-version={version}
           src={src}
           alt="Official team photo"
-          width={size}
-          height={size}
-          style={{
+          width={card ? undefined : size}
+          height={card ? undefined : size}
+          style={card ? {
+            width: '100%',
+            height: 'auto',
+            maxHeight: '70vh',
+            objectFit: 'contain',
+            borderRadius: 8,
+            border: '1px solid #cfd8dc',
+            background: '#eceff1',
+            display: 'block',
+          } : {
             width: size,
             height: size,
             objectFit: 'cover',

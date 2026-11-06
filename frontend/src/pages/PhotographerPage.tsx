@@ -16,6 +16,7 @@ import { TeamSearchResultButton } from '../components/TeamSearchResultButton'
 import type { PhotoTeamSearchHit } from '../components/TeamSearchResultButton'
 import { initialPhotographerSession, photographerReducer } from '../lib/photographerSession'
 import { prepareTeamPhoto } from '../lib/prepareTeamPhoto'
+import { photoVersionsFromSummaries, withPhotoVersion } from '../lib/useOfficialTeamPhotoPolling'
 
 function TeamPhotoSmsLines({
   players,
@@ -56,6 +57,7 @@ export default function PhotographerPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const blobsRef = useRef<Record<string, Blob>>({})
   const confirmLock = useRef(false)
+  const photoNotedAt = useRef<Record<number, number>>({})
   const cameraRef = useRef<HTMLInputElement>(null)
   const libraryRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -116,30 +118,50 @@ export default function PhotographerPage() {
 
   useEffect(() => {
     if (!session.tournamentId) return
+    const started = Date.now()
     let cancelled = false
     listOfficialTeamPhotos(session.tournamentId)
       .then((rows) => {
         if (cancelled) return
-        const next: Record<number, string> = {}
-        for (const row of rows) {
-          const version = row.version || row.updated_at
-          if (version) next[row.team_id] = version
-        }
-        setPhotoVersions(next)
+        const listed = photoVersionsFromSummaries(rows)
+        setPhotoVersions((current) => {
+          const next = { ...current }
+          for (const [teamId, version] of Object.entries(listed)) {
+            const id = Number(teamId)
+            if ((photoNotedAt.current[id] || 0) > started) continue
+            next[id] = version
+          }
+          return next
+        })
       })
       .catch(() => {
-        // The team card still shows a placeholder when the current version is unknown.
+        // Opening a team still uses the version returned with that search result.
       })
     return () => {
       cancelled = true
     }
   }, [session.tournamentId])
 
+  const notePhoto = (teamId: number, version: string | null) => {
+    photoNotedAt.current[teamId] = Date.now()
+    setPhotoVersions((current) => {
+      if (!version) {
+        if (!(teamId in current)) return current
+        const next = { ...current }
+        delete next[teamId]
+        return next
+      }
+      return withPhotoVersion(current, teamId, version)
+    })
+  }
+
   const selectTeam = (hit: PhotoTeamSearchHit) => {
     blobsRef.current = {}
     setConfirmDelete(false)
     setSelectedTeam(hit)
     setActionError(null)
+    if (hit.official_photo_version) notePhoto(hit.team_id, hit.official_photo_version)
+    else if (!hit.has_official_photo) notePhoto(hit.team_id, null)
     dispatch({ type: 'selectTeam', teamId: hit.team_id })
   }
 
@@ -153,13 +175,8 @@ export default function PhotographerPage() {
     const teamId = selectedTeam.team_id
     try {
       await deleteOfficialTeamPhoto(session.tournamentId, teamId)
-      setPhotoVersions((current) => {
-        if (!(teamId in current)) return current
-        const next = { ...current }
-        delete next[teamId]
-        return next
-      })
-      setSelectedTeam({ ...selectedTeam, has_official_photo: false })
+      notePhoto(teamId, null)
+      setSelectedTeam({ ...selectedTeam, has_official_photo: false, official_photo_version: null })
       setSavedOfficial((current) => (current?.teamId === teamId ? null : current))
       setConfirmDelete(false)
     } catch (error) {
@@ -223,9 +240,11 @@ export default function PhotographerPage() {
           onProgress: (fraction) =>
             dispatch({ type: 'uploadProgress', localId: chosen.localId, progress: Math.round(fraction * 100) }),
         })
+        const version = saved.version || saved.updated_at
+        notePhoto(selectedTeam.team_id, version)
         setSavedOfficial({
           teamId: selectedTeam.team_id,
-          version: saved.version || saved.updated_at,
+          version,
         })
       }
       const label = selectedTeam
@@ -341,7 +360,7 @@ export default function PhotographerPage() {
             }}
           >
             <div data-testid="saved-official-photo" style={{ marginTop: 10 }}>
-              <TeamPhotoThumb teamId={savedOfficial.teamId} size={96} surface="photographer" />
+              <TeamPhotoThumb teamId={savedOfficial.teamId} frame="card" surface="photographer" />
             </div>
           </TeamPhotoProvider>
         )}
@@ -416,8 +435,8 @@ export default function PhotographerPage() {
                 }}
               >
                 {selectedTeam && (
-                  <div data-testid="selected-team-photo" style={{ marginBottom: 10 }}>
-                    <TeamPhotoThumb teamId={selectedTeam.team_id} size={96} surface="photographer" />
+                  <div data-testid="selected-team-photo" style={{ width: '100%', marginBottom: 10 }}>
+                    <TeamPhotoThumb key={selectedTeam.team_id} teamId={selectedTeam.team_id} frame="card" surface="photographer" />
                   </div>
                 )}
               </TeamPhotoProvider>

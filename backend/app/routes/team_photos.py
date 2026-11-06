@@ -50,6 +50,7 @@ class PhotoTeamSearchHit(BaseModel):
     avoid_group: Optional[str] = None
     source_team_key: Optional[str] = None
     has_official_photo: bool = False
+    official_photo_version: Optional[str] = None
 
 
 class GroupPhotoResponse(BaseModel):
@@ -141,6 +142,22 @@ def _official_or_404(session: Session, team_id: int) -> TeamOfficialPhoto:
     return photo
 
 
+def _team_ids_in_tournament(session: Session, tournament_id: int) -> list[int]:
+    """Teams currently in this tournament. The photo follows the team row."""
+    event_ids = [
+        event.id
+        for event in session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+        if event.id is not None
+    ]
+    if not event_ids:
+        return []
+    return [
+        team.id
+        for team in session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()  # type: ignore[attr-defined]
+        if team.id is not None
+    ]
+
+
 @router.get("/tournaments", response_model=List[PhotographyTournamentItem])
 def list_photography_tournaments(
     user: UserAccount = Depends(require_photo_user),
@@ -188,10 +205,16 @@ def list_official_photos(
     session: Session = Depends(get_session),
 ):
     _assert_can_photograph(session, user, tournament_id)
-    rows = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.tournament_id == tournament_id)).all()
+    team_ids = _team_ids_in_tournament(session, tournament_id)
+    if not team_ids:
+        return []
+    rows = session.exec(
+        select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id.in_(team_ids))  # type: ignore[attr-defined]
+    ).all()
     return [
         OfficialPhotoSummary(team_id=row.team_id, updated_at=row.updated_at, version=row.storage_key)
         for row in rows
+        if row.storage_key
     ]
 
 
@@ -454,7 +477,7 @@ def official_photo_content(
         raise HTTPException(status_code=404, detail="Team not found")
     _assert_can_photograph(session, user, event.tournament_id)
     photo = _official_or_404(session, team_id)
-    if photo.team_id != team_id or photo.tournament_id != event.tournament_id:
+    if photo.team_id != team_id:
         raise HTTPException(status_code=404, detail="No official team photo")
     try:
         data = get_object_store().get_bytes(photo.storage_key)
@@ -484,7 +507,7 @@ def official_photo_thumb(
         raise HTTPException(status_code=404, detail="Team not found")
     _assert_can_photograph(session, user, event.tournament_id)
     photo = _official_or_404(session, team_id)
-    if photo.team_id != team_id or photo.tournament_id != event.tournament_id:
+    if photo.team_id != team_id:
         raise HTTPException(status_code=404, detail="No official team photo")
     store = get_object_store()
     thumb_key = display_thumb_key(photo.storage_key)
