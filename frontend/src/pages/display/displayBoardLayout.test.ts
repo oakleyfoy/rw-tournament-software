@@ -58,6 +58,15 @@ describe('display board density layout', () => {
     expect(css).toContain('.display-dynamic-screen .display-card-playing')
   })
 
+  it('keeps the court-assigned grid a little narrower than the shared upcoming floor', () => {
+    expect(css).toMatch(/\.display-court-assigned\s*\{[^}]*--display-upcoming-min:\s*122px/)
+    expect(css).toMatch(/\.display-root\s*\{[^}]*--display-upcoming-min:\s*130px/)
+  })
+
+  it('keeps the dynamic screen on the same narrower floor', () => {
+    expect(css).toMatch(/\.display-dynamic-screen\s*\{[^}]*--display-upcoming-min:\s*122px/)
+  })
+
   it('keeps waiting slightly wider and playing larger than upcoming', () => {
     expect(WAITING_CARD_MIN_PX).toBeGreaterThanOrEqual(UPCOMING_CARD_MIN_PX)
     expect(PLAYING_CARD_MIN_PX).toBeGreaterThan(WAITING_CARD_MIN_PX)

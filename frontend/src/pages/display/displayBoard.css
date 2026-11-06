@@ -159,6 +159,8 @@
 }
 
 .display-dynamic-screen {
+  /* Same tighter floor as Court Assigned. */
+  --display-upcoming-min: 122px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -179,6 +181,8 @@
 }
 
 .display-court-assigned {
+  /* A step under the shared 130px floor so a full court row stays a little narrower. */
+  --display-upcoming-min: 122px;
   display: flex;
   flex-direction: column;
   gap: 8px;
