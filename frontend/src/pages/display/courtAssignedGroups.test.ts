@@ -73,4 +73,15 @@ describe('courtAssignedGroupsFromUpcoming', () => {
     expect(groups[0].matches.map((m) => m.match_id)).toEqual([8])
     expect(groups[1].matches.map((m) => m.match_id)).toEqual([10])
   })
+
+  it('orders a time slot by court number, not label text', () => {
+    const groups = courtAssignedGroupsFromUpcoming([
+      makeMatch({ match_id: 1, scheduled_time: '8:00 AM', sort_time: '08:00', court: 'Court 10' }),
+      makeMatch({ match_id: 2, scheduled_time: '8:00 AM', sort_time: '08:00', court: 'Court 2' }),
+      makeMatch({ match_id: 3, scheduled_time: '8:00 AM', sort_time: '08:00', court: 'Court 1' }),
+      makeMatch({ match_id: 4, scheduled_time: '8:00 AM', sort_time: '08:00', court: 'Court 12' }),
+    ])
+
+    expect(groups[0].matches.map((m) => m.court)).toEqual(['Court 1', 'Court 2', 'Court 10', 'Court 12'])
+  })
 })

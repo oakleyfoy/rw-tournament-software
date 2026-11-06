@@ -660,3 +660,36 @@ def test_display_board_404_unknown_tournament(client, monkeypatch):
     _freeze_now(monkeypatch)
     resp = client.get("/api/tournaments/999999/display-board")
     assert resp.status_code == 404
+
+
+def test_playing_courts_sort_by_number_not_label_text():
+    from app.services.display_board import DisplayMatchData, _playing_sort_key
+
+    def row(match_id: int, court: str) -> DisplayMatchData:
+        return DisplayMatchData(
+            match_id=match_id,
+            scheduled_at=None,
+            scheduled_time="8:00 AM",
+            sort_time="08:00",
+            day_date="2026-06-05",
+            event_name="Women's B",
+            division_name=None,
+            event_label="Women's B",
+            round_label=None,
+            stage="WF",
+            team_a_names="A",
+            team_b_names="B",
+            team_a_checked_in=False,
+            team_b_checked_in=False,
+            team_a_has_tbd=False,
+            team_b_has_tbd=False,
+            board_section="currently_playing",
+            in_next_12_hours=False,
+            court=court,
+        )
+
+    ordered = sorted(
+        [row(1, "Court 10"), row(2, "Court 2"), row(3, "Court 1"), row(4, "Court 12")],
+        key=_playing_sort_key,
+    )
+    assert [item.court for item in ordered] == ["Court 1", "Court 2", "Court 10", "Court 12"]

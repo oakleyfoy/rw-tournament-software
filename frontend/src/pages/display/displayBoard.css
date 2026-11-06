@@ -3,7 +3,13 @@
   --display-waiting-min: 140px;
   --display-playing-min: 180px;
   --display-grid-gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
+  /* TV overscan crops the left edge. A small inset keeps the title and first court on screen. */
+  padding-left: 36px;
+  padding-right: 8px;
   background: #0b1633;
   color: #f4f7fb;
   display: flex;

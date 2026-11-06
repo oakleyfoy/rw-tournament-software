@@ -1,4 +1,5 @@
 import { DisplayMatch, DisplayTimeGroup } from '../../api/client'
+import { sortMatchesByCourt } from './courtOrder'
 import { groupDisplayMatchesByTime } from './displayTimeGroups'
 
 /** Prefer showing every court-assigned slot; layout targets at least two. */
@@ -10,7 +11,9 @@ export function courtAssignedTimeGroups(groups: DisplayTimeGroup[]): DisplayTime
     .map((group) => ({
       scheduled_time: group.scheduled_time,
       sort_time: group.sort_time,
-      matches: group.matches.filter((match): match is DisplayMatch => Boolean(match.court)),
+      matches: sortMatchesByCourt(
+        group.matches.filter((match): match is DisplayMatch => Boolean(match.court)),
+      ),
     }))
     .filter((group) => group.matches.length > 0)
 }
@@ -20,5 +23,8 @@ export function courtAssignedTimeGroups(groups: DisplayTimeGroup[]): DisplayTime
  * so earlier still-queued court-assigned matches still appear.
  */
 export function courtAssignedGroupsFromUpcoming(matches: DisplayMatch[]): DisplayTimeGroup[] {
-  return groupDisplayMatchesByTime(matches.filter((match) => Boolean(match.court)))
+  return groupDisplayMatchesByTime(matches.filter((match) => Boolean(match.court))).map((group) => ({
+    ...group,
+    matches: sortMatchesByCourt(group.matches),
+  }))
 }

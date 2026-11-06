@@ -3,6 +3,7 @@ import { DisplayBoardSection } from './DisplayBoardSection'
 import { DisplayMatchCard } from './DisplayMatchCard'
 import { DisplayLoadingState, DisplayShell } from './DisplayShell'
 import { COURT_ASSIGNED_MIN_TIME_SLOTS, courtAssignedGroupsFromUpcoming } from './courtAssignedGroups'
+import { sortMatchesByCourt } from './courtOrder'
 import { useDisplayBoard } from './useDisplayBoard'
 import { useNowMs } from './useNowMs'
 
@@ -25,6 +26,7 @@ export default function CourtAssignedPage() {
     )
   }
 
+  const playing = sortMatchesByCourt(data.currently_playing)
   const assignedGroups = courtAssignedGroupsFromUpcoming(data.upcoming)
   const upcomingEmpty = assignedGroups.length === 0
 
@@ -48,11 +50,11 @@ export default function CourtAssignedPage() {
           testId="court-assigned-playing"
           title="Currently Playing"
           emptyLabel="No matches currently on court"
-          isEmpty={data.currently_playing.length === 0}
+          isEmpty={playing.length === 0}
           gridClass="display-match-grid"
           gridTestId="court-assigned-playing-grid"
         >
-          {data.currently_playing.map((match) => (
+          {playing.map((match) => (
             <DisplayMatchCard
               key={match.match_id}
               match={match}

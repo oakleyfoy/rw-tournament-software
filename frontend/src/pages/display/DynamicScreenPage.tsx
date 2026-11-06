@@ -3,6 +3,7 @@ import { DisplayBoardSection } from './DisplayBoardSection'
 import { DisplayMatchCard } from './DisplayMatchCard'
 import { DisplayLoadingState, DisplayShell } from './DisplayShell'
 import { groupDisplayMatchesByTime } from './displayTimeGroups'
+import { sortMatchesByCourt } from './courtOrder'
 import { dynamicNextTimeGroups, dynamicTimeSlotLabel } from './dynamicNextOrder'
 import { useDisplayBoard } from './useDisplayBoard'
 import { useNowMs } from './useNowMs'
@@ -67,7 +68,7 @@ export default function DynamicScreenPage() {
                   className="display-match-grid"
                   data-testid={`dynamic-playing-grid-${group.sort_time}`}
                 >
-                  {group.matches.map((match) => (
+                  {sortMatchesByCourt(group.matches).map((match) => (
                     <DisplayMatchCard
                       key={match.match_id}
                       match={match}

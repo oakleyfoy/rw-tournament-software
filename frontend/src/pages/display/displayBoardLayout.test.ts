@@ -67,6 +67,11 @@ describe('display board density layout', () => {
     expect(css).toMatch(/\.display-dynamic-screen\s*\{[^}]*--display-upcoming-min:\s*122px/)
   })
 
+  it('insets the TV board so the left edge stays on screen', () => {
+    expect(css).toMatch(/\.display-root\s*\{[^}]*padding-left:\s*36px/)
+    expect(css).toMatch(/\.display-root\s*\{[^}]*max-width:\s*100%/)
+  })
+
   it('keeps waiting slightly wider and playing larger than upcoming', () => {
     expect(WAITING_CARD_MIN_PX).toBeGreaterThanOrEqual(UPCOMING_CARD_MIN_PX)
     expect(PLAYING_CARD_MIN_PX).toBeGreaterThan(WAITING_CARD_MIN_PX)

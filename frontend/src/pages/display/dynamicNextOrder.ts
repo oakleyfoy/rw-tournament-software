@@ -1,4 +1,5 @@
 import { DisplayMatch, DisplayTimeGroup } from '../../api/client'
+import { compareCourts } from './courtOrder'
 import { groupDisplayMatchesByTime } from './displayTimeGroups'
 
 function bothChecked(match: DisplayMatch): boolean {
@@ -20,7 +21,7 @@ export function sortDynamicNextMatches(matches: DisplayMatch[]): DisplayMatch[] 
       const ready = (a.ready_at || '9999').localeCompare(b.ready_at || '9999')
       if (ready !== 0) return ready
     }
-    const court = (a.court || '').localeCompare(b.court || '')
+    const court = compareCourts(a.court, b.court)
     if (court !== 0) return court
     return a.match_id - b.match_id
   })

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeMatch, sampleBoard } from './displayBoardFixture'
@@ -85,6 +85,22 @@ describe('CourtAssignedPage', () => {
     }
     hookState.error = null
     hookState.initialLoading = false
+  })
+
+  it('shows currently playing courts in numeric order', () => {
+    hookState.data = {
+      ...hookState.data,
+      currently_playing: [
+        makeMatch({ match_id: 1, board_section: 'currently_playing', court: 'Court 10', started_at: '2026-06-05T14:00:00' }),
+        makeMatch({ match_id: 2, board_section: 'currently_playing', court: 'Court 2', started_at: '2026-06-05T14:00:00' }),
+        makeMatch({ match_id: 3, board_section: 'currently_playing', court: 'Court 1', started_at: '2026-06-05T14:00:00' }),
+      ],
+    }
+    renderPage()
+    const labels = within(screen.getByTestId('court-assigned-playing-grid'))
+      .getAllByText(/^Court /)
+      .map((node) => node.textContent)
+    expect(labels).toEqual(['Court 1', 'Court 2', 'Court 10'])
   })
 
   it('shows currently playing names, court, and live time on court', () => {

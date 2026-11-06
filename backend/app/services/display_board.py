@@ -11,6 +11,7 @@ Does not mutate schedule, check-in, court assignment, or match runtime state.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone, tzinfo
 from datetime import time as dt_time
@@ -405,9 +406,18 @@ def _sort_key(match: DisplayMatchData) -> Tuple:
     )
 
 
+def _court_sort_key(court: Optional[str]) -> Tuple[int, int, str]:
+    """Court 2 before Court 10. Labels without a number sort after numbered courts."""
+    label = (court or "").strip().lower()
+    match = re.search(r"\d+", label)
+    if match:
+        return (0, int(match.group()), label)
+    return (1, 0, label)
+
+
 def _playing_sort_key(match: DisplayMatchData) -> Tuple:
-    court_key = (match.court or "").lower()
-    return (court_key, match.day_date or "", match.sort_time or "", match.match_id)
+    number_rank, number, label = _court_sort_key(match.court)
+    return (number_rank, number, label, match.day_date or "", match.sort_time or "", match.match_id)
 
 
 def _waiting_sort_key(match: DisplayMatchData) -> Tuple:
