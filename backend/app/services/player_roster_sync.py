@@ -98,18 +98,10 @@ def _player_name_key(player: Player) -> str:
 
 
 def player_names_match(slot_name: str, player_name: str) -> bool:
-    """Exact name or first+last. Never first-name-only (Heather != every Heather)."""
-    slot_key = normalize_player_name(slot_name)
-    player_key = normalize_player_name(player_name)
-    if not slot_key or not player_key:
-        return False
-    if slot_key == player_key:
-        return True
-    slot_tokens = slot_key.split()
-    player_tokens = player_key.split()
-    if len(slot_tokens) >= 2 and len(player_tokens) >= 2:
-        return slot_tokens[0] == player_tokens[0] and slot_tokens[-1] == player_tokens[-1]
-    return False
+    """Same person. The whole given name has to match, not just the first word."""
+    from app.services.person_names import roster_names_match
+
+    return roster_names_match(slot_name, player_name)
 
 
 def resolve_roster_player_for_slot(

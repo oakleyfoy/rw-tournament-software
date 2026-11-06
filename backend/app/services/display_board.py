@@ -168,26 +168,27 @@ def _cap_first(value: str) -> str:
     return (value[:1].upper() + value[1:]) if value else value
 
 
+def _cap_given_name(value: str) -> str:
+    words = []
+    for word in (value or "").split():
+        words.append(_cap_first(word) if word[:1].islower() else word)
+    return " ".join(words)
+
+
 def first_name_only(value: Optional[str]) -> str:
+    from app.services.person_names import given_name
+
     raw = " ".join((value or "").strip().split())
     if not raw:
         return ""
     if _is_tbd_token(raw):
         return TBD_LABEL
-    if "," in raw:
-        segments = [segment.strip() for segment in raw.split(",") if segment.strip()]
-        if len(segments) >= 2:
-            first_segment_words = segments[0].split()
-            second_segment_words = segments[1].split()
-            if len(first_segment_words) == 1 and second_segment_words:
-                return first_name_only(second_segment_words[0])
-            if first_segment_words:
-                return first_name_only(first_segment_words[0])
-    parts = raw.split()
-    token = parts[0] if parts else raw
-    if _is_tbd_token(token):
+    name = given_name(raw)
+    if not name:
+        return ""
+    if _is_tbd_token(name.split()[0]):
         return TBD_LABEL
-    return _cap_first(token)
+    return _cap_given_name(name)
 
 
 def split_team_player_names(team_name: Optional[str]) -> List[str]:
@@ -369,19 +370,30 @@ def _team_first_names(
     team = team_map.get(team_id)
     player_ids = players_by_team.get(team_id, [])
     if player_ids:
+        from app.services.person_names import label_matching_text, restores_compound_given_name
+
         names: List[str] = []
         has_tbd = False
         for pid in player_ids[:2]:
             player = player_map.get(pid)
-            source = (player.display_name or player.full_name) if player else ""
-            token = first_name_only(source) or TBD_LABEL
+            full_given = first_name_only(player.full_name) if player else ""
+            short_given = first_name_only(player.display_name) if player else ""
+            if full_given and short_given and restores_compound_given_name(full_given, short_given):
+                token = full_given
+            else:
+                token = short_given or full_given or TBD_LABEL
             if token == TBD_LABEL:
                 has_tbd = True
             names.append(token)
         if len(names) == 1:
             names.append(TBD_LABEL)
             has_tbd = True
-        return " / ".join(names), has_tbd
+        computed = " / ".join(names)
+        if team is not None:
+            text = label_matching_text(team.display_name, team.name)
+            if text and restores_compound_given_name(text, computed):
+                return text, has_tbd
+        return computed, has_tbd
 
     if team:
         parsed, has_tbd = first_names_from_text(team.name)

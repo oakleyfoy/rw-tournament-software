@@ -53,10 +53,30 @@ def _partner_names_from_label(label: Optional[str]) -> list[str]:
 
 
 def player_names_for_team(team: Team, linked_names: list[str]) -> list[str]:
-    names = [name.strip() for name in linked_names if name and name.strip()]
+    """Names shown with this team's photo.
+
+    They follow the text-message first names. A linked player is kept only
+    when they are the same person as that team slot, so a shared first name
+    or the first word of a double name cannot put the other person's name
+    on this picture.
+    """
+    from app.services.person_names import photo_name_for_slot
+
+    legal_sides = _partner_names_from_label(team.name)
+    text_sides = _partner_names_from_label(team.display_name)
+    linked = [name.strip() for name in linked_names if name and name.strip()]
+    width = max(len(legal_sides), len(text_sides), len(linked), 1)
+    names: list[str] = []
+    for index in range(min(2, width)):
+        legal = legal_sides[index] if index < len(legal_sides) else ""
+        text = text_sides[index] if index < len(text_sides) else ""
+        link = linked[index] if index < len(linked) else ""
+        chosen = photo_name_for_slot(text, legal, link)
+        if chosen and chosen != "Partner not on file":
+            names.append(chosen)
     if len(names) < 2:
-        for candidate in _partner_names_from_label(team.name) + _partner_names_from_label(team.display_name):
-            if candidate not in names:
+        for candidate in legal_sides + text_sides:
+            if candidate and candidate not in names:
                 names.append(candidate)
             if len(names) >= 2:
                 break

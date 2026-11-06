@@ -835,34 +835,15 @@ def _make_display_name(full_name: str) -> str:
     "Heather Robinson / Shea Butler" -> "Heather / Shea"
     "Jane Smith-Jones / Bob Lee" -> "Jane / Bob"
     "Dee Dee Smith / Mike Jones" -> "Dee Dee / Mike"
-    "Smith, Jane & Doe, Bob" -> "Smith / Doe"
+    "Mary Ann Smith / Bob Lee" -> "Mary Ann / Bob"
+    "Smith, Mary Ann & Doe, Bob" -> "Mary Ann / Bob"
     """
-    # Normalize whitespace (collapse double-spaces, strip)
     name = re.sub(r"\s{2,}", " ", full_name).strip()
     if not name:
         return full_name
+    from app.services.person_names import short_partnership
 
-    # Detect separator: "/" or "&"
-    if "/" in name:
-        sep = "/"
-    elif "&" in name:
-        sep = "&"
-    else:
-        # Single player or no separator — return first name
-        return name.split()[0] if name.split() else name
-
-    players = [p.strip() for p in name.split(sep)]
-    firsts = []
-    for p in players:
-        if not p:
-            continue
-        # Handle "Last, First" format
-        if "," in p:
-            parts = [x.strip() for x in p.split(",", 1)]
-            firsts.append(parts[0])
-        else:
-            firsts.append(p.split()[0])
-    return " / ".join(firsts) if firsts else name
+    return short_partnership(name) or name
 
 
 def _fixed_team_capacity(event: Event) -> Optional[int]:

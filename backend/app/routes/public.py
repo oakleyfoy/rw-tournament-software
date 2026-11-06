@@ -1771,41 +1771,37 @@ def _cap_first(value: str) -> str:
     return (value[:1].upper() + value[1:]) if value else value
 
 
+def _cap_given_name(value: str) -> str:
+    words = []
+    for word in (value or "").split():
+        words.append(_cap_first(word) if word[:1].islower() else word)
+    return " ".join(words)
+
+
+def _cap_partnership(value: str) -> str:
+    parts = [_cap_given_name(part.strip()) for part in (value or "").split("/")]
+    return " / ".join(part for part in parts if part)
+
+
 def _schedule_short_player_name(value: Optional[str]) -> str:
-    raw = " ".join((value or "").strip().split())
-    if not raw:
-        return ""
-    if "," in raw:
-        segments = [segment.strip() for segment in raw.split(",") if segment.strip()]
-        if len(segments) >= 2:
-            first_segment_words = segments[0].split()
-            second_segment_words = segments[1].split()
-            # "Last, First" -> use first token from the second segment.
-            if len(first_segment_words) == 1 and second_segment_words:
-                return _cap_first(second_segment_words[0])
-            # "First Last, City, ST" -> use the first token from the name segment.
-            if first_segment_words:
-                return _cap_first(first_segment_words[0])
-    parts = raw.split()
-    return _cap_first(parts[0]) if parts else raw
+    from app.services.person_names import given_name
+
+    return _cap_given_name(given_name(value))
 
 
 def _schedule_short_team_name(value: Optional[str]) -> str:
-    raw = " ".join((value or "").strip().split())
-    if not raw:
-        return ""
-    if "/" in raw:
-        players = [part.strip() for part in raw.split("/") if part.strip()]
-    elif "&" in raw:
-        players = [part.strip() for part in raw.split("&") if part.strip()]
-    else:
-        return _schedule_short_player_name(raw)
-    short_names = [_schedule_short_player_name(player) for player in players[:2]]
-    return " / ".join(name for name in short_names if name) or raw
+    from app.services.person_names import short_partnership
+
+    return _cap_partnership(short_partnership(value))
 
 
 def _public_short_team_name(team: Team) -> str:
-    return _schedule_short_team_name(team.name) or team.display_name or team.name
+    from app.services.person_names import label_matching_text
+
+    label = label_matching_text(team.display_name, team.name)
+    if team.display_name and label == (team.display_name or "").strip():
+        return label
+    return _cap_partnership(label) or team.display_name or team.name
 
 
 def _public_team_name(team: Team) -> str:
@@ -1824,7 +1820,7 @@ def _schedule_team_line(
         t = team_map.get(team_id)
         if t:
             if short:
-                return _schedule_short_team_name(t.name) or t.display_name or t.name
+                return _public_short_team_name(t) or t.display_name or t.name
             return t.name
     feeder = _feeder_match_label(source_match_id, source_role)
     if feeder:
