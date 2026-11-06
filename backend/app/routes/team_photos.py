@@ -363,8 +363,10 @@ def group_photo_content(
     photo = session.get(TournamentGroupPhoto, group_photo_id)
     if not photo or photo.tournament_id != tournament_id or not owned_group_key(tournament_id, photo.storage_key):
         raise HTTPException(status_code=404, detail="Group photo is not available")
+    storage_key = photo.storage_key
+    session.commit()
     try:
-        data = get_object_store().get_bytes(photo.storage_key)
+        data = get_object_store().get_bytes(storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Group photo is not available") from exc
     except PhotoStorageUnavailable as exc:
@@ -479,8 +481,10 @@ def official_photo_content(
     photo = _official_or_404(session, team_id)
     if photo.team_id != team_id:
         raise HTTPException(status_code=404, detail="No official team photo")
+    storage_key = photo.storage_key
+    session.commit()
     try:
-        data = get_object_store().get_bytes(photo.storage_key)
+        data = get_object_store().get_bytes(storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="No official team photo") from exc
     except PhotoStorageUnavailable as exc:
@@ -509,8 +513,10 @@ def official_photo_thumb(
     photo = _official_or_404(session, team_id)
     if photo.team_id != team_id:
         raise HTTPException(status_code=404, detail="No official team photo")
+    storage_key = photo.storage_key
+    session.commit()
     store = get_object_store()
-    thumb_key = display_thumb_key(photo.storage_key)
+    thumb_key = display_thumb_key(storage_key)
     try:
         thumb = None
         if thumb_key:
@@ -519,9 +525,9 @@ def official_photo_thumb(
             except FileNotFoundError:
                 thumb = None
         if thumb is None:
-            original = store.get_bytes(photo.storage_key)
+            original = store.get_bytes(storage_key)
             thumb = make_display_thumbnail(original)
-            if store.get_bytes(photo.storage_key) != original:
+            if store.get_bytes(storage_key) != original:
                 raise HTTPException(status_code=500, detail="Official photograph was not left unchanged")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="No official team photo") from exc

@@ -73,6 +73,8 @@ def delete_official_photo(session: Session, *, tournament_id: int, team_id: int)
         keys.append(thumb_key)
     if any(not _owned_photo_key(tournament_id, team_id, key) for key in keys):
         raise PhotoRejected("Official photograph could not be deleted", status_code=409)
+    # Drop the SQLite write lock before storage. A slow delete must not freeze the desk.
+    session.commit()
     store = get_object_store()
     for key in keys:
         store.delete(key)
@@ -190,6 +192,7 @@ def save_group_photo(
         return existing
 
     new_key = group_object_key(tournament_id, client_upload_id)
+    session.commit()
     store = get_object_store()
     store.put_jpeg(new_key, image_bytes)
     if store.head_size(new_key) != len(image_bytes):
@@ -244,6 +247,8 @@ def save_official_photo(
 
     new_key = official_object_key(tournament_id, team_id, client_upload_id)
     previous_key = existing.storage_key if existing else None
+    # Drop the SQLite write lock before the upload. Storage must not freeze check-in.
+    session.commit()
     store = get_object_store()
     store.put_jpeg(new_key, image_bytes)
     if store.head_size(new_key) != len(image_bytes):

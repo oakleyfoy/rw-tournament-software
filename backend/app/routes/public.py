@@ -2180,8 +2180,11 @@ def public_team_photo(
     ).first()
     if not photo:
         raise HTTPException(status_code=404, detail="Team photo is not available")
+    storage_key = photo.storage_key
+    version = photo.updated_at.isoformat() if photo.updated_at else ""
+    session.commit()
     store = get_object_store()
-    thumb_key = display_thumb_key(photo.storage_key)
+    thumb_key = display_thumb_key(storage_key)
     try:
         thumb = None
         if thumb_key:
@@ -2190,13 +2193,12 @@ def public_team_photo(
             except FileNotFoundError:
                 thumb = None
         if thumb is None:
-            original = store.get_bytes(photo.storage_key)
+            original = store.get_bytes(storage_key)
             thumb = make_display_thumbnail(original)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Team photo is not available") from exc
     except PhotoStorageUnavailable as exc:
         raise HTTPException(status_code=503, detail="Team photo is temporarily unavailable") from exc
-    version = photo.updated_at.isoformat() if photo.updated_at else ""
     return Response(
         content=thumb,
         media_type="image/jpeg",

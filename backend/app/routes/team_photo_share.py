@@ -40,8 +40,10 @@ def public_team_photo_image(
     if resolved is None:
         raise HTTPException(status_code=404, detail=_UNAVAILABLE)
     _share, photo, _team, _tournament, _names = resolved
+    storage_key = photo.storage_key
+    session.commit()
     try:
-        data = get_object_store().get_bytes(photo.storage_key)
+        data = get_object_store().get_bytes(storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=_UNAVAILABLE) from exc
     except PhotoStorageUnavailable as exc:

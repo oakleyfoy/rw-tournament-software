@@ -200,12 +200,15 @@ class R2ObjectStore:
             import boto3
         except ImportError as exc:
             raise PhotoStorageUnavailable("Team photo storage client is not installed") from exc
+        from botocore.config import Config
+
         client = boto3.client(
             "s3",
             endpoint_url=endpoint,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret,
             region_name=region,
+            config=Config(connect_timeout=3, read_timeout=8, retries={"max_attempts": 1}),
         )
         return cls(client, bucket)
 
