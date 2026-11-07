@@ -6,10 +6,13 @@ Now Playing / Up Next, score entry, auto-advancement, working draft management.
 import json
 import logging
 import re
+import threading
+import time
 from datetime import date, datetime, timezone
 from datetime import time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
@@ -94,6 +97,18 @@ from app.services.sms_automation import SmsAutomationEngine
 
 logger = logging.getLogger(__name__)
 _DEBUG_LOG_PATH = r"c:\RW Tournament Software\.cursor\debug.log"
+_desk_snapshot_guard = threading.Lock()
+_desk_snapshot_build_lock = threading.Lock()
+_desk_snapshot_cache: Dict[Tuple[int, int, int], Tuple[float, Any]] = {}
+_desk_snapshot_gen = 0
+
+
+def _bump_desk_snapshot() -> None:
+    """Drop cached desk boards after a check-in write."""
+    global _desk_snapshot_gen
+    with _desk_snapshot_guard:
+        _desk_snapshot_gen += 1
+        _desk_snapshot_cache.clear()
 
 
 def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
@@ -2203,169 +2218,180 @@ def desk_snapshot(
         raise HTTPException(status_code=404, detail="Tournament not found")
 
     version = _resolve_version(session, tournament, version_id)
-    management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
-    items, courts_set = _build_match_items(session, tournament, version, management_mode=management_mode)
+    _desk_snapshot_build_lock.acquire()
+    try:
+        cache_key = (int(tournament_id), int(version.id), _desk_snapshot_gen)
+        cached = _desk_snapshot_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < 2:
+            return cached[1]
+        management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
+        items, courts_set = _build_match_items(session, tournament, version, management_mode=management_mode)
 
-    # Build slots array for the grid view
-    all_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
-    all_assignments = session.exec(
-        select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
-    ).all()
-    slot_assignment_map = {a.slot_id: a.match_id for a in all_assignments}
+        # Build slots array for the grid view
+        all_slots = session.exec(select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id)).all()
+        all_assignments = session.exec(
+            select(MatchAssignment).where(MatchAssignment.schedule_version_id == version.id)
+        ).all()
+        slot_assignment_map = {a.slot_id: a.match_id for a in all_assignments}
 
-    snapshot_slots: List[SnapshotSlot] = []
-    for s in all_slots:
-        court_label = s.court_label or str(s.court_number)
-        court_display = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
-        courts_set.add(court_display)
-        st = s.start_time
-        et = s.end_time
-        snapshot_slots.append(
-            SnapshotSlot(
-                slot_id=s.id,
-                day_date=s.day_date.isoformat(),
-                start_time=st.strftime("%H:%M") if hasattr(st, "strftime") else str(st)[:5],
-                end_time=et.strftime("%H:%M") if hasattr(et, "strftime") else str(et)[:5],
-                court_number=s.court_number,
-                court_label=court_label,
-                block_minutes=s.block_minutes,
-                is_active=s.is_active,
-                assigned_match_id=slot_assignment_map.get(s.id),
+        snapshot_slots: List[SnapshotSlot] = []
+        for s in all_slots:
+            court_label = s.court_label or str(s.court_number)
+            court_display = f"Court {court_label}" if not court_label.lower().startswith("court") else court_label
+            courts_set.add(court_display)
+            st = s.start_time
+            et = s.end_time
+            snapshot_slots.append(
+                SnapshotSlot(
+                    slot_id=s.id,
+                    day_date=s.day_date.isoformat(),
+                    start_time=st.strftime("%H:%M") if hasattr(st, "strftime") else str(st)[:5],
+                    end_time=et.strftime("%H:%M") if hasattr(et, "strftime") else str(et)[:5],
+                    court_number=s.court_number,
+                    court_label=court_label,
+                    block_minutes=s.block_minutes,
+                    is_active=s.is_active,
+                    assigned_match_id=slot_assignment_map.get(s.id),
+                )
             )
+
+        courts_sorted = sorted(
+            courts_set,
+            key=lambda c: (
+                int("".join(ch for ch in c if ch.isdigit()) or "0"),
+                c,
+            ),
         )
 
-    courts_sorted = sorted(
-        courts_set,
-        key=lambda c: (
-            int("".join(ch for ch in c if ch.isdigit()) or "0"),
-            c,
-        ),
-    )
+        now_playing: Dict[str, DeskMatchItem] = {}
+        up_next: Dict[str, DeskMatchItem] = {}
+        on_deck: Dict[str, DeskMatchItem] = {}
 
-    now_playing: Dict[str, DeskMatchItem] = {}
-    up_next: Dict[str, DeskMatchItem] = {}
-    on_deck: Dict[str, DeskMatchItem] = {}
+        court_matches: Dict[str, List[DeskMatchItem]] = {}
+        for m in items:
+            if m.court_name:
+                court_matches.setdefault(m.court_name, []).append(m)
 
-    court_matches: Dict[str, List[DeskMatchItem]] = {}
-    for m in items:
-        if m.court_name:
-            court_matches.setdefault(m.court_name, []).append(m)
+        for court, matches in court_matches.items():
+            in_progress = _select_in_progress_matches(matches)
+            if in_progress:
+                now_playing[court] = in_progress[0]
 
-    for court, matches in court_matches.items():
-        in_progress = _select_in_progress_matches(matches)
-        if in_progress:
-            now_playing[court] = in_progress[0]
+            non_final = [m for m in matches if m.status not in ("FINAL", "IN_PROGRESS", "PAUSED")]
+            reference_day = in_progress[0].day_date if in_progress and in_progress[0].day_date else None
+            if reference_day:
+                # Do not surface next-day matches as Up Next / On Deck while a court is active today.
+                non_final = [m for m in non_final if m.day_date == reference_day]
+            if non_final:
+                up_next[court] = non_final[0]
+            if len(non_final) > 1:
+                on_deck[court] = non_final[1]
 
-        non_final = [m for m in matches if m.status not in ("FINAL", "IN_PROGRESS", "PAUSED")]
-        reference_day = in_progress[0].day_date if in_progress and in_progress[0].day_date else None
-        if reference_day:
-            # Do not surface next-day matches as Up Next / On Deck while a court is active today.
-            non_final = [m for m in non_final if m.day_date == reference_day]
-        if non_final:
-            up_next[court] = non_final[0]
-        if len(non_final) > 1:
-            on_deck[court] = non_final[1]
+        # Board: now_playing / up_next / on_deck per court (finals excluded)
+        board: List[BoardCourtSlot] = []
+        for court in courts_sorted:
+            cms = court_matches.get(court, [])
+            non_final_cms = [m for m in cms if m.status != "FINAL"]
 
-    # Board: now_playing / up_next / on_deck per court (finals excluded)
-    board: List[BoardCourtSlot] = []
-    for court in courts_sorted:
-        cms = court_matches.get(court, [])
-        non_final_cms = [m for m in cms if m.status != "FINAL"]
+            board_now = None
+            board_up = None
+            board_on = None
 
-        board_now = None
-        board_up = None
-        board_on = None
+            in_prog = _select_in_progress_matches(non_final_cms)
+            if in_prog:
+                board_now = in_prog[0]
 
-        in_prog = _select_in_progress_matches(non_final_cms)
-        if in_prog:
-            board_now = in_prog[0]
+            remaining = [m for m in non_final_cms if m.match_id != (board_now.match_id if board_now else -1)]
+            scheduled = [m for m in remaining if m.status not in ("IN_PROGRESS", "PAUSED")]
+            reference_day = board_now.day_date if board_now and board_now.day_date else None
+            if reference_day:
+                # Keep the court board focused on the active day; hide cross-day spillover.
+                scheduled = [m for m in scheduled if m.day_date == reference_day]
+            if scheduled:
+                board_up = scheduled[0]
+            if len(scheduled) > 1:
+                board_on = scheduled[1]
 
-        remaining = [m for m in non_final_cms if m.match_id != (board_now.match_id if board_now else -1)]
-        scheduled = [m for m in remaining if m.status not in ("IN_PROGRESS", "PAUSED")]
-        reference_day = board_now.day_date if board_now and board_now.day_date else None
-        if reference_day:
-            # Keep the court board focused on the active day; hide cross-day spillover.
-            scheduled = [m for m in scheduled if m.day_date == reference_day]
-        if scheduled:
-            board_up = scheduled[0]
-        if len(scheduled) > 1:
-            board_on = scheduled[1]
-
-        board.append(
-            BoardCourtSlot(
-                court_name=court,
-                now_playing=board_now,
-                up_next=board_up,
-                on_deck=board_on,
+            board.append(
+                BoardCourtSlot(
+                    court_name=court,
+                    now_playing=board_now,
+                    up_next=board_up,
+                    on_deck=board_on,
+                )
             )
+
+        checkin_matches: List[CheckInMatchItem] = []
+        ready_queue: List[ReadyQueueItem] = []
+        available_courts: List[str] = []
+        available_slots: List[AvailableCourtSlot] = []
+        checkin_slot_options: List[CheckInSlotOption] = []
+        checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
+        checkin_board_courts: List[str] = []
+        active_checkin_slot_key: Optional[str] = None
+        checkin_court_warnings: List[CheckInCourtWarning] = []
+        ready_assigned_queue: List[ReadyAssignedItem] = []
+        if management_mode == MODE_CHECKIN_MANAGEMENT:
+            (
+                checkin_matches,
+                ready_queue,
+                available_courts,
+                available_slots,
+                checkin_slot_options,
+                checkin_slot_rows,
+                checkin_board_courts,
+                active_checkin_slot_key,
+                checkin_court_warnings,
+                ready_assigned_queue,
+            ) = _build_checkin_snapshot(session, tournament, version, items)
+
+        # region agent log
+        _agent_debug_log(
+            "H6",
+            "desk.py:desk_snapshot:return",
+            "desk snapshot endpoint return summary",
+            {
+                "tournamentId": tournament.id,
+                "versionId": version.id,
+                "managementMode": management_mode,
+                "matchesCount": len(items),
+                "snapshotSlotsCount": len(snapshot_slots),
+                "checkinMatchesCount": len(checkin_matches),
+                "checkinSlotOptionsCount": len(checkin_slot_options),
+                "checkinSlotRowsKeysCount": len(checkin_slot_rows.keys()),
+            },
         )
-
-    checkin_matches: List[CheckInMatchItem] = []
-    ready_queue: List[ReadyQueueItem] = []
-    available_courts: List[str] = []
-    available_slots: List[AvailableCourtSlot] = []
-    checkin_slot_options: List[CheckInSlotOption] = []
-    checkin_slot_rows: Dict[str, List[CheckInMatchItem]] = {}
-    checkin_board_courts: List[str] = []
-    active_checkin_slot_key: Optional[str] = None
-    checkin_court_warnings: List[CheckInCourtWarning] = []
-    ready_assigned_queue: List[ReadyAssignedItem] = []
-    if management_mode == MODE_CHECKIN_MANAGEMENT:
-        (
-            checkin_matches,
-            ready_queue,
-            available_courts,
-            available_slots,
-            checkin_slot_options,
-            checkin_slot_rows,
-            checkin_board_courts,
-            active_checkin_slot_key,
-            checkin_court_warnings,
-            ready_assigned_queue,
-        ) = _build_checkin_snapshot(session, tournament, version, items)
-
-    # region agent log
-    _agent_debug_log(
-        "H6",
-        "desk.py:desk_snapshot:return",
-        "desk snapshot endpoint return summary",
-        {
-            "tournamentId": tournament.id,
-            "versionId": version.id,
-            "managementMode": management_mode,
-            "matchesCount": len(items),
-            "snapshotSlotsCount": len(snapshot_slots),
-            "checkinMatchesCount": len(checkin_matches),
-            "checkinSlotOptionsCount": len(checkin_slot_options),
-            "checkinSlotRowsKeysCount": len(checkin_slot_rows.keys()),
-        },
-    )
-    # endregion
-    return DeskSnapshotResponse(
-        tournament_id=tournament.id,
-        tournament_name=tournament.name,
-        tournament_timezone=tournament.timezone,
-        version_id=version.id,
-        version_status=version.status,
-        courts=courts_sorted,
-        matches=items,
-        now_playing_by_court=now_playing,
-        up_next_by_court=up_next,
-        on_deck_by_court=on_deck,
-        board_by_court=board,
-        slots=snapshot_slots,
-        management_mode=management_mode,
-        checkin_matches=checkin_matches,
-        ready_queue=ready_queue,
-        available_courts=available_courts,
-        available_slots=available_slots,
-        checkin_slot_options=checkin_slot_options,
-        checkin_slot_rows=checkin_slot_rows,
-        checkin_board_courts=checkin_board_courts,
-        active_checkin_slot_key=active_checkin_slot_key,
-        checkin_court_warnings=checkin_court_warnings,
-        ready_assigned_queue=ready_assigned_queue,
-    )
+        # endregion
+        response = DeskSnapshotResponse(
+            tournament_id=tournament.id,
+            tournament_name=tournament.name,
+            tournament_timezone=tournament.timezone,
+            version_id=version.id,
+            version_status=version.status,
+            courts=courts_sorted,
+            matches=items,
+            now_playing_by_court=now_playing,
+            up_next_by_court=up_next,
+            on_deck_by_court=on_deck,
+            board_by_court=board,
+            slots=snapshot_slots,
+            management_mode=management_mode,
+            checkin_matches=checkin_matches,
+            ready_queue=ready_queue,
+            available_courts=available_courts,
+            available_slots=available_slots,
+            checkin_slot_options=checkin_slot_options,
+            checkin_slot_rows=checkin_slot_rows,
+            checkin_board_courts=checkin_board_courts,
+            active_checkin_slot_key=active_checkin_slot_key,
+            checkin_court_warnings=checkin_court_warnings,
+            ready_assigned_queue=ready_assigned_queue,
+        )
+        if cache_key[2] == _desk_snapshot_gen:
+            _desk_snapshot_cache[cache_key] = (time.monotonic(), response)
+        return response
+    finally:
+        _desk_snapshot_build_lock.release()
 
 
 @router.get(
@@ -2444,6 +2470,46 @@ def set_management_mode(
     )
 
 
+def _sync_side_player_checkins(
+    session: Session,
+    *,
+    tournament_id: int,
+    version_id: int,
+    match_id: int,
+    team_id: Optional[int],
+    side: str,
+    checked: bool,
+) -> None:
+    """Write every roster player's check-in in this same save. One click, one commit."""
+    if team_id is None:
+        return
+    now = datetime.utcnow()
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.team_id == team_id)).all()
+    for link in links:
+        player_row = session.exec(
+            select(MatchPlayerCheckIn).where(
+                MatchPlayerCheckIn.schedule_version_id == version_id,
+                MatchPlayerCheckIn.match_id == match_id,
+                MatchPlayerCheckIn.side == side,
+                MatchPlayerCheckIn.player_id == link.player_id,
+            )
+        ).first()
+        if player_row is None:
+            player_row = MatchPlayerCheckIn(
+                tournament_id=tournament_id,
+                schedule_version_id=version_id,
+                match_id=match_id,
+                team_id=team_id,
+                side=side,
+                player_id=link.player_id,
+            )
+        player_row.team_id = team_id
+        player_row.checked_in = checked
+        player_row.checked_in_at = now if checked else None
+        player_row.updated_at = now
+        session.add(player_row)
+
+
 @router.patch(
     "/desk/tournaments/{tournament_id}/matches/{match_id}/checkin/team",
     response_model=ReadyQueueResponse,
@@ -2452,6 +2518,7 @@ def set_team_checkin(
     tournament_id: int,
     match_id: int,
     payload: TeamCheckInRequest,
+    quick: int = Query(0),
     session: Session = Depends(get_session),
 ):
     tournament = session.get(Tournament, tournament_id)
@@ -2493,11 +2560,26 @@ def set_team_checkin(
     row.checked_in_at = datetime.utcnow() if payload.checked_in else None
     row.updated_at = datetime.utcnow()
     session.add(row)
+    if quick:
+        _sync_side_player_checkins(
+            session,
+            tournament_id=tournament_id,
+            version_id=payload.version_id,
+            match_id=match_id,
+            team_id=team_id,
+            side=side,
+            checked=bool(payload.checked_in),
+        )
     session.commit()
     session.refresh(match)
     clear_checkin_reset_if_ready(session, match)
     if not payload.checked_in:
         arm_checkin_reset_if_not_ready(session, match)
+    if quick:
+        if session.in_transaction():
+            session.rollback()
+        _bump_desk_snapshot()
+        return JSONResponse({"ok": True})
 
     # Check-in only moves a match to Ready To Go. Put courts on, a score, or a drag starts it.
 
@@ -2539,6 +2621,7 @@ def set_player_checkin(
     tournament_id: int,
     match_id: int,
     payload: PlayerCheckInRequest,
+    quick: int = Query(0),
     session: Session = Depends(get_session),
 ):
     tournament = session.get(Tournament, tournament_id)
@@ -2604,6 +2687,11 @@ def set_player_checkin(
     clear_checkin_reset_if_ready(session, match)
     if not payload.checked_in:
         arm_checkin_reset_if_not_ready(session, match)
+    if quick:
+        if session.in_transaction():
+            session.rollback()
+        _bump_desk_snapshot()
+        return JSONResponse({"ok": True})
 
     items, _courts = _build_match_items(session, tournament, version, management_mode=MODE_CHECKIN_MANAGEMENT)
     (

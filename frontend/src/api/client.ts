@@ -3592,10 +3592,12 @@ export async function placeMatchOnCourt(
 export async function deskCheckInTeam(
   tournamentId: number,
   matchId: number,
-  payload: { version_id: number; side: 'A' | 'B'; checked_in: boolean }
+  payload: { version_id: number; side: 'A' | 'B'; checked_in: boolean },
+  quick = false
 ): Promise<ReadyQueueResponse> {
+  const qs = quick ? '?quick=1' : ''
   return fetchJson<ReadyQueueResponse>(
-    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/team`,
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/team${qs}`,
     { method: 'PATCH', body: JSON.stringify(payload) }
   )
 }
@@ -3643,10 +3645,12 @@ export async function releaseOpeningSlot(
 export async function deskCheckInPlayer(
   tournamentId: number,
   matchId: number,
-  payload: { version_id: number; side: 'A' | 'B'; player_id: number; checked_in: boolean }
+  payload: { version_id: number; side: 'A' | 'B'; player_id: number; checked_in: boolean },
+  quick = false
 ): Promise<ReadyQueueResponse> {
+  const qs = quick ? '?quick=1' : ''
   return fetchJson<ReadyQueueResponse>(
-    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/player`,
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/player${qs}`,
     { method: 'PATCH', body: JSON.stringify(payload) }
   )
 }

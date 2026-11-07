@@ -9984,16 +9984,59 @@ export default function TournamentDeskPage() {
     }
   }, [checkInNotePrompt, handleRefresh])
 
+  const quietRefreshTimer = useRef<number | null>(null)
+  const queueQuietRefresh = useCallback(() => {
+    if (!tid) return
+    if (quietRefreshTimer.current) window.clearTimeout(quietRefreshTimer.current)
+    const versionId = data?.version_id
+    quietRefreshTimer.current = window.setTimeout(() => {
+      void getDeskSnapshot(tid, versionId).then((resp) => setData(resp)).catch(() => undefined)
+    }, 800)
+  }, [tid, data?.version_id])
+
+  const patchCheckInLocally = useCallback((matchId: number, side: 'A' | 'B', checked: boolean, playerId?: number) => {
+    setData((prev) => {
+      if (!prev) return prev
+      const patchMatch = (match: CheckInMatchItem): CheckInMatchItem => {
+        if (match.match_id !== matchId) return match
+        const current = side === 'A' ? match.side_a : match.side_b
+        const players = current.players.map((player) => {
+          if (playerId != null && player.player_id !== playerId) return player
+          return { ...player, checked_in: checked }
+        })
+        const playersChecked = players.filter((player) => player.checked_in).length
+        const teamChecked = playerId == null ? checked : current.team_checked_in
+        const sideReady = Boolean(teamChecked) || (players.length > 0 && playersChecked === players.length)
+        const nextSide = {
+          ...current,
+          team_checked_in: teamChecked,
+          players,
+          players_checked_in: playersChecked,
+          side_ready: sideReady,
+        }
+        const sideA = side === 'A' ? nextSide : match.side_a
+        const sideB = side === 'B' ? nextSide : match.side_b
+        return { ...match, side_a: sideA, side_b: sideB, match_ready: Boolean(sideA.side_ready && sideB.side_ready) }
+      }
+      const checkin_matches = (prev.checkin_matches || []).map(patchMatch)
+      const checkin_slot_rows = Object.fromEntries(
+        Object.entries(prev.checkin_slot_rows || {}).map(([key, rows]) => [key, (rows || []).map(patchMatch)])
+      )
+      return { ...prev, checkin_matches, checkin_slot_rows }
+    })
+  }, [])
+
   const handlePlayerCheckIn = useCallback(async (match: CheckInMatchItem, side: 'A' | 'B', playerId: number, checked: boolean) => {
     if (!tid || !data) return
     const applyCheckIn = async () => {
-      const resp = await deskCheckInPlayer(tid, match.match_id, {
+      patchCheckInLocally(match.match_id, side, checked, playerId)
+      await deskCheckInPlayer(tid, match.match_id, {
         version_id: data.version_id,
         side,
         player_id: playerId,
         checked_in: checked,
-      })
-      applyReadyQueueResponse(resp)
+      }, true)
+      queueQuietRefresh()
     }
     try {
       const note = side === 'A' ? (match as any).team1_notes : (match as any).team2_notes
@@ -10007,62 +10050,23 @@ export default function TournamentDeskPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed player check-in update')
     }
-  }, [tid, data, applyReadyQueueResponse, runCheckInWithNotePrompt])
+  }, [tid, data, patchCheckInLocally, queueQuietRefresh, runCheckInWithNotePrompt])
 
   const syncCheckInSide = useCallback(async (
     match: CheckInMatchItem,
     side: 'A' | 'B',
-    state: MatchCheckInSideState,
+    _state: MatchCheckInSideState,
     checkedIn: boolean
   ) => {
     if (!tid || !data) return
-    if (checkedIn) {
-      const uncheckedPlayers = state.players.filter((p: PlayerCheckInState) => !p.checked_in && p.player_id != null)
-      if (uncheckedPlayers.length > 0) {
-        const playerResponses = await Promise.all(
-          uncheckedPlayers.map((p: PlayerCheckInState) =>
-            deskCheckInPlayer(tid, match.match_id, {
-              version_id: data.version_id,
-              side,
-              player_id: p.player_id!,
-              checked_in: true,
-            })
-          )
-        )
-        const latestPlayerResp = playerResponses[playerResponses.length - 1]
-        if (latestPlayerResp) applyReadyQueueResponse(latestPlayerResp)
-      }
-      const teamResp = await deskCheckInTeam(tid, match.match_id, {
-        version_id: data.version_id,
-        side,
-        checked_in: true,
-      })
-      applyReadyQueueResponse(teamResp)
-      return
-    }
-
-    const checkedPlayers = state.players.filter((p: PlayerCheckInState) => p.checked_in && p.player_id != null)
-    if (checkedPlayers.length > 0) {
-      const playerResponses = await Promise.all(
-        checkedPlayers.map((p: PlayerCheckInState) =>
-          deskCheckInPlayer(tid, match.match_id, {
-            version_id: data.version_id,
-            side,
-            player_id: p.player_id!,
-            checked_in: false,
-          })
-        )
-      )
-      const latestPlayerResp = playerResponses[playerResponses.length - 1]
-      if (latestPlayerResp) applyReadyQueueResponse(latestPlayerResp)
-    }
-    const teamResp = await deskCheckInTeam(tid, match.match_id, {
+    patchCheckInLocally(match.match_id, side, checkedIn)
+    await deskCheckInTeam(tid, match.match_id, {
       version_id: data.version_id,
       side,
-      checked_in: false,
-    })
-    applyReadyQueueResponse(teamResp)
-  }, [tid, data, applyReadyQueueResponse])
+      checked_in: checkedIn,
+    }, true)
+    queueQuietRefresh()
+  }, [tid, data, patchCheckInLocally, queueQuietRefresh])
 
   const handleSideTeamCheckIn = useCallback(async (
     match: CheckInMatchItem,

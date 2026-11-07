@@ -34,11 +34,13 @@ if _is_sqlite:
     db_path = DATABASE_URL.replace("sqlite:///", "", 1)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-engine: Engine = create_engine(
-    DATABASE_URL,
-    echo=_echo,
-    connect_args=_connect_args,
-)
+_engine_kwargs: dict = {"echo": _echo, "connect_args": _connect_args}
+if _is_sqlite:
+    # More than a handful of desk screens were waiting on the default pool of 5.
+    _engine_kwargs["pool_size"] = 20
+    _engine_kwargs["max_overflow"] = 30
+    _engine_kwargs["pool_timeout"] = 10
+engine: Engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 _configured_sqlite_engines: set[int] = set()
 
