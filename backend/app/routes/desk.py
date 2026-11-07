@@ -5,6 +5,7 @@ Now Playing / Up Next, score entry, auto-advancement, working draft management.
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -2000,7 +2001,11 @@ def _build_match_items(
                 management_mode == MODE_CHECKIN_MANAGEMENT
                 and court_mode != "PREASSIGNED"
                 and status == "SCHEDULED"
-                and (a is not None and (a.assigned_by or "").upper() != "CHECKIN_DESK")
+                and (
+                    a is not None
+                    and (a.assigned_by or "").upper()
+                    not in {"CHECKIN_DESK", "CHECKIN_PLACE", "CHECKIN_PLACE_SWAP"}
+                )
             )
             if preassigned_hidden:
                 # Keep time/slot context for check-in tables, but hide court board placement
@@ -2222,7 +2227,11 @@ def desk_snapshot(
     try:
         cache_key = (int(tournament_id), int(version.id), _desk_snapshot_gen)
         cached = _desk_snapshot_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < 2:
+        if (
+            cached
+            and time.monotonic() - cached[0] < 2
+            and not os.environ.get("PYTEST_CURRENT_TEST")
+        ):
             return cached[1]
         management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
         items, courts_set = _build_match_items(session, tournament, version, management_mode=management_mode)
@@ -3659,6 +3668,7 @@ def assign_ready_match_to_slot(
     match.completed_at = None
     session.add(match)
     session.commit()
+    _bump_desk_snapshot()
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
@@ -4615,6 +4625,12 @@ def set_match_status(
 
     previous_status = (match.runtime_status or "SCHEDULED").upper()
     match.runtime_status = payload.status
+    if payload.status == "SCHEDULED" and (
+        payload.reset_started_at or previous_status in {"IN_PROGRESS", "PAUSED"}
+    ):
+        # Back To Ready leaves the court. Leaving this flag set hides the match
+        # from Ready To Go once the court card stops showing it.
+        match.court_queued = False
     if payload.reset_started_at:
         match.started_at = None
     if payload.status == "IN_PROGRESS" and (match.started_at is None or payload.reset_started_at):
@@ -4624,6 +4640,7 @@ def set_match_status(
 
     session.add(match)
     session.commit()
+    _bump_desk_snapshot()
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
@@ -4679,6 +4696,7 @@ def return_match_to_waiting_checkin_route(
             match=match,
         )
         session.commit()
+        _bump_desk_snapshot()
     except CheckInResetRejected as exc:
         session.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

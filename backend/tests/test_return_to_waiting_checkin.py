@@ -354,6 +354,11 @@ def test_back_to_ready_keeps_checkin_while_waiting_reset_clears_it(client, sessi
         json={"version_id": version.id, "status": "IN_PROGRESS"},
     )
     assert started.status_code == 200
+    session.expire_all()
+    playing = session.get(Match, ready_match.id)
+    playing.court_queued = True
+    session.add(playing)
+    session.commit()
     back = client.patch(
         f"/api/desk/tournaments/{tournament.id}/matches/{ready_match.id}/status",
         json={"version_id": version.id, "status": "SCHEDULED", "reset_started_at": True},
@@ -362,6 +367,8 @@ def test_back_to_ready_keeps_checkin_while_waiting_reset_clears_it(client, sessi
     kept = _snapshot(client, tournament.id, version.id)
     assert ready_match.id in {row["match_id"] for row in kept["ready_queue"]}
     assert _checkin_row(kept, ready_match.id)["match_ready"] is True
+    session.expire_all()
+    assert session.get(Match, ready_match.id).court_queued is False
     assert session.exec(
         select(MatchPlayerCheckIn).where(
             MatchPlayerCheckIn.match_id == ready_match.id,
