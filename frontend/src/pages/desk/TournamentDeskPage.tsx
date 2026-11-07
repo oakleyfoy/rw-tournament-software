@@ -148,6 +148,7 @@ import { confirmDialog } from '../../utils/confirm'
 import { getCompactDivisionLabel, getDivisionPhrase } from '../../utils/matchDivisionLabel'
 import { summarizeTowelCountsFromLookup, summarizeTowelCountsFromMatches } from '../../utils/towelCounts'
 import { DeskRwOsRefresh } from './DeskRwOsRefresh'
+import { scheduleGridStatus } from './scheduleGridStatus'
 
 const SLOT_TINT_PALETTE = [
   { bg: '#f7fff7', border: '#c8e6c9', accent: '#1b5e20' },
@@ -5029,19 +5030,22 @@ function DraggableMatch({
   onMatchClick,
   highlighted,
   allMatches,
+  timeZone,
 }: {
   match: DeskMatchItem
   isDraft: boolean
   onMatchClick: (m: DeskMatchItem) => void
   highlighted?: boolean
   allMatches?: DeskMatchItem[]
+  timeZone?: string | null
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `match-${match.match_id}`,
     data: { match },
     disabled: !isDraft || match.status === 'FINAL',
   })
-  const sc = STATUS_COLORS[match.status] || STATUS_COLORS.SCHEDULED
+  const shownStatus = scheduleGridStatus(match, new Date(), timeZone)
+  const sc = STATUS_COLORS[shownStatus] || STATUS_COLORS.SCHEDULED
   const hasDefault = match.team1_defaulted || match.team2_defaulted
   return (
     <div
@@ -5068,7 +5072,7 @@ function DraggableMatch({
           {hasDefault && <Badge label="DEFAULT" bg="#c62828" color="#fff" />}
           <EventBadge name={match.event_name} />
           <Badge label={match.stage} bg={STAGE_COLORS[match.stage] || '#757575'} color="#fff" />
-          <Badge label={STATUS_LABEL[match.status] || match.status} bg={sc.bg} color={sc.text} />
+          <Badge label={STATUS_LABEL[shownStatus] || shownStatus} bg={sc.bg} color={sc.text} />
         </div>
       </div>
       <div style={{
@@ -5100,7 +5104,7 @@ function DraggableMatch({
       {!match.team2_id && match.source_match_b_id && allMatches && (
         <FeederMatchInfo sourceMatchId={match.source_match_b_id} allMatches={allMatches} />
       )}
-      {match.status === 'FINAL' && match.score_display && (
+      {shownStatus === 'FINAL' && match.score_display && (
         <div style={{ fontWeight: 700, color: '#2e7d32', fontSize: 10 }}>{match.score_display}</div>
       )}
     </div>
@@ -5685,7 +5689,7 @@ function DeskGridTab({
                           return (
                             <DroppableCell key={cn} slotId={slot.slot_id} baseBackgroundColor={rowCellBg}>
                               {match ? (
-                                <DraggableMatch match={match} isDraft={isDraft} onMatchClick={onMatchClick} highlighted={highlightedMatchIds?.has(match.match_id)} allMatches={data.matches} />
+                                <DraggableMatch match={match} isDraft={isDraft} onMatchClick={onMatchClick} highlighted={highlightedMatchIds?.has(match.match_id)} allMatches={data.matches} timeZone={data.tournament_timezone} />
                               ) : (
                                 <div style={{
                                   minHeight: 36,
