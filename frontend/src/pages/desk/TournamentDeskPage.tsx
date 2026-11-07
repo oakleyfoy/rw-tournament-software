@@ -9317,7 +9317,7 @@ function CheckInCourtBoardCard({
           )}
         </div>
         <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, whiteSpace: 'nowrap', flexShrink: 0 }}>
-          {row.slotLabel ? row.slotLabel.split(' ').slice(-2).join('\u00a0') : ''}
+          {row.startAtLabel || (row.slotLabel ? row.slotLabel.split(' ').slice(-2).join('\u00a0') : '')}
         </span>
       </div>
       {/* body — fixed min-height so all cards stay the same size */}
