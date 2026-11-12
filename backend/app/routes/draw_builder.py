@@ -25,23 +25,40 @@ from app.utils.match_generation import (
 router = APIRouter()
 
 
-def _purge_matches_for_event_draw_rebuild(session: Session, event_id: int) -> None:
+def _purge_matches_for_event_draw_rebuild(session: Session, event_id: int, *, keep_final: bool = False) -> int:
     """
-    Delete all matches for an event and rows that FK-match them.
+    Delete matches for an event and rows that FK-match them.
 
     Re-finalizing a draw replaces generated matches; assignments and desk rows
     must be removed first or the DB raises integrity errors (PostgreSQL) or
     leaves orphans (SQLite without FK checks).
+
+    keep_final leaves matches whose runtime_status is FINAL (played waterfall
+    results) and only removes the unplayed board.
     """
     matches = list(session.exec(select(Match).where(Match.event_id == event_id)).all())
-    ids = [m.id for m in matches if m.id is not None]
+    if keep_final:
+        doomed = [m for m in matches if (m.runtime_status or "") != "FINAL"]
+        kept = [m for m in matches if (m.runtime_status or "") == "FINAL"]
+    else:
+        doomed = matches
+        kept = []
+    ids = [m.id for m in doomed if m.id is not None]
     if not ids:
-        return
+        return 0
+    doomed_ids = set(ids)
 
-    for m in matches:
-        if m.source_match_a_id is not None or m.source_match_b_id is not None:
+    for m in doomed + kept:
+        changed = False
+        if m.source_match_a_id is not None and (m in doomed or m.source_match_a_id in doomed_ids):
             m.source_match_a_id = None
+            m.source_a_role = None
+            changed = True
+        if m.source_match_b_id is not None and (m in doomed or m.source_match_b_id in doomed_ids):
             m.source_match_b_id = None
+            m.source_b_role = None
+            changed = True
+        if changed:
             session.add(m)
     session.flush()
 
@@ -59,9 +76,10 @@ def _purge_matches_for_event_draw_rebuild(session: Session, event_id: int) -> No
         session.delete(row)
     session.flush()
 
-    for m in matches:
+    for m in doomed:
         session.delete(m)
     session.flush()
+    return len(doomed)
 
 
 class DrawPlanUpdate(BaseModel):
@@ -395,3 +413,159 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
         "guarantee_selected": event.guarantee_selected,
         "matches_created": len(all_matches),
     }
+
+
+class ApplyRainBoardRequest(BaseModel):
+    winner_team_id: int
+    loser_team_id: int
+
+
+def apply_rain_board_keeping_finals(session: Session, event: Event, winner_team_id: int, loser_team_id: int) -> dict:
+    """Switch an event to the 12-team rain board without deleting FINAL matches.
+
+    Unplayed matches are replaced by the two flights of 6. A finished waterfall
+    match is added for winner_team_id over loser_team_id when that pairing is
+    not already on the board. The winner is not marked defaulted for the weekend.
+    """
+    from datetime import datetime
+
+    from app.services.active_roster import team_is_active
+    from app.services.draw_plan_engine import (
+        build_spec_from_event,
+        compute_inventory,
+        generate_matches_for_event,
+    )
+
+    if winner_team_id == loser_team_id:
+        raise HTTPException(status_code=422, detail="Default waterfall needs two different teams")
+
+    teams = list(session.exec(select(Team).where(Team.event_id == event.id)).all())
+    active = [team for team in teams if team_is_active(team)]
+    by_id = {team.id: team for team in active}
+    winner = by_id.get(winner_team_id)
+    loser = by_id.get(loser_team_id)
+    if winner is None or loser is None:
+        raise HTTPException(status_code=422, detail="Both waterfall teams must be active teams on this event")
+    if len(active) != 12:
+        raise HTTPException(status_code=422, detail=f"Rain board needs 12 active teams, found {len(active)}")
+
+    seeds = [team.seed for team in active]
+    if sorted(seed for seed in seeds if seed is not None) != list(range(1, 13)):
+        raise HTTPException(status_code=422, detail="Rain board needs seeds 1 through 12")
+
+    try:
+        draw_plan = json.loads(event.draw_plan_json) if event.draw_plan_json else {}
+    except (json.JSONDecodeError, TypeError):
+        draw_plan = {}
+    if not isinstance(draw_plan, dict):
+        draw_plan = {}
+    timing = draw_plan.get("timing") if isinstance(draw_plan.get("timing"), dict) else {}
+    draw_plan = {
+        "template_type": "WF_12_RAIN_SIX",
+        "wf_rounds": 0,
+    }
+    if timing:
+        draw_plan["timing"] = timing
+
+    event.team_count = 12
+    event.draw_plan_json = json.dumps(draw_plan)
+    event.draw_plan_version = "1.0"
+    event.draw_status = "final"
+    session.add(event)
+    session.flush()
+
+    removed = _purge_matches_for_event_draw_rebuild(session, event.id, keep_final=True)
+
+    tournament_id = event.tournament_id
+    version = session.exec(
+        select(ScheduleVersion)
+        .where(ScheduleVersion.tournament_id == tournament_id)
+        .order_by(ScheduleVersion.version_number.desc())
+    ).first()
+    if not version:
+        version = ScheduleVersion(tournament_id=tournament_id, version_number=1, status="draft")
+        session.add(version)
+        session.flush()
+
+    spec = build_spec_from_event(event, draw_plan)
+    inventory = compute_inventory(spec)
+    if inventory.has_errors():
+        raise HTTPException(status_code=422, detail="; ".join(inventory.errors))
+
+    linked_team_ids = [team.id for team in sorted(active, key=lambda team: (team.seed or 9999, team.id or 0))]
+    existing_codes: set[str] = set(
+        session.exec(select(Match.match_code).where(Match.schedule_version_id == version.id)).all()
+    )
+    session._allow_match_generation = True
+    try:
+        generated, warnings = generate_matches_for_event(
+            session, version.id, spec, linked_team_ids, existing_codes
+        )
+    finally:
+        session._allow_match_generation = False
+    if len(generated) != 24:
+        raise HTTPException(
+            status_code=422,
+            detail="Rain board did not generate 24 matches: " + "; ".join(warnings),
+        )
+    for match in generated:
+        session.add(match)
+
+    kept_wf = session.exec(
+        select(Match).where(
+            Match.event_id == event.id,
+            Match.match_type == "WF",
+            Match.runtime_status == "FINAL",
+        )
+    ).all()
+    already = any(
+        {match.team_a_id, match.team_b_id} == {winner_team_id, loser_team_id} for match in kept_wf
+    )
+    created_default = False
+    if not already:
+        next_seq = max((match.sequence_in_round or 0 for match in kept_wf if match.round_index == 1), default=0) + 1
+        code = f"{spec.match_code_prefix}WF_R1_{next_seq:02d}"
+        while code in existing_codes:
+            next_seq += 1
+            code = f"{spec.match_code_prefix}WF_R1_{next_seq:02d}"
+        default_match = Match(
+            tournament_id=tournament_id,
+            event_id=event.id,
+            schedule_version_id=version.id,
+            match_code=code,
+            match_type="WF",
+            round_number=1,
+            round_index=1,
+            sequence_in_round=next_seq,
+            duration_minutes=spec.waterfall_minutes,
+            team_a_id=winner.id,
+            team_b_id=loser.id,
+            placeholder_side_a=winner.display_name or winner.name,
+            placeholder_side_b=loser.display_name or loser.name,
+            runtime_status="FINAL",
+            status="complete",
+            score_json={"display": "DEFAULT", "actual": "8-0"},
+            winner_team_id=winner.id,
+            completed_at=datetime.utcnow(),
+        )
+        session.add(default_match)
+        created_default = True
+
+    session.commit()
+    return {
+        "id": event.id,
+        "draw_status": event.draw_status,
+        "removed_unplayed": removed,
+        "matches_created": len(generated) + (1 if created_default else 0),
+        "default_waterfall_created": created_default,
+        "kept_final_matches": len(kept_wf) + (1 if created_default else 0),
+    }
+
+
+@router.post("/events/{event_id}/draw-plan/apply-rain-board")
+def apply_rain_board(event_id: int, request: ApplyRainBoardRequest, session: Session = Depends(get_session)):
+    """Rebuild the unplayed board as the 12-team rain draw and keep finished matches."""
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return apply_rain_board_keeping_finals(session, event, request.winner_team_id, request.loser_team_id)

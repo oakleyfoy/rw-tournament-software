@@ -16,6 +16,7 @@ from app.services.draw_plan_engine import DrawPlanSpec, compute_inventory, gener
 from app.services.draw_plan_rules import get_valid_family_for_team_count, required_wf_rounds
 from app.services.rr_match_codes import rain_placement_bucket, rr_pool_code_for_match
 from app.services.schedule_sequence import _cons_flight_phase, _phase_for_match
+from app.routes.draw_builder import apply_rain_board_keeping_finals
 from app.services.wf_12_rain_advancement import order_pool_teams, refresh_wf12_rain_placement
 from app.services.wf_12_rain_format import wf_12_rain_total_matches
 
@@ -317,3 +318,75 @@ def test_finals_use_group_results_and_ignore_friendlies(session: Session):
     session.refresh(top_final)
     assert top_final.team_a_id == by_seed[1].id
     assert top_final.team_b_id == by_seed[3].id
+
+
+def test_rain_rebuild_keeps_finished_waterfall_and_adds_default(session: Session):
+    tournament, version, event, teams = _seed_rain_event(session)
+    by_seed = {team.seed: team for team in teams}
+    played = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="KEEP_WF_1",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=by_seed[1].id,
+        team_b_id=by_seed[7].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T7",
+        runtime_status="FINAL",
+        winner_team_id=by_seed[1].id,
+        score_json={"display": "8-3"},
+    )
+    unplayed = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="DROP_RR",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=90,
+        team_a_id=by_seed[1].id,
+        team_b_id=by_seed[2].id,
+        placeholder_side_a="T1",
+        placeholder_side_b="T2",
+        runtime_status="SCHEDULED",
+    )
+    session.add(played)
+    session.add(unplayed)
+    session.commit()
+    session.refresh(played)
+
+    result = apply_rain_board_keeping_finals(session, event, by_seed[6].id, by_seed[12].id)
+    assert result["removed_unplayed"] == 1
+    assert result["default_waterfall_created"] is True
+
+    stored = list(session.exec(select(Match).where(Match.event_id == event.id)).all())
+    kept = next(match for match in stored if match.id == played.id)
+    assert kept.score_json["display"] == "8-3"
+    assert kept.winner_team_id == by_seed[1].id
+    assert all(match.match_code != "DROP_RR" for match in stored)
+
+    rain = [match for match in stored if "TOP_" in (match.match_code or "") or "BOT_" in (match.match_code or "")]
+    assert len(rain) == 24
+    assert {_by_suffix(rain, "TOP_FRI_A01").team_a_id, _by_suffix(rain, "TOP_FRI_A01").team_b_id} == {
+        by_seed[1].id,
+        by_seed[6].id,
+    }
+    assert {_by_suffix(rain, "BOT_FRI_C01").team_a_id, _by_suffix(rain, "BOT_FRI_C01").team_b_id} == {
+        by_seed[7].id,
+        by_seed[12].id,
+    }
+
+    default_match = next(match for match in stored if match.winner_team_id == by_seed[6].id and match.match_type == "WF")
+    assert default_match.team_a_id == by_seed[6].id
+    assert default_match.team_b_id == by_seed[12].id
+    assert default_match.score_json["display"] == "DEFAULT"
+    assert default_match.runtime_status == "FINAL"
+    session.refresh(by_seed[6])
+    assert not by_seed[6].is_defaulted
