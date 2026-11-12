@@ -24,6 +24,19 @@ describe('getCompactDivisionLabel', () => {
     expect(getCompactDivisionLabel('MIX_LOSS_SUN_01')).toBe('L PLACE')
   })
 
+  it('maps the 12-team rain flights', () => {
+    expect(getCompactDivisionLabel('MIX_E1_TOP_FRI_A01')).toBe('DIV I')
+    expect(getCompactDivisionLabel('MIX_E1_TOP_SAT2_B02')).toBe('DIV I')
+    expect(getCompactDivisionLabel('MIX_E1_BOT_FRI_C01')).toBe('DIV II')
+    expect(getCompactDivisionLabel('MIX_E1_BOT_SAT1_D02')).toBe('DIV II')
+    expect(getCompactDivisionLabel('MIX_E1_TOP_FUN_FRI_01')).toBe('I FUN')
+    expect(getCompactDivisionLabel('MIX_E1_BOT_FUN_SAT2_01')).toBe('II FUN')
+    expect(getCompactDivisionLabel('MIX_E1_TOP_SUN_01')).toBe('I FINAL')
+    expect(getCompactDivisionLabel('MIX_E1_BOT_SUN_03')).toBe('II FINAL')
+    expect(getDivisionPhrase('MIX_E1_TOP_FUN_SAT1_01')).toBe('Div I Friendly')
+    expect(getDivisionPhrase('MIX_E1_BOT_SUN_01')).toBe('Div II Final')
+  })
+
   it('does not treat WIN_SUN as a winners mini-pool', () => {
     expect(getCompactDivisionLabel('MIX_WIN_SUN_01')).not.toBe('DIV I')
   })

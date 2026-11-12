@@ -266,6 +266,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
     engine_templates = {
         "WF_14_TOP2_BYE",
         "WF_10_SIX_FOUR",
+        "WF_12_RAIN_SIX",
         "WF_TO_POOLS_DYNAMIC",
         "WF_TO_BRACKETS_8",
     }

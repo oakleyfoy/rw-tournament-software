@@ -247,10 +247,12 @@ def apply_advancement_for_final_match(session: Session, match_id: int) -> int:
     event = session.get(Event, match.event_id)
     if event:
         from app.services.wf_10_advancement import refresh_wf10_after_advancement
+        from app.services.wf_12_rain_advancement import refresh_wf12_rain_placement
         from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
 
         updated_count += refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
         updated_count += refresh_wf10_after_advancement(session, match.tournament_id, match.event_id, version_id)
+        updated_count += refresh_wf12_rain_placement(session, match.tournament_id, match.event_id, version_id)
 
     return updated_count
 
@@ -389,10 +391,12 @@ def apply_advancement_with_details(session: Session, match_id: int) -> Dict[str,
     event = session.get(Event, match.event_id)
     if event:
         from app.services.wf_10_advancement import refresh_wf10_after_advancement
+        from app.services.wf_12_rain_advancement import refresh_wf12_rain_placement
         from app.services.wf_14_consolation import refresh_wf14_consolation_after_advancement
 
         refresh_wf14_consolation_after_advancement(session, match.event_id, version_id)
         refresh_wf10_after_advancement(session, match.tournament_id, match.event_id, version_id)
+        refresh_wf12_rain_placement(session, match.tournament_id, match.event_id, version_id)
 
     return {"downstream_updates": updates, "warnings": warnings}
 

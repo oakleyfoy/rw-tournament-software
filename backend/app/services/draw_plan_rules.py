@@ -12,7 +12,14 @@ from typing import Dict, FrozenSet, Literal, Optional, Tuple
 # =============================================================================
 
 # Template families
-TemplateFamily = Literal["RR_ONLY", "WF_TO_POOLS_DYNAMIC", "WF_TO_BRACKETS_8", "WF_14_TOP2_BYE", "WF_10_SIX_FOUR"]
+TemplateFamily = Literal[
+    "RR_ONLY",
+    "WF_TO_POOLS_DYNAMIC",
+    "WF_TO_BRACKETS_8",
+    "WF_14_TOP2_BYE",
+    "WF_10_SIX_FOUR",
+    "WF_12_RAIN_SIX",
+]
 
 # Allowed team counts per family
 ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
@@ -22,6 +29,8 @@ ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
     "WF_TO_BRACKETS_8": frozenset({24, 32}),
     "WF_14_TOP2_BYE": frozenset({14}),
     "WF_10_SIX_FOUR": frozenset({10}),
+    # 12 is also a pools size. Pools stays the default; this rain draw is selected explicitly.
+    "WF_12_RAIN_SIX": frozenset({12}),
 }
 
 # All Phase 1 supported team counts (union of all families)
@@ -46,6 +55,7 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
     - WF_TO_BRACKETS_8: always 2
     - WF_10_SIX_FOUR: always 1
     - WF_14_TOP2_BYE: always 2
+    - WF_12_RAIN_SIX: always 0 (seeds are assigned by hand)
     """
     if family == "RR_ONLY":
         return 0
@@ -59,6 +69,10 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
         return REQUIRED_WF_ROUNDS
     elif family == "WF_10_SIX_FOUR":
         from app.services.wf_10_format import REQUIRED_WF_ROUNDS
+
+        return REQUIRED_WF_ROUNDS
+    elif family == "WF_12_RAIN_SIX":
+        from app.services.wf_12_rain_format import REQUIRED_WF_ROUNDS
 
         return REQUIRED_WF_ROUNDS
     return 0

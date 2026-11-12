@@ -162,6 +162,20 @@ _CONS_FLIGHT_PHASE: Dict[str, int] = {
     "LOSS_SAT2": 42,
     "WIN_SUN": 53,
     "LOSS_SUN": 53,
+    "TOP_FRI": 22,
+    "TOP_SAT1": 32,
+    "TOP_SAT2": 42,
+    "TOP_FUN_FRI": 22,
+    "TOP_FUN_SAT1": 32,
+    "TOP_FUN_SAT2": 42,
+    "TOP_SUN": 53,
+    "BOT_FRI": 22,
+    "BOT_SAT1": 32,
+    "BOT_SAT2": 42,
+    "BOT_FUN_FRI": 22,
+    "BOT_FUN_SAT1": 32,
+    "BOT_FUN_SAT2": 42,
+    "BOT_SUN": 53,
 }
 
 

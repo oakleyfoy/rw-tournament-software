@@ -9,11 +9,32 @@ from typing import Optional
 WF10_PLACEMENT_POOL_CODE = "WF10_PLACEMENT"
 
 _WIN_RR_RE = re.compile(r"_WIN_(?:FRI|SAT1|SAT2)_([AB])\d+", re.IGNORECASE)
+_RAIN_GROUP_RE = re.compile(r"_(?:TOP|BOT)_(?:FRI|SAT1|SAT2)_([ABCD])\d+", re.IGNORECASE)
+_RAIN_FUN_RE = re.compile(r"_(TOP|BOT)_FUN_(?:FRI|SAT1|SAT2)_\d+", re.IGNORECASE)
+_RAIN_SUN_RE = re.compile(r"_(?:TOP|BOT)_SUN_\d+", re.IGNORECASE)
 _FUN_RR_RE = re.compile(r"_FUN_(?:FRI|SAT1|SAT2)_\d+", re.IGNORECASE)
 _LOSS_RR_RE = re.compile(r"_LOSS_(?:FRI|SAT1|SAT2)_\d+", re.IGNORECASE)
 _WF10_SUN_RE = re.compile(r"_(?:WIN|LOSS)_SUN_\d+", re.IGNORECASE)
 # Pool letter is its own match-code segment, either before or after _RR_.
 _POOL_TOKEN_RE = re.compile(r"(?:^|_)(POOL[A-I])(?:_|$)")
+
+
+def is_rain_placement_code(match_code: Optional[str]) -> bool:
+    if not match_code:
+        return False
+    return bool(_RAIN_SUN_RE.search(match_code.upper()))
+
+
+def rain_placement_bucket(match_code: Optional[str]) -> Optional[str]:
+    """Public section for a rain final: TOP_PLACE or BOT_PLACE."""
+    if not match_code:
+        return None
+    upper = match_code.upper()
+    if "_TOP_SUN_" in upper:
+        return "TOP_PLACE"
+    if "_BOT_SUN_" in upper:
+        return "BOT_PLACE"
+    return None
 
 
 def is_wf10_sunday_placement_code(match_code: Optional[str]) -> bool:
@@ -30,10 +51,19 @@ def rr_pool_code_for_match(match_code: Optional[str]) -> Optional[str]:
     - Event-prefixed pools (``MIX_E1_RR_POOLA_M01``)
     - WF_14 loser-flight consolation (``..._CONS_<DAYTAG>_<POOL><SEQ>``)
     - WF_10 winners/fun/losers RR (``..._WIN_FRI_A01``, ``..._FUN_FRI_01``, ``..._LOSS_FRI_01``)
+    - 12-team rain groups (``..._TOP_FRI_A01``, ``..._BOT_FUN_FRI_01``)
     """
     if not match_code:
         return None
     upper = match_code.upper()
+
+    rain_group = _RAIN_GROUP_RE.search(upper)
+    if rain_group:
+        return f"RAIN{rain_group.group(1)}"
+
+    rain_fun = _RAIN_FUN_RE.search(upper)
+    if rain_fun:
+        return "TOPFUN" if rain_fun.group(1) == "TOP" else "BOTFUN"
 
     pool_token = _POOL_TOKEN_RE.search(upper)
     if pool_token:

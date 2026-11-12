@@ -546,6 +546,7 @@ def public_draws_list(
             "WF_14_TOP2_BYE",
             "WF_TO_POOLS_DYNAMIC",
             "WF_10_SIX_FOUR",
+            "WF_12_RAIN_SIX",
         )
 
         found = set()
@@ -1190,9 +1191,21 @@ _CD_PLACEMENT_POOL_CODE = "CD_PLACEMENT"
 _WF10_PLACEMENT_POOL_CODE = "WF10_PLACEMENT"
 
 _WF10_POOL_ORDER = ("POOLA", "POOLB", "FUN", "POOLC", _WF10_PLACEMENT_POOL_CODE)
+_RAIN_POOL_ORDER = (
+    "RAINA",
+    "RAINB",
+    "TOPFUN",
+    "TOP_PLACE",
+    "RAINC",
+    "RAIND",
+    "BOTFUN",
+    "BOT_PLACE",
+)
 
 
 def _pool_display_sort_key(pool_code: str) -> tuple:
+    if pool_code in _RAIN_POOL_ORDER:
+        return (0, _RAIN_POOL_ORDER.index(pool_code))
     if pool_code in _WF10_POOL_ORDER:
         return (0, _WF10_POOL_ORDER.index(pool_code))
     if pool_code == _CD_PLACEMENT_POOL_CODE:
@@ -1331,14 +1344,30 @@ def _public_round_robin_impl(
         WF10_PLACEMENT_POOL_CODE,
         is_public_rr_pool_match_code,
         is_wf10_sunday_placement_code,
+        rain_placement_bucket,
     )
     from app.services.wf_10_advancement import event_uses_wf10
+    from app.services.wf_12_rain_advancement import is_rain_event
     from app.services.wf_14_consolation import event_uses_wf14
 
     is_wf14 = event_uses_wf14(session, event_id, version.id)
     is_wf10 = event_uses_wf10(session, event_id, version.id)
+    is_rain = is_rain_event(event)
 
     def _pool_label(pool_code: str) -> str:
+        if is_rain:
+            rain_labels = {
+                "RAINA": "Division I · Group A",
+                "RAINB": "Division I · Group B",
+                "RAINC": "Division II · Group C",
+                "RAIND": "Division II · Group D",
+                "TOPFUN": "Division I Friendly",
+                "BOTFUN": "Division II Friendly",
+                "TOP_PLACE": "Division I Finals",
+                "BOT_PLACE": "Division II Finals",
+            }
+            if pool_code in rain_labels:
+                return rain_labels[pool_code]
         # WF_14 loser flight is one "Division III" split into two pools (C/D),
         # not two separate divisions.
         if is_wf14:
@@ -1389,17 +1418,24 @@ def _public_round_robin_impl(
         if "_CONS_SUN_" not in (m.match_code or "").upper() and _rr_pool_code_for_match(m.match_code) is not None
     ]
 
-    # WF_10 Sunday placement (WIN_SUN / LOSS_SUN) — match_type PLACEMENT.
-    wf10_sun_matches = session.exec(
+    # Placement matches: WF_10 Sunday, or the 12-team rain finals.
+    placement_matches = session.exec(
         select(Match).where(
             Match.event_id == event_id,
             Match.schedule_version_id == version.id,
             Match.match_type == "PLACEMENT",
         )
     ).all()
-    wf10_sun_matches = [m for m in wf10_sun_matches if is_wf10_sunday_placement_code(m.match_code)]
+    wf10_sun_matches = [m for m in placement_matches if is_wf10_sunday_placement_code(m.match_code)]
+    rain_place_matches = [m for m in placement_matches if rain_placement_bucket(m.match_code)]
 
-    display_matches = list(rr_matches) + list(cons_pool_matches) + list(cross_matches) + list(wf10_sun_matches)
+    display_matches = (
+        list(rr_matches)
+        + list(cons_pool_matches)
+        + list(cross_matches)
+        + list(wf10_sun_matches)
+        + list(rain_place_matches)
+    )
 
     if not display_matches:
         return RoundRobinResponse(
@@ -1569,6 +1605,16 @@ def _public_round_robin_impl(
             ),
         )
         sorted_rows = base_sorted_rows
+        if is_rain and pool_code in ("RAINA", "RAINB", "RAINC", "RAIND"):
+            from app.services.wf_12_rain_advancement import order_pool_teams
+
+            seeds = {
+                tid: team_map[tid].seed if team_map.get(tid) and team_map[tid].seed is not None else 9999
+                for tid in pool_team_ids
+            }
+            ordered_ids = order_pool_teams(list(pool_team_ids), matches_in_pool, seeds)
+            rank = {tid: index for index, tid in enumerate(ordered_ids)}
+            sorted_rows = sorted(rows_data.items(), key=lambda item: rank.get(item[0], 99))
 
         return RRPoolStandings(
             pool_code=pool_code,
@@ -1577,6 +1623,8 @@ def _public_round_robin_impl(
         )
 
     for pool_code in sorted(pool_matches.keys(), key=_pool_display_sort_key):
+        if pool_code in ("TOPFUN", "BOTFUN"):
+            continue
         try:
             standings_list.append(_compute_pool_standings(pool_code))
         except Exception:
@@ -1647,8 +1695,48 @@ def _public_round_robin_impl(
             )
         )
 
+    if rain_place_matches:
+        for bucket in ("TOP_PLACE", "BOT_PLACE"):
+            bucket_matches = [m for m in rain_place_matches if rain_placement_bucket(m.match_code) == bucket]
+            if not bucket_matches:
+                continue
+            place_boxes = []
+            for m in sorted(
+                bucket_matches,
+                key=lambda m: (_safe_int_field(m.sequence_in_round, 0), m.match_code or ""),
+            ):
+                try:
+                    place_boxes.append(
+                        _build_rr_match_box(
+                            m,
+                            team_map,
+                            assignment_map,
+                            slot_map,
+                            _safe_int_field(m.round_index, 1) or 1,
+                            include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "public_round_robin: failed to build rain final box for match %s (%s)",
+                        m.id,
+                        m.match_code,
+                    )
+            pools.append(
+                RRPool(
+                    pool_code=bucket,
+                    pool_label=_pool_label(bucket),
+                    matches=place_boxes,
+                )
+            )
+        pools.sort(key=lambda pool: _pool_display_sort_key(pool.pool_code))
+
     response_show_court = _public_show_court_info(tournament) or any(
         box.court_label for pool in pools for box in pool.matches
+    )
+    rain_tiebreaker = (
+        "*Group order: wins, then head-to-head when two teams are tied, then game difference, then seed. "
+        "Friendly matches do not count."
     )
     return RoundRobinResponse(
         tournament_name=tournament.name,
@@ -1656,6 +1744,7 @@ def _public_round_robin_impl(
         pools=pools,
         standings=standings_list,
         show_court_info=response_show_court,
+        **({"tiebreaker_note": rain_tiebreaker} if is_rain else {}),
     )
 
 

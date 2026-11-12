@@ -7,6 +7,7 @@ export type TemplateType =
   | 'WF_TO_BRACKETS_8'
   | 'WF_14_TOP2_BYE'
   | 'WF_10_SIX_FOUR'
+  | 'WF_12_RAIN_SIX'
   | 'CANONICAL_32'
   | 'SPLIT_FLIGHTS';
 
@@ -218,6 +219,28 @@ export function calculateMatches(
       return {
         wfMatches: 10,
         standardMatches: 21,
+      }
+    }
+
+    case 'WF_12_RAIN_SIX': {
+      if (teamCount !== 12) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_12_RAIN_SIX requires exactly 12 teams, got ${teamCount}`,
+        }
+      }
+      if (wfRounds !== 0) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_12_RAIN_SIX requires 0 waterfall rounds, got ${wfRounds}`,
+        }
+      }
+      // 12 group + 6 friendly + 6 finals. No waterfall; seeds are manual.
+      return {
+        wfMatches: 0,
+        standardMatches: 24,
       }
     }
 

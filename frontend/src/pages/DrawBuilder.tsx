@@ -905,6 +905,16 @@ function DrawBuilder() {
       }
     }
 
+    if (state.templateType === 'WF_12_RAIN_SIX') {
+      if (!isTeamCountValidForFamily('WF_12_RAIN_SIX', n)) {
+        errors.push('WF_12_RAIN_SIX requires exactly 12 teams')
+      }
+      const expectedWfRounds = requiredWfRounds('WF_12_RAIN_SIX', n)
+      if (state.wfRounds !== expectedWfRounds) {
+        errors.push(`WF_12_RAIN_SIX requires ${expectedWfRounds} waterfall rounds`)
+      }
+    }
+
     // Legacy template validations (deprecated but kept for backwards compat)
     if (state.templateType === 'CANONICAL_32' && n !== 32) {
       errors.push('CANONICAL_32 requires exactly 32 teams')
@@ -1526,6 +1536,7 @@ function DrawBuilder() {
                 newType === 'WF_TO_BRACKETS_8' ||
                 newType === 'WF_14_TOP2_BYE' ||
                 newType === 'WF_10_SIX_FOUR' ||
+                newType === 'WF_12_RAIN_SIX' ||
                 newType === 'RR_ONLY'
               ) {
                 updates.wfRounds = requiredWfRounds(newType, n)
@@ -1568,7 +1579,21 @@ function DrawBuilder() {
               10-team WF (winners 6 + losers 4)
               {!isTeamCountValidForFamily('WF_10_SIX_FOUR', event.team_count) && ' — requires 10 teams'}
             </option>
+            <option
+              value="WF_12_RAIN_SIX"
+              disabled={!isTeamCountValidForFamily('WF_12_RAIN_SIX', event.team_count)}
+            >
+              12-team rain (two flights of 6)
+              {!isTeamCountValidForFamily('WF_12_RAIN_SIX', event.team_count) && ' — requires 12 teams'}
+            </option>
           </select>
+          {state.templateType === 'WF_12_RAIN_SIX' && (
+            <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#334' }}>
+              No waterfall in this draw. Seed the 12 teams yourself. Seeds 1–6 and 7–12 each split into
+              groups of 1/4/6 and 2/3/5. Each group plays a round robin. The two byes play a friendly that
+              does not count. Then #1 plays #1, #2 plays #2, and #3 plays #3 inside that flight.
+            </p>
+          )}
           {state.templateType === 'WF_TO_BRACKETS_8' && event.team_count === 24 && (
             <p style={{ margin: '8px 0 0', fontSize: '13px', color: '#334' }}>
               Two waterfall rounds, then seed the field 1–24 on tiebreakers. Seeds 1–8, 9–16, and 17–24

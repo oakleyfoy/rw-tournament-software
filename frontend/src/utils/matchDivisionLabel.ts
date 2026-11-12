@@ -14,6 +14,13 @@ export function getCompactDivisionLabel(matchCode?: string | null): string {
   if (!code) return 'DIV'
   if (code.includes('_WF_')) return 'WF'
 
+  if (/_TOP_FUN_/i.test(code)) return 'I FUN'
+  if (/_BOT_FUN_/i.test(code)) return 'II FUN'
+  if (/_TOP_SUN_/i.test(code)) return 'I FINAL'
+  if (/_BOT_SUN_/i.test(code)) return 'II FINAL'
+  if (/_TOP_(?:FRI|SAT1|SAT2)_[AB]\d+/i.test(code)) return 'DIV I'
+  if (/_BOT_(?:FRI|SAT1|SAT2)_[CD]\d+/i.test(code)) return 'DIV II'
+
   if (FUN_RE.test(code)) return 'FUNMATCH'
   if (WIN_SUN_RE.test(code)) return 'PLACE'
   if (LOSS_SUN_RE.test(code)) return 'L PLACE'
@@ -79,6 +86,14 @@ export function getDivisionPhrase(matchCode?: string | null): string {
       return 'Bracket 3'
     case 'FUNMATCH':
       return 'Fun Match'
+    case 'I FUN':
+      return 'Div I Friendly'
+    case 'II FUN':
+      return 'Div II Friendly'
+    case 'I FINAL':
+      return 'Div I Final'
+    case 'II FINAL':
+      return 'Div II Final'
     case 'PLACE':
       return 'Place'
     case 'L PLACE':
