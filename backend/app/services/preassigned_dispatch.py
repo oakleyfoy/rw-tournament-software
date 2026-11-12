@@ -1,8 +1,8 @@
-"""PREASSIGNED waterfall court dispatch.
+"""Court dispatch for Put courts on.
 
-Automation runs only when Event.court_assignment_by_date_json resolves to
-PREASSIGNED for the match's event/date at execution time. DYNAMIC_CHECKIN days
-are never auto-dispatched.
+Preassigned dates keep their scheduled court and start through dispatch.
+Dynamic check-in dates start a fully checked-in match on the court already
+in the schedule when staff press Put courts on.
 """
 
 from __future__ import annotations
@@ -1436,7 +1436,93 @@ def put_courts_on(
         aggregate.waiting_match_ids.extend(part.waiting_match_ids)
         aggregate.skipped.extend(part.skipped)
         aggregate.errors.extend(part.errors)
+    dynamic_started = start_dynamic_ready_matches(session, tournament, version)
+    aggregate.started_match_ids.extend(dynamic_started)
     return aggregate
+
+
+def start_dynamic_ready_matches(
+    session: Session,
+    tournament: Tournament,
+    version: ScheduleVersion,
+) -> List[int]:
+    """Start checked-in dynamic matches on the court already in the schedule.
+
+    One match starts on each free court. A court that is already playing, or
+    that has an earlier checked-in match, keeps the rest queued underneath.
+    """
+    if version.id is None:
+        return []
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
+    grouped: Dict[Tuple[date, int], List[Tuple[Match, ScheduleSlot]]] = {}
+    for match in matches:
+        if (match.runtime_status or "SCHEDULED").upper() in DONE_OR_LIVE:
+            continue
+        if match.team_a_id is None or match.team_b_id is None:
+            continue
+        if not match_fully_checked_in(session, match):
+            continue
+        slot = _assignment_slot(session, match)
+        if slot is None or slot.court_number is None:
+            continue
+        event = session.get(Event, match.event_id) if match.event_id else None
+        if is_preassigned(event, slot.day_date):
+            continue
+        grouped.setdefault((slot.day_date, slot.court_number), []).append((match, slot))
+
+    started_ids: List[int] = []
+    for (day_date, court_number), rows in sorted(grouped.items(), key=lambda item: (item[0][0].isoformat(), item[0][1])):
+        rows.sort(key=lambda item: (item[1].start_time or time.min, item[0].id or 0))
+        occupant = live_occupant_on_court(
+            session,
+            version_id=version.id,
+            day_date=day_date,
+            court_number=court_number,
+        )
+        court_is_free = occupant is None
+        for index, (match, slot) in enumerate(rows):
+            assignment = session.exec(
+                select(MatchAssignment).where(
+                    MatchAssignment.schedule_version_id == version.id,
+                    MatchAssignment.match_id == match.id,
+                )
+            ).first()
+            if assignment is not None:
+                assignment.assigned_by = "CHECKIN_PLACE"
+                assignment.assigned_at = datetime.utcnow()
+                session.add(assignment)
+            should_start = court_is_free and index == 0
+            if should_start:
+                previous = (match.runtime_status or "SCHEDULED").upper()
+                match.runtime_status = "IN_PROGRESS"
+                if match.started_at is None:
+                    match.started_at = datetime.utcnow()
+                match.completed_at = None
+                match.court_queued = False
+                session.add(match)
+                session.commit()
+                if match.id is not None:
+                    started_ids.append(match.id)
+                try:
+                    automation = SmsAutomationEngine(session, tournament, version.id)
+                    automation.handle_match_status_change(
+                        match=match,
+                        previous_status=previous,
+                        new_status="IN_PROGRESS",
+                    )
+                    if slot.id is not None:
+                        automation.handle_checkin_court_assigned(match=match, slot_id=slot.id)
+                except Exception:
+                    logger.exception(
+                        "SMS automation dynamic put-courts-on failed tournament=%s match=%s",
+                        tournament.id,
+                        match.id,
+                    )
+                continue
+            match.court_queued = True
+            session.add(match)
+        session.commit()
+    return started_ids
 
 
 def list_ready_assigned_matches(

@@ -3,7 +3,7 @@
 Back To Ready To Go keeps check-in. This action clears it and releases the live court.
 """
 
-from datetime import time
+from datetime import datetime, time
 
 from sqlmodel import Session, select
 
@@ -704,3 +704,85 @@ def test_manual_assign_cannot_bypass_checkin_reset(client, session: Session):
     session.expire_all()
     assert session.get(Match, match.id).runtime_status == "SCHEDULED"
     assert teams[0].id == match.team_a_id
+
+
+def _check_in_both_sides(session: Session, tournament_id: int, version_id: int, match: Match) -> None:
+    for side, team_id in (("A", match.team_a_id), ("B", match.team_b_id)):
+        session.add(
+            MatchCheckIn(
+                tournament_id=tournament_id,
+                schedule_version_id=version_id,
+                match_id=match.id,
+                team_id=team_id,
+                side=side,
+                team_checked_in=True,
+                checked_in_at=datetime.utcnow(),
+            )
+        )
+
+
+def test_put_courts_on_starts_dynamic_match_and_queues_the_later_one(session: Session):
+    tournament, version, _event, _teams, matches, slots = _setup_draft_for_move(session)
+    first, second = matches
+    second.match_type = "RR"
+    session.add(second)
+    later_slot = slots[2]
+    second_assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == second.id)).one()
+    second_assignment.slot_id = later_slot.id
+    session.add(second_assignment)
+    _check_in_both_sides(session, tournament.id, version.id, first)
+    _check_in_both_sides(session, tournament.id, version.id, second)
+    session.commit()
+
+    result = put_courts_on(session, session.get(Tournament, tournament.id), session.get(ScheduleVersion, version.id))
+    session.expire_all()
+
+    started = session.get(Match, first.id)
+    queued = session.get(Match, second.id)
+    assert started.runtime_status == "IN_PROGRESS"
+    assert started.court_queued is False
+    assert queued.runtime_status == "SCHEDULED"
+    assert queued.court_queued is True
+    assert first.id in result.started_match_ids
+    assert second.id not in result.started_match_ids
+    started_assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == first.id)).one()
+    assert started_assignment.assigned_by == "CHECKIN_PLACE"
+
+
+def test_put_courts_on_starts_later_dynamic_match_when_earlier_is_not_checked_in(session: Session):
+    tournament, version, _event, _teams, matches, slots = _setup_draft_for_move(session)
+    earlier, later = matches
+    later_assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == later.id)).one()
+    later_assignment.slot_id = slots[2].id
+    session.add(later_assignment)
+    _check_in_both_sides(session, tournament.id, version.id, later)
+    session.commit()
+
+    put_courts_on(session, session.get(Tournament, tournament.id), session.get(ScheduleVersion, version.id))
+    session.expire_all()
+
+    assert session.get(Match, earlier.id).runtime_status == "SCHEDULED"
+    started = session.get(Match, later.id)
+    assert started.runtime_status == "IN_PROGRESS"
+    assert started.court_queued is False
+
+
+def test_put_courts_on_queues_dynamic_match_behind_a_live_court(session: Session):
+    tournament, version, _event, _teams, matches, slots = _setup_draft_for_move(session)
+    live, waiting = matches
+    live.runtime_status = "IN_PROGRESS"
+    session.add(live)
+    waiting_assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == waiting.id)).one()
+    waiting_assignment.slot_id = slots[2].id
+    session.add(waiting_assignment)
+    _check_in_both_sides(session, tournament.id, version.id, waiting)
+    session.commit()
+
+    result = put_courts_on(session, session.get(Tournament, tournament.id), session.get(ScheduleVersion, version.id))
+    session.expire_all()
+
+    queued = session.get(Match, waiting.id)
+    assert queued.runtime_status == "SCHEDULED"
+    assert queued.court_queued is True
+    assert waiting.id not in result.started_match_ids
+    assert session.get(Match, live.id).runtime_status == "IN_PROGRESS"

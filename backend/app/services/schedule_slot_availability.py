@@ -63,6 +63,28 @@ def court_display_for_slot(slot: ScheduleSlot) -> str:
     return court_display_name(slot.court_label, slot.court_number)
 
 
+def court_number_for_named_court(court_name: str, slots: Iterable[ScheduleSlot]) -> Optional[int]:
+    """Court number for a desk drop.
+
+    Match the card label first. A court named Centerberg, or court 12 stored
+    as number 3, must not be looked up by concatenating the digits in the name.
+    """
+    expected = court_display_name(court_name)
+    for slot in slots:
+        if slot.court_number is None:
+            continue
+        if court_display_for_slot(slot) == expected:
+            return slot.court_number
+    digits = "".join(ch for ch in (court_name or "") if ch.isdigit())
+    if not digits:
+        return None
+    number = int(digits)
+    for slot in slots:
+        if slot.court_number == number:
+            return number
+    return None
+
+
 def all_desk_courts(
     court_labels: Iterable[str],
     grid_slots: Iterable[ScheduleSlot],

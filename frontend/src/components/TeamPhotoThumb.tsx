@@ -180,6 +180,7 @@ export function TeamPhotoThumb({
           data-photo-surface={surface}
           data-photo-frame={frame}
           data-photo-version={version}
+          draggable={false}
           src={src}
           alt="Official team photo"
           width={card ? undefined : size}

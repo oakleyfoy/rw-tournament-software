@@ -10399,9 +10399,17 @@ export default function TournamentDeskPage() {
     x: number
     y: number
   } | null>(null)
+  const dragCourtRef = useRef<string | null>(null)
+  const ghostPosRef = useRef({ x: 0, y: 0 })
+  const ghostElRef = useRef<HTMLDivElement | null>(null)
+  const courtUnderPointer = (event: PointerEvent): string | null => {
+    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('[data-ready-court]') as HTMLElement | null
+    return hovered?.dataset.readyCourt || null
+  }
   const handleAssignReadyMatchToCourt = useCallback(async (matchId: number, court: string) => {
     if (!tid || !data) return
     setError(null)
+    setCourtActionError(null)
     try {
       const snap = await placeMatchOnCourt(tid, {
         version_id: data.version_id,
@@ -10410,14 +10418,21 @@ export default function TournamentDeskPage() {
       })
       setData(snap)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to place match on court')
+      const message = e instanceof Error ? e.message : 'Failed to place match on court'
+      setError(message)
+      setCourtActionError(message)
     }
   }, [tid, data])
 
 
   const handlePointerDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    const target = event.target as HTMLElement | null
+    if (!target?.closest?.('[aria-label="View larger team photo"]')) event.preventDefault()
     setError(null)
+    setCourtActionError(null)
+    dragCourtRef.current = null
+    ghostPosRef.current = { x: event.clientX, y: event.clientY }
     setNativeDraggedReadyMatchId(rq.match_id)
     setPointerDragGhost({
       matchId: rq.match_id,
@@ -10432,40 +10447,43 @@ export default function TournamentDeskPage() {
   }, [])
 
   const handleNativeReadyDragEnd = useCallback(() => {
+    dragCourtRef.current = null
     setNativeDraggedReadyMatchId(null)
     setNativeDragOverCourt(null)
     setPointerDragGhost(null)
-  }, [nativeDraggedReadyMatchId, nativeDragOverCourt, pointerDragGhost])
+  }, [])
 
   useEffect(() => {
-    if (!pointerDragGhost) return
+    if (nativeDraggedReadyMatchId == null) return
 
     const handlePointerMove = (event: PointerEvent) => {
-      const hoveredCourtEl = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('[data-ready-court]') as HTMLElement | null
-      const hoveredCourt = hoveredCourtEl?.dataset.readyCourt || null
-      setPointerDragGhost((prev) => prev ? { ...prev, x: event.clientX, y: event.clientY } : null)
-      setNativeDragOverCourt(hoveredCourt)
+      const hoveredCourt = courtUnderPointer(event)
+      dragCourtRef.current = hoveredCourt
+      ghostPosRef.current = { x: event.clientX, y: event.clientY }
+      if (ghostElRef.current) {
+        ghostElRef.current.style.left = `${event.clientX + 12}px`
+        ghostElRef.current.style.top = `${event.clientY + 12}px`
+      }
+      setNativeDragOverCourt((prev) => (prev === hoveredCourt ? prev : hoveredCourt))
     }
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (event: PointerEvent) => {
       const matchId = nativeDraggedReadyMatchId
-      const court = nativeDragOverCourt
-      void (async () => {
-        handleNativeReadyDragEnd()
-        // Only an Open Courts card is a drop target. A miss or a busy court leaves the match where it was.
-        if (matchId != null && court) {
-          await handleAssignReadyMatchToCourt(matchId, court)
-        }
-      })()
+      const court = courtUnderPointer(event) || dragCourtRef.current
+      handleNativeReadyDragEnd()
+      // Only an Open Courts card is a drop target. A miss or a busy court leaves the match where it was.
+      if (matchId != null && court) {
+        void handleAssignReadyMatchToCourt(matchId, court)
+      }
     }
 
     window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', handlePointerUp, { once: true })
+    window.addEventListener('pointerup', handlePointerUp)
     return () => {
       window.removeEventListener('pointermove', handlePointerMove)
       window.removeEventListener('pointerup', handlePointerUp)
     }
-  }, [pointerDragGhost, nativeDraggedReadyMatchId, nativeDragOverCourt, handleNativeReadyDragEnd, handleAssignReadyMatchToCourt])
+  }, [nativeDraggedReadyMatchId, handleNativeReadyDragEnd, handleAssignReadyMatchToCourt])
 
   useEffect(() => {
     if (nativeDraggedReadyMatchId != null) {
@@ -11547,6 +11565,11 @@ export default function TournamentDeskPage() {
             ) : (
               <>
                 <div style={{ display: 'grid', gap: 14 }}>
+                  {courtActionError && (
+                    <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#ffebee', color: '#c62828', fontSize: 12, fontWeight: 700 }}>
+                      {courtActionError}
+                    </div>
+                  )}
                   {(data.checkin_court_warnings || []).length > 0 && (
                     <div style={{ border: '1px solid #ffe0b2', borderRadius: 8, backgroundColor: '#fff8e1', padding: '10px 12px' }}>
                       <div style={{ fontSize: 13, fontWeight: 800, color: '#e65100', marginBottom: 6 }}>
@@ -11633,9 +11656,6 @@ export default function TournamentDeskPage() {
                             >
                               {slotCheckInBusy ? 'Working…' : `Check In ${releaseTimeLabel || 'Time Slot'}`}
                             </button>
-                            {courtActionError && (
-                              <div style={{ fontSize: 11, color: '#c62828', textAlign: 'right' }}>{courtActionError}</div>
-                            )}
                           </div>
                         )}
                       </div>
@@ -11708,7 +11728,7 @@ export default function TournamentDeskPage() {
                           <span>Ready To Go — Assigned Court</span>
                           <button
                             type="button"
-                            disabled={putCourtsBusy || !isDraft || preassignedReadyQueueEntries.length === 0}
+                            disabled={putCourtsBusy || !isDraft || (preassignedReadyQueueEntries.length === 0 && filteredReadyQueue.length === 0)}
                             onClick={() => void handlePutCourtsOn()}
                             style={{
                               padding: '8px 14px',
@@ -11716,9 +11736,9 @@ export default function TournamentDeskPage() {
                               fontWeight: 700,
                               borderRadius: 6,
                               border: 'none',
-                              backgroundColor: putCourtsBusy || !isDraft || preassignedReadyQueueEntries.length === 0 ? '#d1c4e9' : '#5e35b1',
+                              backgroundColor: putCourtsBusy || !isDraft || (preassignedReadyQueueEntries.length === 0 && filteredReadyQueue.length === 0) ? '#d1c4e9' : '#5e35b1',
                               color: '#fff',
-                              cursor: putCourtsBusy || !isDraft || preassignedReadyQueueEntries.length === 0 ? 'not-allowed' : 'pointer',
+                              cursor: putCourtsBusy || !isDraft || (preassignedReadyQueueEntries.length === 0 && filteredReadyQueue.length === 0) ? 'not-allowed' : 'pointer',
                               whiteSpace: 'nowrap',
                             }}
                           >
@@ -11811,10 +11831,11 @@ export default function TournamentDeskPage() {
                 </div>
                 {pointerDragGhost && (
                   <div
+                    ref={ghostElRef}
                     style={{
                       position: 'fixed',
-                      left: pointerDragGhost.x + 12,
-                      top: pointerDragGhost.y + 12,
+                      left: ghostPosRef.current.x + 12,
+                      top: ghostPosRef.current.y + 12,
                       width: 220,
                       pointerEvents: 'none',
                       zIndex: 9999,

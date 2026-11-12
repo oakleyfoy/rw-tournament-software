@@ -7,6 +7,7 @@ from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
     all_desk_courts,
     board_courts_for_slot_key,
+    court_number_for_named_court,
     current_desk_slot_key,
     desk_board_courts,
     desk_operational_slot_keys,
@@ -184,3 +185,17 @@ def test_board_courts_keep_all_open_at_current_playing_block():
     assert "Court 19" in courts
     assert "Court 22" in courts
     assert "Court 20" not in courts
+
+
+def test_court_number_for_named_court_uses_the_card_label():
+    center = _slot(start=time(10, 0), court_number=4)
+    center.court_label = "Centerberg"
+    remapped = _slot(start=time(10, 0), court_number=3)
+    remapped.court_label = "12"
+    numbered = _slot(start=time(10, 0), court_number=1)
+    slots = [center, remapped, numbered]
+
+    assert court_number_for_named_court("Centerberg", slots) == 4
+    assert court_number_for_named_court("Court 12", slots) == 3
+    assert court_number_for_named_court("Court 1", slots) == 1
+    assert court_number_for_named_court("Court 9", slots) is None

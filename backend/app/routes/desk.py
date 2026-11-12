@@ -78,6 +78,7 @@ from app.services.schedule_slot_availability import (
     CourtSlotUnavailableError,
     all_desk_courts,
     court_display_for_slot,
+    court_number_for_named_court,
     current_desk_slot_key,
     desk_operational_slot_keys,
     find_court_slot,
@@ -3073,9 +3074,6 @@ def place_match_on_court(
     if not match_fully_checked_in(session, match):
         raise HTTPException(status_code=409, detail="Both teams must be checked in before this match can be placed")
 
-    court_number = _court_number_from_label(payload.court_name)
-    if court_number is None:
-        raise HTTPException(status_code=400, detail="Court name is missing a number")
     assignment = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == payload.version_id,
@@ -3087,6 +3085,16 @@ def place_match_on_court(
     current_slot = session.get(ScheduleSlot, assignment.slot_id)
     if current_slot is None:
         raise HTTPException(status_code=400, detail="Assigned slot missing")
+
+    day_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.day_date == current_slot.day_date,
+        )
+    ).all()
+    court_number = court_number_for_named_court(payload.court_name, day_slots)
+    if court_number is None:
+        raise HTTPException(status_code=400, detail=f"{payload.court_name} has no slot on this day")
 
     court_slots = session.exec(
         select(ScheduleSlot)
