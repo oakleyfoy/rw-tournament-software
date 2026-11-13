@@ -17,6 +17,7 @@ from app.services.draw_plan_rules import get_valid_family_for_team_count, requir
 from app.services.rr_match_codes import rain_placement_bucket, rr_pool_code_for_match
 from app.services.schedule_sequence import _cons_flight_phase, _phase_for_match
 from app.routes.draw_builder import apply_rain_board_keeping_finals
+from app.routes.teams import swap_teams_in_open_matches
 from app.services.wf_12_rain_advancement import order_pool_teams, refresh_wf12_rain_placement
 from app.services.wf_12_rain_format import wf_12_rain_total_matches
 
@@ -390,3 +391,59 @@ def test_rain_rebuild_keeps_finished_waterfall_and_adds_default(session: Session
     assert default_match.runtime_status == "FINAL"
     session.refresh(by_seed[6])
     assert not by_seed[6].is_defaulted
+
+
+def test_swap_teams_keeps_finished_matches(session: Session):
+    tournament, version, event, teams = _seed_rain_event(session)
+    scott, oakley = teams[3], teams[11]
+    played = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WF_KEEP",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=scott.id,
+        team_b_id=teams[0].id,
+        placeholder_side_a="Scott",
+        placeholder_side_b="Other",
+        runtime_status="FINAL",
+        winner_team_id=scott.id,
+        score_json={"display": "9-7"},
+    )
+    open_match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="RR_OPEN",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=120,
+        team_a_id=scott.id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="Scott",
+        placeholder_side_b="Other",
+        runtime_status="SCHEDULED",
+    )
+    session.add(played)
+    session.add(open_match)
+    session.commit()
+
+    result = swap_teams_in_open_matches(session, event.id, scott.id, oakley.id)
+    assert result.matches_updated == 1
+    assert result.finals_left_alone == 1
+    session.refresh(played)
+    session.refresh(open_match)
+    session.refresh(scott)
+    session.refresh(oakley)
+    assert played.team_a_id == scott.id
+    assert played.winner_team_id == scott.id
+    assert open_match.team_a_id == oakley.id
+    assert open_match.placeholder_side_a == "T12"
+    assert scott.seed == 12
+    assert oakley.seed == 4

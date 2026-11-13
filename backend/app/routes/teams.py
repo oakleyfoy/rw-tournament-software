@@ -1478,3 +1478,89 @@ def inject_teams(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Injection failed: {str(e)}")
+
+
+class SwapTeamsRequest(BaseModel):
+    team_a_id: int
+    team_b_id: int
+
+
+class SwapTeamsResponse(BaseModel):
+    matches_updated: int
+    finals_left_alone: int
+    seeds_swapped: bool
+
+
+def swap_teams_in_open_matches(session: Session, event_id: int, team_a_id: int, team_b_id: int) -> SwapTeamsResponse:
+    """Exchange two teams in every match that has not been played, and exchange their seeds.
+
+    Finished matches stay as they were scored.
+    """
+    if team_a_id == team_b_id:
+        raise HTTPException(status_code=422, detail="Pick two different teams")
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    first = session.get(Team, team_a_id)
+    second = session.get(Team, team_b_id)
+    if not first or first.event_id != event_id or not second or second.event_id != event_id:
+        raise HTTPException(status_code=404, detail="Both teams must belong to this event")
+
+    matches = list(session.exec(select(Match).where(Match.event_id == event_id)).all())
+    updated = 0
+    left = 0
+    labels = {
+        first.id: first.display_name or first.name,
+        second.id: second.display_name or second.name,
+    }
+    swapped = {first.id: second.id, second.id: first.id}
+
+    def _side(current_id, placeholder):
+        if current_id not in swapped:
+            return current_id, placeholder
+        new_id = swapped[current_id]
+        return new_id, labels[new_id]
+
+    for match in matches:
+        if (match.runtime_status or "").upper() == "FINAL":
+            if match.team_a_id in swapped or match.team_b_id in swapped:
+                left += 1
+            continue
+        touched = False
+        new_a, ph_a = _side(match.team_a_id, match.placeholder_side_a)
+        new_b, ph_b = _side(match.team_b_id, match.placeholder_side_b)
+        if new_a != match.team_a_id or ph_a != match.placeholder_side_a:
+            match.team_a_id = new_a
+            match.placeholder_side_a = ph_a
+            touched = True
+        if new_b != match.team_b_id or ph_b != match.placeholder_side_b:
+            match.team_b_id = new_b
+            match.placeholder_side_b = ph_b
+            touched = True
+        if match.winner_team_id in swapped:
+            match.winner_team_id = swapped[match.winner_team_id]
+            touched = True
+        if touched:
+            session.add(match)
+            updated += 1
+
+    seed_a, seed_b = first.seed, second.seed
+    seeds_swapped = seed_a != seed_b
+    if seeds_swapped:
+        first.seed = None
+        session.add(first)
+        session.flush()
+        second.seed = seed_a
+        session.add(second)
+        session.flush()
+        first.seed = seed_b
+        session.add(first)
+
+    session.commit()
+    return SwapTeamsResponse(matches_updated=updated, finals_left_alone=left, seeds_swapped=seeds_swapped)
+
+
+@router.post("/events/{event_id}/teams/swap", response_model=SwapTeamsResponse)
+def swap_event_teams(event_id: int, request: SwapTeamsRequest, session: Session = Depends(get_session)):
+    """Swap two teams through the unplayed draw and exchange their seeds."""
+    return swap_teams_in_open_matches(session, event_id, request.team_a_id, request.team_b_id)
