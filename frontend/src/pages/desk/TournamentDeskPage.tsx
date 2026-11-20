@@ -9,6 +9,7 @@ import {
 import './checkinDeskLayout.css'
 import { TeamPhotoNameRow, TeamPhotoProvider, TeamPhotoThumb, useTeamPhotos } from '../../components/TeamPhotoThumb'
 import { uploadAndSetOfficialTeamPhoto } from '../../api/photography'
+import { useOfficialTeamPhotoPolling } from '../../lib/useOfficialTeamPhotoPolling'
 import {
   getEvents,
   getTournament,
@@ -134,11 +135,14 @@ import {
   RoundRobinResponse,
 } from '../../api/client'
 import {
+  CollisionDetection,
   DndContext,
   DragEndEvent,
   DragOverlay,
   DragStartEvent,
   PointerSensor,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
   useDroppable,
@@ -5008,18 +5012,28 @@ function DroppableCell({
   const { setNodeRef, isOver } = useDroppable({ id: `slot-${slotId}` })
   return (
     <td
-      ref={setNodeRef}
       style={{
-        padding: 3,
+        padding: 0,
         borderBottom: '1px solid #eee',
         borderRight: '1px solid #f0f0f0',
         backgroundColor: isOver ? '#e8f5e9' : baseBackgroundColor,
         verticalAlign: 'top',
-        minWidth: 130,
-        transition: 'background-color 0.15s',
+        minWidth: 0,
+        height: '1px',
       }}
     >
-      {children}
+      <div
+        ref={setNodeRef}
+        style={{
+          minHeight: 44,
+          height: '100%',
+          padding: 3,
+          boxSizing: 'border-box',
+          transition: 'background-color 0.15s',
+        }}
+      >
+        {children}
+      </div>
     </td>
   )
 }
@@ -5145,15 +5159,23 @@ function DeskGridTab({
   const [manageCourtOpen, setManageCourtOpen] = useState(false)
   const [allCourtLabels, setAllCourtLabels] = useState<string[]>([])
   const [gridToast, setGridToast] = useState<string | null>(null)
+  const [slotOverrides, setSlotOverrides] = useState<Record<number, number>>({})
+  const ignoreBackdropClick = useRef(false)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  // The cell under the pointer wins. A wide card still overlapping its old cell must not count as the drop.
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointerHits = pointerWithin(args)
+    return pointerHits.length > 0 ? pointerHits : rectIntersection(args)
+  }
 
   // Build grid data from slots and matches – one section per day, each with its own courts
   const { days, matchBySlot, dayDataList } = useMemo(() => {
     const slots = data.slots || []
     const matchMap = new Map<number, DeskMatchItem>()
     for (const m of data.matches) {
-      if (m.slot_id != null) matchMap.set(m.slot_id, m)
+      const slotId = slotOverrides[m.match_id] ?? m.slot_id
+      if (slotId != null) matchMap.set(slotId, { ...m, slot_id: slotId })
     }
 
     const daySet = new Set<string>()
@@ -5194,7 +5216,7 @@ function DeskGridTab({
     })
 
     return { days: sortedDays, matchBySlot: matchMap, dayDataList }
-  }, [data.slots, data.matches, allCourtLabels])
+  }, [data.slots, data.matches, allCourtLabels, slotOverrides])
 
   useEffect(() => {
     if (days.length > 0 && !selectedDay) {
@@ -5268,6 +5290,25 @@ function DeskGridTab({
     setDraggedMatch(m || null)
   }
 
+  const holdSlots = (overrides: Record<number, number>) => {
+    setSlotOverrides(prev => ({ ...prev, ...overrides }))
+  }
+
+  const releaseSlots = (matchIds: number[]) => {
+    setSlotOverrides(prev => {
+      const next = { ...prev }
+      for (const id of matchIds) delete next[id]
+      return next
+    })
+  }
+
+  const armBackdrop = () => {
+    ignoreBackdropClick.current = true
+    window.setTimeout(() => {
+      ignoreBackdropClick.current = false
+    }, 400)
+  }
+
   const handleDragEnd = async (event: DragEndEvent) => {
     setDraggedMatch(null)
     const { active, over } = event
@@ -5283,11 +5324,26 @@ function DeskGridTab({
     if (match.slot_id === targetSlotId) return
 
     const occupant = matchBySlot.get(targetSlotId)
-    if (occupant) {
-      setSwapModal({ draggedMatch: match, occupantMatch: occupant, targetSlotId })
+    if (occupant && occupant.match_id !== match.match_id && match.slot_id != null) {
+      const fromSlot = match.slot_id
+      holdSlots({ [match.match_id]: targetSlotId, [occupant.match_id]: fromSlot })
+      try {
+        await deskSwapMatches(tid, {
+          version_id: data.version_id,
+          match_a_id: match.match_id,
+          match_b_id: occupant.match_id,
+        })
+        showToast('Matches swapped')
+        await Promise.resolve(onRefresh())
+      } catch (err: any) {
+        showToast(err?.detail || err?.message || 'Swap failed')
+      } finally {
+        releaseSlots([match.match_id, occupant.match_id])
+      }
       return
     }
 
+    let held = false
     try {
       const conflicts = await checkDeskConflicts(tid, {
         version_id: data.version_id,
@@ -5296,25 +5352,46 @@ function DeskGridTab({
         target_slot_id: targetSlotId,
       })
       if (conflicts.conflicts.length > 0) {
+        armBackdrop()
         setConflictModal({ conflicts: conflicts.conflicts, matchId: match.match_id, targetSlotId })
         return
       }
+      holdSlots({ [match.match_id]: targetSlotId })
+      held = true
       await deskMoveMatch(tid, match.match_id, {
         version_id: data.version_id,
         target_slot_id: targetSlotId,
       })
       showToast(`Match #${match.match_number} moved`)
-      onRefresh()
+      await Promise.resolve(onRefresh())
     } catch (err: any) {
-      const detail = err?.detail || err?.message || 'Move failed'
+      const body = err?.detail
+      const detail = (body && typeof body === 'object' && body.detail && typeof body.detail === 'object')
+        ? body.detail
+        : (body || err?.message || 'Move failed')
       if (typeof detail === 'object' && detail.occupant_match_id) {
         const occ = data.matches.find(m => m.match_id === detail.occupant_match_id)
-        if (occ) {
-          setSwapModal({ draggedMatch: match, occupantMatch: occ, targetSlotId })
+        if (occ && match.slot_id != null) {
+          holdSlots({ [match.match_id]: targetSlotId, [occ.match_id]: match.slot_id })
+          try {
+            await deskSwapMatches(tid, {
+              version_id: data.version_id,
+              match_a_id: match.match_id,
+              match_b_id: occ.match_id,
+            })
+            showToast('Matches swapped')
+            await Promise.resolve(onRefresh())
+          } catch (swapErr: any) {
+            showToast(swapErr?.detail || swapErr?.message || 'Swap failed')
+          } finally {
+            releaseSlots([match.match_id, occ.match_id])
+          }
           return
         }
       }
       showToast(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    } finally {
+      if (held) releaseSlots([match.match_id])
     }
   }
 
@@ -5577,7 +5654,7 @@ function DeskGridTab({
       </div>
 
       {/* Grid – all days stacked, drag across days within one DndContext */}
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         {dayDataList.map(({ day, courtNumbers, courtLabels, timeRows }) => (
           <div key={day} id={`desk-grid-day-${day}`} style={{ marginBottom: 32 }}>
             {/* Day header */}
@@ -5745,7 +5822,7 @@ function DeskGridTab({
       {/* Conflict warning modal */}
       {conflictModal && (
         <>
-          <div onClick={() => setConflictModal(null)} style={{
+          <div onClick={() => { if (!ignoreBackdropClick.current) setConflictModal(null) }} style={{
             position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
             backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 1999,
           }} />
@@ -5808,7 +5885,7 @@ function DeskGridTab({
       {/* Swap confirmation modal */}
       {swapModal && (
         <>
-          <div onClick={() => setSwapModal(null)} style={{
+          <div onClick={() => { if (!ignoreBackdropClick.current) setSwapModal(null) }} style={{
             position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
             backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 1999,
           }} />
@@ -9680,7 +9757,7 @@ export default function TournamentDeskPage() {
   const [slotCheckInBusy, setSlotCheckInBusy] = useState(false)
   const [putCourtsBusy, setPutCourtsBusy] = useState(false)
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
-  const teamPhotoLive = { versions: {} as Record<number, string>, refresh: async () => undefined, showSaved: (_teamId: number, _version: string) => undefined }
+  const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -11166,7 +11243,7 @@ export default function TournamentDeskPage() {
   }
 
   return (
-    <TeamPhotoProvider value={{ photos: teamPhotoLive.versions, refresh: teamPhotoLive.refresh, showSaved: teamPhotoLive.showSaved, tournamentId: tid }}>
+    <TeamPhotoProvider value={{ photos: teamPhotoLive.versions, thumbUrls: teamPhotoLive.thumbUrls, refresh: teamPhotoLive.refresh, showSaved: teamPhotoLive.showSaved, tournamentId: tid }}>
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
       {/* Header */}
       <div style={{
