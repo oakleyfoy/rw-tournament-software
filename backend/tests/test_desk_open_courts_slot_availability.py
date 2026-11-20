@@ -720,3 +720,24 @@ def test_open_courts_show_current_and_next_slot_only(client, session):
     assert "Court 9" in noon_open
     court9 = [slot for slot in before_noon["available_slots"] if slot["court_name"] == "Court 9"]
     assert court9 and court9[0]["scheduled_time"] == "12:30 PM"
+
+
+def test_checkin_hour_shows_that_slot_and_the_next_even_with_scheduled_matches(client, session):
+    t, v, _teams, _match, _slots = _setup_open_courts_tournament(
+        session,
+        court1_times=(time(8, 30), time(9, 30), time(10, 30)),
+        court9_times=(time(10, 30),),
+        activity_time=time(9, 30),
+    )
+    _add_slot(session, t, v, FRIDAY, time(9, 30), 2)
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+
+    body = _snapshot(client, t.id, v.id)
+    assert body["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|09:30"
+    open_times = {
+        slot["court_name"]: slot["scheduled_time"] for slot in body["available_slots"]
+    }
+    assert open_times["Court 1"] == "9:30 AM"
+    assert open_times["Court 2"] == "9:30 AM"
+    assert open_times["Court 9"] == "10:30 AM"

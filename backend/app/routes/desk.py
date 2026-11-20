@@ -1735,7 +1735,6 @@ def _build_checkin_snapshot(
     checkin_board_court_set = set(checkin_board_courts)
     available_slots: List[AvailableCourtSlot] = []
     used_court: set[str] = set()
-    reserved_slots = preassigned_reservations(session, version.id)
 
     def _append_available_slot(slot: ScheduleSlot) -> None:
         court_name = court_display_for_slot(slot)
@@ -1745,10 +1744,8 @@ def _build_checkin_snapshot(
             return
         if court_name in active_courts or court_name in closed_courts:
             return
-        if preassigned_court_block_reason(slot, reserved_slots):
-            return
         a = assignment_by_slot.get(slot.id)
-        # Pre-assigned future matches should not block immediate assignment.
+        # A match that has not started does not take the court off this board.
         available_slots.append(
             AvailableCourtSlot(
                 slot_id=slot.id,
@@ -1760,8 +1757,16 @@ def _build_checkin_snapshot(
         )
         used_court.add(court_name)
 
-    # Current time, then the one slot after it. A 12:00-only court stays hidden at 8:00.
-    for key in open_court_slot_keys(ordered_slot_keys, current_board_key):
+    # Follow the hour staff are checking in, then the one slot after it.
+    # A ready 8:30 match keeps 8:30 as the start. Waiting-only 9:00 shows 9:00 and 10:00.
+    open_anchor = current_board_key
+    if not playing_slot_keys:
+        open_activity = set(ready_slot_keys) | set(waiting_slot_keys)
+        for key in ordered_slot_keys:
+            if key in open_activity:
+                open_anchor = key
+                break
+    for key in open_court_slot_keys(ordered_slot_keys, open_anchor):
         for s in grid_slots:
             if slot_key_for_slot(s) == key:
                 _append_available_slot(s)
@@ -3501,10 +3506,11 @@ def assign_ready_match_to_slot(
         if match_slot is not None
         else None
     )
-    keep_requested = payload.slot_id in slot_ids or (
-        match_slot is not None
-        and court_display_for_slot(target_slot) == target_court_name
-        and slot_key_for_slot(target_slot) == slot_key_for_slot(match_slot)
+    requested_is_match_time = (
+        match_slot is not None and slot_key_for_slot(target_slot) == slot_key_for_slot(match_slot)
+    )
+    keep_requested = requested_is_match_time or (
+        payload.slot_id in slot_ids and same_time_slot is None
     )
     if not keep_requested:
         # Prefer the court's cell at the match's own time. Only remap onto a

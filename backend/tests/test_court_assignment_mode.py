@@ -861,7 +861,7 @@ def test_preassigned_court_is_not_offered_until_the_reservation_ends(client, ses
     assert snap.status_code == 200, snap.text
     body = snap.json()
     offered_ids = {slot["slot_id"] for slot in body["available_slots"]}
-    assert reserved.id not in offered_ids
+    assert reserved.id in offered_ids
     assert overlap.id not in offered_ids
     assert open_court.id in offered_ids
     assert dynamic_match.id in {item["match_id"] for item in body["ready_queue"]}
