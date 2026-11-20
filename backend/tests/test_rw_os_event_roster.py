@@ -6,8 +6,13 @@ from sqlmodel import Session, select
 
 from app.models.event import Event, EventCategory
 from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
-from app.services.rw_os_event_roster import choose_rw_os_event, pull_event_players_from_rw_os
+from app.services.rw_os_event_roster import (
+    choose_rw_os_event,
+    pull_event_players_from_rw_os,
+    sync_existing_event_who_knows_who,
+)
 
 
 class _Client:
@@ -284,3 +289,106 @@ def test_pull_replaces_the_copied_roster_with_the_named_event(session: Session):
         (1, "Mike / Dee Dee"),
         (2, "Aaron / Wendy"),
     ]
+
+
+def test_pull_keeps_who_knows_who_inside_womens_and_mixed(session: Session):
+    tournament = Tournament(
+        name="Palm Springs 2026",
+        location="Rancho Las Palmas",
+        timezone="America/Los_Angeles",
+        start_date=date(2026, 12, 3),
+        end_date=date(2026, 12, 5),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    womens_a = Event(tournament_id=tournament.id, name="Women's A", category=EventCategory.womens, team_count=2)
+    womens_b = Event(tournament_id=tournament.id, name="Women's B", category=EventCategory.womens, team_count=2)
+    mixed = Event(tournament_id=tournament.id, name="Mixed", category=EventCategory.mixed, team_count=2)
+    session.add(womens_a)
+    session.add(womens_b)
+    session.add(mixed)
+    session.commit()
+    session.refresh(womens_a)
+    session.refresh(womens_b)
+    session.refresh(mixed)
+
+    def womens(key, name, rating):
+        return _team(key, name, "womens", rating)
+
+    client = _Client(
+        [{"tournamentId": 149, "eventName": "2026 Palm Springs"}],
+        {
+            149: {
+                "organizationSlug": "rw",
+                "tournamentId": 149,
+                "eventName": "2026 Palm Springs",
+                "teams": [
+                    womens("1/2", "Ann / Bea", 9.0),
+                    womens("3/4", "Cara / Dee", 8.5),
+                    womens("5/6", "Eve / Fay", 7.0),
+                    womens("7/8", "Gia / Hoa", 6.5),
+                    _team("11/12", "Ian / Joy", "mixed", 8.0),
+                    _team("13/14", "Ken / Lea", "mixed", 7.5),
+                ],
+                "whoKnowsWhoConnections": [
+                    {"drawKind": "womens", "teamAKey": "1/2", "teamBKey": "3/4"},
+                    {"drawKind": "womens", "teamAKey": "5/6", "teamBKey": "7/8"},
+                    {"drawKind": "womens", "teamAKey": "1/2", "teamBKey": "5/6"},
+                    {"drawKind": "mixed", "teamAKey": "11/12", "teamBKey": "13/14"},
+                ],
+            }
+        },
+    )
+
+    a_result = pull_event_players_from_rw_os(session, tournament, womens_a, client=client)
+    b_result = pull_event_players_from_rw_os(session, tournament, womens_b, client=client)
+    m_result = pull_event_players_from_rw_os(session, tournament, mixed, client=client)
+
+    assert a_result["who_knows_who"] == 1
+    assert b_result["who_knows_who"] == 1
+    assert m_result["who_knows_who"] == 1
+    assert len(session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == womens_a.id)).all()) == 1
+    assert len(session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == womens_b.id)).all()) == 1
+    assert len(session.exec(select(TeamAvoidEdge).where(TeamAvoidEdge.event_id == mixed.id)).all()) == 1
+
+
+def test_sync_who_knows_who_keeps_the_existing_draw(session: Session):
+    tournament = Tournament(
+        name="Palm Springs 2026",
+        location="Rancho Las Palmas",
+        timezone="America/Los_Angeles",
+        start_date=date(2026, 12, 3),
+        end_date=date(2026, 12, 5),
+        source_rw_os_tournament_id=149,
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    event = Event(tournament_id=tournament.id, name="Women's A", category=EventCategory.womens, team_count=2)
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    session.add(Team(event_id=event.id, name="Ann / Bea", display_name="Ann / Bea", seed=1, source_team_key="1/2"))
+    session.add(Team(event_id=event.id, name="Cara / Dee", display_name="Cara / Dee", seed=2, source_team_key="3/4"))
+    session.commit()
+
+    client = _Client(
+        [],
+        {
+            149: {
+                "whoKnowsWhoConnections": [
+                    {"drawKind": "womens", "teamAKey": "1/2", "teamBKey": "3/4"},
+                ]
+            }
+        },
+    )
+    assert sync_existing_event_who_knows_who(session, tournament, event, client=client) == 1
+    names = session.exec(select(Team).where(Team.event_id == event.id)).all()
+    assert sorted(team.display_name for team in names) == ["Ann / Bea", "Cara / Dee"]
+
+    class _Exploding:
+        def get_event(self, tournament_id):
+            raise AssertionError("should not fetch again")
+
+    assert sync_existing_event_who_knows_who(session, tournament, event, client=_Exploding()) == 1

@@ -2427,6 +2427,16 @@ export interface CombinedTeamImportResponse {
   warnings: string[]
 }
 
+export async function syncRwOsWhoKnowsWho(
+  tournamentId: number,
+  eventId: number
+): Promise<{ who_knows_who: number }> {
+  return fetchJson(
+    `${API_BASE_URL}/tournaments/${tournamentId}/events/${eventId}/teams/sync-who-knows-who`,
+    { method: 'POST' }
+  )
+}
+
 export async function pullRwOsEventPlayers(
   tournamentId: number,
   eventId: number
@@ -2435,6 +2445,7 @@ export async function pullRwOsEventPlayers(
   source_event_name: string
   imported_count: number
   retired_count: number
+  who_knows_who?: number
   team_names: string[]
 }> {
   return fetchJson(

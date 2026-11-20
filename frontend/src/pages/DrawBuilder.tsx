@@ -29,6 +29,7 @@ import {
   refreshRwOsImport,
   getEventTeams,
   getEventAvoidEdges,
+  syncRwOsWhoKnowsWho,
   getEventWhoKnowsWhoSummary,
   getTournamentWhoKnowsWhoSummary,
   type TournamentWhoKnowsWhoSummary,
@@ -468,6 +469,9 @@ function DrawBuilder() {
 
   const loadEventWkwNeighbors = async (eventId: number) => {
     try {
+      if (tournamentId) {
+        await syncRwOsWhoKnowsWho(tournamentId, eventId).catch(() => undefined)
+      }
       const edges = await getEventAvoidEdges(eventId)
       setEventWkwNeighborMaps((prev) => ({
         ...prev,

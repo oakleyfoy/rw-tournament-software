@@ -391,6 +391,7 @@ class RwOsRosterPullResponse(BaseModel):
     source_event_name: str
     imported_count: int
     retired_count: int
+    who_knows_who: int = 0
     team_names: List[str]
 
 
@@ -1224,6 +1225,30 @@ def pull_rw_os_event_players(
     except RwOsClientError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return RwOsRosterPullResponse(**result)
+
+
+@router.post("/tournaments/{tournament_id}/events/{event_id}/teams/sync-who-knows-who")
+def sync_rw_os_who_knows_who(
+    tournament_id: int,
+    event_id: int,
+    session: Session = Depends(get_session),
+):
+    """Fill Avoid edges for the teams already pulled, without replacing them."""
+    from app.models.tournament import Tournament
+    from app.services.rw_os_client import RwOsClientError
+    from app.services.rw_os_event_roster import sync_existing_event_who_knows_who
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    event = session.get(Event, event_id)
+    if not event or event.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        count = sync_existing_event_who_knows_who(session, tournament, event)
+    except RwOsClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {"who_knows_who": count}
 
 
 @router.post(

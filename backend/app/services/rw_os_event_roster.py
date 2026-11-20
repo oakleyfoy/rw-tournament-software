@@ -9,10 +9,12 @@ from sqlmodel import Session, select
 
 from app.models.event import Event, EventCategory
 from app.models.team import Team
+from app.models.team_avoid_edge import TeamAvoidEdge
 from app.models.tournament import Tournament
 from app.services.canonical_teams import sort_teams_for_planning
 from app.services.rw_os_client import RwOsClient
 from app.services.rw_os_import import parse_teams
+from app.services.rw_os_wkw import RW_OS_WKW_REASON, parse_who_knows_who_connections, sync_rw_os_wkw_edges_for_event
 from app.services.rw_os_roster_projection import (
     RosterProjectionResult,
     _create_source_team,
@@ -218,6 +220,15 @@ def pull_event_players_from_rw_os(
 
     event.team_count = len(created)
     session.add(event)
+    who_knows_who = 0
+    connections = parse_who_knows_who_connections(payload)
+    if connections is not None and event.id is not None:
+        who_knows_who = sync_rw_os_wkw_edges_for_event(
+            session,
+            event_id=event.id,
+            draw_kind=_category_value(event),
+            connections=connections,
+        ).current
     tournament.source_rw_os_tournament_id = source_id
     if not tournament.source_rw_os_organization_slug:
         tournament.source_rw_os_organization_slug = str(payload.get("organizationSlug") or "rw")
@@ -228,5 +239,43 @@ def pull_event_players_from_rw_os(
         "source_event_name": str(payload.get("eventName") or chosen.get("eventName") or ""),
         "imported_count": len(created),
         "retired_count": len(current),
+        "who_knows_who": who_knows_who,
         "team_names": [team.display_name or team.name for team in created],
     }
+
+
+def sync_existing_event_who_knows_who(
+    session: Session,
+    tournament: Tournament,
+    event: Event,
+    *,
+    client: Optional[RwOsClient] = None,
+) -> int:
+    """Copy Who Knows Who onto the teams already on this event.
+
+    Pull already stored each team's RW-OS key. This does not replace the roster
+    or the draw. A later open skips the RW-OS fetch once those edges exist.
+    """
+    if event.id is None or tournament.source_rw_os_tournament_id is None:
+        return 0
+    existing = session.exec(
+        select(TeamAvoidEdge).where(
+            TeamAvoidEdge.event_id == event.id,
+            TeamAvoidEdge.reason == RW_OS_WKW_REASON,
+        )
+    ).all()
+    if existing:
+        return len(existing)
+    rw_client = client or RwOsClient()
+    payload = rw_client.get_event(int(tournament.source_rw_os_tournament_id))
+    connections = parse_who_knows_who_connections(payload)
+    if not connections:
+        return 0
+    count = sync_rw_os_wkw_edges_for_event(
+        session,
+        event_id=event.id,
+        draw_kind=_category_value(event),
+        connections=connections,
+    ).current
+    session.commit()
+    return count

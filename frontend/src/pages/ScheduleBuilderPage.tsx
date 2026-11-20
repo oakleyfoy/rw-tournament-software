@@ -275,8 +275,10 @@ export default function ScheduleBuilderPage() {
     setPullingRwOsFor(eventId)
     try {
       const result = await pullRwOsEventPlayers(tournamentId, eventId)
+      const connections = result.who_knows_who ?? 0
       showToast(
-        `Pulled ${result.imported_count} teams from ${result.source_event_name}`,
+        `Pulled ${result.imported_count} teams from ${result.source_event_name}` +
+          ` (${connections} Who Knows Who connection${connections === 1 ? '' : 's'})`,
         'success'
       )
       await handleLoadTeams(eventId)
