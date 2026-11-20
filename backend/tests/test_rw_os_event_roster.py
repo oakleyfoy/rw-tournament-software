@@ -49,6 +49,59 @@ def test_palm_springs_2026_matches_rw_os_year_first():
     assert chosen["tournamentId"] == 149
 
 
+def test_womens_a_pulls_only_that_draw_when_two_womens_events_exist(session: Session):
+    tournament = Tournament(
+        name="Palm Springs 2026",
+        location="Rancho Las Palmas",
+        timezone="America/Los_Angeles",
+        start_date=date(2026, 12, 3),
+        end_date=date(2026, 12, 5),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    womens_a = Event(
+        tournament_id=tournament.id,
+        name="Women's A",
+        category=EventCategory.womens,
+        team_count=32,
+    )
+    womens_b = Event(
+        tournament_id=tournament.id,
+        name="Women's B",
+        category=EventCategory.womens,
+        team_count=28,
+    )
+    session.add(womens_a)
+    session.add(womens_b)
+    session.commit()
+    session.refresh(womens_a)
+
+    def team(key, name, label, rating):
+        row = _team(key, name, "womens", rating)
+        row["drawLabel"] = label
+        return row
+
+    client = _Client(
+        [{"tournamentId": 149, "eventName": "2026 Palm Springs"}],
+        {
+            149: {
+                "organizationSlug": "rw",
+                "tournamentId": 149,
+                "eventName": "2026 Palm Springs",
+                "teams": [
+                    team("1/2", "Ann / Bea", "Women's A", 9.0),
+                    team("3/4", "Cara / Dee", "Women's B", 7.0),
+                ],
+            }
+        },
+    )
+
+    result = pull_event_players_from_rw_os(session, tournament, womens_a, client=client)
+    assert result["imported_count"] == 1
+    assert result["team_names"] == ["Ann / Bea"]
+
+
 def test_event_name_cancun_beats_a_wild_dunes_tournament_name():
     events = [
         {"tournamentId": 148, "eventName": "2026 Wild Dunes"},

@@ -30,6 +30,10 @@ def _compact(value: str) -> str:
     return " ".join((value or "").casefold().split())
 
 
+def _draw_key(value: str) -> str:
+    return _compact(value).replace("'", "").replace("’", "")
+
+
 def _without_years(value: str) -> str:
     return " ".join(part for part in _compact(value).split() if not _YEAR.match(part))
 
@@ -90,14 +94,17 @@ def _teams_for_event(payload: dict[str, Any], event: Event, session: Session) ->
         for team in parse_teams(list(payload.get("teams") or []))
         if team.bucket == "active" and team.draw_kind == category and team.team_key
     ]
-    label = _compact(event.name)
-    labeled = [team for team in active if _compact(team.draw_label) == label]
+    label = _draw_key(event.name)
+    labeled = [team for team in active if _draw_key(team.draw_label) == label]
     if labeled:
         return sort_teams_for_planning(labeled)
     if _other_events_in_category(session, event):
+        labels = sorted({team.draw_label for team in active if team.draw_label})
+        shown = ", ".join(labels) or "none"
         raise ValueError(
             f"{event.name} is one of several {category} events. "
-            "Name this event after its RW-OS draw before pulling players."
+            f"RW-OS draw names for this category: {shown}. "
+            "Name this event to match one of those draws, then pull again."
         )
     if not active:
         source_name = str(payload.get("eventName") or "RW-OS")
