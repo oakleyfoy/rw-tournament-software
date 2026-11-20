@@ -5555,7 +5555,7 @@ function DeskGridTab({
     try {
       const resp = await deskDeleteCourt(tid, courtLabel, {
         version_id: data.version_id,
-        delete_matching_slots: true,
+        delete_matching_slots: deleteMatchingSlots,
       })
       showToast(
         resp.removed_slots > 0
