@@ -16,6 +16,16 @@ export function photoVersionsFromSummaries(
   return next
 }
 
+export function photoThumbUrlsFromSummaries(
+  rows: Array<Pick<OfficialPhotoSummary, 'team_id'> & { thumb_url?: string | null }>,
+): Record<number, string> {
+  const next: Record<number, string> = {}
+  for (const row of rows) {
+    if (row.thumb_url) next[row.team_id] = row.thumb_url
+  }
+  return next
+}
+
 export function samePhotoVersions(left: Record<number, string>, right: Record<number, string>): boolean {
   const leftKeys = Object.keys(left)
   const rightKeys = Object.keys(right)
@@ -43,12 +53,19 @@ export function useOfficialTeamPhotoPolling(
   const listPhotosRef = useRef<OfficialPhotoLister>(options?.listPhotos ?? listOfficialTeamPhotos)
   listPhotosRef.current = options?.listPhotos ?? listOfficialTeamPhotos
   const [versions, setVersions] = useState<Record<number, string>>({})
+  const [thumbUrls, setThumbUrls] = useState<Record<number, string>>({})
   const inFlightRef = useRef(false)
   const epochRef = useRef(0)
 
   const showSaved = useCallback((teamId: number, version: string) => {
     epochRef.current += 1
     setVersions((current) => withPhotoVersion(current, teamId, version))
+    setThumbUrls((current) => {
+      if (!current[teamId]) return current
+      const next = { ...current }
+      delete next[teamId]
+      return next
+    })
   }, [])
 
   const refresh = useCallback(async () => {
@@ -59,7 +76,9 @@ export function useOfficialTeamPhotoPolling(
       const rows = await listPhotosRef.current(tournamentId)
       if (started !== epochRef.current) return
       const next = photoVersionsFromSummaries(rows)
+      const nextThumbs = photoThumbUrlsFromSummaries(rows)
       setVersions((current) => (samePhotoVersions(current, next) ? current : next))
+      setThumbUrls((current) => (samePhotoVersions(current, nextThumbs) ? current : nextThumbs))
     } catch {
       // A missed poll keeps the photographs already on screen.
     } finally {
@@ -76,5 +95,5 @@ export function useOfficialTeamPhotoPolling(
     return () => window.clearInterval(timer)
   }, [intervalMs, refresh, tournamentId])
 
-  return { versions, refresh, showSaved }
+  return { versions, thumbUrls, refresh, showSaved }
 }

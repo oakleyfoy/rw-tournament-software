@@ -5,6 +5,7 @@ import { officialTeamPhotoContentUrl, officialTeamPhotoThumbUrl } from '../api/p
 
 export interface TeamPhotoContextValue {
   photos: Record<number, string>
+  thumbUrls?: Record<number, string>
   refresh: () => Promise<void>
   showSaved?: (teamId: number, version: string) => void
   tournamentId: number | null
@@ -12,6 +13,7 @@ export interface TeamPhotoContextValue {
 
 const TeamPhotoContext = createContext<TeamPhotoContextValue>({
   photos: {},
+  thumbUrls: {},
   refresh: async () => undefined,
   showSaved: () => undefined,
   tournamentId: null,
@@ -64,13 +66,6 @@ function Placeholder({ size, surface, frame }: { size: number; surface?: string;
   )
 }
 
-function photoSources(teamId: number, version: string, frame: 'square' | 'card'): string[] {
-  const thumb = officialTeamPhotoThumbUrl(teamId, version)
-  const content = officialTeamPhotoContentUrl(teamId, version)
-  // The photographer card needs the stored photograph. The desk keeps the small thumb.
-  return frame === 'card' ? [content, thumb] : [thumb]
-}
-
 export function TeamPhotoThumb({
   teamId,
   size = 28,
@@ -82,15 +77,14 @@ export function TeamPhotoThumb({
   surface?: string
   frame?: 'square' | 'card'
 }) {
-  // Check-in, scoring, and player pages do not load photographs.
-  // The print center is the only place those files are opened.
-  if (surface !== 'photographer') return null
-  const { photos } = useTeamPhotos()
+  const { photos, thumbUrls } = useTeamPhotos()
   const version = teamId != null ? photos[teamId] : undefined
+  const directThumb = teamId != null ? thumbUrls?.[teamId] : undefined
   const [src, setSrc] = useState<string | null>(null)
   const [loadedVersion, setLoadedVersion] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState(false)
+  const [fullSrc, setFullSrc] = useState<string | null>(null)
 
   useEffect(() => {
     if (teamId == null || !version) {
@@ -98,10 +92,18 @@ export function TeamPhotoThumb({
       setLoadedVersion(null)
       setFailed(false)
       setOpen(false)
+      setFullSrc(null)
       return
     }
-    const urls = photoSources(teamId, version, frame)
-    const cached = urls.map((url) => objectUrlCache.get(url)).find((url): url is string => Boolean(url))
+    setFullSrc(null)
+    if (directThumb) {
+      setSrc(directThumb)
+      setLoadedVersion(version)
+      setFailed(false)
+      return
+    }
+    const url = officialTeamPhotoThumbUrl(teamId, version)
+    const cached = objectUrlCache.get(url)
     if (cached) {
       setSrc(cached)
       setLoadedVersion(version)
@@ -112,35 +114,61 @@ export function TeamPhotoThumb({
     const token = getAuthToken()
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined
     const load = async () => {
-      for (const url of urls) {
-        try {
-          const response = await fetch(url, { headers })
-          if (!response.ok) continue
-          const blob = await response.blob()
-          if (cancelled) return
-          if (!blob.size) continue
-          const objectUrl = URL.createObjectURL(blob)
-          objectUrlCache.set(url, objectUrl)
-          if (cancelled) return
-          setSrc(objectUrl)
-          setLoadedVersion(version)
-          setFailed(false)
-          return
-        } catch {
-          // Try the other stored copy of this same official photo.
+      try {
+        const response = await fetch(url, { headers })
+        if (!response.ok) throw new Error('missing thumb')
+        const blob = await response.blob()
+        if (cancelled) return
+        if (!blob.size) throw new Error('empty thumb')
+        const objectUrl = URL.createObjectURL(blob)
+        objectUrlCache.set(url, objectUrl)
+        if (cancelled) return
+        setSrc(objectUrl)
+        setLoadedVersion(version)
+        setFailed(false)
+      } catch {
+        if (!cancelled) {
+          setFailed(true)
+          setSrc(null)
+          setLoadedVersion(null)
         }
-      }
-      if (!cancelled) {
-        setFailed(true)
-        setSrc(null)
-        setLoadedVersion(null)
       }
     }
     void load()
     return () => {
       cancelled = true
     }
-  }, [frame, teamId, version])
+  }, [directThumb, teamId, version])
+
+  useEffect(() => {
+    if (!open || frame !== 'card' || teamId == null || !version) return
+    const url = officialTeamPhotoContentUrl(teamId, version)
+    const cached = objectUrlCache.get(url)
+    if (cached) {
+      setFullSrc(cached)
+      return
+    }
+    let cancelled = false
+    const token = getAuthToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+    const load = async () => {
+      try {
+        const response = await fetch(url, { headers })
+        if (!response.ok) return
+        const blob = await response.blob()
+        if (cancelled || !blob.size) return
+        const objectUrl = URL.createObjectURL(blob)
+        objectUrlCache.set(url, objectUrl)
+        if (!cancelled) setFullSrc(objectUrl)
+      } catch {
+        // The card already shows the thumbnail. Leave the camera file unloaded.
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [frame, open, teamId, version])
 
   if (!version || failed || !src || loadedVersion !== version) {
     return <Placeholder size={size} surface={surface} frame={frame} />
@@ -222,7 +250,7 @@ export function TeamPhotoThumb({
           }}
         >
           <img
-            src={src}
+            src={frame === 'card' && fullSrc ? fullSrc : src}
             alt="Official team photo"
             style={{ maxWidth: '92vw', maxHeight: '92vh', objectFit: 'contain', borderRadius: 8 }}
           />

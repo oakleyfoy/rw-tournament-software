@@ -34,6 +34,7 @@ export interface OfficialPhotoSummary {
   team_id: number
   updated_at: string
   version: string
+  thumb_url?: string | null
 }
 
 export interface PhotographyAccess {
