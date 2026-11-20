@@ -102,6 +102,57 @@ def test_womens_a_pulls_only_that_draw_when_two_womens_events_exist(session: Ses
     assert result["team_names"] == ["Ann / Bea"]
 
 
+def test_one_womens_draw_splits_by_rating_into_a_then_b(session: Session):
+    tournament = Tournament(
+        name="Palm Springs 2026",
+        location="Rancho Las Palmas",
+        timezone="America/Los_Angeles",
+        start_date=date(2026, 12, 3),
+        end_date=date(2026, 12, 5),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    womens_a = Event(
+        tournament_id=tournament.id,
+        name="Women's A",
+        category=EventCategory.womens,
+        team_count=2,
+    )
+    womens_b = Event(
+        tournament_id=tournament.id,
+        name="Women's B",
+        category=EventCategory.womens,
+        team_count=1,
+    )
+    session.add(womens_a)
+    session.add(womens_b)
+    session.commit()
+    session.refresh(womens_a)
+    session.refresh(womens_b)
+
+    client = _Client(
+        [{"tournamentId": 149, "eventName": "2026 Palm Springs"}],
+        {
+            149: {
+                "organizationSlug": "rw",
+                "tournamentId": 149,
+                "eventName": "2026 Palm Springs",
+                "teams": [
+                    _team("1/2", "Ann / Bea", "womens", 9.0),
+                    _team("3/4", "Cara / Dee", "womens", 7.0),
+                    _team("5/6", "Eve / Fay", "womens", 8.0),
+                ],
+            }
+        },
+    )
+
+    top = pull_event_players_from_rw_os(session, tournament, womens_a, client=client)
+    assert top["team_names"] == ["Ann / Bea", "Eve / Fay"]
+    next_flight = pull_event_players_from_rw_os(session, tournament, womens_b, client=client)
+    assert next_flight["team_names"] == ["Cara / Dee"]
+
+
 def test_event_name_cancun_beats_a_wild_dunes_tournament_name():
     events = [
         {"tournamentId": 148, "eventName": "2026 Wild Dunes"},

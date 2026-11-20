@@ -81,10 +81,31 @@ def _category_value(event: Event) -> str:
     return category.value if isinstance(category, EventCategory) else str(category or "")
 
 
-def _other_events_in_category(session: Session, event: Event) -> bool:
+def _events_in_category(session: Session, event: Event) -> list[Event]:
     category = _category_value(event)
     rows = session.exec(select(Event).where(Event.tournament_id == event.tournament_id)).all()
-    return any(row.id != event.id and _category_value(row) == category for row in rows)
+    return sorted(
+        (row for row in rows if _category_value(row) == category),
+        key=lambda row: (_compact(row.name or ""), row.id or 0),
+    )
+
+
+def _shared_draw_slice(events: list[Event], event: Event, active: list) -> list:
+    """Split one RW-OS draw across local events.
+
+    Women's A comes before Women's B by name, so A receives the strongest teams
+    up to its team count and B receives the next slice.
+    """
+    ranked = sort_teams_for_planning(active)
+    cursor = 0
+    chosen: list = []
+    for sibling in events:
+        count = max(int(sibling.team_count or 0), 0)
+        chunk = ranked[cursor : cursor + count]
+        cursor += len(chunk)
+        if sibling.id == event.id:
+            chosen = chunk
+    return chosen
 
 
 def _teams_for_event(payload: dict[str, Any], event: Event, session: Session) -> list:
@@ -98,14 +119,27 @@ def _teams_for_event(payload: dict[str, Any], event: Event, session: Session) ->
     labeled = [team for team in active if _draw_key(team.draw_label) == label]
     if labeled:
         return sort_teams_for_planning(labeled)
-    if _other_events_in_category(session, event):
-        labels = sorted({team.draw_label for team in active if team.draw_label})
-        shown = ", ".join(labels) or "none"
-        raise ValueError(
-            f"{event.name} is one of several {category} events. "
-            f"RW-OS draw names for this category: {shown}. "
-            "Name this event to match one of those draws, then pull again."
-        )
+    events = _events_in_category(session, event)
+    if len(events) > 1:
+        named = [
+            sibling
+            for sibling in events
+            if any(_draw_key(sibling.name or "") == _draw_key(team.draw_label) for team in active)
+        ]
+        if named:
+            labels = sorted({team.draw_label for team in active if team.draw_label})
+            shown = ", ".join(labels) or "none"
+            raise ValueError(
+                f"{event.name} is one of several {category} events. "
+                f"RW-OS draw names for this category: {shown}. "
+                "Name this event to match one of those draws, then pull again."
+            )
+        chosen = _shared_draw_slice(events, event, active)
+        if not chosen:
+            raise ValueError(
+                f"{event.name} has no players left after the earlier {category} events take their fields."
+            )
+        return chosen
     if not active:
         source_name = str(payload.get("eventName") or "RW-OS")
         raise ValueError(f"{source_name} has no {category} players to pull.")
