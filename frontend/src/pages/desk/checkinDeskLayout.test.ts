@@ -51,7 +51,10 @@ describe('Check-In Desk layout changes', () => {
   it('keeps the four-column desk grids when team photos are shown', () => {
     expect(css).toMatch(/@media \(min-width:\s*1100px\)[\s\S]*repeat\(4/)
     expect(page).toContain("gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)'")
-    expect(page).toContain("gridTemplateColumns: 'repeat(10, minmax(0, 1fr))'")
+    expect(css).toContain('.checkin-court-board')
+    expect(css).toMatch(/repeat\(auto-fill,\s*minmax\(148px,\s*1fr\)\)/)
+    expect(page).toContain('className="checkin-court-board"')
+    expect(page).not.toContain("gridTemplateColumns: 'repeat(10, minmax(0, 1fr))'")
     expect(page.match(/data-ready-court=/g)).toHaveLength(1)
     expect(page).toContain("gridTemplateColumns: 'auto auto auto auto auto'")
     expect(page).toContain('surface="check-in-desk"')

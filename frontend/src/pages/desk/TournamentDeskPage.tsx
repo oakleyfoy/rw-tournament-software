@@ -9371,6 +9371,7 @@ function CheckInCourtBoardCard({
         data-ready-court={canReceiveReady ? row.court : undefined}
         style={{
           alignSelf: 'start',
+          minWidth: 0,
           border: canReceiveReady && isOver ? '2px solid #1565c0' : '1px solid #d7dee5',
           borderRadius: 8,
           overflow: 'hidden',
@@ -9425,6 +9426,7 @@ function CheckInCourtBoardCard({
     <div
       style={{
       alignSelf: 'start',
+      minWidth: 0,
       border: isOver ? '2px solid #1565c0' : `1px solid ${tint?.border || '#c8e6c9'}`,
       borderRadius: 8,
       overflow: 'hidden',
@@ -11312,7 +11314,7 @@ export default function TournamentDeskPage() {
 
   return (
     <TeamPhotoProvider value={{ photos: teamPhotoLive.versions, thumbUrls: teamPhotoLive.thumbUrls, refresh: teamPhotoLive.refresh, showSaved: teamPhotoLive.showSaved, tournamentId: tid }}>
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5', maxWidth: '100%', overflowX: 'clip' }}>
       {/* Header */}
       <div style={{
         backgroundColor: '#1a237e',
@@ -11347,7 +11349,7 @@ export default function TournamentDeskPage() {
             <div style={{ fontSize: 12, opacity: 0.8 }}>Tournament Desk</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+        <div className="desk-header-actions">
           <DeskRwOsRefresh
             importId={rwOsImportId}
             onApplied={async () => {
@@ -11490,7 +11492,7 @@ export default function TournamentDeskPage() {
         ))}
       </div>
 
-      <div style={{ padding: '16px 24px' }}>
+      <div style={{ padding: '16px 24px', minWidth: 0, maxWidth: '100%' }}>
         {/* Courts Tab */}
         {false && activeTab === 'courts' && (
           <>
@@ -11735,7 +11737,7 @@ export default function TournamentDeskPage() {
                       {currentCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>No active courts in this view yet.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 8, alignItems: 'start' }}>
+                        <div className="checkin-court-board">
                           {currentCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
@@ -11763,7 +11765,7 @@ export default function TournamentDeskPage() {
                       {openCourtRows.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#90a4ae' }}>All courts currently have an assignment or are hidden by status.</div>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gap: 8, alignItems: 'start' }}>
+                        <div className="checkin-court-board">
                           {openCourtRows.map((row) => (
                             <CheckInCourtBoardCard
                               key={row.court}
@@ -11834,7 +11836,7 @@ export default function TournamentDeskPage() {
                                     {group.entries.length} match{group.entries.length !== 1 ? 'es' : ''}
                                   </div>
                                 </div>
-                                <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8, overflowX: 'auto' }}>
+                                <div style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr', gap: 8, overflowX: 'auto', minWidth: 0 }}>
                                   {group.entries.map((entry) => (
                                     <div key={entry.key} style={{
                                       border: '1px solid #d7dee5',

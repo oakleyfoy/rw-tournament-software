@@ -44,3 +44,24 @@
   gap: 4px;
   min-width: 0;
 }
+
+/* On Court / Open Courts cards wrap to the window instead of a fixed 10-across row. */
+.checkin-court-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  width: 100%;
+}
+
+.desk-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
