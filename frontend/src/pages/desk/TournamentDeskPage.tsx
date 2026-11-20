@@ -5024,6 +5024,7 @@ function DroppableCell({
     >
       <div
         ref={setNodeRef}
+        data-desk-slot={slotId}
         style={{
           minHeight: 44,
           height: '100%',
@@ -5161,6 +5162,31 @@ function DeskGridTab({
   const [gridToast, setGridToast] = useState<string | null>(null)
   const [slotOverrides, setSlotOverrides] = useState<Record<number, number>>({})
   const ignoreBackdropClick = useRef(false)
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const savePointer = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY }
+    }
+    window.addEventListener('pointermove', savePointer, true)
+    window.addEventListener('pointerup', savePointer, true)
+    return () => {
+      window.removeEventListener('pointermove', savePointer, true)
+      window.removeEventListener('pointerup', savePointer, true)
+    }
+  }, [])
+
+  const slotIdAtPointer = () => {
+    const point = pointerRef.current
+    if (!point) return null
+    for (const el of document.elementsFromPoint(point.x, point.y)) {
+      const node = el.closest('[data-desk-slot]')
+      if (!node) continue
+      const id = Number(node.getAttribute('data-desk-slot'))
+      if (Number.isFinite(id)) return id
+    }
+    return null
+  }
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   // The cell under the pointer wins. A wide card still overlapping its old cell must not count as the drop.
@@ -5312,14 +5338,17 @@ function DeskGridTab({
   const handleDragEnd = async (event: DragEndEvent) => {
     setDraggedMatch(null)
     const { active, over } = event
-    if (!over) return
 
     const match = (active.data.current as any)?.match as DeskMatchItem
     if (!match) return
 
-    const overId = String(over.id)
-    if (!overId.startsWith('slot-')) return
-    const targetSlotId = parseInt(overId.replace('slot-', ''), 10)
+    // The floating card and the library's rectangle can disagree on a wide
+    // scrolled grid. The cell under the pointer is the drop the operator made.
+    const pointedSlotId = slotIdAtPointer()
+    const overId = over ? String(over.id) : ''
+    const overSlotId = overId.startsWith('slot-') ? parseInt(overId.replace('slot-', ''), 10) : null
+    const targetSlotId = pointedSlotId ?? overSlotId
+    if (targetSlotId == null || Number.isNaN(targetSlotId)) return
 
     if (match.slot_id === targetSlotId) return
 
@@ -5799,7 +5828,7 @@ function DeskGridTab({
           </div>
         ))}
 
-        <DragOverlay>
+        <DragOverlay dropAnimation={null}>
           {draggedMatch && (
             <div style={{
               border: '2px solid #1a237e',
