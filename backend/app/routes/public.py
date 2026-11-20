@@ -471,6 +471,20 @@ def _r2_dest_lines(event_name: str, r2_role: str, r2_seq: int, r2_winner_count: 
     return f"Winner to {event_name} {win_div} — {letter}\nLoser to {event_name} {lose_div} — {letter}"
 
 
+def _event_template_type(event: Event) -> Optional[str]:
+    raw = getattr(event, "draw_plan_json", None)
+    if not raw:
+        return None
+    try:
+        import json as _json
+
+        plan = _json.loads(raw) or {}
+    except (TypeError, ValueError):
+        return None
+    value = plan.get("template_type") if isinstance(plan, dict) else None
+    return str(value) if value else None
+
+
 def _rr_pool_dest_lines(event_name: str, pool_count: int, teams_per_pool: int) -> str:
     """Destination label for WF_TO_POOLS dynamic events."""
     return f"Advances to {event_name} RR pool seeding\n({pool_count} pools × {teams_per_pool} teams)"
@@ -806,7 +820,15 @@ def public_waterfall(
 
         winner_dest = None
         loser_dest = None
-        if div_type == "roundrobin":
+        if _event_template_type(event) == "WF_28_BRACKETS_RR":
+            ranked_dest = (
+                f"Ranked 1–28 into {event.name}\nBrackets 1–3 and Division 4 round robin"
+            )
+            if winner_match:
+                winner_dest = ranked_dest
+            if loser_match:
+                loser_dest = ranked_dest
+        elif div_type == "roundrobin":
             pools_count, teams_per_pool = pool_config(event.team_count or 0)
             rr_dest = _rr_pool_dest_lines(event.name, pools_count, teams_per_pool)
             if winner_match:
@@ -1092,6 +1114,7 @@ _POOL_LABELS = {
     "POOLG": "Division VII",
     "POOLH": "Division VIII",
     "POOLI": "Division IX",
+    "DIV4": "Division 4",
 }
 
 

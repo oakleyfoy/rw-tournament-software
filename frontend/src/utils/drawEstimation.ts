@@ -8,6 +8,7 @@ export type TemplateType =
   | 'WF_14_TOP2_BYE'
   | 'WF_10_SIX_FOUR'
   | 'WF_12_RAIN_SIX'
+  | 'WF_28_BRACKETS_RR'
   | 'CANONICAL_32'
   | 'SPLIT_FLIGHTS';
 
@@ -241,6 +242,33 @@ export function calculateMatches(
       return {
         wfMatches: 0,
         standardMatches: 24,
+      }
+    }
+
+    case 'WF_28_BRACKETS_RR': {
+      if (teamCount !== 28) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_28_BRACKETS_RR requires exactly 28 teams, got ${teamCount}`,
+        }
+      }
+      if (wfRounds !== 2) {
+        return {
+          wfMatches: 0,
+          standardMatches: 0,
+          estimationError: `WF_28_BRACKETS_RR requires 2 waterfall rounds, got ${wfRounds}`,
+        }
+      }
+      // 3 brackets of 8 (G4=9, G5=12) plus one 4-team round robin (6 matches).
+      const bracketG4 = 9
+      const bracketG5 = 12
+      const division4 = 6
+      return {
+        wfMatches: wfRoundMatches(28) * 2,
+        standardMatches: 3 * bracketG5 + division4,
+        standardMatchesFor4: 3 * bracketG4 + division4,
+        standardMatchesFor5: 3 * bracketG5 + division4,
       }
     }
 

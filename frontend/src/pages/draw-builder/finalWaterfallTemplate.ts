@@ -6,6 +6,7 @@ const WATERFALL_TEMPLATES = new Set<TemplateType>([
   'WF_TO_BRACKETS_8',
   'WF_14_TOP2_BYE',
   'WF_10_SIX_FOUR',
+  'WF_28_BRACKETS_RR',
   'CANONICAL_32',
 ])
 

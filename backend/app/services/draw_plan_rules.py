@@ -19,6 +19,7 @@ TemplateFamily = Literal[
     "WF_14_TOP2_BYE",
     "WF_10_SIX_FOUR",
     "WF_12_RAIN_SIX",
+    "WF_28_BRACKETS_RR",
 ]
 
 # Allowed team counts per family
@@ -31,6 +32,9 @@ ALLOWED_TEAM_COUNTS: Dict[TemplateFamily, FrozenSet[int]] = {
     "WF_10_SIX_FOUR": frozenset({10}),
     # 12 is also a pools size. Pools stays the default; this rain draw is selected explicitly.
     "WF_12_RAIN_SIX": frozenset({12}),
+    # 28 is also a pools size. Pools stays the default; this draw is selected explicitly.
+    # Two waterfalls, rank 1-28, brackets for 1-8 / 9-16 / 17-24, round robin for 25-28.
+    "WF_28_BRACKETS_RR": frozenset({28}),
 }
 
 # All Phase 1 supported team counts (union of all families)
@@ -56,6 +60,7 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
     - WF_10_SIX_FOUR: always 1
     - WF_14_TOP2_BYE: always 2
     - WF_12_RAIN_SIX: always 0 (seeds are assigned by hand)
+    - WF_28_BRACKETS_RR: always 2
     """
     if family == "RR_ONLY":
         return 0
@@ -75,6 +80,8 @@ def required_wf_rounds(family: TemplateFamily, team_count: int) -> int:
         from app.services.wf_12_rain_format import REQUIRED_WF_ROUNDS
 
         return REQUIRED_WF_ROUNDS
+    elif family == "WF_28_BRACKETS_RR":
+        return 2
     return 0
 
 
@@ -178,9 +185,10 @@ def get_valid_family_for_team_count(team_count: int) -> Optional[TemplateFamily]
     Priority order (most specific first):
     1. WF_14_TOP2_BYE (14 only)
     2. WF_10_SIX_FOUR (10 only)
-    3. WF_TO_POOLS_DYNAMIC (8, 12, 16, 20, 24, 28) — default for 24
+    3. WF_TO_POOLS_DYNAMIC (8, 12, 16, 20, 24, 28) — default for 24 and 28
     4. WF_TO_BRACKETS_8 (32, and 24 when explicitly selected)
     5. RR_ONLY (4, 6)
+    WF_28_BRACKETS_RR is 28 teams only, and only when explicitly selected.
     """
     if team_count in ALLOWED_TEAM_COUNTS["WF_14_TOP2_BYE"]:
         return "WF_14_TOP2_BYE"

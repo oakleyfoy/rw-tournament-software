@@ -519,7 +519,7 @@ def _spec_for_rebuild(event: Event, live_matches: list[Match]) -> DrawPlanSpec:
 
 def _infer_live_guarantee(spec: DrawPlanSpec, live_matches: list[Match]) -> Optional[int]:
     """Return 4 or 5 when every bracket has that exact consolation set. Otherwise None."""
-    if resolve_event_family(spec) != "WF_TO_BRACKETS_8":
+    if resolve_event_family(spec) not in ("WF_TO_BRACKETS_8", "WF_28_BRACKETS_RR"):
         return None
     labels = _expected_bracket_labels(spec.team_count)
     if labels is None:
@@ -549,7 +549,7 @@ def _infer_live_guarantee(spec: DrawPlanSpec, live_matches: list[Match]) -> Opti
 
 def _expected_bracket_labels(team_count: int) -> Optional[list[str]]:
     """Bracket labels produced by the waterfall-to-brackets generator."""
-    if team_count == 24:
+    if team_count in (24, 28):
         return ["1", "2", "3"]
     if team_count == 8:
         bracket_count = 1

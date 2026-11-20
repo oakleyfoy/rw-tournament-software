@@ -31,6 +31,7 @@ export function getCompactDivisionLabel(matchCode?: string | null): string {
     return winPool[1] === 'A' ? 'DIV I' : 'DIV II'
   }
 
+  if (code.includes('_DIV4_')) return 'DIV IV'
   if (code.includes('_B1_')) return 'BR 1'
   if (code.includes('_B2_')) return 'BR 2'
   if (code.includes('_B3_')) return 'BR 3'

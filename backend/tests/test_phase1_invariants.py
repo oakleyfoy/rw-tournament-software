@@ -119,7 +119,7 @@ class TestPhase1RejectsUnsupported:
         assert any("WF_TO_POOLS_DYNAMIC supports" in e for e in inv.errors)
 
     def test_all_phase1_counts_covered(self):
-        """Verify Phase 1 team counts. 24 may be pools or three seeded brackets."""
+        """Verify Phase 1 team counts. 12, 24, and 28 each belong to two families."""
         from collections import Counter
 
         counts: Counter[int] = Counter()
@@ -127,5 +127,5 @@ class TestPhase1RejectsUnsupported:
             for team_count in family_counts:
                 counts[team_count] += 1
         overlaps = {team_count for team_count, n in counts.items() if n > 1}
-        assert overlaps == {24}
+        assert overlaps == {12, 24, 28}
         assert set(counts) == set(PHASE1_SUPPORTED_TEAM_COUNTS)

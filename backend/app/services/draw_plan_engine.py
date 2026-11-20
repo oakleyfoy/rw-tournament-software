@@ -170,6 +170,7 @@ EventFamily = Literal[
     "WF_14_TOP2_BYE",
     "WF_10_SIX_FOUR",
     "WF_12_RAIN_SIX",
+    "WF_28_BRACKETS_RR",
     "UNSUPPORTED",
 ]
 
@@ -320,6 +321,9 @@ def resolve_event_family(spec: DrawPlanSpec) -> EventFamily:
     if key == "WF_12_RAIN_SIX":
         return "WF_12_RAIN_SIX"
 
+    if key == "WF_28_BRACKETS_RR":
+        return "WF_28_BRACKETS_RR"
+
     # WF_TO_POOLS_4: 16 teams, 2 WF rounds, 4 pools of 4 (legacy, deprecated)
     if key == "WF_TO_POOLS_4":
         return "WF_TO_POOLS_4"
@@ -422,6 +426,33 @@ def _compute_wf_to_pools_dynamic(spec: DrawPlanSpec) -> InventoryCounts:
         rr_matches=rr_matches,
         total_matches=wf_matches + rr_matches,
         counts_by_stage={"WF": wf_matches, "RR_POOL": rr_matches},
+    )
+
+
+def _compute_wf_28_brackets_rr(spec: DrawPlanSpec) -> InventoryCounts:
+    """28 teams: 2 waterfall rounds, 3 brackets of 8, and a 4-team round robin."""
+    errors: List[str] = []
+    if spec.team_count != 28:
+        errors.append(f"WF_28_BRACKETS_RR requires team_count=28, got {spec.team_count}")
+    if spec.waterfall_rounds != 2:
+        errors.append(f"WF_28_BRACKETS_RR requires waterfall_rounds=2, got {spec.waterfall_rounds}")
+    if errors:
+        return InventoryCounts(errors=errors)
+
+    k = 3
+    wf_matches = (28 // 2) * 2
+    brk = bracket_inventory(spec.guarantee)
+    bracket_matches = k * brk["TOTAL"]
+    rr_matches = 6
+    counts_by_stage: dict = {"WF": wf_matches, "RR_POOL": rr_matches}
+    for stage in ("BRACKET_MAIN", "CONSOLATION_T1", "CONSOLATION_T2", "PLACEMENT"):
+        counts_by_stage[stage] = k * brk[stage]
+    return InventoryCounts(
+        wf_matches=wf_matches,
+        bracket_matches=bracket_matches,
+        rr_matches=rr_matches,
+        total_matches=wf_matches + bracket_matches + rr_matches,
+        counts_by_stage=counts_by_stage,
     )
 
 
@@ -602,6 +633,9 @@ def compute_inventory(spec: DrawPlanSpec) -> InventoryCounts:
     if family == "WF_12_RAIN_SIX":
         return _compute_wf_12_rain_six(spec)
 
+    if family == "WF_28_BRACKETS_RR":
+        return _compute_wf_28_brackets_rr(spec)
+
     if family == "WF_TO_BRACKETS_8":
         return _compute_wf_to_brackets_8(spec)
 
@@ -761,7 +795,7 @@ def generate_matches_for_event(
         from app.services.wf_12_rain_generator import generate_wf_12_rain_matches
 
         matches, warnings = generate_wf_12_rain_matches(session, version_id, spec, linked_team_ids)
-    elif family == "WF_TO_BRACKETS_8":
+    elif family in ("WF_TO_BRACKETS_8", "WF_28_BRACKETS_RR"):
         matches, warnings = _generate_wf_to_brackets_8(session, version_id, spec, linked_team_ids)
     else:
         warnings.append(f"Unsupported family {family} for event {spec.event_name}")
@@ -1281,17 +1315,21 @@ def _generate_wf_to_brackets_8(
     warnings = []
     n = spec.team_count
     wf_rounds = spec.waterfall_rounds
+    seeded_28 = spec.template_key == "WF_28_BRACKETS_RR"
 
-    if n not in (8, 12, 16, 24, 32):
+    if seeded_28 and (n != 28 or wf_rounds != 2):
+        warnings.append(f"WF_28_BRACKETS_RR requires 28 teams and 2 waterfall rounds, got {n} teams and {wf_rounds} rounds")
+        return matches, warnings
+    if not seeded_28 and n not in (8, 12, 16, 24, 32):
         warnings.append(f"WF_TO_BRACKETS_8 requires team_count in {{8,12,16,24,32}}, got {n}")
         return matches, warnings
 
-    # Determine bracket count
+    # Determine bracket count. 28 teams uses the same three seed blocks as 24.
     if n == 8:
         bracket_count = 1
     elif n in (12, 16):
         bracket_count = 2
-    elif n == 24:
+    elif n in (24, 28):
         bracket_count = 3
     else:  # 32
         bracket_count = 4
@@ -1456,7 +1494,7 @@ def _generate_wf_to_brackets_8(
         For 32-team fields, WW/WL still use ``W01``–``W08`` and LW/LL use ``L01``–``L08``
         (same ordinal slots as the green track; there is no second R2 octet in inventory).
         """
-        if n == 24:
+        if n in (24, 28):
             from app.utils.wf_seeding import wf24_quarterfinal_seeds
 
             bracket_index = {"1": 0, "2": 1, "3": 2}.get(bracket_label)
@@ -1480,7 +1518,7 @@ def _generate_wf_to_brackets_8(
             f"{event_prefix}_WF_R2_{token_type}{sb:02d}",
         )
 
-    bracket_labels = ["1", "2", "3"] if n == 24 else ["WW", "WL", "LW", "LL"][:bracket_count]
+    bracket_labels = ["1", "2", "3"] if n in (24, 28) else ["WW", "WL", "LW", "LL"][:bracket_count]
     matches_per_bracket = bracket_matches_for_guarantee(spec.guarantee)
 
     # Sort WF2 matches deterministically by sequence_in_round
@@ -1764,7 +1802,42 @@ def _generate_wf_to_brackets_8(
             spec.event_name,
         )
 
+    if seeded_28:
+        _append_wf28_division4(matches, spec, version_id)
+
     return matches, warnings
+
+
+def _append_wf28_division4(matches, spec: DrawPlanSpec, version_id: int) -> None:
+    """Seeds 25-28 play a 4-team round robin after the three brackets."""
+    from app.models.match import Match
+
+    prefix = spec.match_code_prefix
+    # Pool index 6 of size 4 is global seeds 25-28.
+    wired = wire_rr_match_placeholders(
+        pool_index=6,
+        pool_size=4,
+        pairings=rr_pairings_by_round(4),
+        enforce_top2_last=True,
+    )
+    for rr_idx, (round_index, seq_in_round, placeholder_a, placeholder_b) in enumerate(wired):
+        matches.append(
+            Match(
+                tournament_id=spec.tournament_id,
+                event_id=spec.event_id,
+                schedule_version_id=version_id,
+                match_code=f"{prefix}DIV4_RR_{rr_idx + 1:02d}",
+                match_type="RR",
+                round_number=round_index,
+                round_index=round_index,
+                sequence_in_round=seq_in_round,
+                team_a_id=None,
+                team_b_id=None,
+                placeholder_side_a=placeholder_a,
+                placeholder_side_b=placeholder_b,
+                duration_minutes=spec.standard_minutes,
+            )
+        )
 
 
 # -----------------------------------------------------------------------------

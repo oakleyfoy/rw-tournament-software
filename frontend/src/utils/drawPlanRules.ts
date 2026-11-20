@@ -12,7 +12,8 @@ export type TemplateFamily =
   | 'WF_TO_BRACKETS_8'
   | 'WF_14_TOP2_BYE'
   | 'WF_10_SIX_FOUR'
-  | 'WF_12_RAIN_SIX';
+  | 'WF_12_RAIN_SIX'
+  | 'WF_28_BRACKETS_RR';
 
 // Allowed team counts per family
 export const ALLOWED_TEAM_COUNTS: Record<TemplateFamily, readonly number[]> = {
@@ -23,6 +24,8 @@ export const ALLOWED_TEAM_COUNTS: Record<TemplateFamily, readonly number[]> = {
   WF_10_SIX_FOUR: [10],
   // 12 is also a pools size. Pools stays the default; the rain draw is selected explicitly.
   WF_12_RAIN_SIX: [12],
+  // 28 is also a pools size. Pools stays the default; this draw is selected explicitly.
+  WF_28_BRACKETS_RR: [28],
 } as const;
 
 // All Phase 1 supported team counts (union of all families; 24 is in two families)
@@ -34,6 +37,7 @@ export const PHASE1_SUPPORTED_TEAM_COUNTS = [
     ...ALLOWED_TEAM_COUNTS.WF_14_TOP2_BYE,
     ...ALLOWED_TEAM_COUNTS.WF_10_SIX_FOUR,
     ...ALLOWED_TEAM_COUNTS.WF_12_RAIN_SIX,
+    ...ALLOWED_TEAM_COUNTS.WF_28_BRACKETS_RR,
   ]),
 ] as const;
 
@@ -66,6 +70,8 @@ export function requiredWfRounds(family: TemplateFamily, _teamCount: number): nu
       return 1;
     case 'WF_12_RAIN_SIX':
       return 0;
+    case 'WF_28_BRACKETS_RR':
+      return 2;
     default:
       return 0;
   }

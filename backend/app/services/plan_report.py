@@ -185,6 +185,9 @@ def _compute_pools_info(spec: DrawPlanSpec, family: str) -> PoolsInfo:
         rr_matches = (n * (n - 1)) // 2
         return PoolsInfo(pool_count=1, pool_size=n, rr_rounds=rr_rounds, rr_matches=rr_matches)
 
+    if family == "WF_28_BRACKETS_RR":
+        return PoolsInfo(pool_count=1, pool_size=4, rr_rounds=3, rr_matches=6)
+
     if family in ("WF_TO_POOLS_4", "WF_TO_POOLS_DYNAMIC"):
         pools_count, teams_per_pool = pool_config(spec.team_count)
         rr_rounds = rr_round_count(teams_per_pool)
@@ -202,6 +205,16 @@ def _compute_pools_info(spec: DrawPlanSpec, family: str) -> PoolsInfo:
 
 def _compute_brackets_info(spec: DrawPlanSpec, family: str) -> BracketsInfo:
     """Compute bracket structural info from spec."""
+    if family == "WF_28_BRACKETS_RR":
+        brk = bracket_inventory(spec.guarantee)
+        k = 3
+        return BracketsInfo(
+            divisions=k,
+            main_matches=k * brk["BRACKET_MAIN"],
+            consolation_matches=k * (brk["CONSOLATION_T1"] + brk["CONSOLATION_T2"] + brk["PLACEMENT"]),
+            total_matches=k * brk["TOTAL"],
+        )
+
     if family != "WF_TO_BRACKETS_8":
         return BracketsInfo(divisions=0, main_matches=0, consolation_matches=0, total_matches=0)
 
@@ -368,6 +381,7 @@ def _check_bracket_placeholders(
         re.compile(r"^LOSER:.+$"),
         re.compile(r"^.+_WF_R\d+_[WL]\d+$"),
         re.compile(r"^TBD:.+$"),
+        re.compile(r"^WFSEED:\d+$"),
     ]
 
     for m in bracket_matches:

@@ -287,6 +287,7 @@ def finalize_draw_plan(event_id: int, request: FinalizeRequest, session: Session
         "WF_12_RAIN_SIX",
         "WF_TO_POOLS_DYNAMIC",
         "WF_TO_BRACKETS_8",
+        "WF_28_BRACKETS_RR",
     }
     if template_key in engine_templates:
         spec = build_spec_from_event(event, draw_plan)

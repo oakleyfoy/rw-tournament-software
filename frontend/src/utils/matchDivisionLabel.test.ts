@@ -12,6 +12,8 @@ describe('getCompactDivisionLabel', () => {
     expect(getCompactDivisionLabel('MIX_E1_B1_M1')).toBe('BR 1')
     expect(getCompactDivisionLabel('MIX_E1_B2_M1')).toBe('BR 2')
     expect(getCompactDivisionLabel('MIX_E1_B3_M1')).toBe('BR 3')
+    expect(getCompactDivisionLabel('MIX_E1_DIV4_RR_01')).toBe('DIV IV')
+    expect(getDivisionPhrase('MIX_E1_DIV4_RR_01')).toBe('Div IV')
     expect(getCompactDivisionLabel('WOM_WF_R1_01')).toBe('WF')
   })
 

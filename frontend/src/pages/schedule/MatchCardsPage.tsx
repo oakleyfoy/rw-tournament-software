@@ -524,7 +524,7 @@ export function MatchCardsPage() {
               const poolGroups = new Map<string, typeof rrMatches>()
               for (const m of rrMatches) {
                 const pool = (m.match_code.match(/POOL([A-Z0-9]+)_/i) ?? [])[1] ?? ''
-                const key = pool ? `Pool ${pool}` : 'Round Robin'
+                const key = /_DIV4_/i.test(m.match_code) ? 'Division 4' : pool ? `Pool ${pool}` : 'Round Robin'
                 const arr = poolGroups.get(key) ?? []
                 arr.push(m)
                 poolGroups.set(key, arr)
