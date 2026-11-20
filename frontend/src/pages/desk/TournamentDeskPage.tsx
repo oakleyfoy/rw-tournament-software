@@ -9309,6 +9309,8 @@ type CheckInCourtBoardRowData = {
   availableSlotsForCourt: AvailableCourtSlot[]
   availabilityWarning?: string | null
   stackedQueue: Array<{ key: string; label: string; rq: ReadyQueueItem }>
+  openSlotTime?: string | null
+  openSlotDay?: string | null
 }
 
 function CheckInCourtBoardCard({
@@ -9326,8 +9328,11 @@ function CheckInCourtBoardCard({
   onStackDragStart?: (event: React.PointerEvent<HTMLDivElement>, rq: ReadyQueueItem) => void
 }) {
   const match = row.displayMatch
+  const laterTint = row.openSlotTime
+    ? TIME_SLOT_TINTS[_hashSlotKey(`${row.openSlotDay || ''}|${row.openSlotTime}`) % TIME_SLOT_TINTS.length]
+    : null
   // Tint by scheduled start (day + time) so staff can spot long-running early slots at a glance.
-  const tint = match ? getTimeSlotTint(match) : getSlotTint(slotTintIndex)
+  const tint = match ? getTimeSlotTint(match) : (laterTint || getSlotTint(slotTintIndex))
   const canReceiveReady = !row.isClosed
   const isOver = canReceiveReady && nativeDragOverCourt === row.court
   const stackedQueue = row.stackedQueue || []
@@ -9375,7 +9380,7 @@ function CheckInCourtBoardCard({
       >
         {/* dark header */}
         <div style={{
-          backgroundColor: canReceiveReady && isOver ? '#1565c0' : '#546e7a',
+          backgroundColor: canReceiveReady && isOver ? '#1565c0' : (laterTint?.accent || '#546e7a'),
           color: '#fff',
           padding: '5px 8px',
           fontSize: 12,
@@ -9388,12 +9393,14 @@ function CheckInCourtBoardCard({
         }}>
           <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.court.replace(/^Court\s+/i, 'Ct ')}</span>
           {canReceiveReady && (
-            <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, whiteSpace: 'nowrap', flexShrink: 0 }}>Drop</span>
+            <span style={{ fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {row.openSlotTime || 'Drop'}
+            </span>
           )}
         </div>
         {/* body — same minHeight as playing card */}
         <div style={{
-          backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : '#fafcfe',
+          backgroundColor: canReceiveReady && isOver ? '#e3f2fd' : (laterTint?.bg || '#fafcfe'),
           padding: '5px 7px 6px',
           minHeight: 88,
           display: 'flex',
@@ -9401,10 +9408,13 @@ function CheckInCourtBoardCard({
           justifyContent: 'center',
           textAlign: 'center',
           fontSize: 10,
-          color: '#90a4ae',
-          fontStyle: 'italic',
+          color: laterTint ? laterTint.accent : '#90a4ae',
+          fontStyle: row.openSlotTime ? 'normal' : 'italic',
+          fontWeight: row.openSlotTime ? 700 : 400,
         }}>
-          {canReceiveReady ? 'Drag a ready match here' : (row.isClosed ? 'Closed' : 'Open — no slot')}
+          {canReceiveReady
+            ? (row.openSlotTime ? `${row.openSlotTime} slot` : 'Drag a ready match here')
+            : (row.isClosed ? 'Closed' : 'Open — no slot')}
         </div>
         {queueList}
       </div>
@@ -11113,6 +11123,11 @@ export default function TournamentDeskPage() {
     const availableSlotsForCourt = visibleReadyAssignSlots.filter(
       (slot) => slot.court_name === court
     )
+    const focusSection = focusSlotKey ? slotSections.find((section) => section.key === focusSlotKey) : null
+    const focusTimeLabel = focusSection ? focusSection.label.trim().split(' ').slice(-2).join(' ') : null
+    const openSlot = availableSlotsForCourt[0]
+    const openSlotTime = openSlot?.scheduled_time || null
+    const laterOpenSlot = Boolean(openSlotTime && focusTimeLabel && openSlotTime !== focusTimeLabel)
     let lane: 'current' | 'open' = 'open'
     let slotStateLabel = isClosed ? 'Closed' : 'Open'
     let slotStateColor = isClosed
@@ -11152,11 +11167,15 @@ export default function TournamentDeskPage() {
       availableSlotsForCourt,
       availabilityWarning: checkInWarningByCourt.get(court) || null,
       stackedQueue,
+      openSlotTime: laterOpenSlot ? openSlotTime : null,
+      openSlotDay: laterOpenSlot ? (openSlot?.day_label || '') : null,
     }
   })
 
   const currentCourtRows = courtBoardRows.filter((row) => row.lane === 'current')
-  const openCourtRows = courtBoardRows.filter((row) => row.lane === 'open' && !row.isClosed)
+  const openCourtRows = courtBoardRows
+    .filter((row) => row.lane === 'open' && !row.isClosed && row.availableSlotsForCourt.length > 0)
+    .sort((a, b) => Number(Boolean(a.openSlotTime)) - Number(Boolean(b.openSlotTime)))
 
   const renderCheckInPlayerCircle = (
     checked: boolean,
@@ -11734,8 +11753,11 @@ export default function TournamentDeskPage() {
                   </div>
 
                   <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#2e7d32', backgroundColor: '#f4fbf5' }}>
-                      Open Courts
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', backgroundColor: '#f4fbf5' }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: '#2e7d32' }}>Open Courts</div>
+                      <div style={{ fontSize: 11, color: '#607d8b', marginTop: 2 }}>
+                        Free at this time, plus courts that open on the next time slot. A later card shows that time.
+                      </div>
                     </div>
                     <div style={{ padding: 12 }}>
                       {openCourtRows.length === 0 ? (

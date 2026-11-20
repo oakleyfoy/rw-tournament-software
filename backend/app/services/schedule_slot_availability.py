@@ -191,6 +191,26 @@ def desk_operational_slot_keys(
     return operational
 
 
+def open_court_slot_keys(ordered_keys: Iterable[str], current_key: Optional[str]) -> list[str]:
+    """The current Check-In block and the single time slot after it, same day.
+
+    A court whose first opening is 12:00 stays off the board while 8:00 is
+    current. It appears once the block before 12:00 is current, and that
+    card is the 12:00 slot. An earlier empty cell still shows immediately.
+    """
+    keys = [key for key in ordered_keys if key]
+    if not keys:
+        return []
+    if current_key:
+        day = current_key.split("|", 1)[0]
+        upcoming = [key for key in keys if key.startswith(f"{day}|") and key >= current_key]
+        if upcoming:
+            return upcoming[:2]
+    day = keys[0].split("|", 1)[0]
+    same_day = [key for key in keys if key.startswith(f"{day}|")]
+    return (same_day or keys)[:2]
+
+
 def current_desk_slot_key(
     operational_keys: Iterable[str],
     *,

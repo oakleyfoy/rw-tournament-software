@@ -301,7 +301,8 @@ def test_assign_rejects_drop_onto_unavailable_court(client, session):
         f"/api/desk/tournaments/{t.id}/checkin/assign",
         json={"version_id": v.id, "match_id": match.id, "slot_id": court9_1230.id},
     )
-    assert assign.status_code == 200, assign.text
+    assert assign.status_code == 400
+    assert "not available" in assign.json()["detail"]
 
     session.refresh(match)
     assignment = session.exec(
@@ -310,9 +311,9 @@ def test_assign_rejects_drop_onto_unavailable_court(client, session):
             MatchAssignment.match_id == match.id,
         )
     ).first()
-    assert match.runtime_status == "IN_PROGRESS"
+    assert (match.runtime_status or "SCHEDULED").upper() == "SCHEDULED"
     assert assignment is not None
-    assert assignment.slot_id == court9_1230.id
+    assert assignment.slot_id != court9_1230.id
 
 
 def test_assign_ready_match_onto_court_that_appears_at_1230(client, session):
@@ -675,3 +676,47 @@ def test_in_progress_match_on_removed_slot_is_warning_not_rewritten(client, sess
     assert later.runtime_status == "IN_PROGRESS"
     assert later_assignment is not None
     assert later_assignment.slot_id == court9_1230.id
+
+
+def test_open_courts_show_current_and_next_slot_only(client, session):
+    t, v, _teams, _match, _slots = _setup_open_courts_tournament(
+        session,
+        court9_times=(time(12, 30),),
+        activity_time=time(8, 30),
+    )
+    _add_slot(session, t, v, FRIDAY, time(9, 30), 11)
+    session.commit()
+    _enable_checkin(client, t.id, v.id)
+
+    early = _snapshot(client, t.id, v.id)
+    _, early_open = _board_and_open_courts(early)
+    assert "Court 1" in early_open
+    assert "Court 11" in early_open
+    assert "Court 9" not in early_open
+    court11 = [slot for slot in early["available_slots"] if slot["court_name"] == "Court 11"]
+    assert court11 and court11[0]["scheduled_time"] == "9:30 AM"
+
+    later_match = session.exec(select(Match).where(Match.tournament_id == t.id)).first()
+    assert later_match is not None
+    later_match_assignment = session.exec(
+        select(MatchAssignment).where(MatchAssignment.match_id == later_match.id)
+    ).first()
+    assert later_match_assignment is not None
+    eleven_thirty = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == v.id,
+            ScheduleSlot.court_number == 1,
+            ScheduleSlot.start_time == time(11, 30),
+        )
+    ).first()
+    assert eleven_thirty is not None
+    later_match_assignment.slot_id = eleven_thirty.id
+    session.add(later_match_assignment)
+    session.commit()
+
+    before_noon = _snapshot(client, t.id, v.id)
+    _, noon_open = _board_and_open_courts(before_noon)
+    assert before_noon["active_checkin_slot_key"] == f"{FRIDAY.isoformat()}|11:30"
+    assert "Court 9" in noon_open
+    court9 = [slot for slot in before_noon["available_slots"] if slot["court_name"] == "Court 9"]
+    assert court9 and court9[0]["scheduled_time"] == "12:30 PM"

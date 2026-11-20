@@ -85,6 +85,7 @@ from app.services.schedule_slot_availability import (
     format_slot_key_time_label,
     format_slot_time_label,
     iter_grid_slots,
+    open_court_slot_keys,
     slot_key_for_slot,
     validate_checkin_court_assignment,
 )
@@ -1759,17 +1760,11 @@ def _build_checkin_snapshot(
         )
         used_court.add(court_name)
 
-    # Current block first, then any later Grid cell so every empty court can show.
-    preferred_keys = [current_board_key] if current_board_key else []
-    preferred_keys.extend(key for key in assignable_slot_keys if key not in preferred_keys)
-    for key in preferred_keys:
+    # Current time, then the one slot after it. A 12:00-only court stays hidden at 8:00.
+    for key in open_court_slot_keys(ordered_slot_keys, current_board_key):
         for s in grid_slots:
             if slot_key_for_slot(s) == key:
                 _append_available_slot(s)
-    for s in grid_slots:
-        if current_board_key and slot_key_for_slot(s) < current_board_key:
-            continue
-        _append_available_slot(s)
 
     available_courts = [s.court_name for s in available_slots]
     checkin_court_warnings: List[CheckInCourtWarning] = []
