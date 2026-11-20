@@ -40,6 +40,15 @@ def _team(key, name, draw, rating):
     }
 
 
+def test_palm_springs_2026_matches_rw_os_year_first():
+    events = [
+        {"tournamentId": 140, "eventName": "2025 Palm Springs"},
+        {"tournamentId": 149, "eventName": "2026 Palm Springs"},
+    ]
+    chosen = choose_rw_os_event(events, "Mixed", "Palm Springs 2026")
+    assert chosen["tournamentId"] == 149
+
+
 def test_event_name_cancun_beats_a_wild_dunes_tournament_name():
     events = [
         {"tournamentId": 148, "eventName": "2026 Wild Dunes"},

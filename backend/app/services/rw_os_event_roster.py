@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -22,16 +23,40 @@ from app.services.rw_os_roster_projection import (
 )
 
 
+_YEAR = re.compile(r"^(?:19|20)\d{2}$")
+
+
 def _compact(value: str) -> str:
     return " ".join((value or "").casefold().split())
 
 
+def _without_years(value: str) -> str:
+    return " ".join(part for part in _compact(value).split() if not _YEAR.match(part))
+
+
+def _years(value: str) -> set[str]:
+    return {part for part in _compact(value).split() if _YEAR.match(part)}
+
+
 def names_match_rw_os_event(candidate: str, event_name: str) -> bool:
+    """Match a local name to an RW-OS event name.
+
+    "Palm Springs 2026" and "2026 Palm Springs" are the same event. A year on
+    both sides must agree, so 2026 does not pull 2025.
+    """
     left = _compact(candidate)
     right = _compact(event_name)
     if not left or not right:
         return False
-    return right in left or left in right
+    if right in left or left in right:
+        return True
+    left_years = _years(candidate)
+    right_years = _years(event_name)
+    if left_years and right_years and left_years.isdisjoint(right_years):
+        return False
+    left_core = _without_years(candidate)
+    right_core = _without_years(event_name)
+    return bool(left_core) and left_core == right_core
 
 
 def choose_rw_os_event(events: list[dict[str, Any]], *names: str) -> Optional[dict[str, Any]]:
@@ -114,10 +139,9 @@ def pull_event_players_from_rw_os(
     listed = client.list_events(include_historical=False)
     chosen = choose_rw_os_event(listed, event.name, tournament.name or "")
     if chosen is None:
-        raise ValueError(
-            "No RW-OS event matches this event or tournament name. "
-            "Name the event Cancun, or name the tournament 2026 Cancun, then pull again."
-        )
+        looked_for = [name.strip() for name in (event.name, tournament.name or "") if str(name or "").strip()]
+        shown = " or ".join(f"'{name}'" for name in looked_for) or "this event"
+        raise ValueError(f"No current RW-OS event matches {shown}.")
     source_id = int(chosen["tournamentId"])
     payload = client.get_event(source_id)
     incoming = _teams_for_event(payload, event, session)
