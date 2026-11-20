@@ -153,6 +153,57 @@ def test_one_womens_draw_splits_by_rating_into_a_then_b(session: Session):
     assert next_flight["team_names"] == ["Cara / Dee"]
 
 
+def test_womens_b_pulls_the_next_flight_even_before_a_is_pulled(session: Session):
+    tournament = Tournament(
+        name="Palm Springs 2026",
+        location="Rancho Las Palmas",
+        timezone="America/Los_Angeles",
+        start_date=date(2026, 12, 3),
+        end_date=date(2026, 12, 5),
+    )
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    womens_a = Event(
+        tournament_id=tournament.id,
+        name="Women's A",
+        category=EventCategory.womens,
+        team_count=32,
+    )
+    womens_b = Event(
+        tournament_id=tournament.id,
+        name="Women's B",
+        category=EventCategory.womens,
+        team_count=28,
+    )
+    session.add(womens_a)
+    session.add(womens_b)
+    session.commit()
+    session.refresh(womens_b)
+
+    teams = [
+        _team(f"{index}/{index + 100}", f"P{index} / Q{index}", "womens", 100 - index)
+        for index in range(1, 61)
+    ]
+    client = _Client(
+        [{"tournamentId": 149, "eventName": "2026 Palm Springs"}],
+        {
+            149: {
+                "organizationSlug": "rw",
+                "tournamentId": 149,
+                "eventName": "2026 Palm Springs",
+                "teams": teams,
+            }
+        },
+    )
+
+    result = pull_event_players_from_rw_os(session, tournament, womens_b, client=client)
+    assert result["imported_count"] == 28
+    assert result["team_names"][0] == "P33 / Q33"
+    assert result["team_names"][-1] == "P60 / Q60"
+    assert "P1 / Q1" not in result["team_names"]
+
+
 def test_event_name_cancun_beats_a_wild_dunes_tournament_name():
     events = [
         {"tournamentId": 148, "eventName": "2026 Wild Dunes"},
