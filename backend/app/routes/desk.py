@@ -6542,14 +6542,8 @@ def move_match(
             },
         )
 
-    reserved_reason = preassigned_court_block_reason(
-        target_slot,
-        preassigned_reservations(session, payload.version_id),
-        ignore_match_id=match_id,
-    )
-    if reserved_reason:
-        raise HTTPException(status_code=409, detail=reserved_reason)
-
+    # A neighboring window, such as a 9:00-10:30 slot beside 10:00, must not
+    # stop a manual drop onto this empty cell. Exact occupancy is checked above.
     existing_assignment = session.exec(
         select(MatchAssignment).where(
             MatchAssignment.schedule_version_id == payload.version_id,
@@ -7124,17 +7118,32 @@ def add_time_slots(
     block = end_min - start_min if end_min > start_min else 60
 
     created: List[AddSlotItem] = []
+    day_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == payload.version_id,
+            ScheduleSlot.day_date == day,
+        )
+    ).all()
+
+    def _minutes(value: time_type) -> int:
+        return value.hour * 60 + value.minute
+
+    def _window(slot: ScheduleSlot) -> tuple[int, int]:
+        begin = _minutes(slot.start_time)
+        finish = _minutes(slot.end_time) if slot.end_time else begin
+        if finish <= begin:
+            finish = begin + int(slot.block_minutes or 60)
+        return begin, finish
+
+    new_window = (start_min, start_min + block)
+    overlapped = False
 
     for cn in payload.court_numbers:
-        existing = session.exec(
-            select(ScheduleSlot).where(
-                ScheduleSlot.schedule_version_id == payload.version_id,
-                ScheduleSlot.day_date == day,
-                ScheduleSlot.start_time == st,
-                ScheduleSlot.court_number == cn,
-            )
-        ).first()
-        if existing:
+        if any(
+            slot.court_number == cn and new_window[0] < _window(slot)[1] and _window(slot)[0] < new_window[1]
+            for slot in day_slots
+        ):
+            overlapped = True
             continue
 
         label = court_label_for_index(tournament.court_names, cn)
@@ -7164,7 +7173,14 @@ def add_time_slots(
             )
         )
 
+    if not created and overlapped:
+        raise HTTPException(
+            status_code=409,
+            detail="That time overlaps a slot already on those courts.",
+        )
+
     session.commit()
+    _bump_desk_snapshot()
     return AddSlotResponse(success=True, created_slots=created)
 
 

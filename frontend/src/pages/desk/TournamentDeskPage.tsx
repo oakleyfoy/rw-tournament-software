@@ -5986,6 +5986,7 @@ function DeskGridTab({
       {addSlotOpen && (
         <AddTimeSlotModal
           days={days}
+          slots={data.slots || []}
           courtNumbers={courtNumbers}
           courtLabels={courtLabels}
           onClose={() => setAddSlotOpen(false)}
@@ -6043,23 +6044,48 @@ function DeskGridTab({
 
 // ── Add Time Slot Modal ─────────────────────────────────────────────────
 
+function nextSlotTimes(slots: SnapshotSlot[], day: string) {
+  const onDay = slots.filter(slot => slot.day_date === day && slot.start_time)
+  if (onDay.length === 0) return { start: '10:00', end: '11:00' }
+  const latest = onDay.reduce((best, slot) => (slot.start_time > best.start_time ? slot : best))
+  const start = (latest.end_time || latest.start_time).slice(0, 5)
+  const [hour, minute] = start.split(':').map(part => parseInt(part, 10) || 0)
+  const block = latest.block_minutes > 0 ? latest.block_minutes : 60
+  const endTotal = hour * 60 + minute + block
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return {
+    start,
+    end: `${pad(Math.floor(endTotal / 60) % 24)}:${pad(endTotal % 60)}`,
+  }
+}
+
 function AddTimeSlotModal({
   days,
+  slots,
   courtNumbers,
   courtLabels,
   onClose,
   onSubmit,
 }: {
   days: string[]
+  slots: SnapshotSlot[]
   courtNumbers: number[]
   courtLabels: Record<number, string>
   onClose: () => void
   onSubmit: (dayDate: string, startTime: string, endTime: string, courtNums: number[]) => void
 }) {
   const [day, setDay] = useState(days[0] || '')
-  const [startTime, setStartTime] = useState('09:00')
-  const [endTime, setEndTime] = useState('10:30')
+  const initialTimes = nextSlotTimes(slots, days[0] || '')
+  const [startTime, setStartTime] = useState(initialTimes.start)
+  const [endTime, setEndTime] = useState(initialTimes.end)
   const [selectedCourts, setSelectedCourts] = useState<number[]>([...courtNumbers])
+
+  const chooseDay = (nextDay: string) => {
+    const times = nextSlotTimes(slots, nextDay)
+    setDay(nextDay)
+    setStartTime(times.start)
+    setEndTime(times.end)
+  }
 
   const toggleCourt = (cn: number) => {
     setSelectedCourts(prev =>
@@ -6086,7 +6112,7 @@ function AddTimeSlotModal({
             <label style={{ display: 'block', fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Day</label>
             <select
               value={day}
-              onChange={e => setDay(e.target.value)}
+              onChange={e => chooseDay(e.target.value)}
               style={{ width: '100%', padding: '6px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4 }}
             >
               {days.map(d => <option key={d} value={d}>{d}</option>)}

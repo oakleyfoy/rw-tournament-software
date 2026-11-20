@@ -631,6 +631,37 @@ def test_move_blocked_by_preassigned_reservation(client, session: Session):
     assert resp.status_code == 409
 
 
+def test_manual_move_onto_open_slot_ignores_neighbor_overlap(client, session: Session):
+    """A 9:00-10:30 slot must not block a drop onto the empty 10:00 cell."""
+    ctx = _setup_automation(session)
+    t, v, m_dyn = ctx["tournament"], ctx["version"], ctx["m_dyn"]
+    slot_b = ctx["slot_b"]
+    slot_b.end_time = time(10, 30)
+    slot_b.block_minutes = 90
+    empty = ScheduleSlot(
+        tournament_id=t.id,
+        schedule_version_id=v.id,
+        day_date=ctx["day"],
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add(slot_b)
+    session.add(empty)
+    session.commit()
+
+    resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m_dyn.id}/move",
+        json={"version_id": v.id, "target_slot_id": empty.id},
+    )
+    assert resp.status_code == 200
+    session.expire_all()
+    assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == m_dyn.id)).one()
+    assert assignment.slot_id == empty.id
+
+
 def test_no_checkin_court_assigned_sms_on_preassigned_start(session: Session):
     ctx = _setup_automation(session)
     t, v, m1 = ctx["tournament"], ctx["version"], ctx["m1"]
