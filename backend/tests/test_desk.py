@@ -4380,7 +4380,7 @@ def test_update_court_renames_label_and_slots(client, session):
 
 
 def test_delete_middle_court_requires_slot_opt_in_then_renumbers_remaining(client, session):
-    """Deleting any court with slots requires opt-in and shifts higher court numbers down."""
+    """An empty court deletes with its open slots. A court with a match does not."""
     t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
 
     add_resp = client.post(
@@ -4402,24 +4402,24 @@ def test_delete_middle_court_requires_slot_opt_in_then_renumbers_remaining(clien
     )
     assert add_resp.status_code == 200
 
-    # First attempt without deleting slots should be rejected.
-    reject = client.request(
+    blocked = client.request(
         "DELETE",
-        f"/api/desk/tournaments/{t.id}/courts/3",
+        f"/api/desk/tournaments/{t.id}/courts/1",
         json={
             "version_id": v.id,
-            "delete_matching_slots": False,
+            "delete_matching_slots": True,
         },
     )
-    assert reject.status_code == 400
-    assert "delete_matching_slots" in reject.json()["detail"]
+    assert blocked.status_code == 400
+    assert "assigned matches" in blocked.json()["detail"]
 
+    # First attempt: an empty court deletes, including its open slots.
     ok = client.request(
         "DELETE",
         f"/api/desk/tournaments/{t.id}/courts/3",
         json={
             "version_id": v.id,
-            "delete_matching_slots": True,
+            "delete_matching_slots": False,
         },
     )
     assert ok.status_code == 200

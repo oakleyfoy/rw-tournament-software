@@ -7683,12 +7683,6 @@ def delete_court(
         )
     ).all()
 
-    if slots and not payload.delete_matching_slots:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Court has {len(slots)} slot(s). Enable delete_matching_slots to remove them.",
-        )
-
     removed_slots = 0
     if slots:
         slot_ids = [s.id for s in slots]
@@ -7746,6 +7740,7 @@ def delete_court(
     tournament.court_names = court_names
     session.add(tournament)
     session.commit()
+    _bump_desk_snapshot()
 
     return DeleteCourtResponse(
         success=True,

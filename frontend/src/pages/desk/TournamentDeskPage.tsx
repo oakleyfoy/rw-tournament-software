@@ -5555,7 +5555,7 @@ function DeskGridTab({
     try {
       const resp = await deskDeleteCourt(tid, courtLabel, {
         version_id: data.version_id,
-        delete_matching_slots: deleteMatchingSlots,
+        delete_matching_slots: true,
       })
       showToast(
         resp.removed_slots > 0
@@ -5565,7 +5565,7 @@ function DeskGridTab({
       await loadAllCourts()
       onRefresh()
     } catch (err: any) {
-      showToast(err?.detail || err || 'Failed to delete court')
+      showToast(formatErrMsg(err, 'Failed to delete court'))
     }
   }
 
@@ -6401,7 +6401,6 @@ function ManageCourtsModal({
 }) {
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({})
   const [busyLabel, setBusyLabel] = useState<string | null>(null)
-  const [deleteWithSlots, setDeleteWithSlots] = useState(false)
   const [remapText, setRemapText] = useState('')
 
   const sortedCourts = [...courts]
@@ -6558,14 +6557,15 @@ function ManageCourtsModal({
                           disabled={rowBusy}
                           title="Delete court"
                           onClick={async () => {
-                            const suffix = deleteWithSlots
-                              ? ' This will also delete unassigned slots on this court.'
-                              : ''
-                            const ok = window.confirm(`Delete Court "${label}"?${suffix}`)
+                            const ok = window.confirm(
+                              slotCount > 0
+                                ? `Delete Court "${label}"? Its open time slots will be removed. A court with a match on it stays.`
+                                : `Delete Court "${label}"?`
+                            )
                             if (!ok) return
                             setBusyLabel(label)
                             try {
-                              await onDelete(label, deleteWithSlots)
+                              await onDelete(label, true)
                             } finally {
                               setBusyLabel(null)
                             }
@@ -6587,14 +6587,9 @@ function ManageCourtsModal({
               </tbody>
             </table>
           )}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 11, color: '#555' }}>
-            <input
-              type="checkbox"
-              checked={deleteWithSlots}
-              onChange={e => setDeleteWithSlots(e.target.checked)}
-            />
-            When deleting a court, also remove its matching slots
-          </label>
+          <div style={{ marginTop: 10, fontSize: 11, color: '#555' }}>
+            A court with no matches is removed, including its open time slots. A court that still has a match stays.
+          </div>
         </div>
         <div style={{
           padding: '12px 20px', borderTop: '1px solid #e0e0e0',
