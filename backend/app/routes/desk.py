@@ -6592,6 +6592,7 @@ def move_match(
         )
 
     session.commit()
+    _bump_desk_snapshot()
     session.refresh(match)
 
     try:
@@ -6999,6 +7000,7 @@ def swap_matches(
     except AssignmentOwnershipError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.commit()
+    _bump_desk_snapshot()
 
     session.refresh(match_a)
     session.refresh(match_b)

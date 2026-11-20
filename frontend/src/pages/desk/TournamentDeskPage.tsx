@@ -5012,7 +5012,9 @@ function DroppableCell({
   const { setNodeRef, isOver } = useDroppable({ id: `slot-${slotId}` })
   return (
     <td
+      data-desk-slot={slotId}
       style={{
+        position: 'relative',
         padding: 0,
         borderBottom: '1px solid #eee',
         borderRight: '1px solid #f0f0f0',
@@ -5022,17 +5024,13 @@ function DroppableCell({
         height: '1px',
       }}
     >
+      {/* Cover the whole cell. A tall row's empty space under a short Open label has to accept the drop. */}
       <div
         ref={setNodeRef}
         data-desk-slot={slotId}
-        style={{
-          minHeight: 44,
-          height: '100%',
-          padding: 3,
-          boxSizing: 'border-box',
-          transition: 'background-color 0.15s',
-        }}
-      >
+        style={{ position: 'absolute', inset: 0 }}
+      />
+      <div style={{ position: 'relative', minHeight: 44, padding: 3, boxSizing: 'border-box' }}>
         {children}
       </div>
     </td>
@@ -5372,7 +5370,8 @@ function DeskGridTab({
       return
     }
 
-    let held = false
+    holdSlots({ [match.match_id]: targetSlotId })
+    let held = true
     try {
       const conflicts = await checkDeskConflicts(tid, {
         version_id: data.version_id,
@@ -5381,12 +5380,12 @@ function DeskGridTab({
         target_slot_id: targetSlotId,
       })
       if (conflicts.conflicts.length > 0) {
+        releaseSlots([match.match_id])
+        held = false
         armBackdrop()
         setConflictModal({ conflicts: conflicts.conflicts, matchId: match.match_id, targetSlotId })
         return
       }
-      holdSlots({ [match.match_id]: targetSlotId })
-      held = true
       await deskMoveMatch(tid, match.match_id, {
         version_id: data.version_id,
         target_slot_id: targetSlotId,
@@ -5828,7 +5827,7 @@ function DeskGridTab({
           </div>
         ))}
 
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay dropAnimation={null} style={{ pointerEvents: 'none' }}>
           {draggedMatch && (
             <div style={{
               border: '2px solid #1a237e',
