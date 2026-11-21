@@ -370,7 +370,7 @@ def photo_print_workspace(
     session.commit()
     if session.in_transaction():
         session.rollback()
-    allow_browser_downloads()
+    payload["storage_access"] = allow_browser_downloads()
     _attach_photo_sizes(payload)
     return payload
 

@@ -117,12 +117,14 @@ _presign_cache: dict[str, tuple[str, float]] = {}
 
 
 _cors_next_try = 0.0
+_cors_error: str | None = None
 
 
 def reset_presign_cache() -> None:
-    global _cors_next_try
+    global _cors_next_try, _cors_error
     _presign_cache.clear()
     _cors_next_try = 0.0
+    _cors_error = None
 
 
 def _original_photo_key(storage_key: str) -> bool:
@@ -162,23 +164,40 @@ def presigned_file_urls(storage_keys: list[str]) -> dict[str, str | None]:
     return urls
 
 
-def allow_browser_downloads() -> None:
+def _public_storage_error(exc: Exception) -> str:
+    cause = exc.__cause__ or exc
+    response = getattr(cause, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error") or {}
+        code = str(error.get("Code") or "").strip()
+        message = str(error.get("Message") or "").strip()
+        text = ": ".join(part for part in (code, message) if part)
+        if text:
+            return text[:240]
+    return str(cause)[:240]
+
+
+def allow_browser_downloads() -> str | None:
     """Let the laptop read a signed photograph. The bytes stay in storage."""
-    global _cors_next_try
+    global _cors_next_try, _cors_error
     now = time.monotonic()
     if now < _cors_next_try:
-        return
+        return _cors_error
     store = get_object_store()
     allow = getattr(store, "allow_browser_downloads", None)
     if not callable(allow):
+        _cors_error = None
         _cors_next_try = float("inf")
-        return
+        return None
     try:
         allow()
-    except Exception:
+    except Exception as exc:
+        _cors_error = _public_storage_error(exc)
         _cors_next_try = now + 60
-        return
+        return _cors_error
+    _cors_error = None
     _cors_next_try = float("inf")
+    return None
 
 
 def presigned_display_url(storage_key: str) -> str | None:
@@ -286,12 +305,13 @@ _memory_store = MemoryObjectStore()
 
 
 def reset_memory_store() -> None:
-    global _cors_next_try
+    global _cors_next_try, _cors_error
     _memory_store.objects.clear()
     _memory_store.fail_next_put = False
     _memory_store.fail_next_delete = False
     _presign_cache.clear()
     _cors_next_try = 0.0
+    _cors_error = None
 
 
 def arm_next_put_failure() -> None:
@@ -330,13 +350,27 @@ class R2ObjectStore:
             raise PhotoStorageUnavailable("Team photo storage client is not installed") from exc
         from botocore.config import Config
 
+        base = {
+            "connect_timeout": 3,
+            "read_timeout": 8,
+            "retries": {"max_attempts": 1},
+            "signature_version": "s3v4",
+        }
+        try:
+            config = Config(
+                **base,
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
+            )
+        except TypeError:
+            config = Config(**base)
         client = boto3.client(
             "s3",
             endpoint_url=endpoint,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret,
             region_name=region,
-            config=Config(connect_timeout=3, read_timeout=8, retries={"max_attempts": 1}),
+            config=config,
         )
         return cls(client, bucket)
 

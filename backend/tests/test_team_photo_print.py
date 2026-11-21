@@ -591,6 +591,7 @@ def test_print_workspace_links_storage_without_reading_the_photograph(client: Te
     assert response.status_code == 200, response.text
     photo = response.json()["photos"][0]
     assert photo["file_url"].startswith("https://photos.example/team-photos/")
+    assert response.json()["storage_access"] is None
     assert "Haley" not in photo["file_url"]
     assert "Stacey" not in photo["file_url"]
     assert calls == {"prefix": 0, "bytes": 0, "cors": 1}
