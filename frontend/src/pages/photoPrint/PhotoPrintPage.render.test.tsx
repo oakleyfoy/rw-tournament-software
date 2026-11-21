@@ -1,11 +1,13 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { downloadPhotoPrintPackage } from '../../api/photoPrint'
 import PhotoPrintPage from './PhotoPrintPage'
 import { defaultWatermarkSettings } from '../../lib/photoPrintSettings'
 
 const mocks = vi.hoisted(() => ({
   loadPhotoPrintWorkspace: vi.fn(),
+  buildWalgreensZip: vi.fn(),
 }))
 
 vi.mock('../../api/photoPrint', () => ({
@@ -25,7 +27,13 @@ vi.mock('../../api/photoPrint', () => ({
 
 vi.mock('../../api/photography', () => ({
   officialTeamPhotoContentUrl: () => '/photo.jpg',
+  groupPhotoContentUrl: () => '/group.jpg',
 }))
+
+vi.mock('../../lib/walgreensPackage', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/walgreensPackage')>('../../lib/walgreensPackage')
+  return { ...actual, buildWalgreensZip: mocks.buildWalgreensZip }
+})
 
 describe('photo print workspace', () => {
   beforeEach(() => {
@@ -54,6 +62,7 @@ describe('photo print workspace', () => {
         needs_attention: true,
       }],
     })
+    mocks.buildWalgreensZip.mockReset()
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       blob: async () => new Blob(['img'], { type: 'image/jpeg' }),
@@ -74,6 +83,23 @@ describe('photo print workspace', () => {
     expect(screen.getByRole('button', { name: 'Apply to All Photos' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Order Prints at Walgreens' })).toBeTruthy()
     expect(screen.queryByText('9')).toBeNull()
+    expect(screen.getByText('team-9.jpg')).toBeTruthy()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Resize wording' })).toBeTruthy())
+  })
+
+  it('builds the Walgreens zip on this computer', async () => {
+    mocks.buildWalgreensZip.mockResolvedValue({ blob: new Blob(['zip']), filename: 'Scottsdale-2026-prints.zip' })
+    render(
+      <MemoryRouter initialEntries={['/tournaments/5/photo-print']}>
+        <Routes>
+          <Route path="/tournaments/:tournamentId/photo-print" element={<PhotoPrintPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Download All Photos as ZIP' }))
+    await waitFor(() => expect(mocks.buildWalgreensZip).toHaveBeenCalled())
+    const photos = mocks.buildWalgreensZip.mock.calls[0][0].photos
+    expect(photos.map((photo: { team_id: number }) => photo.team_id)).toEqual([9])
+    expect(downloadPhotoPrintPackage).not.toHaveBeenCalled()
   })
 })

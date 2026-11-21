@@ -4,10 +4,6 @@ import { getAuthToken } from '../../api/client'
 import { deleteGroupPhoto, groupPhotoContentUrl, officialTeamPhotoContentUrl } from '../../api/photography'
 import {
   applyPhotoPrintToAll,
-  downloadGroupPhotoPrintFile,
-  downloadPhotoPrintFile,
-  downloadPhotoPrintPackage,
-  exportPhotoPrints,
   loadPhotoPrintWorkspace,
   photoPrintLogoUrl,
   resetGroupPhotoPrintOverride,
@@ -33,28 +29,18 @@ import {
   cropCutsPhoto,
   defaultWatermarkSettings,
   logoPixelWidth,
-  printFilename,
   watermarkBox,
   wordingFontSize,
   wordingPixelWidth,
   type WatermarkSettings,
 } from '../../lib/photoPrintSettings'
+import { buildWalgreensZip, loadHtmlImage, photoPrintSize, renderWalgreensPhoto, walgreensFileName } from '../../lib/walgreensPackage'
 import './photoPrint.css'
 
 type GalleryFilter = 'all' | 'edited' | 'review'
 
 function photoKey(photo: { photo_kind?: string; team_id?: number | null; group_photo_id?: number | null }) {
   return photo.photo_kind === 'group' ? `group:${photo.group_photo_id}` : `team:${photo.team_id}`
-}
-
-function splitPhotoKeys(keys: string[]) {
-  const team_ids: number[] = []
-  const group_photo_ids: number[] = []
-  for (const key of keys) {
-    if (key.startsWith('group:')) group_photo_ids.push(Number(key.slice(6)))
-    else team_ids.push(Number(key.startsWith('team:') ? key.slice(5) : key))
-  }
-  return { team_ids, group_photo_ids }
 }
 
 function photoContentUrl(tournamentId: number, photo: PhotoPrintPhoto) {
@@ -152,6 +138,11 @@ export default function PhotoPrintPage() {
     if (!current) return
     const key = photoKey(current)
     if (loadedImages.current.get(key) === current.version) return
+    if (current.file_url) {
+      loadedImages.current.set(key, current.version)
+      setImages((prev) => ({ ...prev, [key]: current.file_url as string }))
+      return
+    }
     let cancelled = false
     authorizedBlob(photoContentUrl(tid, current))
       .then((url) => {
@@ -162,7 +153,7 @@ export default function PhotoPrintPage() {
         loadedImages.current.set(key, current.version)
         setImages((prev) => {
           const previous = prev[key]
-          if (previous) URL.revokeObjectURL(previous)
+          if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous)
           return { ...prev, [key]: url }
         })
       })
@@ -174,7 +165,7 @@ export default function PhotoPrintPage() {
     return () => {
       cancelled = true
     }
-  }, [tid, current ? photoKey(current) : '', current?.version])
+  }, [tid, current ? photoKey(current) : '', current?.version, current?.file_url])
 
   useEffect(() => {
     if (!workspace?.has_custom_logo) {
@@ -271,18 +262,26 @@ export default function PhotoPrintPage() {
     await refresh()
   })
 
+  const photosForKeys = (keys: string[]) => photos
+    .filter((photo) => keys.includes(photoKey(photo)))
+    .map((photo) => (
+      current && settings && photoKey(photo) === photoKey(current) ? { ...photo, settings } : photo
+    ))
+
   const packageFor = (keys: string[], acknowledge: boolean) => run(async () => {
-    const selection = splitPhotoKeys(keys)
-    const result = await downloadPhotoPrintPackage(tid, {
-      ...selection,
-      print_size: printSize,
-      quantity,
-      acknowledge_low_resolution: acknowledge,
+    const chosen = photosForKeys(keys)
+    if (!chosen.length) throw new Error('Select at least one photograph')
+    const customLogo = logoSrc ? await loadHtmlImage(logoSrc, false) : null
+    const result = await buildWalgreensZip({
+      tournamentName: workspace?.tournament_name || 'Tournament',
+      photos: chosen,
+      customLogo,
+      acknowledgeLowResolution: acknowledge,
+      onProgress: (done, total) => setNotice(`Preparing photograph ${done} of ${total} on this computer.`),
     })
     saveBlob(result.blob, result.filename)
     setReviewOpen(false)
-    setNotice('Print files downloaded. Walgreens has not confirmed an order.')
-    await refresh()
+    setNotice('Print files downloaded on this computer. Walgreens has not confirmed an order.')
   })
 
   const deleteCurrentGroup = () => run(async () => {
@@ -294,31 +293,32 @@ export default function PhotoPrintPage() {
   })
 
   const downloadCurrent = () => run(async () => {
-    if (!current) return
-    const low = current.low_resolution_sizes.includes(printSize)
-    const selection = splitPhotoKeys([photoKey(current)])
-    await exportPhotoPrints(tid, {
-      ...selection,
-      print_size: printSize,
-      quantity,
-      acknowledge_low_resolution: low,
-    })
-    const file = current.photo_kind === 'group' && current.group_photo_id
-      ? await downloadGroupPhotoPrintFile(tid, current.group_photo_id, printSize)
-      : await downloadPhotoPrintFile(tid, current.team_id || 0, printSize)
-    saveBlob(file.blob, file.filename)
-    setNotice(`${file.filename} downloaded. The original photograph was not changed.`)
+    if (!current || !settings) return
+    if (!current.file_url) throw new Error('Photograph could not be opened from storage. Open Watermark & Print again and retry.')
+    const image = await loadHtmlImage(current.file_url, true)
+    const size = photoPrintSize(image.naturalWidth || image.width, image.naturalHeight || image.height)
+    if (size.lowResolution && !current.low_resolution_sizes.includes(printSize)) {
+      throw new Error('This photograph is below 1200×1800. Use Generate Print Package to confirm enlarging it.')
+    }
+    const brand = await loadHtmlImage('/assets/rw-watermark-logo.png', false)
+    const customLogo = logoSrc ? await loadHtmlImage(logoSrc, false) : null
+    const file = await renderWalgreensPhoto(image, settings, { brand, custom: customLogo })
+    const filename = walgreensFileName(current)
+    saveBlob(file, filename)
+    setNotice(`${filename} downloaded on this computer. The original photograph was not changed.`)
   })
 
   const orderWalgreens = () => run(async () => {
     const ids = selectedIds.filter((id) => photos.some((photo) => photoKey(photo) === id))
     if (!ids.length) throw new Error('Select at least one photograph')
     const low = photos.some((photo) => ids.includes(photoKey(photo)) && photo.low_resolution_sizes.includes(printSize))
-    const result = await downloadPhotoPrintPackage(tid, {
-      ...splitPhotoKeys(ids),
-      print_size: printSize,
-      quantity,
-      acknowledge_low_resolution: low,
+    const customLogo = logoSrc ? await loadHtmlImage(logoSrc, false) : null
+    const result = await buildWalgreensZip({
+      tournamentName: workspace?.tournament_name || 'Tournament',
+      photos: photosForKeys(ids),
+      customLogo,
+      acknowledgeLowResolution: low,
+      onProgress: (done, total) => setNotice(`Preparing photograph ${done} of ${total} on this computer.`),
     })
     saveBlob(result.blob, result.filename)
     const url = workspace?.walgreens.ordering_url || 'https://photo.walgreens.com/store/prints'
@@ -482,6 +482,26 @@ export default function PhotoPrintPage() {
                   <img
                     src={images[photoKey(current)]}
                     alt={current.player_names.join(' and ')}
+                    onLoad={(event) => {
+                      const width = event.currentTarget.naturalWidth
+                      const height = event.currentTarget.naturalHeight
+                      if (!width || !height) return
+                      const key = photoKey(current)
+                      const size = photoPrintSize(width, height)
+                      setWorkspace((prev) => {
+                        if (!prev) return prev
+                        return {
+                          ...prev,
+                          photos: prev.photos.map((photo) => photoKey(photo) === key ? {
+                            ...photo,
+                            source_width: width,
+                            source_height: height,
+                            low_resolution_sizes: size.lowResolution ? [PRINT_SIZE] : [],
+                            crop_warning: size.cropWarning,
+                          } : photo),
+                        }
+                      })
+                    }}
                     onPointerDown={onDragCrop}
                     style={{
                       position: 'absolute',
@@ -662,7 +682,7 @@ export default function PhotoPrintPage() {
               <label className="photo-print-field">Quantity
                 <input type="number" min={1} max={20} value={quantity} onChange={(event) => setQuantity(Number(event.target.value) || 1)} />
               </label>
-              {current && <p className="photo-print-span" style={{ fontSize: 12, margin: 0 }}>{printFilename(workspace?.tournament_name || '', current.player_names, printSize)}</p>}
+              {current && <p className="photo-print-span" style={{ fontSize: 12, margin: 0 }}>{walgreensFileName(current)}</p>}
             </div>
           )}
           {settings && (
@@ -693,7 +713,7 @@ export default function PhotoPrintPage() {
         <div className="photo-print-review">
           <section>
             <h2>Review print package</h2>
-            <p>{selectedPhotos.length} photographs · {printSize} · quantity {quantity}. Walgreens has not confirmed an order.</p>
+            <p>{selectedPhotos.length} photographs · 4×6 portrait. The files are made on this computer and contain the pictures only. Walgreens has not confirmed an order.</p>
             <ul>
               {selectedPhotos.map((photo) => (
                 <li key={photoKey(photo)}>

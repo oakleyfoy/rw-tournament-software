@@ -116,8 +116,69 @@ _PRESIGN_REUSE_SECONDS = 24 * 3600
 _presign_cache: dict[str, tuple[str, float]] = {}
 
 
+_cors_next_try = 0.0
+
+
 def reset_presign_cache() -> None:
+    global _cors_next_try
     _presign_cache.clear()
+    _cors_next_try = 0.0
+
+
+def _original_photo_key(storage_key: str) -> bool:
+    if not storage_key or ".." in storage_key or "\\" in storage_key:
+        return False
+    return storage_key.startswith("team-photos/") and storage_key.endswith(".jpg") and not storage_key.endswith("-thumb.jpg")
+
+
+def presigned_file_urls(storage_keys: list[str]) -> dict[str, str | None]:
+    """Direct links for the camera files. Signing does not download them."""
+    urls: dict[str, str | None] = {}
+    store = None
+    now = time.monotonic()
+    for storage_key in storage_keys:
+        if not _original_photo_key(storage_key):
+            urls[storage_key] = None
+            continue
+        cached = _presign_cache.get(storage_key)
+        if cached and cached[1] - now > _PRESIGN_REUSE_SECONDS:
+            urls[storage_key] = cached[0]
+            continue
+        if store is None:
+            store = get_object_store()
+        presign = getattr(store, "presigned_get_url", None)
+        if not callable(presign):
+            urls[storage_key] = None
+            continue
+        try:
+            url = presign(storage_key, _PRESIGN_SECONDS)
+        except Exception:
+            url = None
+        if not url:
+            urls[storage_key] = None
+            continue
+        _presign_cache[storage_key] = (url, now + _PRESIGN_SECONDS)
+        urls[storage_key] = url
+    return urls
+
+
+def allow_browser_downloads() -> None:
+    """Let the laptop read a signed photograph. The bytes stay in storage."""
+    global _cors_next_try
+    now = time.monotonic()
+    if now < _cors_next_try:
+        return
+    store = get_object_store()
+    allow = getattr(store, "allow_browser_downloads", None)
+    if not callable(allow):
+        _cors_next_try = float("inf")
+        return
+    try:
+        allow()
+    except Exception:
+        _cors_next_try = now + 60
+        return
+    _cors_next_try = float("inf")
 
 
 def presigned_display_url(storage_key: str) -> str | None:
@@ -225,10 +286,12 @@ _memory_store = MemoryObjectStore()
 
 
 def reset_memory_store() -> None:
+    global _cors_next_try
     _memory_store.objects.clear()
     _memory_store.fail_next_put = False
     _memory_store.fail_next_delete = False
     _presign_cache.clear()
+    _cors_next_try = 0.0
 
 
 def arm_next_put_failure() -> None:
@@ -295,6 +358,25 @@ class R2ObjectStore:
             "get_object",
             Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=int(expires_in),
+        )
+
+    def allow_browser_downloads(self) -> None:
+        self._call(
+            "prepare",
+            lambda: self.client.put_bucket_cors(
+                Bucket=self.bucket,
+                CORSConfiguration={
+                    "CORSRules": [
+                        {
+                            "AllowedOrigins": ["*"],
+                            "AllowedMethods": ["GET", "HEAD"],
+                            "AllowedHeaders": ["*"],
+                            "ExposeHeaders": ["Content-Length", "Content-Type", "ETag"],
+                            "MaxAgeSeconds": 86400,
+                        }
+                    ]
+                },
+            ),
         )
 
     def head_size(self, key: str) -> int:

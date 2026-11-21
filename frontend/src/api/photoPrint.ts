@@ -17,6 +17,7 @@ export interface PhotoPrintPhoto {
   low_resolution_sizes: string[]
   crop_warning?: boolean
   needs_attention: boolean
+  file_url?: string | null
 }
 
 export interface PhotoPrintWorkspace {

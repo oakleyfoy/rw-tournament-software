@@ -554,3 +554,43 @@ def test_uploaded_logo_loses_a_solid_background_and_keeps_transparency():
         image = image.convert("RGBA")
         assert image.getpixel((image.width // 2, image.height // 2))[3] == 255
         assert image.size[0] < 40
+
+
+def test_print_workspace_links_storage_without_reading_the_photograph(client: TestClient, session: Session, monkeypatch):
+    from app.services import team_photo_storage
+
+    admin = _bootstrap_admin(client)
+    roster = _roster(session)
+    _save_photo(client, admin, roster["tournament_id"], roster["team_id"])
+    team_photo_storage.reset_presign_cache()
+    calls = {"prefix": 0, "bytes": 0, "cors": 0}
+
+    class SigningStore:
+        def presigned_get_url(self, key: str, expires_in: int) -> str:
+            assert key.startswith("team-photos/")
+            assert not key.endswith("-thumb.jpg")
+            assert expires_in > 0
+            return f"https://photos.example/{key}"
+
+        def get_prefix(self, key: str, limit: int = 262144) -> bytes:
+            calls["prefix"] += 1
+            raise AssertionError(key)
+
+        def get_bytes(self, key: str) -> bytes:
+            calls["bytes"] += 1
+            raise AssertionError(key)
+
+        def allow_browser_downloads(self) -> None:
+            calls["cors"] += 1
+
+    monkeypatch.setattr(team_photo_storage, "get_object_store", lambda: SigningStore())
+    response = client.get(
+        f"/api/photography/tournaments/{roster['tournament_id']}/photo-print",
+        headers=admin,
+    )
+    assert response.status_code == 200, response.text
+    photo = response.json()["photos"][0]
+    assert photo["file_url"].startswith("https://photos.example/team-photos/")
+    assert "Haley" not in photo["file_url"]
+    assert "Stacey" not in photo["file_url"]
+    assert calls == {"prefix": 0, "bytes": 0, "cors": 1}

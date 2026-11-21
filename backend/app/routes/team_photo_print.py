@@ -25,7 +25,13 @@ from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.models.user_account import UserAccount
 from app.services.team_photo_search import player_names_for_team
-from app.services.team_photo_storage import PhotoRejected, PhotoStorageUnavailable, get_object_store
+from app.services.team_photo_storage import (
+    PhotoRejected,
+    PhotoStorageUnavailable,
+    allow_browser_downloads,
+    get_object_store,
+    presigned_file_urls,
+)
 from app.services.team_photo_watermark import (
     WALGREENS_DIRECT_ORDERING,
     WALGREENS_NOTE,
@@ -174,6 +180,8 @@ def _attach_photo_sizes(payload: dict) -> None:
     except PhotoStorageUnavailable:
         return
     for item in payload.get("photos") or []:
+        if item.get("file_url"):
+            continue
         width = height = 0
         try:
             width, height = _jpeg_header_size(store.get_prefix(item.get("version") or ""))
@@ -264,6 +272,9 @@ def _workspace(session: Session, tournament: Tournament) -> dict:
     group_items = _group_photo_items(session, tournament, default)
     team_photo_count = len(items)
     items.extend(group_items)
+    file_urls = presigned_file_urls([item["version"] for item in items])
+    for item in items:
+        item["file_url"] = file_urls.get(item["version"])
     team_count = len(team_by_id)
     with_photos = team_photo_count
     reviewed_count = sum(1 for item in items if item["reviewed"])
@@ -359,6 +370,7 @@ def photo_print_workspace(
     session.commit()
     if session.in_transaction():
         session.rollback()
+    allow_browser_downloads()
     _attach_photo_sizes(payload)
     return payload
 
