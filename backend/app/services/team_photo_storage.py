@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 
 from PIL import Image, ImageOps
 
@@ -110,6 +111,57 @@ def load_display_thumb(storage_key: str) -> bytes:
     return get_object_store().get_bytes(thumb_key)
 
 
+_PRESIGN_SECONDS = 7 * 24 * 3600
+_PRESIGN_REUSE_SECONDS = 24 * 3600
+_presign_cache: dict[str, tuple[str, float]] = {}
+
+
+def reset_presign_cache() -> None:
+    _presign_cache.clear()
+
+
+def presigned_display_url(storage_key: str) -> str | None:
+    """Direct storage link for the thumbnail. None when this store cannot sign one."""
+    thumb_key = display_thumb_key(storage_key)
+    if not thumb_key:
+        return None
+    now = time.monotonic()
+    cached = _presign_cache.get(thumb_key)
+    if cached and cached[1] - now > _PRESIGN_REUSE_SECONDS:
+        return cached[0]
+    store = get_object_store()
+    presign = getattr(store, "presigned_get_url", None)
+    if not callable(presign):
+        return None
+    try:
+        url = presign(thumb_key, _PRESIGN_SECONDS)
+    except Exception:
+        return None
+    if not url:
+        return None
+    _presign_cache[thumb_key] = (url, now + _PRESIGN_SECONDS)
+    return url
+
+
+def display_thumb_response(storage_key: str):
+    """Send the stored thumbnail. A direct link keeps the bytes out of this server."""
+    from fastapi.responses import RedirectResponse, Response
+
+    url = presigned_display_url(storage_key)
+    if url:
+        return RedirectResponse(
+            url,
+            status_code=302,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    data = load_display_thumb(storage_key)
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 def official_object_key(tournament_id: int, team_id: int, unique_id: str) -> str:
     safe = "".join(ch for ch in unique_id if ch.isalnum() or ch in {"-", "_"})[:80]
     if len(safe) < 8:
@@ -141,7 +193,8 @@ class MemoryObjectStore:
         self.fail_next_put = False
         self.fail_next_delete = False
 
-    def put_jpeg(self, key: str, data: bytes, content_type: str = "image/jpeg") -> None:
+    def put_jpeg(self, key: str, data: bytes, content_type: str = "image/jpeg", cache_control: str | None = None) -> None:
+        del cache_control
         if self.fail_next_put:
             self.fail_next_put = False
             raise PhotoStorageUnavailable("Team photograph storage is unavailable")
@@ -175,6 +228,7 @@ def reset_memory_store() -> None:
     _memory_store.objects.clear()
     _memory_store.fail_next_put = False
     _memory_store.fail_next_delete = False
+    _presign_cache.clear()
 
 
 def arm_next_put_failure() -> None:
@@ -223,7 +277,8 @@ class R2ObjectStore:
         )
         return cls(client, bucket)
 
-    def put_jpeg(self, key: str, data: bytes, content_type: str = "image/jpeg") -> None:
+    def put_jpeg(self, key: str, data: bytes, content_type: str = "image/jpeg", cache_control: str | None = None) -> None:
+        extra = {"CacheControl": cache_control} if cache_control else {}
         self._call(
             "upload",
             lambda: self.client.put_object(
@@ -231,7 +286,15 @@ class R2ObjectStore:
                 Key=key,
                 Body=data,
                 ContentType=content_type,
+                **extra,
             ),
+        )
+
+    def presigned_get_url(self, key: str, expires_in: int) -> str:
+        return self.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=int(expires_in),
         )
 
     def head_size(self, key: str) -> int:

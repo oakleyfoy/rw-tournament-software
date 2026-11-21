@@ -16,7 +16,7 @@ import { TeamSearchResultButton } from '../components/TeamSearchResultButton'
 import type { PhotoTeamSearchHit } from '../components/TeamSearchResultButton'
 import { initialPhotographerSession, photographerReducer } from '../lib/photographerSession'
 import { prepareTeamPhoto } from '../lib/prepareTeamPhoto'
-import { photoVersionsFromSummaries, withPhotoVersion } from '../lib/useOfficialTeamPhotoPolling'
+import { photoThumbUrlsFromSummaries, photoVersionsFromSummaries, withPhotoVersion } from '../lib/useOfficialTeamPhotoPolling'
 
 function TeamPhotoSmsLines({
   players,
@@ -49,6 +49,7 @@ export default function PhotographerPage() {
   const [savedOfficial, setSavedOfficial] = useState<{ teamId: number; version: string } | null>(null)
   const [photoSms, setPhotoSms] = useState<{ teamId: number; players: { name: string; status: string; detail?: string | null }[] } | null>(null)
   const [photoVersions, setPhotoVersions] = useState<Record<number, string>>({})
+  const [thumbUrls, setThumbUrls] = useState<Record<number, string>>({})
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const deleteLock = useRef(false)
@@ -124,6 +125,16 @@ export default function PhotographerPage() {
       .then((rows) => {
         if (cancelled) return
         const listed = photoVersionsFromSummaries(rows)
+        const listedThumbs = photoThumbUrlsFromSummaries(rows)
+        setThumbUrls((current) => {
+          const next = { ...current }
+          for (const [teamId, url] of Object.entries(listedThumbs)) {
+            const id = Number(teamId)
+            if ((photoNotedAt.current[id] || 0) > started) continue
+            next[id] = url
+          }
+          return next
+        })
         setPhotoVersions((current) => {
           const next = { ...current }
           for (const [teamId, version] of Object.entries(listed)) {
@@ -144,6 +155,12 @@ export default function PhotographerPage() {
 
   const notePhoto = (teamId: number, version: string | null) => {
     photoNotedAt.current[teamId] = Date.now()
+    setThumbUrls((current) => {
+      if (!current[teamId]) return current
+      const next = { ...current }
+      delete next[teamId]
+      return next
+    })
     setPhotoVersions((current) => {
       if (!version) {
         if (!(teamId in current)) return current
@@ -430,6 +447,7 @@ export default function PhotographerPage() {
               <TeamPhotoProvider
                 value={{
                   photos: photoVersions,
+                  thumbUrls,
                   refresh: async () => undefined,
                   tournamentId: session.tournamentId,
                 }}

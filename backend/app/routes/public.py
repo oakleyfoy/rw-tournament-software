@@ -2270,6 +2270,24 @@ def public_team_photo(
     team_id: int,
     session: Session = Depends(get_session),
 ):
-    """Player pages do not load photographs. Printing uses the print center."""
-    del tournament_id, team_id, session
-    raise HTTPException(status_code=404, detail="Team photo is not shown on player pages")
+    """Public pages receive the stored thumbnail. The camera file stays in storage."""
+    from app.services.team_photo_storage import PhotoStorageUnavailable, display_thumb_response
+
+    if not _get_public_version(session, tournament_id):
+        raise HTTPException(status_code=404, detail="Team photo is not available")
+    photo = session.exec(
+        select(TeamOfficialPhoto).where(
+            TeamOfficialPhoto.tournament_id == tournament_id,
+            TeamOfficialPhoto.team_id == team_id,
+        )
+    ).first()
+    if not photo or not photo.storage_key:
+        raise HTTPException(status_code=404, detail="No official team photo")
+    storage_key = photo.storage_key
+    session.commit()
+    try:
+        return display_thumb_response(storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="No official team photo") from exc
+    except PhotoStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Team photo is temporarily unavailable") from exc

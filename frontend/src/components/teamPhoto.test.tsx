@@ -4,28 +4,55 @@ import { MatchTeamPhotos, TeamPhotoNameRow, TeamPhotoProvider, TeamPhotoThumb } 
 import { TeamSearchResultButton } from './TeamSearchResultButton'
 
 describe('team photo operational rendering', () => {
-  it('does not load photographs on the desk', () => {
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
+  it('loads only the thumbnail on the desk', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(String(url))
+      return new Response(new Blob(['photo'], { type: 'image/jpeg' }), { status: 200 })
+    }))
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:desk-thumb'),
+      revokeObjectURL: vi.fn(),
+    })
+    window.localStorage.setItem('rw_auth_token', 'token')
     render(
       <TeamPhotoProvider value={{ photos: { 11: '2026-10-21T12:00:00' }, refresh: async () => undefined, tournamentId: 1 }}>
         <MatchTeamPhotos teamIds={[11, 12]} surface="score-entry" />
       </TeamPhotoProvider>,
     )
-    expect(screen.queryByTestId('team-photo')).toBeNull()
-    expect(screen.queryByTestId('team-photo-placeholder')).toBeNull()
-    expect(fetchMock).not.toHaveBeenCalled()
+    const photo = await screen.findByTestId('team-photo')
+    expect(photo).toHaveAttribute('data-photo-surface', 'score-entry')
+    expect(urls.every((url) => url.includes('/official/thumb'))).toBe(true)
+    expect(urls.some((url) => url.includes('/official/content'))).toBe(false)
     expect(screen.getByTestId('match-team-photos')).toHaveAttribute('data-photo-surface', 'score-entry')
   })
 
-  it('uses the full official photo on the photographer card when the thumbnail is unavailable', async () => {
+  it('uses a direct thumbnail link without asking the tournament server for the file', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <TeamPhotoProvider value={{
+        photos: { 11: 'team-photos/1/11/full.jpg' },
+        thumbUrls: { 11: 'https://photos.example/team-thumb.jpg' },
+        refresh: async () => undefined,
+        tournamentId: 1,
+      }}>
+        <TeamPhotoThumb teamId={11} surface="check-in-desk" />
+      </TeamPhotoProvider>,
+    )
+    expect(screen.getByTestId('team-photo')).toHaveAttribute('src', 'https://photos.example/team-thumb.jpg')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the camera file off the photographer card until it is opened', async () => {
     const urls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       urls.push(String(url))
-      if (String(url).includes('/official/content')) {
-        return new Response('', { status: 404 })
+      if (String(url).includes('/official/thumb')) {
+        return new Response(new Blob(['photo'], { type: 'image/jpeg' }), { status: 200 })
       }
-      return new Response(new Blob(['photo'], { type: 'image/jpeg' }), { status: 200 })
+      return new Response('', { status: 404 })
     }))
     vi.stubGlobal('URL', {
       ...URL,
@@ -41,8 +68,8 @@ describe('team photo operational rendering', () => {
     const photo = await screen.findByTestId('team-photo')
     expect(photo).toHaveAttribute('data-photo-frame', 'card')
     expect(photo).toHaveAttribute('data-photo-version', 'team-photos/1/11/full.jpg')
-    expect(urls.some((url) => url.includes('/official/content'))).toBe(true)
     expect(urls.some((url) => url.includes('/official/thumb'))).toBe(true)
+    expect(urls.some((url) => url.includes('/official/content'))).toBe(false)
   })
 })
 
@@ -76,17 +103,22 @@ describe('team photo name rows', () => {
     )
   }
 
-  function expectNameOnly(teamId: string, name: string) {
+  async function expectRow(teamId: string, name: string, hasPhoto: boolean) {
     const row = screen.getAllByTestId('team-photo-name-row').find((item) => item.getAttribute('data-team-id') === teamId)
     expect(row).toBeTruthy()
     expect(within(row!).getByTestId('team-photo-name')).toHaveTextContent(name)
-    expect(within(row!).queryByTestId('team-photo')).toBeNull()
+    if (hasPhoto) {
+      expect(await within(row!).findByTestId('team-photo')).toBeTruthy()
+    } else {
+      expect(within(row!).queryByTestId('team-photo')).toBeNull()
+      expect(within(row!).getByTestId('team-photo-placeholder')).toBeTruthy()
+    }
   }
 
-  it('keeps each name with its team and does not load a photograph', () => {
+  it('keeps each name with its team and shows that team thumbnail', async () => {
     renderRows(teams)
-    expectNameOnly('12', 'Trisha / Heather')
-    expectNameOnly('11', 'Haley / Stacey')
+    await expectRow('12', 'Trisha / Heather', true)
+    await expectRow('11', 'Haley / Stacey', false)
     expect(screen.getAllByTestId('team-photo-name-row')[0]).toHaveAttribute('data-team-id', '11')
 
     cleanup()
@@ -94,9 +126,10 @@ describe('team photo name rows', () => {
     const rows = screen.getAllByTestId('team-photo-name-row')
     expect(rows[0]).toHaveAttribute('data-team-id', '12')
     expect(within(rows[0]).getByTestId('team-photo-name')).toHaveTextContent('Trisha / Heather')
-    expect(within(rows[0]).queryByTestId('team-photo')).toBeNull()
+    expect(await within(rows[0]).findByTestId('team-photo')).toBeTruthy()
     expect(rows[1]).toHaveAttribute('data-team-id', '11')
     expect(within(rows[1]).getByTestId('team-photo-name')).toHaveTextContent('Haley / Stacey')
+    expect(within(rows[1]).queryByTestId('team-photo')).toBeNull()
   })
 })
 

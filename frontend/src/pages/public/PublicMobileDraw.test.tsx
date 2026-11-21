@@ -99,7 +99,7 @@ describe('PublicMobileDraw', () => {
     expect(screen.queryByText('Underway')).toBeNull()
     expect(screen.queryByText('Seed 1')).toBeNull()
     expect(screen.queryByText('Seed 2')).toBeNull()
-    expect(document.querySelector('img')).toBeNull()
+    expect(document.querySelector('img.public-photo')).toHaveAttribute('src', expect.stringContaining('/teams/20/photo?v=photo-1'))
     expect(screen.getByText('AB')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Find your team'), { target: { value: 'bea' } })
     fireEvent.click(document.querySelector('.public-search-result') as HTMLButtonElement)

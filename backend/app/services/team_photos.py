@@ -258,7 +258,11 @@ def save_official_photo(
     thumb_key = display_thumb_key(new_key)
     if thumb_key:
         try:
-            store.put_jpeg(thumb_key, make_display_thumbnail(image_bytes))
+            store.put_jpeg(
+                thumb_key,
+                make_display_thumbnail(image_bytes),
+                cache_control="public, max-age=31536000",
+            )
         except (PhotoRejected, PhotoStorageUnavailable):
             if previous_key != new_key:
                 store.delete(new_key)

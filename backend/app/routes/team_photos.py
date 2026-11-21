@@ -75,6 +75,7 @@ class OfficialPhotoSummary(BaseModel):
     team_id: int
     updated_at: datetime
     version: str
+    thumb_url: Optional[str] = None
 
 
 class TeamPhotoSmsPlayerStatus(BaseModel):
@@ -210,8 +211,15 @@ def list_official_photos(
     rows = session.exec(
         select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id.in_(team_ids))  # type: ignore[attr-defined]
     ).all()
+    from app.services.team_photo_storage import presigned_display_url
+
     return [
-        OfficialPhotoSummary(team_id=row.team_id, updated_at=row.updated_at, version=row.storage_key)
+        OfficialPhotoSummary(
+            team_id=row.team_id,
+            updated_at=row.updated_at,
+            version=row.storage_key,
+            thumb_url=presigned_display_url(row.storage_key),
+        )
         for row in rows
         if row.storage_key
     ]
@@ -527,5 +535,5 @@ def official_photo_thumb(
     return Response(
         content=thumb,
         media_type="image/jpeg",
-        headers={"Cache-Control": "private, max-age=300"},
+        headers={"Cache-Control": "private, max-age=86400"},
     )

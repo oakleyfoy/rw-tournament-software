@@ -152,6 +152,63 @@ def test_public_photo_uses_the_existing_thumbnail_after_it_is_saved(client, sess
     assert other.status_code == 404
 
 
+def test_public_photo_returns_the_stored_thumbnail(client, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    reset_memory_store()
+    tournament, team = _published(session)
+    key = official_object_key(tournament.id, team.id, "public-photo-02")
+    original = _jpeg() + b"original"
+    thumbnail = _jpeg() + b"thumbnail"
+    store = get_object_store()
+    store.put_jpeg(key, original)
+    store.put_jpeg(key[:-4] + "-thumb.jpg", thumbnail)
+    session.add(TeamOfficialPhoto(
+        tournament_id=tournament.id,
+        team_id=team.id,
+        storage_key=key,
+        byte_size=len(original),
+    ))
+    session.commit()
+
+    response = client.get(f"/api/public/tournaments/{tournament.id}/teams/{team.id}/photo")
+    assert response.status_code == 200
+    assert response.content == thumbnail
+    assert response.content != original
+    assert "max-age=86400" in response.headers["cache-control"]
+
+
+def test_public_photo_redirects_to_storage_without_opening_the_camera_file(client, session: Session, monkeypatch):
+    from app.services import team_photo_storage
+
+    tournament, team = _published(session)
+    key = official_object_key(tournament.id, team.id, "public-photo-03")
+    session.add(TeamOfficialPhoto(
+        tournament_id=tournament.id,
+        team_id=team.id,
+        storage_key=key,
+        byte_size=10,
+    ))
+    session.commit()
+    team_photo_storage.reset_presign_cache()
+
+    class SigningStore:
+        def presigned_get_url(self, object_key: str, expires_in: int) -> str:
+            assert object_key == key[:-4] + "-thumb.jpg"
+            assert expires_in > 0
+            return "https://photos.example/team-thumb.jpg"
+
+        def get_bytes(self, object_key: str) -> bytes:
+            raise AssertionError(object_key)
+
+    monkeypatch.setattr(team_photo_storage, "get_object_store", lambda: SigningStore())
+    response = client.get(
+        f"/api/public/tournaments/{tournament.id}/teams/{team.id}/photo",
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://photos.example/team-thumb.jpg"
+
+
 def test_public_photo_stays_hidden_until_the_draw_is_published(client, session: Session):
     tournament = Tournament(
         name="Unpublished",

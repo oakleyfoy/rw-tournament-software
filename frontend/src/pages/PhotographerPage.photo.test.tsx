@@ -105,7 +105,8 @@ describe('photographer official photo confirmation', () => {
     }))
     expect(mocks.searchPhotographyTeams).toHaveBeenCalledWith(4, 'Jane')
     const fetchMock = vi.mocked(fetch)
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/official/content?'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/official/thumb?'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/official/content?'))).toBe(false)
   })
 
   it('shows a previously saved official photo, then the next team placeholder or photo', async () => {

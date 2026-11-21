@@ -56,7 +56,7 @@ function TeamPhoto({
 }) {
   const [broken, setBroken] = useState(false)
   const name = team?.full_name || 'Team'
-  const version = null
+  const version = team?.photo_version || null
   if (!team || !version || broken) {
     return <span className={large ? 'public-photo-fallback large' : 'public-photo-fallback'} aria-hidden="true">{teamInitials(name)}</span>
   }
@@ -111,7 +111,6 @@ export default function PublicMobileDraw({
   const [round, setRound] = useState('All')
   const [detailId, setDetailId] = useState<number | null>(null)
   const [enlargedTeamId, setEnlargedTeamId] = useState<number | null>(null)
-  void enlargedTeamId
   const [notPublished, setNotPublished] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -153,6 +152,7 @@ export default function PublicMobileDraw({
 
   const teamMap = useMemo(() => new Map(teams.map((team) => [team.team_id, team])), [teams])
   const selectedTeam = selectedTeamId == null ? null : teamMap.get(selectedTeamId) || null
+  const enlargedTeam = enlargedTeamId == null ? null : teamMap.get(enlargedTeamId) || null
   const results = searchPublicTeams(teams, query)
   const divisionMatches = useMemo(() => {
     const rows = matchesForView(matches, eventId, divisionCode, divisionLabel)
@@ -353,6 +353,30 @@ export default function PublicMobileDraw({
           <div>{detail.day_label}</div>
           {courtText(detail, showCourtInfo) && <div>{courtText(detail, showCourtInfo)}</div>}
         </article>
+      )}
+
+      {enlargedTeam?.photo_version && (
+        <div
+          role="dialog"
+          aria-label={`Photo of ${enlargedTeam.full_name}`}
+          onClick={() => setEnlargedTeamId(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 40,
+            background: 'rgba(0,0,0,0.72)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <img
+            className="public-photo large"
+            src={publicTeamPhotoUrl(tournamentId, enlargedTeam.team_id, enlargedTeam.photo_version)}
+            alt=""
+          />
+        </div>
       )}
 
     </div>
