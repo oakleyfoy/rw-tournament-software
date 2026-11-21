@@ -45,14 +45,32 @@
   min-width: 0;
 }
 
-/* On Court / Open Courts cards wrap to the window instead of a fixed 10-across row. */
+/* On Court / Open Courts. width:0 + min-width:100% stops the row from
+   growing with the cards, so auto-fill has to wrap inside the window. */
+.checkin-stack {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.checkin-court-panel {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .checkin-court-board {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: 8px;
   align-items: start;
-  min-width: 0;
-  width: 100%;
+  width: 0;
+  min-width: 100%;
+  max-width: 100%;
+  contain: inline-size;
 }
 
 .desk-header-actions {

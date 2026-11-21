@@ -11314,7 +11314,7 @@ export default function TournamentDeskPage() {
 
   return (
     <TeamPhotoProvider value={{ photos: teamPhotoLive.versions, thumbUrls: teamPhotoLive.thumbUrls, refresh: teamPhotoLive.refresh, showSaved: teamPhotoLive.showSaved, tournamentId: tid }}>
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5', maxWidth: '100%', overflowX: 'clip' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5', width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
       {/* Header */}
       <div style={{
         backgroundColor: '#1a237e',
@@ -11711,7 +11711,7 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                <div style={{ display: 'grid', gap: 14 }}>
+                <div className="checkin-stack">
                   {courtActionError && (
                     <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#ffebee', color: '#c62828', fontSize: 12, fontWeight: 700 }}>
                       {courtActionError}
@@ -11729,7 +11729,7 @@ export default function TournamentDeskPage() {
                       ))}
                     </div>
                   )}
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                  <div className="checkin-court-panel" style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', fontSize: 14, fontWeight: 800, color: '#1565c0', backgroundColor: '#f4f9ff' }}>
                       On Court
                     </div>
@@ -11754,7 +11754,7 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
 
-                  <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                  <div className="checkin-court-panel" style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff' }}>
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #eef2f5', backgroundColor: '#f4fbf5' }}>
                       <div style={{ fontSize: 14, fontWeight: 800, color: '#2e7d32' }}>Open Courts</div>
                       <div style={{ fontSize: 11, color: '#607d8b', marginTop: 2 }}>
@@ -11782,7 +11782,7 @@ export default function TournamentDeskPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'start', minWidth: 0, width: '100%', maxWidth: '100%' }}>
                     <div style={{ border: '1px solid #dfe4ea', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
                       <div className="checkin-waiting-header">
                         <div className="checkin-waiting-header-title">Waiting For Check-In</div>
