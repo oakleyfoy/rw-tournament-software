@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   postOfficialTeamPhoto: vi.fn(),
   postGroupPhoto: vi.fn(),
   listOfficialTeamPhotos: vi.fn(),
-  getTeamPhotoSms: vi.fn(),
   prepareTeamPhoto: vi.fn(),
 }))
 
@@ -19,7 +18,6 @@ vi.mock('../api/photography', () => ({
   postOfficialTeamPhoto: mocks.postOfficialTeamPhoto,
   postGroupPhoto: mocks.postGroupPhoto,
   listOfficialTeamPhotos: mocks.listOfficialTeamPhotos,
-  getTeamPhotoSms: mocks.getTeamPhotoSms,
   deleteOfficialTeamPhoto: vi.fn(),
   officialTeamPhotoContentUrl: () => '/team-photo',
   officialTeamPhotoThumbUrl: () => '/team-thumb',
@@ -37,7 +35,6 @@ describe('photographer group photo mode', () => {
 
   beforeEach(() => {
     mocks.listOfficialTeamPhotos.mockResolvedValue([])
-    mocks.getTeamPhotoSms.mockResolvedValue({ players: [] })
     mocks.listPhotographyTournaments.mockResolvedValue([
       { id: 4, name: '2026 Kiawah', location: 'Kiawah', start_date: '2026-02-20', end_date: '2026-02-22' },
     ])
@@ -82,7 +79,7 @@ describe('photographer group photo mode', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Group Photo' }))
     expect(screen.queryByPlaceholderText("Either player's name")).toBeNull()
-    expect(screen.getByText('Saved for printing only. It is not linked to a team and no text is sent.')).toBeTruthy()
+    expect(screen.getByText('Saved for printing only. It is not linked to a team.')).toBeTruthy()
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['jpeg'], 'group.jpg', { type: 'image/jpeg' })] } })
@@ -96,7 +93,6 @@ describe('photographer group photo mode', () => {
     expect(screen.getByPlaceholderText("Either player's name")).toBeTruthy()
     expect(mocks.postGroupPhoto).toHaveBeenCalledWith(expect.objectContaining({ tournamentId: 4, clientUploadId: 'group-upload-1' }))
     expect(mocks.postOfficialTeamPhoto).not.toHaveBeenCalled()
-    expect(mocks.getTeamPhotoSms).not.toHaveBeenCalled()
   })
 
   it('keeps Group Photo and the picture when saving fails', async () => {

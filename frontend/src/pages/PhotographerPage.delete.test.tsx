@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   searchPhotographyTeams: vi.fn(),
   listOfficialTeamPhotos: vi.fn(),
   deleteOfficialTeamPhoto: vi.fn(),
-  getTeamPhotoSms: vi.fn(),
 }))
 
 vi.mock('../api/photography', () => ({
@@ -16,7 +15,6 @@ vi.mock('../api/photography', () => ({
   searchPhotographyTeams: mocks.searchPhotographyTeams,
   listOfficialTeamPhotos: mocks.listOfficialTeamPhotos,
   deleteOfficialTeamPhoto: mocks.deleteOfficialTeamPhoto,
-  getTeamPhotoSms: mocks.getTeamPhotoSms,
   postOfficialTeamPhoto: vi.fn(),
   postGroupPhoto: vi.fn(),
   officialTeamPhotoContentUrl: (teamId: number, version: string) =>
@@ -64,12 +62,6 @@ describe('delete official team photo', () => {
       { team_id: 41, updated_at: '2026-10-21T18:00:00', version: 'team-photos/4/41/current.jpg' },
     ])
     mocks.deleteOfficialTeamPhoto.mockResolvedValue({ team_id: 41, deleted: true })
-    mocks.getTeamPhotoSms.mockResolvedValue({
-      players: [
-        { name: 'Jane Doe', status: 'Delivered', detail: null },
-        { name: 'Sue Park', status: 'Skipped', detail: 'Opted out' },
-      ],
-    })
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['photo'], { type: 'image/jpeg' }), { status: 200 })))
     vi.stubGlobal('URL', {
       ...URL,

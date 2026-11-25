@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   searchPhotographyTeams: vi.fn(),
   postOfficialTeamPhoto: vi.fn(),
   listOfficialTeamPhotos: vi.fn(),
-  getTeamPhotoSms: vi.fn(),
   deleteOfficialTeamPhoto: vi.fn(),
   prepareTeamPhoto: vi.fn(),
 }))
@@ -19,7 +18,6 @@ vi.mock('../api/photography', () => ({
   postOfficialTeamPhoto: mocks.postOfficialTeamPhoto,
   postGroupPhoto: vi.fn(),
   listOfficialTeamPhotos: mocks.listOfficialTeamPhotos,
-  getTeamPhotoSms: mocks.getTeamPhotoSms,
   deleteOfficialTeamPhoto: mocks.deleteOfficialTeamPhoto,
   officialTeamPhotoContentUrl: (teamId: number, version: string) =>
     `/api/photography/teams/${teamId}/official/content?v=${encodeURIComponent(version)}`,
@@ -38,7 +36,6 @@ describe('photographer official photo confirmation', () => {
 
   beforeEach(() => {
     mocks.listOfficialTeamPhotos.mockResolvedValue([])
-    mocks.getTeamPhotoSms.mockResolvedValue({ players: [] })
     mocks.deleteOfficialTeamPhoto.mockResolvedValue({ team_id: 41, deleted: true })
     mocks.listPhotographyTournaments.mockResolvedValue([
       { id: 4, name: '2026 Kiawah', location: 'Kiawah', start_date: '2026-02-20', end_date: '2026-02-22' },

@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { clearAuthToken, logoutAuth } from '../api/client'
 import {
   deleteOfficialTeamPhoto,
-  getTeamPhotoSms,
   listOfficialTeamPhotos,
   listPhotographyTournaments,
   PhotographyTournament,
@@ -18,26 +17,6 @@ import { initialPhotographerSession, photographerReducer } from '../lib/photogra
 import { prepareTeamPhoto } from '../lib/prepareTeamPhoto'
 import { photoThumbUrlsFromSummaries, photoVersionsFromSummaries, withPhotoVersion } from '../lib/useOfficialTeamPhotoPolling'
 
-function TeamPhotoSmsLines({
-  players,
-}: {
-  players: { name: string; status: string; detail?: string | null }[] | null
-}) {
-  if (!players) return null
-  return (
-    <section aria-label="Team Photo SMS" style={{ marginTop: 10, fontSize: 14, color: '#263238' }}>
-      <div style={{ fontWeight: 800 }}>Team Photo SMS</div>
-      {players.length === 0 && <div>Not sent for this photo.</div>}
-      {players.map((player) => (
-        <div key={`${player.name}-${player.status}-${player.detail || ''}`}>
-          {player.name} — {player.status}
-          {player.detail ? ` (${player.detail})` : ''}
-        </div>
-      ))}
-    </section>
-  )
-}
-
 export default function PhotographerPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -47,7 +26,6 @@ export default function PhotographerPage() {
   const [results, setResults] = useState<PhotoTeamSearchHit[]>([])
   const [selectedTeam, setSelectedTeam] = useState<PhotoTeamSearchHit | null>(null)
   const [savedOfficial, setSavedOfficial] = useState<{ teamId: number; version: string } | null>(null)
-  const [photoSms, setPhotoSms] = useState<{ teamId: number; players: { name: string; status: string; detail?: string | null }[] } | null>(null)
   const [photoVersions, setPhotoVersions] = useState<Record<number, string>>({})
   const [thumbUrls, setThumbUrls] = useState<Record<number, string>>({})
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -97,25 +75,6 @@ export default function PhotographerPage() {
   useEffect(() => {
     if (session.phase === 'search') searchRef.current?.focus()
   }, [session.phase, session.confirmationMessage])
-
-  useEffect(() => {
-    const teamId = savedOfficial?.teamId ?? (selectedTeam?.has_official_photo ? selectedTeam.team_id : null)
-    if (!session.tournamentId || !teamId) {
-      setPhotoSms(null)
-      return
-    }
-    let cancelled = false
-    getTeamPhotoSms(session.tournamentId, teamId)
-      .then((status) => {
-        if (!cancelled) setPhotoSms({ teamId, players: status.players })
-      })
-      .catch(() => {
-        if (!cancelled) setPhotoSms(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [session.tournamentId, savedOfficial, selectedTeam])
 
   useEffect(() => {
     if (!session.tournamentId) return
@@ -381,7 +340,6 @@ export default function PhotographerPage() {
             </div>
           </TeamPhotoProvider>
         )}
-        {photoSms && photoSms.teamId === savedOfficial?.teamId && <TeamPhotoSmsLines players={photoSms.players} />}
 
         {tournaments.length > 1 && <label style={labelStyle}>
           Tournament
@@ -462,7 +420,7 @@ export default function PhotographerPage() {
                 <>
                   <div style={{ fontWeight: 800, fontSize: 20 }}>Group Photo</div>
                   <div style={{ marginTop: 6, fontSize: 14, color: '#455a64' }}>
-                    Saved for printing only. It is not linked to a team and no text is sent.
+                    Saved for printing only. It is not linked to a team.
                   </div>
                 </>
               ) : selectedTeam && (
@@ -472,7 +430,6 @@ export default function PhotographerPage() {
                   {selectedTeam.has_official_photo && (
                     <div style={{ marginTop: 8, fontSize: 13, color: '#1565c0' }}>This team already has an official photo. A confirmed selection replaces it.</div>
                   )}
-                  {photoSms && photoSms.teamId === selectedTeam.team_id && <TeamPhotoSmsLines players={photoSms.players} />}
                 </>
               )}
             </div>

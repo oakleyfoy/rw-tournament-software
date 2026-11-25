@@ -8,14 +8,11 @@ from app.models.event import Event
 from app.models.player import Player
 from app.models.sms_log import SmsLog
 from app.models.team import Team
-from app.models.team_photo import TeamOfficialPhoto
-from app.models.team_photo_sms import TeamPhotoSmsNotice
 from app.models.team_player import TeamPlayer
 from app.models.tournament import Tournament
 from app.services.canonical_teams import SnapshotPlayer, SnapshotTeam
 from app.services.registration_sms_consent import apply_registration_sms_consent
 from app.services.rw_os_import import snapshot_hash
-from app.services.team_photo_sms import dispatch_team_photo_notices, queue_team_photo_sms
 
 
 def _player(rw_id: str, phone: str, *, consent: str | None, at: str | None = "2026-09-01") -> SnapshotPlayer:
@@ -45,7 +42,7 @@ def _team(p1: SnapshotPlayer, p2: SnapshotPlayer) -> SnapshotTeam:
     )
 
 
-def test_registration_consent_reconciles_unknown_and_preserves_opt_out(session: Session, monkeypatch):
+def test_registration_consent_reconciles_unknown_and_preserves_opt_out(session: Session):
     tournament = Tournament(
         name="Consent",
         location="Test",
@@ -125,38 +122,6 @@ def test_registration_consent_reconciles_unknown_and_preserves_opt_out(session: 
     assert later_stop.sms_consent_source == "twilio_stop"
     assert missing.sms_consent_status == "unknown"
     assert session.exec(select(SmsLog)).all() == []
-    assert session.exec(select(TeamPhotoSmsNotice)).all() == []
-
-    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed", team_count=2)
-    session.add(event)
-    session.flush()
-    team = Team(event_id=event.id, name="Documented / Partner", seed=1)
-    session.add(team)
-    session.flush()
-    session.add(TeamPlayer(team_id=team.id, player_id=documented.id, lineup_slot=1))
-    session.add(TeamPlayer(team_id=team.id, player_id=partner.id, lineup_slot=2))
-    photo = TeamOfficialPhoto(
-        team_id=team.id,
-        tournament_id=tournament.id,
-        storage_key="memory/consent-photo.jpg",
-        byte_size=10,
-    )
-    session.add(photo)
-    session.flush()
-    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
-    monkeypatch.setenv("PUBLIC_APP_URL", "https://photos.test")
-    calls: list[str] = []
-
-    def fake_send(to, body, status_callback_url=None):
-        calls.append(to)
-        return {"sid": f"SM{len(calls)}", "status": "sent", "error": None}
-
-    queue_team_photo_sms(session, photo)
-    assert dispatch_team_photo_notices(session, send=fake_send) == 2
-    assert calls == ["+15555550101", "+15555550104"]
-    notices = session.exec(select(TeamPhotoSmsNotice)).all()
-    assert {notice.player_id for notice in notices} == {documented.id, partner.id}
-    assert all(notice.status == "SENT" for notice in notices)
 
 
 def test_legacy_slot_phone_matches_registration_consent_without_copying_the_number(session: Session):

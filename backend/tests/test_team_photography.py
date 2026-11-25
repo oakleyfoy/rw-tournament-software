@@ -14,6 +14,7 @@ from app.models.event import Event
 from app.models.match import Match
 from app.models.player import Player
 from app.models.schedule_version import ScheduleVersion
+from app.models.sms_log import SmsLog
 from app.models.team import Team
 from app.models.team_photo import TeamOfficialPhoto, TeamPhotoCapture
 from app.models.team_player import TeamPlayer
@@ -313,6 +314,12 @@ def test_capture_selection_replacement_and_team_isolation(client: TestClient, se
     saved = _save(client, admin, tournament_id, team_id, "upload-best-02", oriented_jpeg)
     assert saved.status_code == 200, saved.text
     session.expire_all()
+    assert session.exec(select(SmsLog)).all() == []
+    assert client.get(
+        f"/api/photography/tournaments/{tournament_id}/teams/{team_id}/photo-sms",
+        headers=admin,
+    ).status_code == 404
+    assert client.get("/api/public/team-photo/any-token").status_code == 404
     assert saved.json()["team_id"] == team_id
     assert saved.json()["tournament_id"] == tournament_id
     photos = session.exec(select(TeamOfficialPhoto)).all()

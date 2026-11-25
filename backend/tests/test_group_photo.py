@@ -1,4 +1,4 @@
-"""Group photographs stay off teams, public draws, and photo SMS."""
+"""Group photographs stay off teams and public draws."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from sqlmodel import Session, select
 from app.models.group_photo import TournamentGroupPhoto
 from app.models.sms_log import SmsLog
 from app.models.team_photo import TeamOfficialPhoto
-from app.models.team_photo_sms import TeamPhotoSmsNotice
 from app.models.tournament_sms_settings import TournamentSmsSettings
 from app.services.team_photo_storage import get_object_store, reset_memory_store
 from tests.test_team_photo_print import _roster, _save_photo
@@ -38,12 +37,10 @@ def _save_group(client: TestClient, headers: dict, tournament_id: int, upload_id
     return saved.json()
 
 
-def test_group_photos_print_without_a_team_draw_or_text(client: TestClient, session: Session, monkeypatch):
-    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "false")
+def test_group_photos_print_without_a_team_or_draw(client: TestClient, session: Session):
     admin = _bootstrap_admin(client)
     roster = _roster(session)
     _save_photo(client, admin, roster["tournament_id"], roster["team_id"])
-    monkeypatch.setenv("TEAM_PHOTO_AUTO_SMS_ENABLED", "true")
     session.add(TournamentSmsSettings(tournament_id=roster["tournament_id"], texts_enabled=True, delivery_mode="live"))
     session.commit()
     official = session.exec(select(TeamOfficialPhoto).where(TeamOfficialPhoto.team_id == roster["team_id"])).one()
@@ -58,7 +55,6 @@ def test_group_photos_print_without_a_team_draw_or_text(client: TestClient, sess
     assert session.exec(select(TournamentGroupPhoto)).all().__len__() == 2
     assert official.storage_key == session.get(TeamOfficialPhoto, official.id).storage_key
     assert get_object_store().get_bytes(official.storage_key) == official_before
-    assert session.exec(select(TeamPhotoSmsNotice)).all() == []
     assert session.exec(select(SmsLog)).all() == []
 
     listed = client.get(f"/api/photography/tournaments/{roster['tournament_id']}/official-photos", headers=admin)
