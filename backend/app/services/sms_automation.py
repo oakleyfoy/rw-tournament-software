@@ -173,46 +173,8 @@ class SmsAutomationEngine:
         previous_slot_id: Optional[int],
         new_slot_id: Optional[int],
     ) -> None:
-        """Run auto_court_change when a match's slot changes."""
-        if self._is_checkin_management():
-            new_slot_for_mode = self._slot_by_id(new_slot_id) if new_slot_id else None
-            event = self.session.get(Event, match.event_id) if match.event_id else None
-            day = new_slot_for_mode.day_date if new_slot_for_mode else None
-            if not is_preassigned(event, day):
-                return
-        if not self._is_enabled("auto_court_change", default=True):
-            return
-        if not previous_slot_id or not new_slot_id:
-            return
-        if previous_slot_id == new_slot_id:
-            return
-
-        old_slot = self._slot_by_id(previous_slot_id)
-        new_slot = self._slot_by_id(new_slot_id)
-        if not old_slot or not new_slot:
-            return
-
-        old_sig = (old_slot.day_date, old_slot.start_time, old_slot.court_number)
-        new_sig = (new_slot.day_date, new_slot.start_time, new_slot.court_number)
-        if old_sig == new_sig:
-            return
-
-        for team in self._teams_for_match(match):
-            dedupe_key = self._dedupe_key(
-                "court_change",
-                f"v{self.version_id}",
-                f"m{match.id}",
-                f"from{previous_slot_id}",
-                f"to{new_slot_id}",
-            )
-            self._send_template_to_team(
-                team=team,
-                message_type="court_change",
-                dedupe_key=dedupe_key,
-                match=match,
-                slot=new_slot,
-                opponent=self._opponent_display(match, team.id),
-            )
+        """Court moves stay on the sheet. They do not send a text."""
+        return
 
     def handle_checkin_court_assigned(
         self,

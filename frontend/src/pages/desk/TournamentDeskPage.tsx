@@ -7561,7 +7561,7 @@ function SmsAdminTab({
   }, [tournamentId])
 
   const loadTemplates = useCallback(async () => {
-    const rows = await getSmsTemplates(tournamentId)
+    const rows = (await getSmsTemplates(tournamentId)).filter((row) => row.message_type !== 'court_change')
     setTemplates(rows)
     const bodies: Record<string, string> = {}
     rows.forEach(t => { bodies[t.message_type] = t.template_body })
@@ -8248,7 +8248,7 @@ function SmsAdminTab({
       auto_checkin_post_match_next: nextMode === 'checkin_management',
       auto_checkin_court_assigned: false,
     }
-    const rows = [...templates]
+    const rows = templates.filter((row) => row.message_type !== 'court_change')
     const settingsMismatch = settingsDraft
       ? (
           settingsDraft.auto_first_match !== nextAutomationDefaults.auto_first_match ||
@@ -8340,7 +8340,6 @@ function SmsAdminTab({
     post_match_next: 'Court: Post-match next',
     on_deck: 'Court: On deck',
     up_next: 'Court: Up next',
-    court_change: 'Court: Court change',
     checkin_first_match: 'Check-In: First match check-in',
     checkin_rr_first_match: 'Check-In: Round Robin first match',
     checkin_slot_checkin: 'Check-In: Prior slot started (check-in now)',

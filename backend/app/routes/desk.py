@@ -2467,6 +2467,7 @@ def desk_snapshot(
         active_checkin_slot_key: Optional[str] = None
         checkin_court_warnings: List[CheckInCourtWarning] = []
         ready_assigned_queue: List[ReadyAssignedItem] = []
+        arrival_matches: List[CheckInMatchItem] = []
         if management_mode == MODE_CHECKIN_MANAGEMENT:
             (
                 checkin_matches,

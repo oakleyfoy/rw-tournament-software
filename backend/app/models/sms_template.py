@@ -14,7 +14,7 @@ class SmsTemplate(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     tournament_id: int = Field(foreign_key="tournament.id", index=True)
-    message_type: str  # first_match|rr_first_match|post_match_next|on_deck|up_next|court_change|checkin_*
+    message_type: str  # first_match|rr_first_match|post_match_next|on_deck|up_next|checkin_*
     template_body: str  # Message with {placeholders}
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -28,7 +28,6 @@ DEFAULT_SMS_TEMPLATES = {
     "post_match_next": ("{team_name}: Your next match is {date} at {time} on {court}."),
     "on_deck": ("{team_name}: You're ON DECK. Your match on {court} starts after the current game."),
     "up_next": ("{team_name}: You're UP NEXT on {court}. Please head to your court now."),
-    "court_change": ("{team_name}: Court change! Your match has moved to {court} at {time}."),
     "checkin_first_match": (
         "{team_name}: Your first match is {date} at {time}. "
         "Please arrive at least 30 mins early and check in at the desk."

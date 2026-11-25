@@ -669,8 +669,8 @@ def test_finalize_sms_approval_endpoint_sends_post_match_next(client, session):
     assert all(not (row.message_body or "").rstrip().endswith(")") for row in post_logs)
 
 
-def test_sms_automation_move_triggers_court_change(client, session):
-    """Moving a match to a new slot triggers court_change automation sends."""
+def test_sms_automation_move_does_not_send_a_court_change_text(client, session):
+    """Moving a match updates the court and does not text the players."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
     _set_team_test_phones(session, teams)
 
@@ -716,7 +716,7 @@ def test_sms_automation_move_triggers_court_change(client, session):
             SmsLog.message_type == "court_change",
         )
     ).all()
-    assert len(court_change_logs) == 2
+    assert court_change_logs == []
 
 
 def test_board_excludes_finals(client, session):

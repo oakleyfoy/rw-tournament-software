@@ -553,10 +553,7 @@ def test_message_rendering_includes_preassigned_court_and_hides_dynamic_slot_cou
         session.exec(select(MatchAssignment).where(MatchAssignment.match_id == data["friday"].id)).one().slot_id
     )
     engine.handle_court_change(data["friday"], old_slot_id, court_18.id)
-    assert sent
-    assert "Court 18" in sent[0]
-    assert "Court 14" not in sent[0]
-    assert "9:00 AM" in sent[0]
+    assert sent == []
 
 
 def test_preassigned_court_change_updates_player_and_staff_surfaces(client, session, monkeypatch):

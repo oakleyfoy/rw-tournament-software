@@ -341,7 +341,6 @@ def test_default_templates_exist():
         "post_match_next",
         "on_deck",
         "up_next",
-        "court_change",
     ]
     for msg_type in expected_types:
         assert msg_type in DEFAULT_SMS_TEMPLATES

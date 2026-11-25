@@ -3791,6 +3791,8 @@ def get_sms_templates(
     # defaults with custom overrides when present.
     result: List[SmsTemplateResponse] = []
     for msg_type, default_body in DEFAULT_SMS_TEMPLATES.items():
+        if msg_type == "court_change":
+            continue
         custom = custom_by_type.get(msg_type)
         if custom is not None:
             result.append(SmsTemplateResponse.model_validate(custom))
@@ -3807,7 +3809,7 @@ def get_sms_templates(
 
     # Include unexpected persisted rows (defensive), after known defaults.
     extras = sorted(
-        (t for t in templates if t.message_type not in DEFAULT_SMS_TEMPLATES),
+        (t for t in templates if t.message_type not in DEFAULT_SMS_TEMPLATES and t.message_type != "court_change"),
         key=lambda t: (t.message_type, t.id or 0),
     )
     for extra in extras:
@@ -3825,6 +3827,24 @@ def update_sms_template(
 ):
     """Create or update an SMS template for a specific message type."""
     _get_tournament_or_404(session, tournament_id)
+
+    if message_type == "court_change":
+        retired = session.exec(
+            select(SmsTemplate).where(
+                SmsTemplate.tournament_id == tournament_id,
+                SmsTemplate.message_type == message_type,
+            )
+        ).all()
+        for row in retired:
+            session.delete(row)
+        session.commit()
+        return SmsTemplateResponse(
+            id=0,
+            tournament_id=tournament_id,
+            message_type=message_type,
+            template_body="",
+            is_active=False,
+        )
 
     # Validate message_type
     valid_types = list(DEFAULT_SMS_TEMPLATES.keys())
