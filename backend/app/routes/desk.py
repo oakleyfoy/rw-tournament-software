@@ -714,6 +714,7 @@ class PlayerCheckInState(BaseModel):
     report_url: Optional[str] = None
     phone_e164: Optional[str] = None
     sms_consent: Optional[str] = None
+    lineup_slot: Optional[int] = None
 
 
 class MatchCheckInSideState(BaseModel):
@@ -1250,6 +1251,13 @@ def _build_ready_assigned_queue(
     return []
 
 
+def _checkin_contact_phone(team, player, lineup_slot):
+    """P1 Cell / P2 Cell on the registered team, with the player profile only if that slot is empty."""
+    from app.services.player_roster_sync import authoritative_display_phone
+
+    return authoritative_display_phone(team, player, lineup_slot)
+
+
 def _build_checkin_snapshot(
     session: Session,
     tournament: Tournament,
@@ -1385,10 +1393,13 @@ def _build_checkin_snapshot(
         else []
     )
     players_by_team: Dict[int, List[int]] = {}
+    slot_by_team_player: Dict[tuple[int, int], int] = {}
     player_ids: set[int] = set()
     for row in team_player_rows:
         players_by_team.setdefault(row.team_id, []).append(row.player_id)
         player_ids.add(row.player_id)
+        if row.lineup_slot in (1, 2):
+            slot_by_team_player[(row.team_id, row.player_id)] = int(row.lineup_slot)
     players = (
         session.exec(
             select(Player).where(Player.id.in_(list(player_ids)))  # type: ignore[arg-type]
@@ -1543,6 +1554,7 @@ def _build_checkin_snapshot(
                                 )
                             )
                             linked_ids.append(resolved_id)
+                            slot_by_team_player[(team_id, resolved_id)] = idx + 1
                             roster_repairs.append(resolved_id)
                     side_players = list(players_by_team.get(team_id, []))
                 for pid in side_players:
@@ -1584,8 +1596,9 @@ def _build_checkin_snapshot(
                             checked_in_at=checked_at.isoformat() if checked_at else None,
                             towel_color=lookup_row.towel_color if lookup_row else None,
                             report_url=lookup_row.report_url if lookup_row else None,
-                            phone_e164=p.phone_e164 if p else None,
+                            phone_e164=_checkin_contact_phone(team_obj, p, slot_by_team_player.get((team_id, pid)) if team_id else None),
                             sms_consent=p.sms_consent_status if p else None,
+                            lineup_slot=slot_by_team_player.get((team_id, pid)) if team_id else None,
                         )
                     )
 
@@ -1630,8 +1643,13 @@ def _build_checkin_snapshot(
                                 checked_in_at=fallback_checked_at.isoformat() if fallback_checked_at else None,
                                 towel_color=lookup_row.towel_color if lookup_row else None,
                                 report_url=lookup_row.report_url if lookup_row else None,
-                                phone_e164=fallback_player.phone_e164 if fallback_player else None,
+                                phone_e164=_checkin_contact_phone(
+                                    team_obj,
+                                    fallback_player,
+                                    slot_by_team_player.get((team_id, fallback_player_id)) if team_id and fallback_player_id else None,
+                                ),
                                 sms_consent=fallback_player.sms_consent_status if fallback_player else None,
+                                lineup_slot=slot_by_team_player.get((team_id, fallback_player_id)) if team_id and fallback_player_id else None,
                             )
                         )
 
@@ -5851,6 +5869,10 @@ class DeskTeamItem(BaseModel):
     player1_email: Optional[str] = None
     player2_cellphone: Optional[str] = None
     player2_email: Optional[str] = None
+    player1_id: Optional[int] = None
+    player1_name: Optional[str] = None
+    player2_id: Optional[int] = None
+    player2_name: Optional[str] = None
     is_defaulted: bool = False
     notes: Optional[str] = None
 
@@ -6187,9 +6209,35 @@ def get_desk_teams(
         draw_sizes = {event.id: event.team_count for event in events if event.team_count}
         teams = visible_roster_teams(teams, matches, draw_sizes)
     display_seed = _contiguous_event_seeds(teams, events_with_matches)
+    team_ids = [t.id for t in teams if t.id is not None]
+    links = (
+        session.exec(select(TeamPlayer).where(TeamPlayer.team_id.in_(team_ids))).all()  # type: ignore[attr-defined]
+        if team_ids
+        else []
+    )
+    linked_players = (
+        session.exec(select(Player).where(Player.id.in_([link.player_id for link in links]))).all()  # type: ignore[attr-defined]
+        if links
+        else []
+    )
+    linked_player_map = {player.id: player for player in linked_players if player.id is not None}
+    links_by_team: Dict[int, List[TeamPlayer]] = {}
+    for link in links:
+        links_by_team.setdefault(link.team_id, []).append(link)
+
+    def roster_slot(team: Team, slot: int):
+        from app.services.player_roster_sync import slot_for_player_on_team
+
+        for link in links_by_team.get(team.id or -1, []):
+            player = linked_player_map.get(link.player_id)
+            if slot_for_player_on_team(team, player, link.lineup_slot) == slot and player is not None:
+                return player.id, player.full_name
+        return None, None
 
     items = []
     for t in sorted(teams, key=lambda t: (event_map.get(t.event_id, ""), display_seed.get(t.id) or 9999, t.id)):
+        player1_id, player1_name = roster_slot(t, 1)
+        player2_id, player2_name = roster_slot(t, 2)
         items.append(
             DeskTeamItem(
                 team_id=t.id,
@@ -6203,6 +6251,10 @@ def get_desk_teams(
                 player1_email=t.player1_email or t.p1_email,
                 player2_cellphone=t.player2_cellphone or t.p2_cell,
                 player2_email=t.player2_email or t.p2_email,
+                player1_id=player1_id,
+                player1_name=player1_name,
+                player2_id=player2_id,
+                player2_name=player2_name,
                 is_defaulted=t.is_defaulted if t.is_defaulted else False,
                 notes=t.notes,
             )

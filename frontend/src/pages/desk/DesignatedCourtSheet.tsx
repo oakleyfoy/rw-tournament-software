@@ -49,6 +49,14 @@ type Props = {
   onUndo: () => void
   onCourtState: (courtLabel: string, closed: boolean, note: string) => void
   onInteractionChange?: (active: boolean) => void
+  rosterByTeam?: Record<number, { id: number; name: string }[]>
+  notedPlayerIds?: number[]
+  teamNotesById?: Record<number, string | null>
+  onOpenNotes?: (players: { id: number; name: string }[], teamNotes: { label: string; body: string }[]) => void
+}
+
+function participantsFor(match: DeskMatchItem, roster: Record<number, { id: number; name: string }[]>) {
+  return [match.team1_id, match.team2_id].flatMap((teamId) => (teamId == null ? [] : roster[teamId] || []))
 }
 
 function dayLabel(day: string): string {
@@ -67,6 +75,8 @@ function MatchCard({
   onOpen,
   onDragStart,
   onDragEnd,
+  hasNotes,
+  onNotes,
 }: {
   match: DeskMatchItem
   matches: DeskMatchItem[]
@@ -77,6 +87,8 @@ function MatchCard({
   onOpen: () => void
   onDragStart?: () => void
   onDragEnd?: () => void
+  hasNotes?: boolean
+  onNotes?: () => void
 }) {
   const status = cardStatus(match, checkinReady, nowMinutes)
   const delayed = isDelayed(match, nowMinutes)
@@ -110,7 +122,22 @@ function MatchCard({
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, fontSize: compact ? 9 : 10, fontWeight: 800 }}>
         <span>#{match.match_number}</span>
-        <span style={{ background: '#455a64', color: '#fff', borderRadius: 3, padding: '0 3px' }}>{division}</span>
+        <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {hasNotes && (
+            <span
+              role="button"
+              title="Player notes exist."
+              onClick={(event) => {
+                event.stopPropagation()
+                onNotes?.()
+              }}
+              style={{ width: 14, height: 14, borderRadius: 3, background: '#f9a825', color: '#fff', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              N
+            </span>
+          )}
+          <span style={{ background: '#455a64', color: '#fff', borderRadius: 3, padding: '0 3px' }}>{division}</span>
+        </span>
       </div>
       <div style={{ fontSize: compact ? 10 : 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sideA.label}</div>
       <div style={{ fontSize: compact ? 10 : 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sideB.label}</div>
@@ -124,7 +151,18 @@ export default function DesignatedCourtSheet(props: Props) {
     schedule, days, selectedDay, onSelectDay, checkinReadyByMatchId, matches,
     nowMinutes, isToday, clockLabel, syncedLabel, isDraft, busyMatchId, canUndo,
     onOpenMatch, onStart, onMove, onSwap, onUndo, onCourtState, onInteractionChange,
+    rosterByTeam = {}, notedPlayerIds = [], teamNotesById = {}, onOpenNotes,
   } = props
+  const noted = new Set(notedPlayerIds)
+  const noteState = (match: DeskMatchItem) => {
+    const players = participantsFor(match, rosterByTeam)
+    const teamNotes = [match.team1_id, match.team2_id].flatMap((teamId, index) => {
+      const body = teamId == null ? '' : (teamNotesById[teamId] || '')
+      return body ? [{ label: index === 0 ? 'Team 1 note' : 'Team 2 note', body }] : []
+    })
+    const hasPlayerNote = players.some((player) => noted.has(player.id))
+    return { players, teamNotes, hasNotes: hasPlayerNote || teamNotes.length > 0 }
+  }
   const rootRef = useRef<HTMLDivElement | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
   const [view, setView] = useState<'schedule' | 'live'>('schedule')
@@ -324,6 +362,11 @@ export default function DesignatedCourtSheet(props: Props) {
                             onDragStart={() => hold(true)}
                             onDragEnd={() => hold(false)}
                             onOpen={() => onOpenMatch(cell.match as DeskMatchItem)}
+                            hasNotes={noteState(cell.match as DeskMatchItem).hasNotes}
+                            onNotes={() => {
+                              const state = noteState(cell.match as DeskMatchItem)
+                              onOpenNotes?.(state.players, state.teamNotes)
+                            }}
                           />
                         )}
                         {cell && !cell.match && (
@@ -399,6 +442,11 @@ export default function DesignatedCourtSheet(props: Props) {
                     onDragStart={() => hold(true)}
                     onDragEnd={() => hold(false)}
                     onOpen={() => onOpenMatch(current)}
+                    hasNotes={noteState(current).hasNotes}
+                    onNotes={() => {
+                      const state = noteState(current)
+                      onOpenNotes?.(state.players, state.teamNotes)
+                    }}
                   />
                 ) : (
                   <div style={{ fontSize: 12, fontWeight: 800, color: tone.fg, padding: 6 }}>{tone.label}</div>

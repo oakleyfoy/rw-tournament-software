@@ -3176,6 +3176,7 @@ export interface PlayerCheckInState {
   report_url: string | null
   phone_e164?: string | null
   sms_consent?: string | null
+  lineup_slot?: number | null
 }
 
 export interface MatchCheckInSideState {
@@ -4428,6 +4429,10 @@ export interface DeskTeamItem {
   player1_email: string | null
   player2_cellphone: string | null
   player2_email: string | null
+  player1_id?: number | null
+  player1_name?: string | null
+  player2_id?: number | null
+  player2_name?: string | null
   is_defaulted: boolean
   notes: string | null
 }
@@ -4542,6 +4547,7 @@ export interface SmsSendResult {
 export interface SmsSendRequest {
   message: string
   dedupe_key?: string
+  team_id?: number
 }
 
 export interface SmsSendResponse {
@@ -4918,6 +4924,8 @@ export type PlayerNoteRecord = {
   body: string
   created_at: string
   created_by_name: string | null
+  updated_at?: string | null
+  updated_by_name?: string | null
 }
 
 export async function listPlayerNotes(tournamentId: number): Promise<PlayerNoteRecord[]> {
@@ -4931,6 +4939,22 @@ export async function createPlayerNotes(tournamentId: number, playerIds: number[
   const response = await fetchJson<{ notes: PlayerNoteRecord[] }>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/player-notes`,
     { method: 'POST', body: JSON.stringify({ player_ids: playerIds, body }) },
+  )
+  return response.notes
+}
+
+export async function updatePlayerNote(tournamentId: number, noteId: number, body: string): Promise<PlayerNoteRecord[]> {
+  const response = await fetchJson<{ notes: PlayerNoteRecord[] }>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/player-notes/${noteId}`,
+    { method: 'PATCH', body: JSON.stringify({ body }) },
+  )
+  return response.notes
+}
+
+export async function deletePlayerNote(tournamentId: number, noteId: number): Promise<PlayerNoteRecord[]> {
+  const response = await fetchJson<{ notes: PlayerNoteRecord[] }>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/player-notes/${noteId}`,
+    { method: 'DELETE' },
   )
   return response.notes
 }

@@ -63,6 +63,12 @@ REQUIRED_SMS_LOG_COLUMNS: List[Tuple[str, str, str]] = [
     ("sent_by_user_id", "INTEGER", "INTEGER"),
 ]
 
+REQUIRED_PLAYER_NOTE_COLUMNS: List[Tuple[str, str, str]] = [
+    ("updated_at", "DATETIME", "TIMESTAMP"),
+    ("updated_by_user_id", "INTEGER", "INTEGER"),
+    ("updated_by_name", "VARCHAR(150)", "VARCHAR(150)"),
+]
+
 # Columns we must ensure exist in the "tournament_sms_settings" table.
 REQUIRED_TOURNAMENT_SMS_SETTINGS_COLUMNS: List[Tuple[str, str, str]] = [
     ("texts_enabled", "INTEGER", "BOOLEAN"),
@@ -397,6 +403,39 @@ def ensure_sms_log_columns(engine: Engine) -> None:
 
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to ensure sms_log columns (this is OK if table doesn't exist yet): {e}")
+
+
+def ensure_player_note_columns(engine: Engine) -> None:
+    """Add note edit history columns on databases created before notes could be edited."""
+    try:
+        from app.models.player_note import PlayerNote
+
+        table = PlayerNote.__table__.name
+        if _is_sqlite(engine):
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    {"table_name": table},
+                ).fetchone()
+                if not result:
+                    return
+            existing = _get_existing_columns_sqlite(engine, table)
+            with engine.begin() as conn:
+                for name, sqlite_type, _pg_type in REQUIRED_PLAYER_NOTE_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sqlite_type};"))
+        else:
+            existing = _get_existing_columns_postgres(engine, table)
+            with engine.begin() as conn:
+                for name, _sqlite_type, pg_type in REQUIRED_PLAYER_NOTE_COLUMNS:
+                    if name in existing:
+                        continue
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_type};"))
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to ensure player note columns: %s", exc)
 
 
 def ensure_tournament_sms_settings_columns(engine: Engine) -> None:

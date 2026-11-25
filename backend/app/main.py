@@ -22,6 +22,7 @@ from app.db_schema_patch import (
     ensure_team_photo_print_tables,
     ensure_tournament_group_photo_tables,
     ensure_schedule_slot_columns,
+    ensure_player_note_columns,
     ensure_sms_log_columns,
     ensure_sms_phone_list_columns,
     ensure_start_over_baseline_assignment_table,
@@ -240,6 +241,7 @@ def on_startup():
     ensure_tournament_import_columns(engine)
     ensure_team_columns(engine)
     ensure_sms_log_columns(engine)
+    ensure_player_note_columns(engine)
     ensure_start_over_baseline_assignment_table(engine)
     import logging as _logging
 

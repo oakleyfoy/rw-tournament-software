@@ -25,8 +25,9 @@ function person(index: number): PlayerCheckInState {
     checked_in_at: null,
     towel_color: TOWELS[index % TOWELS.length],
     report_url: null,
-    phone_e164: `+1555555${String(1000 + index).padStart(4, '0').slice(-4)}`,
-    sms_consent: index === 1 ? 'opted_out' : 'unknown',
+    phone_e164: index < 2 ? null : `+1555555${String(1000 + index).padStart(4, '0').slice(-4)}`,
+    sms_consent: 'unknown',
+    lineup_slot: (index % 2) + 1,
   }
 }
 
@@ -145,6 +146,7 @@ export default function CheckInPreviewPage() {
         isToday={() => true}
         pendingIds={[]}
         photographedTeamIds={photos}
+        phonesByTeam={{ 5000: { p1: '(760) 555-0101', p2: '(760) 555-0102' } }}
         playerNotes={notes}
         onSendText={async (players) => players.map((player) => ({ playerId: player.playerId, status: 'queued', error: null }))}
         onSaveNote={async (playerIds, body) => {

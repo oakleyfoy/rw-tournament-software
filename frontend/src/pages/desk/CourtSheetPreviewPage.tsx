@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
+import PlayerNotesDialog from './PlayerNotesDialog'
 import { buildDaySchedule, listScheduleDays } from './courtSheet'
 
 const DAYS = ['2026-12-04', '2026-12-05', '2026-12-06']
@@ -45,8 +46,8 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
           court_name: `Court ${court}`,
           court_assignment_mode: 'PREASSIGNED',
           status,
-          team1_id: status === 'SCHEDULED' && court === 6 ? null : id * 10,
-          team1_display: status === 'SCHEDULED' && court === 6 ? 'WINNER:WA_WF_R1_M1' : `Alex ${court}`,
+          team1_id: court === 4 ? 4242 : status === 'SCHEDULED' && court === 6 ? null : id * 10,
+          team1_display: court === 4 ? 'Alex Bose / Jennifer Myers' : status === 'SCHEDULED' && court === 6 ? 'WINNER:WA_WF_R1_M1' : `Alex ${court}`,
           team2_id: id * 10 + 1,
           team2_display: `Blake ${court}`,
           score_display: status === 'FINAL' ? '8-5' : null,
@@ -75,6 +76,10 @@ export default function CourtSheetPreviewPage() {
   const [matches, setMatches] = useState(sample.matches)
   const [day, setDay] = useState(DAYS[0])
   const [openMatch, setOpenMatch] = useState<DeskMatchItem | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const alex = { id: 42421, name: 'Alex Bose' }
+  const jennifer = { id: 42422, name: 'Jennifer Myers' }
+  const sampleNotes = [{ id: 1, playerId: alex.id, body: 'Arriving after announcements', createdAt: '2026-11-25T18:00:00Z', createdByName: 'Staff' }]
   const [score, setScore] = useState('8-6')
   const days = listScheduleDays(slots)
   const schedule = buildDaySchedule({ day, slots, matches, closedCourtLabels: ['2'] })
@@ -122,6 +127,9 @@ export default function CourtSheetPreviewPage() {
             }}
             onUndo={() => undefined}
             onCourtState={() => undefined}
+            rosterByTeam={{ 4242: [alex, jennifer] }}
+            notedPlayerIds={[alex.id]}
+            onOpenNotes={() => setNotesOpen(true)}
           />
         </div>
         {openMatch && (
@@ -129,6 +137,9 @@ export default function CourtSheetPreviewPage() {
             <div style={{ fontWeight: 800, marginBottom: 8 }}>Match #{openMatch.match_number}</div>
             <div style={{ fontSize: 13 }}>{openMatch.team1_display}</div>
             <div style={{ fontSize: 13, marginBottom: 8 }}>{openMatch.team2_display}</div>
+            {openMatch.team1_id === 4242 && (
+              <button type="button" onClick={() => setNotesOpen(true)} style={{ marginBottom: 8, border: '1px solid #f9a825', background: '#fff8e1', color: '#e65100', fontWeight: 800 }}>Notes</button>
+            )}
             <input value={score} onChange={(event) => setScore(event.target.value)} style={{ width: '100%', marginBottom: 8 }} />
             <button
               type="button"
@@ -142,6 +153,13 @@ export default function CourtSheetPreviewPage() {
           </aside>
         )}
       </div>
+      {notesOpen && (
+        <PlayerNotesDialog
+          players={[alex, jennifer]}
+          notes={sampleNotes}
+          onClose={() => setNotesOpen(false)}
+        />
+      )}
     </div>
   )
 }

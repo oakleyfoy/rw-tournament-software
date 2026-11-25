@@ -195,6 +195,92 @@ def restore_team_phones_from_slot_emails(session: Session, tournament_id: int) -
     return restored
 
 
+def raw_team_slot_phone(team: Optional[Team], slot: Optional[int]) -> Optional[str]:
+    """The cellphone shown on the Teams page for this partner position."""
+    if team is None or slot not in (1, 2):
+        return None
+    raw = team.player1_cellphone or team.p1_cell if slot == 1 else team.player2_cellphone or team.p2_cell
+    value = str(raw or "").strip()
+    if not value or value in {"—", "-", "N/A", "n/a", "none", "None"}:
+        return None
+    return value
+
+
+def slot_for_player_on_team(team: Team, player: Optional[Player], lineup_slot: Optional[int]) -> Optional[int]:
+    """Partner position on the registered team. A lineup slot wins. Otherwise email, then the full registered name."""
+    if lineup_slot in (1, 2):
+        return int(lineup_slot)
+    if player is None:
+        return None
+    names = _team_slot_names(team)
+    name_matches: list[int] = []
+    for slot in (1, 2):
+        email = _team_slot_email(team, slot)
+        if email and normalize_email(player.email) == email:
+            return slot
+        if player_names_match(names[slot - 1], player.full_name or "") or player_names_match(
+            names[slot - 1], player.display_name or ""
+        ):
+            name_matches.append(slot)
+    if len(name_matches) == 1:
+        return name_matches[0]
+    return None
+
+
+def authoritative_display_phone(
+    team: Optional[Team],
+    player: Optional[Player],
+    lineup_slot: Optional[int] = None,
+) -> Optional[str]:
+    """Teams P1/P2 Cell is the tournament contact. The player profile is only a fallback."""
+    slot = slot_for_player_on_team(team, player, lineup_slot) if team is not None else None
+    team_phone = raw_team_slot_phone(team, slot)
+    if team_phone:
+        return team_phone
+    if player is None:
+        return None
+    return normalize_player_phone(player.phone_e164)
+
+
+def authoritative_phone_for_player(
+    session: Session,
+    tournament_id: int,
+    player: Player,
+    team_id: Optional[int] = None,
+) -> Optional[str]:
+    """Phone to text, read from the registered team slot at send time."""
+    from app.models.event import Event
+
+    if player.id is None:
+        return normalize_player_phone(player.phone_e164)
+    events = session.exec(select(Event).where(Event.tournament_id == tournament_id)).all()
+    event_ids = [event.id for event in events if event.id is not None]
+    teams = (
+        session.exec(select(Team).where(Team.event_id.in_(event_ids))).all()  # type: ignore[attr-defined]
+        if event_ids
+        else []
+    )
+    team_map = {team.id: team for team in teams if team.id is not None}
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.player_id == player.id)).all()
+    ordered = sorted(links, key=lambda link: (0 if team_id is not None and link.team_id == team_id else 1, link.lineup_slot or 9, link.id or 0))
+    for link in ordered:
+        team = team_map.get(link.team_id)
+        if team is None:
+            continue
+        if team_id is not None and link.team_id != team_id:
+            continue
+        slot = slot_for_player_on_team(team, player, link.lineup_slot)
+        phone = _team_slot_phone(team, slot) if slot in (1, 2) else None
+        if phone:
+            return phone
+    if team_id is not None and team_id in team_map:
+        slot = slot_for_player_on_team(team_map[team_id], player, None)
+        phone = _team_slot_phone(team_map[team_id], slot) if slot in (1, 2) else None
+        if phone:
+            return phone
+    return normalize_player_phone(player.phone_e164)
+
+
 def snapshot_team_slots(team: Team) -> list[TeamSlotSnapshot]:
     p1_name, p2_name = _team_slot_names(team)
     return [

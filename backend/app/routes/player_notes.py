@@ -22,6 +22,8 @@ class PlayerNoteItem(BaseModel):
     body: str
     created_at: str
     created_by_name: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by_name: Optional[str] = None
 
 
 class PlayerNoteListResponse(BaseModel):
@@ -30,6 +32,10 @@ class PlayerNoteListResponse(BaseModel):
 
 class PlayerNoteCreate(BaseModel):
     player_ids: List[int] = Field(min_length=1)
+    body: str
+
+
+class PlayerNoteUpdate(BaseModel):
     body: str
 
 
@@ -66,6 +72,8 @@ def list_player_notes(
                 body=row.body,
                 created_at=row.created_at.isoformat(),
                 created_by_name=row.created_by_name,
+                updated_at=row.updated_at.isoformat() if row.updated_at else None,
+                updated_by_name=row.updated_by_name,
             )
             for row in rows
             if row.id is not None
@@ -107,5 +115,46 @@ def create_player_notes(
                 created_by_name=user_name,
             )
         )
+    session.commit()
+    return list_player_notes(tournament_id, session)
+
+
+def _note_or_404(session: Session, tournament_id: int, note_id: int) -> PlayerNote:
+    row = session.get(PlayerNote, note_id)
+    if row is None or row.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return row
+
+
+@router.patch("/desk/tournaments/{tournament_id}/player-notes/{note_id}", response_model=PlayerNoteListResponse)
+def update_player_note(
+    tournament_id: int,
+    note_id: int,
+    payload: PlayerNoteUpdate,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    row = _note_or_404(session, tournament_id, note_id)
+    body = (payload.body or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Note is empty")
+    user_id, user_name = _staff_name(request)
+    row.body = body
+    row.updated_at = datetime.now(timezone.utc)
+    row.updated_by_user_id = user_id
+    row.updated_by_name = user_name
+    session.add(row)
+    session.commit()
+    return list_player_notes(tournament_id, session)
+
+
+@router.delete("/desk/tournaments/{tournament_id}/player-notes/{note_id}", response_model=PlayerNoteListResponse)
+def delete_player_note(
+    tournament_id: int,
+    note_id: int,
+    session: Session = Depends(get_session),
+):
+    row = _note_or_404(session, tournament_id, note_id)
+    session.delete(row)
     session.commit()
     return list_player_notes(tournament_id, session)

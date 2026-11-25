@@ -259,6 +259,7 @@ class SmsSendRequest(BaseModel):
 
     message: str
     dedupe_key: Optional[str] = None
+    team_id: Optional[int] = None
 
 
 class SmsTimeslotRequest(BaseModel):
@@ -3112,11 +3113,14 @@ def send_player_text(
     player = session.get(Player, player_id)
     if not player or player.tournament_id != tournament_id:
         raise HTTPException(404, f"Player {player_id} not found in tournament")
-    if not player.phone_e164:
-        raise HTTPException(400, "Player has no phone_e164 on file")
+    from app.services.player_roster_sync import authoritative_phone_for_player
+
+    resolved = authoritative_phone_for_player(session, tournament_id, player, body.team_id)
+    if not resolved:
+        raise HTTPException(400, "Player has no cellphone on the registered team")
 
     try:
-        phone = format_e164(player.phone_e164)
+        phone = format_e164(resolved)
     except ValueError as exc:
         raise HTTPException(400, f"Player phone is invalid: {exc}")
 

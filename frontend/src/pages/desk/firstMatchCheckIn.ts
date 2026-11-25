@@ -13,6 +13,8 @@ export type ArrivalPlayer = {
   canCheckIn: boolean
   phone: string | null
   smsConsent: string | null
+  teamId: number | null
+  slot: number | null
 }
 
 export type ArrivalTile = {
@@ -23,6 +25,7 @@ export type ArrivalTile = {
   courtLabel: string
   division: string
   teamId: number | null
+  teamNote: string | null
   day: string
   sortTime: string
   timeLabel: string
@@ -66,6 +69,8 @@ type Appearance = {
   canCheckIn: boolean
   phone: string | null
   smsConsent: string | null
+  slot: number | null
+  teamNote: string | null
 }
 
 export function playerFirstName(display: string): string {
@@ -146,10 +151,12 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
           courtLabel,
           division,
           teamKey: state.team_id != null ? `team:${state.team_id}` : `side:${checkin.match_id}|${side}`,
-          teamId: state.team_id,
           canCheckIn: checkin.match_id > 0,
           phone: player.phone_e164 || null,
           smsConsent: player.sms_consent || null,
+          teamId: state.team_id,
+          slot: player.lineup_slot ?? null,
+          teamNote: (side === 'A' ? checkin.team1_notes : checkin.team2_notes) || null,
         })
       }
     }
@@ -187,6 +194,7 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
       courtLabel: first.courtLabel || '—',
       division: first.division,
       teamId: first.teamId,
+      teamNote: first.teamNote,
       day: first.day,
       sortTime: first.sortTime,
       timeLabel: first.timeLabel,
@@ -202,6 +210,8 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
         canCheckIn: row.canCheckIn,
         phone: row.phone,
         smsConsent: row.smsConsent,
+        teamId: row.teamId,
+        slot: row.slot,
       })),
     })
   }

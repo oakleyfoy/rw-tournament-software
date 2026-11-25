@@ -8,6 +8,7 @@ import {
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
+import PlayerNotesDialog, { type StaffNote } from './PlayerNotesDialog'
 import ArrivalCheckIn from './ArrivalCheckIn'
 import { TowelColorPill, TowelCountBar } from './towelColor'
 import { buildDaySchedule, courtLabelKey, isDesignatedMatch, listScheduleDays, nowMinutesInZone, pickDefaultDay, tournamentToday } from './courtSheet'
@@ -100,6 +101,8 @@ import {
   sendSmsPlayer,
   listPlayerNotes,
   createPlayerNotes,
+  updatePlayerNote,
+  deletePlayerNote,
   sendSmsMatch,
   sendSmsPhoneList,
   previewSmsBlast,
@@ -1109,6 +1112,8 @@ function MatchDrawer({
   onRefreshKeepOpen,
   onRefreshAndClose,
   allMatches,
+  rosterPlayers = [],
+  playerNotes = [],
 }: {
   match: DeskMatchItem
   isDraft: boolean
@@ -1118,6 +1123,8 @@ function MatchDrawer({
   onRefreshKeepOpen: () => void
   onRefreshAndClose: () => void
   allMatches: DeskMatchItem[]
+  rosterPlayers?: { id: number; name: string }[]
+  playerNotes?: StaffNote[]
 }) {
   const [score, setScore] = useState('')
   const [winnerId, setWinnerId] = useState<number | null>(null)
@@ -1143,6 +1150,9 @@ function MatchDrawer({
   const [noteText, setNoteText] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
   const [returningToWaiting, setReturningToWaiting] = useState(false)
+  const [playerNotesOpen, setPlayerNotesOpen] = useState(false)
+  const matchPlayerNotes = playerNotes.filter((note) => rosterPlayers.some((player) => player.id === note.playerId))
+  const hasPlayerNotes = matchPlayerNotes.length > 0 || Boolean(match.team1_notes || match.team2_notes)
   const waitingResetLock = useRef(false)
 
   const openNote = useCallback((teamId: number, currentNote: string | null) => {
@@ -1759,7 +1769,12 @@ function MatchDrawer({
         justifyContent: 'space-between',
         alignItems: 'center',
       }}>
-        <span style={{ fontWeight: 700, fontSize: 16 }}>Match #{match.match_number}</span>
+        <span style={{ fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          Match #{match.match_number}
+          {hasPlayerNotes && (
+            <button type="button" onClick={() => setPlayerNotesOpen(true)} title="Player notes exist." style={{ border: '1px solid #f9a825', background: '#fff8e1', color: '#e65100', borderRadius: 999, fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>Notes</button>
+          )}
+        </span>
         <button
           onClick={onClose}
           style={{
@@ -1774,6 +1789,17 @@ function MatchDrawer({
           &times;
         </button>
       </div>
+      {playerNotesOpen && (
+        <PlayerNotesDialog
+          players={rosterPlayers}
+          notes={matchPlayerNotes}
+          teamNotes={[
+            match.team1_notes ? { label: `${match.team1_display} team note`, body: match.team1_notes } : null,
+            match.team2_notes ? { label: `${match.team2_display} team note`, body: match.team2_notes } : null,
+          ].filter((note): note is { label: string; body: string } => note != null)}
+          onClose={() => setPlayerNotesOpen(false)}
+        />
+      )}
 
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column' }}>
         {actionsPanel && <div style={{ order: 0 }}>{actionsPanel}</div>}
@@ -6472,11 +6498,21 @@ function TeamsTab({
   versionId,
   onRefresh,
   rosterReloadKey = 0,
+  playerNotes = [],
+  onCreateNote,
+  onEditNote,
+  onDeleteNote,
+  onTeamsLoaded,
 }: {
   tournamentId: number
   versionId: number
   onRefresh: () => void
   rosterReloadKey?: number
+  playerNotes?: StaffNote[]
+  onCreateNote?: (playerIds: number[], body: string) => Promise<void>
+  onEditNote?: (noteId: number, body: string) => Promise<void>
+  onDeleteNote?: (noteId: number) => Promise<void>
+  onTeamsLoaded?: (teams: DeskTeamItem[]) => void
 }) {
   const [teams, setTeams] = useState<DeskTeamItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -6492,6 +6528,7 @@ function TeamsTab({
   const replacePhotoRef = useRef<HTMLInputElement>(null)
   const replaceTeamIdRef = useRef<number | null>(null)
   const [replacingTeamId, setReplacingTeamId] = useState<number | null>(null)
+  const [notesTeam, setNotesTeam] = useState<DeskTeamItem | null>(null)
 
   const onReplacePhoto = async (file: File | undefined) => {
     const teamId = replaceTeamIdRef.current
@@ -6518,13 +6555,14 @@ function TeamsTab({
     try {
       const data = await getDeskTeams(tournamentId)
       setTeams(data)
+      onTeamsLoaded?.(data)
     } catch (e: any) {
       console.error('Failed to load teams:', e)
       setError('Failed to load teams. The server may need to be restarted.')
     } finally {
       setLoading(false)
     }
-  }, [tournamentId, rosterReloadKey])
+  }, [tournamentId, rosterReloadKey, onTeamsLoaded])
 
   useEffect(() => { loadTeams() }, [loadTeams])
 
@@ -6571,7 +6609,7 @@ function TeamsTab({
         player1_email: editFields.player1_email || undefined,
         player2_cellphone: editFields.player2_cellphone || undefined,
         player2_email: editFields.player2_email || undefined,
-        notes: editFields.notes,
+        notes: t.notes ?? undefined,
       })
       setEditingId(null)
       await loadTeams()
@@ -6727,13 +6765,20 @@ function TeamsTab({
                     )}
                   </td>
                   <td style={{ padding: '6px 10px', maxWidth: 200 }}>
-                    {isEditing ? (
-                      <input value={editFields.notes} onChange={e => setEditFields(f => ({ ...f, notes: e.target.value }))} style={inputStyle} placeholder="Notes..." />
-                    ) : (
-                      <span style={{ fontSize: 11, color: t.notes ? '#333' : '#bbb', fontStyle: t.notes ? 'normal' : 'italic' }}>
-                        {t.notes || '—'}
-                      </span>
-                    )}
+                    {(() => {
+                      const ids = [t.player1_id, t.player2_id].filter((id): id is number => id != null)
+                      const hasNotes = Boolean(t.notes) || playerNotes.some((note) => ids.includes(note.playerId))
+                      return (
+                        <button
+                          type="button"
+                          title={hasNotes ? 'Player notes exist.' : 'No player notes'}
+                          onClick={() => setNotesTeam(t)}
+                          style={{ border: `1px solid ${hasNotes ? '#f9a825' : '#cfd8dc'}`, background: hasNotes ? '#fff8e1' : '#fff', color: hasNotes ? '#e65100' : '#455a64', borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                        >
+                          Notes
+                        </button>
+                      )
+                    })()}
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                     {t.is_defaulted ? (
@@ -6830,6 +6875,23 @@ function TeamsTab({
             </div>
           </div>
         </div>
+      )}
+
+      {notesTeam && (
+        <PlayerNotesDialog
+          players={[
+            notesTeam.player1_id ? { id: notesTeam.player1_id, name: notesTeam.player1_name || 'Player 1' } : null,
+            notesTeam.player2_id ? { id: notesTeam.player2_id, name: notesTeam.player2_name || 'Player 2' } : null,
+          ].filter((player): player is { id: number; name: string } => player != null)}
+          notes={playerNotes.filter((note) => note.playerId === notesTeam.player1_id || note.playerId === notesTeam.player2_id)}
+          teamNotes={notesTeam.notes ? [{ label: 'Team note', body: notesTeam.notes }] : []}
+          canAdd
+          canManage
+          onAdd={onCreateNote}
+          onEdit={onEditNote}
+          onDelete={onDeleteNote}
+          onClose={() => setNotesTeam(null)}
+        />
       )}
 
       {/* Toast */}
@@ -9678,20 +9740,28 @@ export default function TournamentDeskPage() {
   const [checkInPendingIds, setCheckInPendingIds] = useState<number[]>([])
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
   const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
-  const [playerNotes, setPlayerNotes] = useState<Array<{ id: number; playerId: number; body: string; createdAt: string; createdByName: string | null }>>([])
+  const [playerNotes, setPlayerNotes] = useState<StaffNote[]>([])
+  const [deskTeams, setDeskTeams] = useState<DeskTeamItem[]>([])
+  const [sheetNotes, setSheetNotes] = useState<{ players: { id: number; name: string }[]; teamNotes: { label: string; body: string }[] } | null>(null)
+  const rememberNotes = (rows: Array<{ id: number; player_id: number; player_name?: string; body: string; created_at: string; created_by_name: string | null; updated_at?: string | null; updated_by_name?: string | null }>) => {
+    setPlayerNotes(rows.map((row) => ({
+      id: row.id,
+      playerId: row.player_id,
+      playerName: row.player_name,
+      body: row.body,
+      createdAt: row.created_at,
+      createdByName: row.created_by_name,
+      updatedAt: row.updated_at,
+      updatedByName: row.updated_by_name,
+    })))
+  }
   useEffect(() => {
     if (!tid) return
     let cancelled = false
     const loadNotes = () => {
       void listPlayerNotes(tid).then((rows) => {
         if (cancelled) return
-        setPlayerNotes(rows.map((row) => ({
-          id: row.id,
-          playerId: row.player_id,
-          body: row.body,
-          createdAt: row.created_at,
-          createdByName: row.created_by_name,
-        })))
+        rememberNotes(rows)
       }).catch(() => undefined)
     }
     loadNotes()
@@ -9701,6 +9771,10 @@ export default function TournamentDeskPage() {
       window.clearInterval(timer)
     }
   }, [tid])
+  useEffect(() => {
+    if (!tid) return
+    void getDeskTeams(tid).then(setDeskTeams).catch(() => undefined)
+  }, [tid, rosterReloadKey])
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -11757,6 +11831,7 @@ export default function TournamentDeskPage() {
                     pendingIds={checkInPendingIds}
                     photographedTeamIds={Object.keys(teamPhotoLive.versions).map((id) => Number(id))}
                     playerNotes={playerNotes}
+                    phonesByTeam={Object.fromEntries(deskTeams.map((team) => [team.team_id, { p1: team.player1_cellphone, p2: team.player2_cellphone }]))}
                     onSendText={async (players, message) => {
                       if (!tid) return []
                       const results: Array<{ playerId: number; status: string; error: string | null }> = []
@@ -11773,7 +11848,7 @@ export default function TournamentDeskPage() {
                         }
                         seen.add(phone)
                         try {
-                          const response = await sendSmsPlayer(tid, player.playerId, { message })
+                          const response = await sendSmsPlayer(tid, player.playerId, { message, team_id: player.teamId ?? undefined })
                           const row = response.results[0]
                           results.push({ playerId: player.playerId, status: row?.status || 'failed', error: row?.error || null })
                         } catch (error) {
@@ -11784,14 +11859,7 @@ export default function TournamentDeskPage() {
                     }}
                     onSaveNote={async (playerIds, body) => {
                       if (!tid) return
-                      const rows = await createPlayerNotes(tid, playerIds, body)
-                      setPlayerNotes(rows.map((row) => ({
-                        id: row.id,
-                        playerId: row.player_id,
-                        body: row.body,
-                        createdAt: row.created_at,
-                        createdByName: row.created_by_name,
-                      })))
+                      rememberNotes(await createPlayerNotes(tid, playerIds, body))
                     }}
                     onCheckIn={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, true) }}
                     onUndo={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, false) }}
@@ -12101,6 +12169,13 @@ export default function TournamentDeskPage() {
               onUndo={() => { void handleCourtSheetUndo() }}
               onCourtState={(courtLabel, closed, note) => { void handleCourtStateChange(courtLabel, { is_closed: closed, note }) }}
               onInteractionChange={(active) => { courtSheetHold.current = active }}
+              rosterByTeam={Object.fromEntries(deskTeams.map((team) => [team.team_id, [
+                team.player1_id ? { id: team.player1_id, name: team.player1_name || 'Player 1' } : null,
+                team.player2_id ? { id: team.player2_id, name: team.player2_name || 'Player 2' } : null,
+              ].filter((player): player is { id: number; name: string } => player != null)]))}
+              notedPlayerIds={playerNotes.map((note) => note.playerId)}
+              teamNotesById={Object.fromEntries(deskTeams.map((team) => [team.team_id, team.notes]))}
+              onOpenNotes={(players, teamNotes) => setSheetNotes({ players, teamNotes })}
             />
           </div>
         )}
@@ -12587,6 +12662,11 @@ export default function TournamentDeskPage() {
             tournamentId={tid!}
             versionId={data.version_id}
             rosterReloadKey={rosterReloadKey}
+            playerNotes={playerNotes}
+            onCreateNote={async (playerIds, body) => rememberNotes(await createPlayerNotes(tid!, playerIds, body))}
+            onEditNote={async (noteId, body) => rememberNotes(await updatePlayerNote(tid!, noteId, body))}
+            onDeleteNote={async (noteId) => rememberNotes(await deletePlayerNote(tid!, noteId))}
+            onTeamsLoaded={setDeskTeams}
             onRefresh={() => loadSnapshot(data.version_id)}
           />
         )}
@@ -12741,8 +12821,25 @@ export default function TournamentDeskPage() {
               setDrawerMatch(null)
             }}
             allMatches={data.matches}
+            rosterPlayers={[drawerMatch.team1_id, drawerMatch.team2_id].flatMap((teamId) => {
+              const team = deskTeams.find((item) => item.team_id === teamId)
+              if (!team) return []
+              return [
+                team.player1_id ? { id: team.player1_id, name: team.player1_name || 'Player 1' } : null,
+                team.player2_id ? { id: team.player2_id, name: team.player2_name || 'Player 2' } : null,
+              ].filter((player): player is { id: number; name: string } => player != null)
+            })}
+            playerNotes={playerNotes}
           />
         </>
+      )}
+      {sheetNotes && (
+        <PlayerNotesDialog
+          players={sheetNotes.players}
+          notes={playerNotes.filter((note) => sheetNotes.players.some((player) => player.id === note.playerId))}
+          teamNotes={sheetNotes.teamNotes}
+          onClose={() => setSheetNotes(null)}
+        />
       )}
     </div>
     </TeamPhotoProvider>

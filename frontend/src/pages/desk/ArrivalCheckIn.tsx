@@ -9,15 +9,12 @@ import {
   type ArrivalTile,
 } from './firstMatchCheckIn'
 import type { CheckInMatchItem, DeskMatchItem } from '../../api/client'
+import PlayerNotesDialog, { type StaffNote } from './PlayerNotesDialog'
 import { TowelColorPill } from './towelColor'
 
-export type PlayerStaffNote = {
-  id: number
-  playerId: number
-  body: string
-  createdAt: string
-  createdByName: string | null
-}
+export type PlayerStaffNote = StaffNote
+
+export type TeamPhones = { p1: string | null; p2: string | null }
 
 export type TextSendResult = {
   playerId: number
@@ -33,6 +30,7 @@ type Props = {
   pendingIds: number[]
   photographedTeamIds?: number[]
   playerNotes?: PlayerStaffNote[]
+  phonesByTeam?: Record<number, TeamPhones>
   onCheckIn: (player: ArrivalPlayer) => void
   onUndo: (player: ArrivalPlayer) => void
   onCheckBoth: (tile: ArrivalTile) => void
@@ -66,7 +64,7 @@ function TowelEgg({ colorName, eggHeight }: { colorName: string | null; eggHeigh
 }
 
 export default function FirstMatchCheckIn({
-  checkins, matches, nowMinutes, isToday, pendingIds, photographedTeamIds = [], playerNotes = [],
+  checkins, matches, nowMinutes, isToday, pendingIds, photographedTeamIds = [], playerNotes = [], phonesByTeam = {},
   onCheckIn, onUndo, onCheckBoth, onSendText, onSaveNote,
 }: Props) {
   const board = buildArrivalBoard(checkins, matches)
@@ -173,6 +171,7 @@ export default function FirstMatchCheckIn({
               pendingIds={pendingIds}
               hasPhoto={tile.teamId != null && photoTeams.has(tile.teamId)}
               notes={tile.players.flatMap((player) => notesFor(player.playerId))}
+              hasTeamNote={Boolean(tile.teamNote)}
               onCheckIn={onCheckIn}
               onUndo={onUndo}
               onCheckBoth={onCheckBoth}
@@ -185,16 +184,19 @@ export default function FirstMatchCheckIn({
       {textTile && (
         <TextModal
           tile={textTile}
+          phonesByTeam={phonesByTeam}
           onClose={() => setTextTile(null)}
           onSend={onSendText}
         />
       )}
       {notesTile && (
-        <NotesModal
-          tile={notesTile}
+        <PlayerNotesDialog
+          players={notesTile.players.map((player) => ({ id: player.playerId, name: player.fullName }))}
           notes={notesTile.players.flatMap((player) => notesFor(player.playerId))}
+          teamNotes={notesTile.teamNote ? [{ label: 'Team note', body: notesTile.teamNote }] : []}
+          canAdd
+          onAdd={onSaveNote}
           onClose={() => setNotesTile(null)}
-          onSave={onSaveNote}
         />
       )}
     </div>
@@ -210,8 +212,15 @@ function TeamPhotoIcon() {
   )
 }
 
+function contactPhone(player: ArrivalPlayer, phonesByTeam: Record<number, TeamPhones>): string | null {
+  const team = player.teamId != null ? phonesByTeam[player.teamId] : undefined
+  if (player.slot === 1 && team?.p1) return team.p1
+  if (player.slot === 2 && team?.p2) return team.p2
+  return player.phone
+}
+
 function TeamTile({
-  tile, fontSize, eggHeight, pendingIds, hasPhoto, notes, onCheckIn, onUndo, onCheckBoth, onText, onNotes,
+  tile, fontSize, eggHeight, pendingIds, hasPhoto, notes, hasTeamNote, onCheckIn, onUndo, onCheckBoth, onText, onNotes,
 }: {
   tile: ArrivalTile
   fontSize: number
@@ -219,6 +228,7 @@ function TeamTile({
   pendingIds: number[]
   hasPhoto: boolean
   notes: PlayerStaffNote[]
+  hasTeamNote: boolean
   onCheckIn: (player: ArrivalPlayer) => void
   onUndo: (player: ArrivalPlayer) => void
   onCheckBoth: (tile: ArrivalTile) => void
@@ -275,7 +285,7 @@ function TeamTile({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 22 }}>
         {hasPhoto && <TeamPhotoIcon />}
         <button type="button" onClick={onText} style={miniButton(false)}>Text</button>
-        <button type="button" title={notes.length > 0 ? 'Player notes exist.' : 'No player notes'} onClick={onNotes} style={miniButton(notes.length > 0)}>Notes</button>
+        <button type="button" title={notes.length > 0 || hasTeamNote ? 'Player notes exist.' : 'No player notes'} onClick={onNotes} style={miniButton(notes.length > 0 || hasTeamNote)}>Notes</button>
       </div>
       <button
         type="button"
@@ -329,23 +339,25 @@ function miniButton(alerted: boolean): CSSProperties {
 
 const ACCEPTED_TEXT = new Set(['queued', 'sent', 'dry_run', 'sent_redirect'])
 
-function phoneReady(player: ArrivalPlayer): boolean {
-  return Boolean(player.phone) && player.smsConsent !== 'opted_out'
+function phoneReady(player: ArrivalPlayer, phone: string | null): boolean {
+  return Boolean(phone) && player.smsConsent !== 'opted_out'
 }
 
 function TextModal({
-  tile, onClose, onSend,
+  tile, phonesByTeam, onClose, onSend,
 }: {
   tile: ArrivalTile
+  phonesByTeam: Record<number, TeamPhones>
   onClose: () => void
   onSend?: (players: ArrivalPlayer[], message: string) => Promise<TextSendResult[]>
 }) {
-  const [selected, setSelected] = useState<number[]>(() => tile.players.filter(phoneReady).map((player) => player.playerId))
+  const shown = tile.players.map((player) => ({ player, phone: contactPhone(player, phonesByTeam) }))
+  const [selected, setSelected] = useState<number[]>(() => shown.filter(({ player, phone }) => phoneReady(player, phone)).map(({ player }) => player.playerId))
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState('')
   const send = async () => {
-    const recipients = tile.players.filter((player) => selected.includes(player.playerId) && phoneReady(player))
+    const recipients = shown.filter(({ player, phone }) => selected.includes(player.playerId) && phoneReady(player, phone)).map(({ player }) => player)
     if (!message.trim()) {
       setNotice('Enter a message.')
       return
@@ -378,9 +390,9 @@ function TextModal({
   }
   return (
     <Modal title="Text players" onClose={onClose}>
-      {tile.players.map((player) => {
-        const ready = phoneReady(player)
-        const reason = !player.phone ? 'No cellphone on file' : player.smsConsent === 'opted_out' ? 'Opted out of texts' : player.phone
+      {shown.map(({ player, phone }) => {
+        const ready = phoneReady(player, phone)
+        const reason = !phone ? 'No cellphone on file' : player.smsConsent === 'opted_out' ? 'Opted out of texts' : phone
         return (
           <label key={player.playerId} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14 }}>
             <input
@@ -400,70 +412,6 @@ function TextModal({
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button type="button" onClick={onClose} disabled={sending}>Close</button>
         <button type="button" onClick={() => { void send() }} disabled={sending}>{sending ? 'Sending…' : 'Send Text'}</button>
-      </div>
-    </Modal>
-  )
-}
-
-function NotesModal({
-  tile, notes, onClose, onSave,
-}: {
-  tile: ArrivalTile
-  notes: PlayerStaffNote[]
-  onClose: () => void
-  onSave?: (playerIds: number[], body: string) => Promise<void>
-}) {
-  const [body, setBody] = useState('')
-  const [target, setTarget] = useState<'0' | '1' | 'both'>('0')
-  const [saving, setSaving] = useState(false)
-  const [notice, setNotice] = useState('')
-  const save = async () => {
-    const text = body.trim()
-    if (!text) {
-      setNotice('Enter a note.')
-      return
-    }
-    const ids = target === 'both'
-      ? tile.players.map((player) => player.playerId)
-      : [tile.players[Number(target)]?.playerId].filter((id): id is number => id != null)
-    if (!onSave || ids.length === 0) return
-    setSaving(true)
-    setNotice('')
-    try {
-      await onSave(ids, text)
-      setBody('')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not save the note')
-    } finally {
-      setSaving(false)
-    }
-  }
-  const ordered = [...notes].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  return (
-    <Modal title="Player notes" onClose={onClose}>
-      {tile.players.map((player) => (
-        <div key={player.playerId}>
-          <div style={{ fontWeight: 800 }}>{player.fullName}</div>
-          {ordered.filter((note) => note.playerId === player.playerId).map((note) => (
-            <div key={note.id} style={{ fontSize: 13, margin: '4px 0 8px' }}>
-              <div>{note.body}</div>
-              <div style={{ color: '#607d8b' }}>{new Date(note.createdAt).toLocaleString()}{note.createdByName ? ` · ${note.createdByName}` : ''}</div>
-            </div>
-          ))}
-          {ordered.every((note) => note.playerId !== player.playerId) && <div style={{ color: '#90a4ae', fontSize: 13, marginBottom: 8 }}>No notes</div>}
-        </div>
-      ))}
-      <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={3} placeholder="Add a note" style={{ width: '100%', boxSizing: 'border-box', fontSize: 14, padding: 8 }} />
-      <div style={{ display: 'flex', gap: 8, fontSize: 13 }}>
-        {tile.players.map((player, index) => (
-          <label key={player.playerId}><input type="radio" name="note-target" checked={target === String(index)} onChange={() => setTarget(String(index) as '0' | '1')} /> {player.firstName}</label>
-        ))}
-        <label><input type="radio" name="note-target" checked={target === 'both'} onChange={() => setTarget('both')} /> Both players</label>
-      </div>
-      {notice && <div style={{ color: '#c62828', fontSize: 13 }}>{notice}</div>}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button type="button" onClick={onClose} disabled={saving}>Close</button>
-        <button type="button" onClick={() => { void save() }} disabled={saving}>{saving ? 'Saving…' : 'Save Note'}</button>
       </div>
     </Modal>
   )
