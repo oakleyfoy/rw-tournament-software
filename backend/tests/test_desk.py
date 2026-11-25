@@ -20,6 +20,7 @@ from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
+from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.match_lock import MatchLock
 from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
@@ -3208,6 +3209,74 @@ def test_checkin_player_rollup_and_assign_ready_match(client, session):
     assert moved["court_name"] is not None
     assert moved["status"] == "IN_PROGRESS"
     assert all(cm["match_id"] != m1.id for cm in snap["checkin_matches"])
+
+
+def test_player_checkin_covers_later_matches_without_duplicate_rows(client, session):
+    t, v, ev, teams, matches, slots = _setup_draft_for_move(session)
+    players = _add_two_players_for_team(session, t.id, teams[0].id, "Alpha")
+    later = Match(
+        tournament_id=t.id,
+        event_id=ev.id,
+        schedule_version_id=v.id,
+        match_code="MIX_WF_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="WINNER",
+        placeholder_side_b="WINNER",
+    )
+    session.add(later)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=v.id, match_id=later.id, slot_id=slots[2].id))
+    session.commit()
+
+    mode_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/management-mode",
+        json={"version_id": v.id, "management_mode": "checkin_management"},
+    )
+    assert mode_resp.status_code == 200
+
+    first = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{matches[0].id}/checkin/player?quick=1",
+        json={"version_id": v.id, "side": "A", "player_id": players[0].id, "checked_in": True},
+    )
+    assert first.status_code == 200
+    rows = session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.player_id == players[0].id)
+    ).all()
+    assert len(rows) == 2
+    assert {row.match_id for row in rows} == {matches[0].id, later.id}
+    assert all(row.checked_in for row in rows)
+    original = rows[0].checked_in_at
+    assert original is not None
+
+    again = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{matches[0].id}/checkin/player?quick=1",
+        json={"version_id": v.id, "side": "A", "player_id": players[0].id, "checked_in": True},
+    )
+    assert again.status_code == 200
+    session.expire_all()
+    rows = session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.player_id == players[0].id)
+    ).all()
+    assert len(rows) == 2
+    assert all(row.checked_in_at == original for row in rows)
+
+    undo = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{matches[0].id}/checkin/player?quick=1&all_matches=1",
+        json={"version_id": v.id, "side": "A", "player_id": players[0].id, "checked_in": False},
+    )
+    assert undo.status_code == 200
+    session.expire_all()
+    rows = session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.player_id == players[0].id)
+    ).all()
+    assert rows
+    assert all(row.checked_in is False and row.checked_in_at is None for row in rows)
 
 
 def test_checkin_available_slots_are_scoped_to_active_board_block(client, session):

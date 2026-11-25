@@ -3658,9 +3658,13 @@ export async function deskCheckInPlayer(
   tournamentId: number,
   matchId: number,
   payload: { version_id: number; side: 'A' | 'B'; player_id: number; checked_in: boolean },
-  quick = false
+  quick = false,
+  allMatches = false
 ): Promise<ReadyQueueResponse> {
-  const qs = quick ? '?quick=1' : ''
+  const params = new URLSearchParams()
+  if (quick) params.set('quick', '1')
+  if (allMatches) params.set('all_matches', '1')
+  const qs = params.toString() ? `?${params.toString()}` : ''
   return fetchJson<ReadyQueueResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/checkin/player${qs}`,
     { method: 'PATCH', body: JSON.stringify(payload) }

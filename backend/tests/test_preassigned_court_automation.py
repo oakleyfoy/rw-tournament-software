@@ -716,6 +716,32 @@ def test_opening_waiting_checkin_outcome(session: Session):
     assert elig.outcome == OUTCOME_WAITING_CHECKIN
 
 
+def test_finalize_preassigned_does_not_start_the_next_match(client, session: Session):
+    ctx = _setup_automation(session)
+    t, v, m1, m_r2 = ctx["tournament"], ctx["version"], ctx["m1"], ctx["m_r2"]
+    m1.runtime_status = "IN_PROGRESS"
+    m_r2.team_a_id = ctx["teams"][0].id
+    m_r2.team_b_id = ctx["teams"][2].id
+    original_slot = ctx["slot_c"].id
+    session.add_all([m1, m_r2])
+    session.commit()
+
+    response = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{m1.id}/finalize",
+        json={"version_id": v.id, "score": "8-4", "winner_team_id": m1.team_a_id},
+    )
+    assert response.status_code == 200
+    session.refresh(m1)
+    session.refresh(m_r2)
+    assert m1.runtime_status == "FINAL"
+    assert m_r2.runtime_status == "SCHEDULED"
+    assignment = session.exec(
+        select(MatchAssignment).where(MatchAssignment.match_id == m_r2.id)
+    ).first()
+    assert assignment is not None
+    assert assignment.slot_id == original_slot
+
+
 def test_dispatch_after_finalize_starts_next_on_court(session: Session):
     ctx = _setup_automation(session)
     t, m1, m2, m_r2 = ctx["tournament"], ctx["m1"], ctx["m2"], ctx["m_r2"]

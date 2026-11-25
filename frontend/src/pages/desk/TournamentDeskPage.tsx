@@ -8,7 +8,8 @@ import {
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
-import { buildCourtColumns, isDesignatedMatch, nextOpenSlotId } from './courtSheet'
+import ArrivalCheckIn from './ArrivalCheckIn'
+import { buildDaySchedule, courtLabelKey, isDesignatedMatch, listScheduleDays, nowMinutesInZone, pickDefaultDay, tournamentToday } from './courtSheet'
 import { TeamPhotoNameRow, TeamPhotoProvider, TeamPhotoThumb, useTeamPhotos } from '../../components/TeamPhotoThumb'
 import { uploadAndSetOfficialTeamPhoto } from '../../api/photography'
 import { useOfficialTeamPhotoPolling } from '../../lib/useOfficialTeamPhotoPolling'
@@ -9803,7 +9804,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms' | 'text_list'>('checkin')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'court_sheet' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms' | 'text_list'>('checkin')
   const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
@@ -9818,8 +9819,11 @@ export default function TournamentDeskPage() {
   } | null>(null)
   const [checkInNoteBusy, setCheckInNoteBusy] = useState(false)
   const [slotCheckInBusy, setSlotCheckInBusy] = useState(false)
-  const [designatedSheet, setDesignatedSheet] = useState<'checkin' | 'courts'>('courts')
+  const [courtSheetDay, setCourtSheetDay] = useState('')
+  const [courtSheetUndo, setCourtSheetUndo] = useState<{ matchId: number; slotId: number } | null>(null)
+  const [deskSyncedAt, setDeskSyncedAt] = useState<Date | null>(null)
   const [courtSheetBusyId, setCourtSheetBusyId] = useState<number | null>(null)
+  const [checkInPendingIds, setCheckInPendingIds] = useState<number[]>([])
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
   const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
 
@@ -9848,17 +9852,40 @@ export default function TournamentDeskPage() {
     })
   }, [])
 
+  const snapshotFlight = useRef(false)
+  const snapshotQueued = useRef(false)
+  const snapshotQueuedVersion = useRef<number | undefined>(undefined)
+  const courtSheetHold = useRef(false)
+  const hasSnapshot = useRef(false)
+
   const loadSnapshot = useCallback(async (versionId?: number) => {
     if (!tid) return
-    setLoading(true)
-    setError(null)
+    if (snapshotFlight.current) {
+      snapshotQueued.current = true
+      snapshotQueuedVersion.current = versionId
+      return
+    }
+    snapshotFlight.current = true
+    const quiet = hasSnapshot.current
+    if (!quiet) {
+      setLoading(true)
+      setError(null)
+    }
+    let requested = versionId
     try {
-      const resp = await getDeskSnapshot(tid, versionId)
-      setData(resp)
+      do {
+        snapshotQueued.current = false
+        const resp = await getDeskSnapshot(tid, requested)
+        setData(resp)
+        setDeskSyncedAt(new Date())
+        hasSnapshot.current = true
+        requested = snapshotQueuedVersion.current
+      } while (snapshotQueued.current)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
-      setLoading(false)
+      snapshotFlight.current = false
+      if (!quiet) setLoading(false)
     }
   }, [tid])
 
@@ -9966,6 +9993,16 @@ export default function TournamentDeskPage() {
     }
   }, [activeTab, refreshSnapshotAndLookups])
 
+  useEffect(() => {
+    if (activeTab !== 'checkin' && activeTab !== 'court_sheet') return
+    const id = window.setInterval(() => {
+      if (courtSheetBusyId != null || drawerMatch || courtSheetHold.current || snapshotFlight.current) return
+      handleRefresh()
+      loadCourtStates()
+    }, 4000)
+    return () => window.clearInterval(id)
+  }, [activeTab, courtSheetBusyId, drawerMatch, handleRefresh, loadCourtStates])
+
   const handleAction = useCallback((match: DeskMatchItem, action: string) => {
     if (action === 'FINALIZE') {
       setDrawerMatch(match)
@@ -10056,6 +10093,7 @@ export default function TournamentDeskPage() {
   const visibleTabs = useMemo<ReadonlyArray<typeof activeTab>>(
     () => ([
       'checkin',
+      'court_sheet',
       'towels',
       'schedule',
       'draws',
@@ -10143,24 +10181,29 @@ export default function TournamentDeskPage() {
     setData((prev) => {
       if (!prev) return prev
       const patchMatch = (match: CheckInMatchItem): CheckInMatchItem => {
-        if (match.match_id !== matchId) return match
-        const current = side === 'A' ? match.side_a : match.side_b
-        const players = current.players.map((player) => {
-          if (playerId != null && player.player_id !== playerId) return player
-          return { ...player, checked_in: checked }
-        })
-        const playersChecked = players.filter((player) => player.checked_in).length
-        const teamChecked = playerId == null ? checked : current.team_checked_in
-        const sideReady = Boolean(teamChecked) || (players.length > 0 && playersChecked === players.length)
-        const nextSide = {
-          ...current,
-          team_checked_in: teamChecked,
-          players,
-          players_checked_in: playersChecked,
-          side_ready: sideReady,
+        const patchSide = (current: MatchCheckInSideState, sideKey: 'A' | 'B') => {
+          const applies = playerId == null
+            ? match.match_id === matchId && sideKey === side
+            : current.players.some((player) => player.player_id === playerId)
+          if (!applies) return current
+          const players = current.players.map((player) => {
+            if (playerId != null && player.player_id !== playerId) return player
+            return { ...player, checked_in: checked }
+          })
+          const playersChecked = players.filter((player) => player.checked_in).length
+          const teamChecked = playerId == null ? checked : current.team_checked_in
+          const sideReady = Boolean(teamChecked) || (players.length > 0 && playersChecked === players.length)
+          return {
+            ...current,
+            team_checked_in: teamChecked,
+            players,
+            players_checked_in: playersChecked,
+            side_ready: sideReady,
+          }
         }
-        const sideA = side === 'A' ? nextSide : match.side_a
-        const sideB = side === 'B' ? nextSide : match.side_b
+        const sideA = patchSide(match.side_a, 'A')
+        const sideB = patchSide(match.side_b, 'B')
+        if (sideA === match.side_a && sideB === match.side_b) return match
         return { ...match, side_a: sideA, side_b: sideB, match_ready: Boolean(sideA.side_ready && sideB.side_ready) }
       }
       const checkin_matches = (prev.checkin_matches || []).map(patchMatch)
@@ -10196,6 +10239,26 @@ export default function TournamentDeskPage() {
       setError(e instanceof Error ? e.message : 'Failed player check-in update')
     }
   }, [tid, data, patchCheckInLocally, queueQuietRefresh, runCheckInWithNotePrompt])
+
+  const checkInArrivalPlayer = useCallback(async (matchId: number, side: 'A' | 'B', playerId: number, checked: boolean) => {
+    if (!tid || !data) return
+    setCheckInPendingIds((prev) => prev.includes(playerId) ? prev : [...prev, playerId])
+    patchCheckInLocally(matchId, side, checked, playerId)
+    try {
+      await deskCheckInPlayer(tid, matchId, {
+        version_id: data.version_id,
+        side,
+        player_id: playerId,
+        checked_in: checked,
+      }, true, !checked)
+      queueQuietRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed player check-in update')
+      await loadSnapshot(data.version_id)
+    } finally {
+      setCheckInPendingIds((prev) => prev.filter((id) => id !== playerId))
+    }
+  }, [tid, data, patchCheckInLocally, queueQuietRefresh, loadSnapshot])
 
   const syncCheckInSide = useCallback(async (
     match: CheckInMatchItem,
@@ -11067,28 +11130,22 @@ export default function TournamentDeskPage() {
 
   const designatedMatches = (data.matches || []).filter(isDesignatedMatch)
   const hasDesignatedCourts = designatedMatches.length > 0
+  const scheduleDays = listScheduleDays(data.slots || [])
+  const selectedScheduleDay = scheduleDays.includes(courtSheetDay) ? courtSheetDay : pickDefaultDay(scheduleDays, data.tournament_timezone)
   const closedCourtLabels = Object.values(courtStates)
     .filter((state) => state.is_closed)
     .map((state) => state.court_label)
   const checkinReadyByMatchId = new Map(
     (data.checkin_matches || []).map((row) => [row.match_id, Boolean(row.match_ready)]),
   )
-  const slotCourtNames = (data.slots || []).map((slot) => {
-    const label = (slot.court_label || '').trim() || (slot.court_number != null ? String(slot.court_number) : '')
-    if (!label) return ''
-    return label.toLowerCase().startsWith('court') ? label : `Court ${label}`
-  }).filter(Boolean)
-  const courtColumns = buildCourtColumns({
-    matches: data.matches || [],
-    courts: Array.from(new Set([...(data.courts || []), ...slotCourtNames, ...closedCourtLabels.map((label) => {
-      const trimmed = label.trim()
-      if (!trimmed) return ''
-      return trimmed.toLowerCase().startsWith('court') ? trimmed : `Court ${trimmed}`
-    }).filter(Boolean)])),
-    closedCourtLabels,
+  const daySchedule = buildDaySchedule({
+    day: selectedScheduleDay,
     slots: data.slots || [],
-    checkinReadyByMatchId,
+    matches: data.matches || [],
+    closedCourtLabels,
   })
+  const scheduleNowMinutes = nowMinutesInZone(data.tournament_timezone)
+  const scheduleIsToday = selectedScheduleDay === tournamentToday(data.tournament_timezone)
 
   const handleCourtSheetStart = async (matchId: number) => {
     if (!tid || !data || !isDraft) return
@@ -11104,34 +11161,70 @@ export default function TournamentDeskPage() {
     }
   }
 
-  const handleCourtSheetMove = async (matchId: number, courtName: string) => {
+  const handleCourtSheetMove = async (matchId: number, slotId: number) => {
     if (!tid || !data || !isDraft) return
     const match = (data.matches || []).find((row) => row.match_id === matchId)
-    if (!match || (match.status || '').toUpperCase() === 'IN_PROGRESS' || (match.status || '').toUpperCase() === 'PAUSED') {
+    const slot = (data.slots || []).find((row) => row.slot_id === slotId)
+    if (!match || !slot || match.slot_id === slotId) return
+    if (slot.is_active === false) {
+      setCourtActionError('That time is unavailable. The match stays on its assigned court.')
       return
     }
-    if (match.court_name === courtName) return
-    const column = courtColumns.find((row) => row.courtName === courtName)
-    const slotId = nextOpenSlotId(
-      data.slots || [],
-      column?.courtNumber ?? null,
-      courtName,
-      match.day_date,
-    )
-    if (slotId == null) {
-      setCourtActionError(`No open time on ${courtName}`)
+    const slotClosed = closedCourtLabels.some((label) => courtLabelKey(label) === courtLabelKey(slot.court_label) || courtLabelKey(label) === courtLabelKey(String(slot.court_number)))
+    if (slotClosed) {
+      setCourtActionError('That court is closed. Assigned matches stay put until you reassign them.')
       return
     }
     setCourtActionError(null)
     setCourtSheetBusyId(matchId)
     try {
+      const conflicts = await checkDeskConflicts(tid, {
+        version_id: data.version_id,
+        action_type: 'MOVE',
+        match_id: matchId,
+        target_slot_id: slotId,
+      })
+      if (conflicts.conflicts.length > 0) {
+        setCourtActionError(conflicts.conflicts.map((row) => row.message).join(' '))
+        return
+      }
+      if (match.slot_id != null) setCourtSheetUndo({ matchId, slotId: match.slot_id })
       await deskMoveMatch(tid, matchId, { version_id: data.version_id, target_slot_id: slotId })
       await loadSnapshot(data.version_id)
     } catch (e) {
       setCourtActionError(e instanceof Error ? e.message : 'Failed to move match')
+      await loadSnapshot(data.version_id)
     } finally {
       setCourtSheetBusyId(null)
     }
+  }
+
+  const handleCourtSheetSwap = async (matchId: number, occupantId: number) => {
+    if (!tid || !data || !isDraft) return
+    const match = (data.matches || []).find((row) => row.match_id === matchId)
+    setCourtActionError(null)
+    setCourtSheetBusyId(matchId)
+    try {
+      if (match?.slot_id != null) setCourtSheetUndo({ matchId, slotId: match.slot_id })
+      await deskSwapMatches(tid, {
+        version_id: data.version_id,
+        match_a_id: matchId,
+        match_b_id: occupantId,
+      })
+      await loadSnapshot(data.version_id)
+    } catch (e) {
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to swap matches')
+      await loadSnapshot(data.version_id)
+    } finally {
+      setCourtSheetBusyId(null)
+    }
+  }
+
+  const handleCourtSheetUndo = async () => {
+    if (!courtSheetUndo) return
+    const previous = courtSheetUndo
+    setCourtSheetUndo(null)
+    await handleCourtSheetMove(previous.matchId, previous.slotId)
   }
 
   // Dynamic ready-queue matches are waiting for assignment and do not occupy a court.
@@ -11548,7 +11641,7 @@ export default function TournamentDeskPage() {
               marginBottom: -2,
             }}
           >
-            {tab === 'checkin' ? 'Check-In' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab === 'text_list' ? 'Text List' : tab}
+            {tab === 'checkin' ? 'Check-In' : tab === 'court_sheet' ? 'Court Sheet' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab === 'text_list' ? 'Text List' : tab}
           </button>
         ))}
       </div>
@@ -11772,58 +11865,22 @@ export default function TournamentDeskPage() {
               </div>
             ) : (
               <>
-                {hasDesignatedCourts && (
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <button
-                      type="button"
-                      onClick={() => setDesignatedSheet('checkin')}
-                      style={{
-                        padding: '8px 14px',
-                        borderRadius: 6,
-                        border: '1px solid #1a237e',
-                        background: designatedSheet === 'checkin' ? '#1a237e' : '#fff',
-                        color: designatedSheet === 'checkin' ? '#fff' : '#1a237e',
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      First-match check-in
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDesignatedSheet('courts')}
-                      style={{
-                        padding: '8px 14px',
-                        borderRadius: 6,
-                        border: '1px solid #1a237e',
-                        background: designatedSheet === 'courts' ? '#1a237e' : '#fff',
-                        color: designatedSheet === 'courts' ? '#fff' : '#1a237e',
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Court sheet
-                    </button>
-                  </div>
-                )}
-                {hasDesignatedCourts && designatedSheet === 'courts' ? (
-                  <div className="checkin-stack">
-                    {courtActionError && (
-                      <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#ffebee', color: '#c62828', fontSize: 12, fontWeight: 700 }}>
-                        {courtActionError}
-                      </div>
-                    )}
-                    <div style={{ fontSize: 12, color: '#607d8b', fontWeight: 700 }}>
-                      Each court shows the match on it now. Later matches stack underneath. Drag a stacked match onto another court. A court stays dark while a match is playing or the court is closed.
-                    </div>
-                    <DesignatedCourtSheet
-                      columns={courtColumns}
-                      isDraft={isDraft}
-                      busyMatchId={courtSheetBusyId}
-                      onOpenMatch={setDrawerMatch}
-                      onStart={(matchId) => { void handleCourtSheetStart(matchId) }}
-                      onMove={(matchId, courtName) => { void handleCourtSheetMove(matchId, courtName) }}
-                    />
+                {hasDesignatedCourts ? (
+                  <div style={{ height: 'calc(100vh - 196px)', minHeight: 420, display: 'flex', flexDirection: 'column' }}>
+                  <ArrivalCheckIn
+                    checkins={data.checkin_matches || []}
+                    matches={data.matches || []}
+                    nowMinutes={scheduleNowMinutes}
+                    isToday={(day) => day === tournamentToday(data.tournament_timezone)}
+                    pendingIds={checkInPendingIds}
+                    onCheckIn={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, true) }}
+                    onUndo={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, false) }}
+                    onCheckBoth={(tile) => {
+                      for (const player of tile.players) {
+                        if (!player.checkedIn) void checkInArrivalPlayer(player.matchId, player.side, player.playerId, true)
+                      }
+                    }}
+                  />
                   </div>
                 ) : (
                 <div className="checkin-stack">
@@ -12089,6 +12146,38 @@ export default function TournamentDeskPage() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {activeTab === 'court_sheet' && (
+          <div className="checkin-stack" style={{ height: 'calc(100vh - 196px)', minHeight: 420, display: 'flex', flexDirection: 'column' }}>
+            {courtActionError && (
+              <div style={{ padding: '8px 10px', borderRadius: 6, backgroundColor: '#ffebee', color: '#c62828', fontSize: 12, fontWeight: 700 }}>
+                {courtActionError}
+              </div>
+            )}
+            <DesignatedCourtSheet
+              schedule={daySchedule}
+              days={scheduleDays}
+              selectedDay={selectedScheduleDay}
+              onSelectDay={setCourtSheetDay}
+              checkinReadyByMatchId={checkinReadyByMatchId}
+              matches={data.matches || []}
+              nowMinutes={scheduleNowMinutes}
+              isToday={scheduleIsToday}
+              clockLabel={new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              syncedLabel={deskSyncedAt ? `Synced ${deskSyncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Waiting for sync'}
+              isDraft={isDraft}
+              busyMatchId={courtSheetBusyId}
+              canUndo={courtSheetUndo != null}
+              onOpenMatch={setDrawerMatch}
+              onStart={(matchId) => { void handleCourtSheetStart(matchId) }}
+              onMove={(matchId, slotId) => { void handleCourtSheetMove(matchId, slotId) }}
+              onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
+              onUndo={() => { void handleCourtSheetUndo() }}
+              onCourtState={(courtLabel, closed, note) => { void handleCourtStateChange(courtLabel, { is_closed: closed, note }) }}
+              onInteractionChange={(active) => { courtSheetHold.current = active }}
+            />
           </div>
         )}
 

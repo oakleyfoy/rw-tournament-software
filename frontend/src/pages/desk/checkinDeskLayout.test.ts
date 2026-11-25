@@ -7,6 +7,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const css = readFileSync(join(here, 'checkinDeskLayout.css'), 'utf8')
 const page = readFileSync(join(here, 'TournamentDeskPage.tsx'), 'utf8')
 const courtSheet = readFileSync(join(here, 'DesignatedCourtSheet.tsx'), 'utf8')
+const firstMatch = readFileSync(join(here, 'ArrivalCheckIn.tsx'), 'utf8')
 
 describe('Check-In Desk layout changes', () => {
   it('uses a responsive 1/2/4 column grid for Dynamic Ready To Go', () => {
@@ -28,8 +29,8 @@ describe('Check-In Desk layout changes', () => {
     expect(waitingIdx).toBeGreaterThan(-1)
     expect(dynamicIdx).toBeGreaterThan(waitingIdx)
     expect(page.match(/Dynamic Ready To Go/g)).toHaveLength(1)
-    expect(page).toContain('First-match check-in')
-    expect(page).toContain('Court sheet')
+    expect(firstMatch).toContain('First-match check-in')
+    expect(page).toContain('Court Sheet')
     expect(page).toContain('<DesignatedCourtSheet')
     expect(courtSheet).toContain('data-testid="court-sheet"')
   })

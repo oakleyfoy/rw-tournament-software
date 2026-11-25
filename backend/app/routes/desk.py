@@ -54,7 +54,6 @@ from app.services.preassigned_dispatch import (
     OUTCOME_WAITING_TIME,
     PreassignedSchemaNotReady,
     dispatch_after_court_freed,
-    dispatch_after_finalize,
     dispatch_court,
     is_opening_waterfall,
     match_fully_checked_in,
@@ -2603,6 +2602,57 @@ def set_team_checkin(
     )
 
 
+def _propagate_player_attendance(
+    session: Session,
+    *,
+    tournament_id: int,
+    version_id: int,
+    player_id: int,
+    checked_in: bool,
+) -> None:
+    """One attendance record covers every team and match for this player."""
+    links = session.exec(select(TeamPlayer).where(TeamPlayer.player_id == player_id)).all()
+    team_ids = {link.team_id for link in links if link.team_id is not None}
+    if not team_ids:
+        return
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
+    now = datetime.utcnow()
+    for match in matches:
+        for side, team_id in (("A", match.team_a_id), ("B", match.team_b_id)):
+            if team_id not in team_ids or match.id is None:
+                continue
+            row = session.exec(
+                select(MatchPlayerCheckIn).where(
+                    MatchPlayerCheckIn.schedule_version_id == version_id,
+                    MatchPlayerCheckIn.match_id == match.id,
+                    MatchPlayerCheckIn.side == side,
+                    MatchPlayerCheckIn.player_id == player_id,
+                )
+            ).first()
+            if checked_in and row is not None and row.checked_in:
+                continue
+            if row is None:
+                if not checked_in:
+                    continue
+                row = MatchPlayerCheckIn(
+                    tournament_id=tournament_id,
+                    schedule_version_id=version_id,
+                    match_id=match.id,
+                    team_id=team_id,
+                    side=side,
+                    player_id=player_id,
+                )
+            row.team_id = team_id
+            row.checked_in = checked_in
+            if checked_in:
+                if row.checked_in_at is None:
+                    row.checked_in_at = now
+            else:
+                row.checked_in_at = None
+            row.updated_at = now
+            session.add(row)
+
+
 @router.patch(
     "/desk/tournaments/{tournament_id}/matches/{match_id}/checkin/player",
     response_model=ReadyQueueResponse,
@@ -2612,6 +2662,7 @@ def set_player_checkin(
     match_id: int,
     payload: PlayerCheckInRequest,
     quick: int = Query(0),
+    all_matches: int = Query(0),
     session: Session = Depends(get_session),
 ):
     tournament = session.get(Tournament, tournament_id)
@@ -2669,9 +2720,21 @@ def set_player_checkin(
         )
     row.team_id = team_id
     row.checked_in = bool(payload.checked_in)
-    row.checked_in_at = datetime.utcnow() if payload.checked_in else None
+    if payload.checked_in:
+        if row.checked_in_at is None:
+            row.checked_in_at = datetime.utcnow()
+    else:
+        row.checked_in_at = None
     row.updated_at = datetime.utcnow()
     session.add(row)
+    if payload.checked_in or all_matches:
+        _propagate_player_attendance(
+            session,
+            tournament_id=tournament_id,
+            version_id=payload.version_id,
+            player_id=payload.player_id,
+            checked_in=bool(payload.checked_in),
+        )
     session.commit()
     session.refresh(match)
     clear_checkin_reset_if_ready(session, match)
@@ -3857,8 +3920,8 @@ def finalize_match(
 
     management_mode = _normalize_management_mode(getattr(tournament, "desk_management_mode", None))
 
-    # Auto-start next match. PREASSIGNED uses shared dispatch (never rolls back score).
-    # Court-management DYNAMIC keeps the legacy same-court auto-start.
+    # Designated courts do not start the next match. Dynamic court assignment
+    # keeps its existing same-court auto-start.
     auto_started_match_id = None
     dispatch_errors: List[str] = []
     finalized_assignment = session.exec(
@@ -3872,26 +3935,11 @@ def finalize_match(
     preassigned_day = bool(finalized_slot is not None and is_preassigned(finalized_event, finalized_slot.day_date))
 
     raw_updates = adv_result.get("downstream_updates", [])
-    downstream_match_ids = [u["match_id"] for u in raw_updates]
 
     if preassigned_day:
-        try:
-            dispatch_result = dispatch_after_finalize(
-                session,
-                tournament,
-                match,
-                downstream_match_ids=downstream_match_ids,
-            )
-            if dispatch_result.started_match_ids:
-                auto_started_match_id = dispatch_result.started_match_ids[0]
-            dispatch_errors.extend(dispatch_result.errors)
-        except Exception as exc:
-            logger.exception(
-                "preassigned dispatch after finalize failed tournament=%s match=%s",
-                tournament_id,
-                match_id,
-            )
-            dispatch_errors.append(str(exc))
+        # The score is saved and the draw is already advanced. The next
+        # designated-court match stays on its scheduled time until staff start it.
+        pass
     elif management_mode != MODE_CHECKIN_MANAGEMENT and finalized_assignment and finalized_slot:
         court_num = finalized_slot.court_number
         court_slots = session.exec(

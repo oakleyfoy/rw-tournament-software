@@ -18,6 +18,7 @@ import PublicSchedulePage from './pages/public/PublicSchedulePage'
 import PublicTournamentHubPage from './pages/public/PublicTournamentHubPage'
 import PublicTournamentTeamPage from './pages/public/PublicTournamentTeamPage'
 import TournamentDeskPage from './pages/desk/TournamentDeskPage'
+import CourtSheetPreviewPage from './pages/desk/CourtSheetPreviewPage'
 import TournamentDeskBoardPage from './pages/desk/TournamentDeskBoardPage'
 import TournamentDeskCheckinBoardPage from './pages/desk/TournamentDeskCheckinBoardPage'
 import TournamentDeskDrawsDisplayPage from './pages/desk/TournamentDeskDrawsDisplayPage'
@@ -59,6 +60,7 @@ function App() {
     <div className="App">
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {import.meta.env.DEV && <Route path="/desk/court-sheet-preview" element={<CourtSheetPreviewPage />} />}
         {/* Public routes */}
         <Route path="/t/:tournamentId/hub" element={<PublicTournamentHubPage />} />
         <Route path="/t/:tournamentId/hub/teams/:teamId" element={<PublicTournamentTeamPage />} />
