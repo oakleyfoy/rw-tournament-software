@@ -14,6 +14,8 @@ class SmsLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     tournament_id: int = Field(foreign_key="tournament.id", index=True)
     team_id: Optional[int] = Field(default=None, foreign_key="team.id")
+    player_id: Optional[int] = Field(default=None, foreign_key="player.id", index=True)
+    sent_by_user_id: Optional[int] = Field(default=None, foreign_key="user_account.id")
     phone_number: str  # Actual delivery phone in E.164 format
     # Original intended recipient when delivery was redirected or blocked.
     # For live sends this matches phone_number; may be null on legacy rows.

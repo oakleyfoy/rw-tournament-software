@@ -59,6 +59,8 @@ REQUIRED_TEAM_COLUMNS: List[Tuple[str, str, str]] = [
 REQUIRED_SMS_LOG_COLUMNS: List[Tuple[str, str, str]] = [
     ("dedupe_key", "TEXT", "TEXT"),
     ("intended_phone_number", "TEXT", "TEXT"),
+    ("player_id", "INTEGER", "INTEGER"),
+    ("sent_by_user_id", "INTEGER", "INTEGER"),
 ]
 
 # Columns we must ensure exist in the "tournament_sms_settings" table.

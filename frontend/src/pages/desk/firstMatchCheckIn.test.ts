@@ -169,9 +169,10 @@ describe('first-match check-in board', () => {
     expect(board.checkedPlayerIds).toEqual([1, 2])
   })
 
-  it('sorts teams by the top first name and keeps a photo on that player only', () => {
+  it('sorts teams by the top first name and keeps partner order', () => {
     const early = side([[1, 'Olivia Jones', 'Lime', true], [2, 'Carol Smith', 'Orange', false]], 20)
-    early.players[0].photo_taken = true
+    early.players[0].phone_e164 = '+15555550111'
+    early.players[0].sms_consent = 'unknown'
     const laterCourt = side([[3, 'Amy Clark', 'Red', false], [4, 'Holly Moore', 'Blue', false]], 21)
     const board = buildArrivalBoard(
       [checkin(1, '09:00', early, laterCourt)],
@@ -181,8 +182,8 @@ describe('first-match check-in board', () => {
     expect(names).toEqual([['Amy', 'Holly'], ['Olivia', 'Carol']])
     const olivia = board.slots[0].tiles[1].players[0]
     const carol = board.slots[0].tiles[1].players[1]
-    expect(olivia.photoTaken).toBe(true)
-    expect(carol.photoTaken).toBe(false)
+    expect(olivia.phone).toBe('+15555550111')
+    expect(carol.phone).toBeNull()
     expect(olivia.checkedIn).toBe(true)
     expect(carol.checkedIn).toBe(false)
   })
@@ -193,8 +194,8 @@ describe('first-match check-in board', () => {
     expect(morning.fits).toBe(true)
     expect(morning.columns).toBeGreaterThanOrEqual(7)
     expect(morning.columns).toBeLessThanOrEqual(8)
-    expect(morning.tileHeight).toBeGreaterThanOrEqual(108)
-    expect(morning.tileHeight).toBeLessThanOrEqual(136)
+    expect(morning.tileHeight).toBeGreaterThanOrEqual(128)
+    expect(morning.tileHeight).toBeLessThanOrEqual(150)
     expect(morning.fontSize).toBeGreaterThanOrEqual(15)
     const laptop = matrixLayout(1366 - 48, 768 - chrome, 26)
     expect(laptop.fits).toBe(true)

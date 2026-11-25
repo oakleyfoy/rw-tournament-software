@@ -11,7 +11,8 @@ export type ArrivalPlayer = {
   matchId: number
   countsInSlot: boolean
   canCheckIn: boolean
-  photoTaken: boolean
+  phone: string | null
+  smsConsent: string | null
 }
 
 export type ArrivalTile = {
@@ -63,7 +64,8 @@ type Appearance = {
   teamKey: string
   teamId: number | null
   canCheckIn: boolean
-  photoTaken: boolean
+  phone: string | null
+  smsConsent: string | null
 }
 
 export function playerFirstName(display: string): string {
@@ -87,8 +89,8 @@ export function matrixLayout(width: number, height: number, teamCount: number): 
   const minWidth = 156
   const targetWidth = 176
   const maxWidth = 230
-  const minHeight = 108
-  const maxHeight = 136
+  const minHeight = 128
+  const maxHeight = 150
   const rowsFor = (count: number) => Math.ceil(teamCount / count)
   const heightFor = (rows: number, rowHeight: number) => rows * rowHeight + gap * Math.max(0, rows - 1)
   const maxColumns = Math.max(1, Math.floor((width + gap) / (minWidth + gap)))
@@ -146,7 +148,8 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
           teamKey: state.team_id != null ? `team:${state.team_id}` : `side:${checkin.match_id}|${side}`,
           teamId: state.team_id,
           canCheckIn: checkin.match_id > 0,
-          photoTaken: player.photo_taken === true,
+          phone: player.phone_e164 || null,
+          smsConsent: player.sms_consent || null,
         })
       }
     }
@@ -197,7 +200,8 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
         matchId: row.matchId,
         countsInSlot: earliest.get(row.playerId) === rank(first.day, first.sortTime),
         canCheckIn: row.canCheckIn,
-        photoTaken: row.photoTaken,
+        phone: row.phone,
+        smsConsent: row.smsConsent,
       })),
     })
   }

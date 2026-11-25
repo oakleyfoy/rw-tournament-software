@@ -98,6 +98,8 @@ import {
   sendSmsEventDivision,
   sendSmsTeam,
   sendSmsPlayer,
+  listPlayerNotes,
+  createPlayerNotes,
   sendSmsMatch,
   sendSmsPhoneList,
   previewSmsBlast,
@@ -9676,6 +9678,29 @@ export default function TournamentDeskPage() {
   const [checkInPendingIds, setCheckInPendingIds] = useState<number[]>([])
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
   const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
+  const [playerNotes, setPlayerNotes] = useState<Array<{ id: number; playerId: number; body: string; createdAt: string; createdByName: string | null }>>([])
+  useEffect(() => {
+    if (!tid) return
+    let cancelled = false
+    const loadNotes = () => {
+      void listPlayerNotes(tid).then((rows) => {
+        if (cancelled) return
+        setPlayerNotes(rows.map((row) => ({
+          id: row.id,
+          playerId: row.player_id,
+          body: row.body,
+          createdAt: row.created_at,
+          createdByName: row.created_by_name,
+        })))
+      }).catch(() => undefined)
+    }
+    loadNotes()
+    const timer = window.setInterval(loadNotes, 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [tid])
 
   const applyReadyQueueResponse = useCallback((resp: ReadyQueueResponse) => {
     setData((prev) => {
@@ -11730,6 +11755,44 @@ export default function TournamentDeskPage() {
                     nowMinutes={scheduleNowMinutes}
                     isToday={(day) => day === tournamentToday(data.tournament_timezone)}
                     pendingIds={checkInPendingIds}
+                    photographedTeamIds={Object.keys(teamPhotoLive.versions).map((id) => Number(id))}
+                    playerNotes={playerNotes}
+                    onSendText={async (players, message) => {
+                      if (!tid) return []
+                      const results: Array<{ playerId: number; status: string; error: string | null }> = []
+                      const seen = new Set<string>()
+                      for (const player of players) {
+                        const phone = (player.phone || '').replace(/\s+/g, '')
+                        if (!phone) {
+                          results.push({ playerId: player.playerId, status: 'failed', error: 'No cellphone on file' })
+                          continue
+                        }
+                        if (seen.has(phone)) {
+                          results.push({ playerId: player.playerId, status: 'shared_number', error: null })
+                          continue
+                        }
+                        seen.add(phone)
+                        try {
+                          const response = await sendSmsPlayer(tid, player.playerId, { message })
+                          const row = response.results[0]
+                          results.push({ playerId: player.playerId, status: row?.status || 'failed', error: row?.error || null })
+                        } catch (error) {
+                          results.push({ playerId: player.playerId, status: 'failed', error: error instanceof Error ? error.message : 'Text failed' })
+                        }
+                      }
+                      return results
+                    }}
+                    onSaveNote={async (playerIds, body) => {
+                      if (!tid) return
+                      const rows = await createPlayerNotes(tid, playerIds, body)
+                      setPlayerNotes(rows.map((row) => ({
+                        id: row.id,
+                        playerId: row.player_id,
+                        body: row.body,
+                        createdAt: row.created_at,
+                        createdByName: row.created_by_name,
+                      })))
+                    }}
                     onCheckIn={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, true) }}
                     onUndo={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, false) }}
                     onCheckBoth={(tile) => {

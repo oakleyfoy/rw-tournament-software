@@ -3174,7 +3174,8 @@ export interface PlayerCheckInState {
   checked_in_at: string | null
   towel_color: string | null
   report_url: string | null
-  photo_taken?: boolean
+  phone_e164?: string | null
+  sms_consent?: string | null
 }
 
 export interface MatchCheckInSideState {
@@ -4908,6 +4909,30 @@ export async function sendSmsTeam(
     `${API_BASE_URL}/tournaments/${tournamentId}/sms/team/${teamId}`,
     { method: 'POST', body: JSON.stringify(payload) }
   )
+}
+
+export type PlayerNoteRecord = {
+  id: number
+  player_id: number
+  player_name: string
+  body: string
+  created_at: string
+  created_by_name: string | null
+}
+
+export async function listPlayerNotes(tournamentId: number): Promise<PlayerNoteRecord[]> {
+  const response = await fetchJson<{ notes: PlayerNoteRecord[] }>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/player-notes`,
+  )
+  return response.notes
+}
+
+export async function createPlayerNotes(tournamentId: number, playerIds: number[], body: string): Promise<PlayerNoteRecord[]> {
+  const response = await fetchJson<{ notes: PlayerNoteRecord[] }>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/player-notes`,
+    { method: 'POST', body: JSON.stringify({ player_ids: playerIds, body }) },
+  )
+  return response.notes
 }
 
 export async function sendSmsPlayer(

@@ -9,6 +9,7 @@ from app.models.match_lock import MatchLock
 from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.opening_slot_release import OpeningSlotRelease
 from app.models.player import Player
+from app.models.player_note import PlayerNote
 from app.models.policy_run import PolicyRun
 from app.models.schedule_slot import ScheduleSlot
 from app.models.schedule_version import ScheduleVersion

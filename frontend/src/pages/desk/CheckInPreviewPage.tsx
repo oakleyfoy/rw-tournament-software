@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import FirstMatchCheckIn from './ArrivalCheckIn'
+import FirstMatchCheckIn, { type PlayerStaffNote } from './ArrivalCheckIn'
 import type { ArrivalPlayer, ArrivalTile } from './firstMatchCheckIn'
 import type { CheckInMatchItem, DeskMatchItem, MatchCheckInSideState, PlayerCheckInState } from '../../api/client'
 
@@ -25,7 +25,8 @@ function person(index: number): PlayerCheckInState {
     checked_in_at: null,
     towel_color: TOWELS[index % TOWELS.length],
     report_url: null,
-    photo_taken: index === 0 || index === 8,
+    phone_e164: `+1555555${String(1000 + index).padStart(4, '0').slice(-4)}`,
+    sms_consent: index === 1 ? 'opted_out' : 'unknown',
   }
 }
 
@@ -119,6 +120,8 @@ function buildBoard() {
 export default function CheckInPreviewPage() {
   const seed = useMemo(() => buildBoard(), [])
   const [checkins, setCheckins] = useState(seed.checkins)
+  const [notes, setNotes] = useState<PlayerStaffNote[]>([])
+  const photos = [5000]
   const mark = (player: ArrivalPlayer, checked: boolean) => {
     setCheckins((current) => current.map((match) => {
       if (match.match_id !== player.matchId) return match
@@ -141,6 +144,21 @@ export default function CheckInPreviewPage() {
         nowMinutes={9 * 60}
         isToday={() => true}
         pendingIds={[]}
+        photographedTeamIds={photos}
+        playerNotes={notes}
+        onSendText={async (players) => players.map((player) => ({ playerId: player.playerId, status: 'queued', error: null }))}
+        onSaveNote={async (playerIds, body) => {
+          setNotes((current) => [
+            ...playerIds.map((playerId, index) => ({
+              id: Date.now() + index,
+              playerId,
+              body,
+              createdAt: new Date().toISOString(),
+              createdByName: 'Staff',
+            })),
+            ...current,
+          ])
+        }}
         onCheckIn={(player) => mark(player, true)}
         onUndo={(player) => mark(player, false)}
         onCheckBoth={(tile: ArrivalTile) => {

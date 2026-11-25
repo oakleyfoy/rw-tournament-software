@@ -45,6 +45,7 @@ from app.routes import (
     events,
     phase1_status,
     plan_report,
+    player_notes,
     post_draw_corrections,
     public,
     runtime,
@@ -208,6 +209,7 @@ app.include_router(public.router, prefix="/api", tags=["public"])
 
 # Desk runtime console (staff-only)
 app.include_router(desk.router, prefix="/api", tags=["desk"], dependencies=_protected_deps)
+app.include_router(player_notes.router, prefix="/api", tags=["player-notes"], dependencies=_protected_deps)
 
 # Tournament TV display boards (staff-only, read-only)
 app.include_router(display_board.router, prefix="/api", tags=["display-board"], dependencies=_protected_deps)

@@ -101,6 +101,7 @@ def init_db() -> None:
     from app.models.match_player_checkin import MatchPlayerCheckIn  # noqa: F401
     from app.models.opening_slot_release import OpeningSlotRelease  # noqa: F401
     from app.models.player import Player  # noqa: F401
+    from app.models.player_note import PlayerNote  # noqa: F401
     from app.models.policy_run import PolicyRun  # noqa: F401
     from app.models.schedule_slot import ScheduleSlot  # noqa: F401
     from app.models.schedule_version import ScheduleVersion  # noqa: F401

@@ -1588,6 +1588,7 @@ def _send_to_phone_targets(
     skipped_no_phone: int = 0,
     status_callback_base_url: Optional[str] = None,
     send_sms: Optional[Callable[..., dict]] = None,
+    sent_by_user_id: Optional[int] = None,
 ) -> SmsSendResponse:
     """Send to explicit phone targets with consent + dedupe + delivery-mode protections."""
     # Reading an expired row after commit opens a new write transaction.
@@ -1759,6 +1760,8 @@ def _send_to_phone_targets(
                 SmsLog(
                     tournament_id=tournament_id,
                     team_id=team_id,
+                    player_id=player_id,
+                    sent_by_user_id=sent_by_user_id,
                     phone_number=phone,
                     intended_phone_number=phone,
                     message_body=normalized_message,
@@ -1799,6 +1802,8 @@ def _send_to_phone_targets(
                 SmsLog(
                     tournament_id=tournament_id,
                     team_id=team_id,
+                    player_id=player_id,
+                    sent_by_user_id=sent_by_user_id,
                     phone_number=phone,
                     intended_phone_number=phone,
                     message_body=normalized_message,
@@ -1858,6 +1863,8 @@ def _send_to_phone_targets(
             SmsLog(
                 tournament_id=tournament_id,
                 team_id=team_id,
+                player_id=player_id,
+                sent_by_user_id=sent_by_user_id,
                 phone_number=delivery_phone,
                 intended_phone_number=phone,
                 message_body=outbound_body,
@@ -3122,6 +3129,7 @@ def send_player_text(
             "player_name": player.display_name or player.full_name,
         }
     ]
+    staff = getattr(request.state, "current_user", None)
     return _send_to_phone_targets(
         session=session,
         tournament_id=tournament_id,
@@ -3132,6 +3140,7 @@ def send_player_text(
         dedupe_key=body.dedupe_key,
         skipped_no_phone=0,
         status_callback_base_url=str(request.base_url),
+        sent_by_user_id=staff.id if staff is not None else None,
     )
 
 

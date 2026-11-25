@@ -712,6 +712,8 @@ class PlayerCheckInState(BaseModel):
     checked_in_at: Optional[str] = None
     towel_color: Optional[str] = None
     report_url: Optional[str] = None
+    phone_e164: Optional[str] = None
+    sms_consent: Optional[str] = None
 
 
 class MatchCheckInSideState(BaseModel):
@@ -1582,6 +1584,8 @@ def _build_checkin_snapshot(
                             checked_in_at=checked_at.isoformat() if checked_at else None,
                             towel_color=lookup_row.towel_color if lookup_row else None,
                             report_url=lookup_row.report_url if lookup_row else None,
+                            phone_e164=p.phone_e164 if p else None,
+                            sms_consent=p.sms_consent_status if p else None,
                         )
                     )
 
@@ -1608,6 +1612,7 @@ def _build_checkin_snapshot(
                             continue
                         represented_names.update(_lookup_name_keys(fallback_name))
                         fallback_player_id = lookup_row.player_id if lookup_row else None
+                        fallback_player = player_map.get(fallback_player_id) if fallback_player_id is not None else None
                         fallback_checkin = (
                             player_checkin_map.get((m.id, side_key, fallback_player_id))
                             if fallback_player_id is not None
@@ -1625,6 +1630,8 @@ def _build_checkin_snapshot(
                                 checked_in_at=fallback_checked_at.isoformat() if fallback_checked_at else None,
                                 towel_color=lookup_row.towel_color if lookup_row else None,
                                 report_url=lookup_row.report_url if lookup_row else None,
+                                phone_e164=fallback_player.phone_e164 if fallback_player else None,
+                                sms_consent=fallback_player.sms_consent_status if fallback_player else None,
                             )
                         )
 
