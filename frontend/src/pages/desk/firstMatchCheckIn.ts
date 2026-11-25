@@ -11,6 +11,7 @@ export type ArrivalPlayer = {
   matchId: number
   countsInSlot: boolean
   canCheckIn: boolean
+  photoTaken: boolean
 }
 
 export type ArrivalTile = {
@@ -20,6 +21,7 @@ export type ArrivalTile = {
   courtNumber: number | null
   courtLabel: string
   division: string
+  teamId: number | null
   day: string
   sortTime: string
   timeLabel: string
@@ -61,6 +63,7 @@ type Appearance = {
   teamKey: string
   teamId: number | null
   canCheckIn: boolean
+  photoTaken: boolean
 }
 
 export function playerFirstName(display: string): string {
@@ -84,8 +87,8 @@ export function matrixLayout(width: number, height: number, teamCount: number): 
   const minWidth = 156
   const targetWidth = 176
   const maxWidth = 230
-  const minHeight = 148
-  const maxHeight = 176
+  const minHeight = 108
+  const maxHeight = 136
   const rowsFor = (count: number) => Math.ceil(teamCount / count)
   const heightFor = (rows: number, rowHeight: number) => rows * rowHeight + gap * Math.max(0, rows - 1)
   const maxColumns = Math.max(1, Math.floor((width + gap) / (minWidth + gap)))
@@ -97,8 +100,8 @@ export function matrixLayout(width: number, height: number, teamCount: number): 
   const tileHeight = Math.max(minHeight, Math.min(maxHeight, available || minHeight))
   const neededHeight = heightFor(rows, minHeight)
   const fits = tileWidth >= minWidth && heightFor(rows, tileHeight) <= height + 1
-  const fontSize = tileWidth >= 180 && tileHeight >= 156 ? 16 : 15
-  const eggHeight = tileHeight >= 156 ? 22 : 20
+  const fontSize = tileWidth >= 170 ? 16 : 15
+  const eggHeight = tileHeight >= 120 ? 22 : 20
   return { columns, tileWidth, tileHeight: fits ? tileHeight : minHeight, fontSize, eggHeight, fits, neededHeight }
 }
 
@@ -143,6 +146,7 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
           teamKey: state.team_id != null ? `team:${state.team_id}` : `side:${checkin.match_id}|${side}`,
           teamId: state.team_id,
           canCheckIn: checkin.match_id > 0,
+          photoTaken: player.photo_taken === true,
         })
       }
     }
@@ -179,6 +183,7 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
       courtNumber: first.courtNumber,
       courtLabel: first.courtLabel || '—',
       division: first.division,
+      teamId: first.teamId,
       day: first.day,
       sortTime: first.sortTime,
       timeLabel: first.timeLabel,
@@ -192,6 +197,7 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
         matchId: row.matchId,
         countsInSlot: earliest.get(row.playerId) === rank(first.day, first.sortTime),
         canCheckIn: row.canCheckIn,
+        photoTaken: row.photoTaken,
       })),
     })
   }
@@ -213,7 +219,7 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
     slots.set(key, slot)
   }
   for (const slot of slots.values()) {
-    slot.tiles.sort((a, b) => (a.courtNumber ?? 999) - (b.courtNumber ?? 999) || a.matchId - b.matchId || a.side.localeCompare(b.side))
+    slot.tiles.sort(compareArrivalTiles)
     const ids = new Set<number>()
     for (const tile of slot.tiles) {
       for (const player of tile.players) {
@@ -246,12 +252,22 @@ export function filterTiles(tiles: ArrivalTile[], mode: 'all' | 'outstanding' | 
   })
 }
 
+export function compareArrivalTiles(a: ArrivalTile, b: ArrivalTile): number {
+  const topA = a.players[0]
+  const topB = b.players[0]
+  const first = (topA?.firstName || '').localeCompare(topB?.firstName || '', undefined, { sensitivity: 'base' })
+  if (first !== 0) return first
+  const full = (topA?.fullName || '').localeCompare(topB?.fullName || '', undefined, { sensitivity: 'base' })
+  if (full !== 0) return full
+  return (a.teamId ?? a.matchId) - (b.teamId ?? b.matchId)
+}
+
 export function searchTiles(board: ArrivalBoard, query: string): ArrivalTile[] {
   const needle = query.trim().toLowerCase()
   if (!needle) return []
   return board.slots.flatMap((slot) => slot.tiles).filter((tile) => (
     tile.players.some((player) => `${player.fullName} ${player.firstName}`.toLowerCase().includes(needle))
-  ))
+  )).sort(compareArrivalTiles)
 }
 
 export function pickArrivalSlot(slots: ArrivalSlot[], nowMinutes: number | null, manualKey: string | null): string {

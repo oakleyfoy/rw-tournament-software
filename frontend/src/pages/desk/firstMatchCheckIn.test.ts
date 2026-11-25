@@ -148,8 +148,8 @@ describe('first-match check-in board', () => {
     )
     const names = board.slots.flatMap((slot) => slot.tiles.flatMap((tile) => tile.players.map((player) => player.firstName))).sort()
     expect(names).toEqual(['Frank', 'Jeff', 'Vicky'])
-    expect(board.playerIds).toEqual([41, 43, 44])
-    expect(board.slots[0].expectedPlayerIds).toEqual([41, 43, 44])
+    expect(board.playerIds.slice().sort()).toEqual([41, 43, 44])
+    expect(board.slots[0].expectedPlayerIds.slice().sort()).toEqual([41, 43, 44])
     expect(board.days).toEqual(['2026-12-04'])
   })
 
@@ -169,24 +169,36 @@ describe('first-match check-in board', () => {
     expect(board.checkedPlayerIds).toEqual([1, 2])
   })
 
+  it('sorts teams by the top first name and keeps a photo on that player only', () => {
+    const early = side([[1, 'Olivia Jones', 'Lime', true], [2, 'Carol Smith', 'Orange', false]], 20)
+    early.players[0].photo_taken = true
+    const laterCourt = side([[3, 'Amy Clark', 'Red', false], [4, 'Holly Moore', 'Blue', false]], 21)
+    const board = buildArrivalBoard(
+      [checkin(1, '09:00', early, laterCourt)],
+      [match(1, '2026-12-04', '09:00', 12, 'WA_WF_R1')],
+    )
+    const names = board.slots[0].tiles.map((tile) => tile.players.map((player) => player.firstName))
+    expect(names).toEqual([['Amy', 'Holly'], ['Olivia', 'Carol']])
+    const olivia = board.slots[0].tiles[1].players[0]
+    const carol = board.slots[0].tiles[1].players[1]
+    expect(olivia.photoTaken).toBe(true)
+    expect(carol.photoTaken).toBe(false)
+    expect(olivia.checkedIn).toBe(true)
+    expect(carol.checkedIn).toBe(false)
+  })
+
   it('fits standard desktop time slots and reports a display that is too small', () => {
     const chrome = 220
-    const cases = [
-      [1366, 768],
-      [1440, 900],
-      [1920, 1080],
-      [2560, 1440],
-    ] as const
     const morning = matrixLayout(1440 - 48, 900 - chrome, 26)
     expect(morning.fits).toBe(true)
     expect(morning.columns).toBeGreaterThanOrEqual(7)
     expect(morning.columns).toBeLessThanOrEqual(8)
-    expect(morning.tileHeight).toBeGreaterThanOrEqual(148)
-    expect(morning.tileHeight).toBeLessThanOrEqual(176)
+    expect(morning.tileHeight).toBeGreaterThanOrEqual(108)
+    expect(morning.tileHeight).toBeLessThanOrEqual(136)
     expect(morning.fontSize).toBeGreaterThanOrEqual(15)
-    const short = matrixLayout(1366 - 48, 768 - chrome, 26)
-    expect(short.fits).toBe(false)
-    expect(short.tileHeight).toBeGreaterThanOrEqual(148)
+    const laptop = matrixLayout(1366 - 48, 768 - chrome, 26)
+    expect(laptop.fits).toBe(true)
+    expect(laptop.fontSize).toBeGreaterThanOrEqual(15)
     const few = matrixLayout(1400, 700, 2)
     expect(few.columns).toBe(2)
     expect(few.tileWidth).toBeLessThanOrEqual(230)

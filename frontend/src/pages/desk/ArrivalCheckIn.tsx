@@ -80,10 +80,6 @@ export default function FirstMatchCheckIn({
   }, [selectedDay, slotKey, searching, tiles.length])
 
   const layout = matrixLayout(box.width, box.height, tiles.length)
-  const tournamentChecked = board.checkedPlayerIds.length
-  const tournamentTotal = board.playerIds.length
-  const tournamentRemaining = Math.max(0, tournamentTotal - tournamentChecked)
-  const complete = tournamentTotal > 0 && tournamentChecked === tournamentTotal
 
   return (
     <div ref={rootRef} data-testid="first-match-checkin" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', background: '#f7f8fa', overflow: 'hidden' }}>
@@ -95,18 +91,6 @@ export default function FirstMatchCheckIn({
         )) : (
           <span style={{ fontSize: 16, fontWeight: 800, color: '#1a237e' }}>{dateLabel}</span>
         )}
-        <button type="button" onClick={() => {
-          const node = rootRef.current
-          if (!node) return
-          if (document.fullscreenElement) void document.exitFullscreen()
-          else void node.requestFullscreen()
-        }} style={chip(false, 15)}>Full screen</button>
-        {complete && (
-          <span style={{ background: '#1b5e20', color: '#fff', borderRadius: 6, padding: '6px 12px', fontSize: 15, fontWeight: 800 }}>CHECK-IN COMPLETE</span>
-        )}
-        <span style={{ fontSize: 16, fontWeight: 800, color: '#1b5e20' }}>
-          Tournament: {tournamentChecked} / {tournamentTotal} checked in — {tournamentRemaining} remaining
-        </span>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -122,7 +106,6 @@ export default function FirstMatchCheckIn({
       {!searching && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {daySlots.map((item, index) => {
-            const done = item.expectedPlayerIds.length > 0 && item.checkedPlayerIds.length === item.expectedPlayerIds.length
             const tint = SLOT_TINTS[index % SLOT_TINTS.length]
             const selected = item.key === slotKey
             return (
@@ -138,7 +121,7 @@ export default function FirstMatchCheckIn({
                   padding: '8px 14px',
                 }}
               >
-                {item.timeLabel} {item.checkedPlayerIds.length}/{item.expectedPlayerIds.length}{done ? ' ✓' : ''}
+                {item.timeLabel}
               </button>
             )
           })}
@@ -162,7 +145,6 @@ export default function FirstMatchCheckIn({
             <TeamTile
               key={searching ? `${tile.day}|${tile.key}` : tile.key}
               tile={tile}
-              showWhen={searching}
               fontSize={layout.fontSize}
               eggHeight={layout.eggHeight}
               pendingIds={pendingIds}
@@ -177,11 +159,19 @@ export default function FirstMatchCheckIn({
   )
 }
 
+function PhotoTakenIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-label="Photo taken." style={{ flexShrink: 0, pointerEvents: 'none' }}>
+      <title>Photo taken.</title>
+      <path fill="#2e7d32" d="M9 4l1.5 2h3L15 4h4a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2h4zm3 4a5 5 0 100 10 5 5 0 000-10zm0 2.2a2.8 2.8 0 110 5.6 2.8 2.8 0 010-5.6z" />
+    </svg>
+  )
+}
+
 function TeamTile({
-  tile, showWhen, fontSize, eggHeight, pendingIds, onCheckIn, onUndo, onCheckBoth,
+  tile, fontSize, eggHeight, pendingIds, onCheckIn, onUndo, onCheckBoth,
 }: {
   tile: ArrivalTile
-  showWhen: boolean
   fontSize: number
   eggHeight: number
   pendingIds: number[]
@@ -195,11 +185,6 @@ function TeamTile({
   const border = bothDone ? '#2e7d32' : '#cfd8dc'
   return (
     <div style={{ border: `1px solid ${border}`, borderRadius: 10, background: '#fff', padding: '4px 6px', minWidth: 0, height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 4, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, fontWeight: 800, color: '#455a64' }}>
-        <span>Court {tile.courtLabel}</span>
-        <span>{checked}/{total || 2}</span>
-      </div>
-      {showWhen && <div style={{ fontSize: 11, fontWeight: 700, color: '#607d8b' }}>{tile.timeLabel}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0, flex: 1 }}>
         {tile.players.map((player) => {
           const pending = pendingIds.includes(player.playerId)
@@ -229,7 +214,8 @@ function TeamTile({
                 }}
               >
                 <TowelEgg colorName={player.towelColor} eggHeight={eggHeight} />
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a1a', fontSize, fontWeight: 800 }}>{player.firstName}</span>
+                <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', color: '#1a1a1a', fontSize, fontWeight: 800 }}>{player.firstName}</span>
+                {player.photoTaken && <PhotoTakenIcon />}
                 <span style={{ width: 18, textAlign: 'center', color: player.checkedIn ? '#2e7d32' : '#90a4ae', fontSize: 16, fontWeight: 800 }}>
                   {player.checkedIn ? '✓' : '☐'}
                 </span>
@@ -259,7 +245,7 @@ function TeamTile({
           cursor: bothDone ? 'default' : 'pointer',
         }}
       >
-        {bothDone ? '✓ Team checked in' : 'Check In Both'}
+        {bothDone ? 'Checked In' : 'Check In Both'}
       </button>
     </div>
   )

@@ -3174,6 +3174,7 @@ export interface PlayerCheckInState {
   checked_in_at: string | null
   towel_color: string | null
   report_url: string | null
+  photo_taken?: boolean
 }
 
 export interface MatchCheckInSideState {

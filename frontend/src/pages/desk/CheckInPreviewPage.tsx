@@ -25,6 +25,7 @@ function person(index: number): PlayerCheckInState {
     checked_in_at: null,
     towel_color: TOWELS[index % TOWELS.length],
     report_url: null,
+    photo_taken: index === 0 || index === 8,
   }
 }
 

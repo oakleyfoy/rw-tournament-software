@@ -282,6 +282,17 @@ def _towel_names_compatible(candidate: Optional[str], lookup_name: Optional[str]
     return True
 
 
+def _registered_name_word(token: str) -> str:
+    """A name word may contain an apostrophe or hyphen. Anything else is not part of the person."""
+    trimmed = token.strip(".,")
+    if not trimmed:
+        return ""
+    letters = [ch for ch in trimmed if ch.isalpha()]
+    if not letters or any(ch not in set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'-’") for ch in trimmed):
+        return ""
+    return trimmed
+
+
 def _clean_registered_person(value: Optional[str]) -> Optional[str]:
     """A registered person's name. City suffixes, state codes, and draw placeholders are not people."""
     raw = " ".join((value or "").split())
@@ -294,8 +305,9 @@ def _clean_registered_person(value: Optional[str]) -> Optional[str]:
     lowered = raw.lower()
     if any(token in lowered for token in ("winner", "loser", "seed", "tbd", "bye", "awaiting")):
         return None
-    words = [word.strip("-") for word in raw.replace("/", " ").split() if word.strip("-").isalpha()]
-    if len(words) < 2 or len(words[-1]) < 3:
+    words = [kept for word in raw.replace("/", " ").split() if (kept := _registered_name_word(word))]
+    last_letters = "".join(ch for ch in (words[-1] if words else "") if ch.isalpha())
+    if len(words) < 2 or len(last_letters) < 3:
         return None
     return " ".join(words)
 

@@ -5429,6 +5429,15 @@ def test_desk_team_list_keeps_playing_team_over_stale_seeded_partner(client, ses
     assert "Gina Martin, Albemarle, NC / Sarah Moore, Denton, NC" not in names
 
 
+def test_registered_person_keeps_apostrophes_and_hyphens_and_rejects_placeholders():
+    from app.routes.desk import _clean_registered_person
+
+    assert _clean_registered_person("Sarah O'Brien, Atlanta, GA") == "Sarah O'Brien"
+    assert _clean_registered_person("Amanda Gage-Cole, Roswell, GA") == "Amanda Gage-Cole"
+    assert _clean_registered_person("TBD Partner") is None
+    assert _clean_registered_person("Alpha - VA") is None
+
+
 def test_opening_checkin_uses_real_player_ids_and_ignores_later_rounds(client, session):
     """A registered name on a first-round team can be checked in, and round two does not add players."""
     tournament = Tournament(
