@@ -37,7 +37,7 @@ function dayButtonLabel(day: string, fallback: string): string {
   const date = new Date(`${day}T12:00:00`)
   if (day === 'unscheduled') return 'Unscheduled'
   if (Number.isNaN(date.getTime())) return fallback
-  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
 function TowelEgg({ colorName, eggHeight }: { colorName: string | null; eggHeight: number }) {
@@ -67,6 +67,7 @@ export default function FirstMatchCheckIn({
   const tiles = searching
     ? searchTiles(board, query)
     : filterTiles(slot?.tiles || [], mode, '')
+  const dateLabel = slot?.dayLabel || dayButtonLabel(selectedDay, selectedDay)
 
   useEffect(() => {
     const node = matrixRef.current
@@ -81,51 +82,45 @@ export default function FirstMatchCheckIn({
   const layout = matrixLayout(box.width, box.height, tiles.length)
   const tournamentChecked = board.checkedPlayerIds.length
   const tournamentTotal = board.playerIds.length
-  const slotChecked = slot?.checkedPlayerIds.length || 0
-  const slotTotal = slot?.expectedPlayerIds.length || 0
+  const tournamentRemaining = Math.max(0, tournamentTotal - tournamentChecked)
+  const complete = tournamentTotal > 0 && tournamentChecked === tournamentTotal
 
   return (
-    <div ref={rootRef} data-testid="first-match-checkin" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 8px', background: '#f4f6f8', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {board.days.map((item) => (
-          <button key={item} type="button" onClick={() => { setDay(item); setPinnedSlot(null) }} style={chip(item === selectedDay)}>
+    <div ref={rootRef} data-testid="first-match-checkin" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', background: '#f7f8fa', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        {board.days.length > 1 ? board.days.map((item) => (
+          <button key={item} type="button" onClick={() => { setDay(item); setPinnedSlot(null) }} style={chip(item === selectedDay, 15)}>
             {dayButtonLabel(item, item)}
           </button>
-        ))}
+        )) : (
+          <span style={{ fontSize: 16, fontWeight: 800, color: '#1a237e' }}>{dateLabel}</span>
+        )}
         <button type="button" onClick={() => {
           const node = rootRef.current
           if (!node) return
           if (document.fullscreenElement) void document.exitFullscreen()
           else void node.requestFullscreen()
-        }} style={chip(false)}>Full screen</button>
-      </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
-        <span>First-match check-in</span>
-        {tournamentTotal > 0 && tournamentChecked === tournamentTotal && (
-          <span style={{ background: '#1b5e20', color: '#fff', borderRadius: 4, padding: '2px 8px' }}>CHECK-IN COMPLETE</span>
+        }} style={chip(false, 15)}>Full screen</button>
+        {complete && (
+          <span style={{ background: '#1b5e20', color: '#fff', borderRadius: 6, padding: '6px 12px', fontSize: 15, fontWeight: 800 }}>CHECK-IN COMPLETE</span>
         )}
-        <span style={{ color: '#2e7d32' }}>Tournament: {tournamentChecked}/{tournamentTotal} checked in</span>
-        <span style={{ color: tournamentTotal - tournamentChecked > 0 ? '#e65100' : '#2e7d32' }}>{tournamentTotal - tournamentChecked} remaining</span>
-        {!searching && slot && (
-          <>
-            <span style={{ color: '#2e7d32' }}>{slot.timeLabel}: {slotChecked}/{slotTotal} checked in</span>
-            <span style={{ color: slotTotal - slotChecked > 0 ? '#e65100' : '#2e7d32' }}>{slotTotal - slotChecked} remaining</span>
-          </>
-        )}
+        <span style={{ fontSize: 16, fontWeight: 800, color: '#1b5e20' }}>
+          Tournament: {tournamentChecked} / {tournamentTotal} checked in — {tournamentRemaining} remaining
+        </span>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search player"
-          style={{ marginLeft: 'auto', width: 180, padding: '3px 6px', border: '1px solid #90a4ae', borderRadius: 4 }}
+          style={{ marginLeft: 'auto', width: 200, padding: '7px 10px', border: '1px solid #90a4ae', borderRadius: 6, fontSize: 15 }}
         />
         {(['all', 'outstanding', 'complete'] as const).map((item) => (
-          <button key={item} type="button" onClick={() => setMode(item)} style={chip(mode === item)}>
+          <button key={item} type="button" onClick={() => setMode(item)} style={chip(mode === item, 15)}>
             {item === 'all' ? 'All' : item === 'outstanding' ? 'Outstanding' : 'Done'}
           </button>
         ))}
       </div>
       {!searching && (
-        <div style={{ display: 'flex', gap: 4, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {daySlots.map((item, index) => {
             const done = item.expectedPlayerIds.length > 0 && item.checkedPlayerIds.length === item.expectedPlayerIds.length
             const tint = SLOT_TINTS[index % SLOT_TINTS.length]
@@ -136,21 +131,22 @@ export default function FirstMatchCheckIn({
                 type="button"
                 onClick={() => setPinnedSlot(item.key)}
                 style={{
-                  ...chip(selected),
+                  ...chip(selected, 16),
                   background: selected ? '#1a237e' : tint.bg,
                   borderColor: selected ? '#1a237e' : tint.border,
                   color: selected ? '#fff' : tint.accent,
+                  padding: '8px 14px',
                 }}
               >
-                {item.timeLabel} — {item.checkedPlayerIds.length}/{item.expectedPlayerIds.length}{done ? ' ✓' : ''}
+                {item.timeLabel} {item.checkedPlayerIds.length}/{item.expectedPlayerIds.length}{done ? ' ✓' : ''}
               </button>
             )
           })}
         </div>
       )}
       {!layout.fits && (
-        <div style={{ fontSize: 11, color: '#b71c1c', fontWeight: 700 }}>
-          {tiles.length} teams need about {layout.neededHeight}px. This window is {box.width}×{box.height}. Widen the display or use full screen.
+        <div style={{ fontSize: 13, color: '#b71c1c', fontWeight: 700 }}>
+          {tiles.length} teams need about {layout.neededHeight}px. This window is {box.width}×{box.height}.
         </div>
       )}
       <div ref={matrixRef} style={{ flex: 1, minHeight: 0, overflow: layout.fits ? 'hidden' : 'auto' }}>
@@ -160,7 +156,7 @@ export default function FirstMatchCheckIn({
           gridAutoRows: `${layout.tileHeight}px`,
           justifyContent: 'start',
           alignContent: 'start',
-          gap: 4,
+          gap: 8,
         }}>
           {tiles.map((tile) => (
             <TeamTile
@@ -195,56 +191,88 @@ function TeamTile({
 }) {
   const checked = tile.players.filter((player) => player.checkedIn).length
   const total = tile.players.length
-  const border = checked === 0 ? '#cfd8dc' : checked < total ? '#ffb300' : '#2e7d32'
   const bothDone = total > 0 && checked === total
+  const border = bothDone ? '#2e7d32' : '#cfd8dc'
   return (
-    <div style={{ border: `1px solid ${border}`, borderRadius: 4, background: '#fff', padding: '2px 4px', minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
-      <div style={{ fontSize: 9, fontWeight: 800, color: '#1a237e', width: 54, flexShrink: 0 }}>
-        Ct {tile.courtLabel} · {tile.division}
-        <div>{checked}/{total}</div>
-        {showWhen && <div>{tile.day === 'unscheduled' ? 'Unscheduled' : tile.day.slice(5)} {tile.timeLabel}</div>}
+    <div style={{ border: `1px solid ${border}`, borderRadius: 10, background: '#fff', padding: '4px 6px', minWidth: 0, height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 4, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, fontWeight: 800, color: '#455a64' }}>
+        <span>Court {tile.courtLabel}</span>
+        <span>{checked}/{total || 2}</span>
       </div>
-      <div style={{ display: 'flex', gap: 3, minWidth: 0, flex: 1 }}>
-        {tile.players.map((player) => (
-          <div key={player.playerId} style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, flex: 1, background: player.checkedIn ? '#e8f5e9' : 'transparent', borderRadius: 3, padding: '0 2px' }}>
-            <button
-              type="button"
-              disabled={player.checkedIn || !player.canCheckIn || pendingIds.includes(player.playerId)}
-              title={player.fullName}
-              onClick={() => onCheckIn(player)}
-              style={{ display: 'flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', padding: 0, minWidth: 0, cursor: player.checkedIn || !player.canCheckIn ? 'default' : 'pointer', fontSize, fontWeight: 700, color: '#1a1a1a' }}
-            >
-              <TowelEgg colorName={player.towelColor} eggHeight={eggHeight} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a1a' }}>{player.firstName}</span>
-              {player.checkedIn && <span style={{ color: '#2e7d32' }}>✓</span>}
-            </button>
-            {player.checkedIn && (
-              <button type="button" title="Undo check-in" onClick={() => onUndo(player)} style={{ border: 'none', background: 'transparent', color: '#90a4ae', cursor: 'pointer', fontSize: 10 }}>×</button>
-            )}
-          </div>
-        ))}
+      {showWhen && <div style={{ fontSize: 11, fontWeight: 700, color: '#607d8b' }}>{tile.timeLabel}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0, flex: 1 }}>
+        {tile.players.map((player) => {
+          const pending = pendingIds.includes(player.playerId)
+          return (
+            <div key={player.playerId} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+              <button
+                type="button"
+                aria-disabled={player.checkedIn || !player.canCheckIn || pending}
+                title={player.fullName}
+                onClick={() => {
+                  if (player.checkedIn || !player.canCheckIn || pending) return
+                  onCheckIn(player)
+                }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  border: '1px solid #e0e0e0',
+                  borderRadius: 8,
+                  background: player.checkedIn ? '#e8f5e9' : '#fff',
+                  padding: '4px 8px',
+                  cursor: player.checkedIn ? 'default' : 'pointer',
+                  textAlign: 'left',
+                  opacity: 1,
+                }}
+              >
+                <TowelEgg colorName={player.towelColor} eggHeight={eggHeight} />
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a1a', fontSize, fontWeight: 800 }}>{player.firstName}</span>
+                <span style={{ width: 18, textAlign: 'center', color: player.checkedIn ? '#2e7d32' : '#90a4ae', fontSize: 16, fontWeight: 800 }}>
+                  {player.checkedIn ? '✓' : '☐'}
+                </span>
+              </button>
+              {player.checkedIn && (
+                <button type="button" title="Undo check-in" onClick={() => onUndo(player)} style={{ border: 'none', background: 'transparent', color: '#90a4ae', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Undo</button>
+              )}
+            </div>
+          )
+        })}
       </div>
       <button
         type="button"
-        title="Check In Both Players"
-        disabled={bothDone || tile.players.some((player) => pendingIds.includes(player.playerId) || (!player.checkedIn && !player.canCheckIn))}
-        onClick={() => onCheckBoth(tile)}
-        style={{ border: 'none', background: bothDone ? '#c8e6c9' : '#1a237e', color: bothDone ? '#1b5e20' : '#fff', borderRadius: 4, fontSize: 11, fontWeight: 800, padding: '2px 4px', cursor: bothDone ? 'default' : 'pointer' }}
+        aria-disabled={bothDone || tile.players.some((player) => pendingIds.includes(player.playerId) || !player.canCheckIn)}
+        onClick={() => {
+          if (bothDone || tile.players.some((player) => pendingIds.includes(player.playerId) || !player.canCheckIn)) return
+          onCheckBoth(tile)
+        }}
+        style={{
+          border: 'none',
+          borderRadius: 8,
+          background: bothDone ? '#eceff1' : '#111',
+          color: bothDone ? '#2e7d32' : '#fff',
+          fontSize: 13,
+          fontWeight: 800,
+          padding: '5px 8px',
+          cursor: bothDone ? 'default' : 'pointer',
+        }}
       >
-        ✓✓
+        {bothDone ? '✓ Team checked in' : 'Check In Both'}
       </button>
     </div>
   )
 }
 
-function chip(active: boolean): CSSProperties {
+function chip(active: boolean, fontSize = 14): CSSProperties {
   return {
     border: '1px solid #1a237e',
     background: active ? '#1a237e' : '#fff',
     color: active ? '#fff' : '#1a237e',
-    borderRadius: 4,
-    padding: '2px 8px',
-    fontSize: 12,
+    borderRadius: 8,
+    padding: '6px 12px',
+    fontSize,
     fontWeight: 800,
     cursor: 'pointer',
   }

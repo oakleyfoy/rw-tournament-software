@@ -5428,3 +5428,113 @@ def test_desk_team_list_keeps_playing_team_over_stale_seeded_partner(client, ses
     assert "Catherine Webb / Tracy OShea" in names
     assert "Gina Martin, Albemarle, NC / Sarah Moore, Denton, NC" not in names
 
+
+def test_opening_checkin_uses_real_player_ids_and_ignores_later_rounds(client, session):
+    """A registered name on a first-round team can be checked in, and round two does not add players."""
+    tournament = Tournament(
+        name="Arrival Identity",
+        location="Test",
+        timezone="America/Chicago",
+        start_date=date(2026, 12, 4),
+        end_date=date(2026, 12, 6),
+        desk_management_mode="checkin_management",
+    )
+    session.add(tournament)
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft", notes="Desk Draft")
+    session.add(version)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's B", team_count=2)
+    session.add(event)
+    session.flush()
+    carol = Team(event_id=event.id, name="Carol Smith / Olivia Jones", seed=1, display_name="Carol Smith / Olivia Jones")
+    helen = Team(event_id=event.id, name="Helen Price / Amy Clark", seed=2, display_name="Helen Price / Amy Clark")
+    session.add_all([carol, helen])
+    session.flush()
+    opening = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_E1_WF_R1_M01",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=carol.id,
+        team_b_id=helen.id,
+        placeholder_side_a="Seed 1",
+        placeholder_side_b="Seed 2",
+    )
+    session.add(opening)
+    session.flush()
+    later = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="WOM_E1_WF_R2_M01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=carol.id,
+        team_b_id=helen.id,
+        placeholder_side_a="Winner",
+        placeholder_side_b="Winner",
+        source_match_a_id=opening.id,
+        source_match_b_id=opening.id,
+    )
+    session.add(later)
+    session.flush()
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 12, 4),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    later_slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 12, 5),
+        start_time=time(11, 0),
+        end_time=time(12, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+    )
+    session.add_all([slot, later_slot])
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=opening.id, slot_id=slot.id))
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=later.id, slot_id=later_slot.id))
+    session.commit()
+
+    first = client.get(f"/api/desk/tournaments/{tournament.id}/snapshot?version_id={version.id}")
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert len(body["arrival_matches"]) == 1
+    players = body["arrival_matches"][0]["side_a"]["players"] + body["arrival_matches"][0]["side_b"]["players"]
+    assert [player["player_display"] for player in players] == [
+        "Carol Smith",
+        "Olivia Jones",
+        "Helen Price",
+        "Amy Clark",
+    ]
+    assert all(player["player_id"] for player in players)
+    carol_id = players[0]["player_id"]
+    checked = client.patch(
+        f"/api/desk/tournaments/{tournament.id}/matches/{opening.id}/checkin/player?quick=1",
+        json={"version_id": version.id, "side": "A", "player_id": carol_id, "checked_in": True},
+    )
+    assert checked.status_code == 200, checked.text
+    second = client.get(f"/api/desk/tournaments/{tournament.id}/snapshot?version_id={version.id}")
+    assert second.status_code == 200, second.text
+    again = second.json()["arrival_matches"][0]["side_a"]["players"]
+    assert again[0]["checked_in"] is True
+    assert again[1]["checked_in"] is False
+    assert len(second.json()["arrival_matches"]) == 1
+

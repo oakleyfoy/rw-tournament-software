@@ -147,9 +147,9 @@ describe('first-match check-in board', () => {
       [{ ...match(9, '2026-12-04', '11:00', 21, 'MX_WF_R1'), status: 'FINAL', court_assignment_mode: 'DYNAMIC_CHECKIN' }],
     )
     const names = board.slots.flatMap((slot) => slot.tiles.flatMap((tile) => tile.players.map((player) => player.firstName))).sort()
-    expect(names).toEqual(['Frank', 'Jeff', 'Karen', 'Vicky'])
+    expect(names).toEqual(['Frank', 'Jeff', 'Vicky'])
     expect(board.playerIds).toEqual([41, 43, 44])
-    expect(board.playerIds).not.toContain(42)
+    expect(board.slots[0].expectedPlayerIds).toEqual([41, 43, 44])
     expect(board.days).toEqual(['2026-12-04'])
   })
 
@@ -177,20 +177,20 @@ describe('first-match check-in board', () => {
       [1920, 1080],
       [2560, 1440],
     ] as const
-    for (const [width, height] of cases) {
-      for (const teams of [12, 24, 36, 48, 60]) {
-        const layout = matrixLayout(width - 48, height - chrome, teams)
-        expect(layout.fits, `${teams} teams at ${width}x${height}`).toBe(true)
-        expect(layout.tileHeight).toBeGreaterThanOrEqual(36)
-        expect(layout.tileHeight).toBeLessThanOrEqual(68)
-        expect(layout.tileWidth).toBeGreaterThanOrEqual(150)
-        expect(layout.tileWidth).toBeLessThanOrEqual(300)
-      }
-    }
+    const morning = matrixLayout(1440 - 48, 900 - chrome, 26)
+    expect(morning.fits).toBe(true)
+    expect(morning.columns).toBeGreaterThanOrEqual(7)
+    expect(morning.columns).toBeLessThanOrEqual(8)
+    expect(morning.tileHeight).toBeGreaterThanOrEqual(148)
+    expect(morning.tileHeight).toBeLessThanOrEqual(176)
+    expect(morning.fontSize).toBeGreaterThanOrEqual(15)
+    const short = matrixLayout(1366 - 48, 768 - chrome, 26)
+    expect(short.fits).toBe(false)
+    expect(short.tileHeight).toBeGreaterThanOrEqual(148)
     const few = matrixLayout(1400, 700, 2)
     expect(few.columns).toBe(2)
-    expect(few.tileWidth).toBeGreaterThanOrEqual(250)
-    expect(few.tileWidth).toBeLessThanOrEqual(300)
+    expect(few.tileWidth).toBeLessThanOrEqual(230)
+    expect(few.tileWidth).toBeGreaterThanOrEqual(156)
     const tight = matrixLayout(900, 180, 60)
     expect(tight.fits).toBe(false)
     expect(tight.neededHeight).toBeGreaterThan(180)

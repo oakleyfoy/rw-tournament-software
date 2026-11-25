@@ -282,6 +282,31 @@ def _towel_names_compatible(candidate: Optional[str], lookup_name: Optional[str]
     return True
 
 
+def _clean_registered_person(value: Optional[str]) -> Optional[str]:
+    """A registered person's name. City suffixes, state codes, and draw placeholders are not people."""
+    raw = " ".join((value or "").split())
+    if not raw:
+        return None
+    if "," in raw:
+        head = raw.split(",", 1)[0].strip()
+        if len(head.split()) >= 2:
+            raw = head
+    lowered = raw.lower()
+    if any(token in lowered for token in ("winner", "loser", "seed", "tbd", "bye", "awaiting")):
+        return None
+    words = [word.strip("-") for word in raw.replace("/", " ").split() if word.strip("-").isalpha()]
+    if len(words) < 2 or len(words[-1]) < 3:
+        return None
+    return " ".join(words)
+
+
+def _player_identity_key(value: Optional[str]) -> Optional[str]:
+    tokens = _person_name_tokens(_clean_registered_person(value) or "")
+    if len(tokens) < 2 or len(tokens[-1]) < 3:
+        return None
+    return f"{tokens[0]} {tokens[-1]}"
+
+
 def _ambiguous_person_short_names(labels: List[str]) -> set[str]:
     """First names that belong to more than one distinct person (first + last)."""
     identities_by_short: Dict[str, set[str]] = {}
@@ -1397,6 +1422,18 @@ def _build_checkin_snapshot(
     ambiguous_short_names = _ambiguous_person_short_names(
         _known_person_labels(list(tournament_players), tournament_teams)
     )
+    players_by_identity: Dict[str, List[Player]] = {}
+    for person in tournament_players:
+        if person.id is None:
+            continue
+        for source in (person.full_name, person.display_name):
+            identity = _player_identity_key(source)
+            if not identity:
+                continue
+            bucket = players_by_identity.setdefault(identity, [])
+            if person not in bucket:
+                bucket.append(person)
+    roster_repairs: List[int] = []
 
     team_checkins = session.exec(
         select(MatchCheckIn).where(MatchCheckIn.schedule_version_id == version.id)
@@ -1459,6 +1496,41 @@ def _build_checkin_snapshot(
                         part = parts[idx]
                         if part and part not in slot_name_candidates[idx]:
                             slot_name_candidates[idx].append(part)
+                if fill_partners and team_id:
+                    for idx, candidates in enumerate(slot_name_candidates):
+                        label = _clean_registered_person(candidates[0] if candidates else None)
+                        identity = _player_identity_key(label)
+                        if not label or not identity:
+                            continue
+                        matches = players_by_identity.get(identity, [])
+                        if matches and matches[0].id is not None:
+                            resolved_id = matches[0].id
+                        else:
+                            created = Player(
+                                tournament_id=tournament.id,
+                                full_name=label,
+                                display_name=label,
+                            )
+                            session.add(created)
+                            session.flush()
+                            resolved_id = created.id
+                            if resolved_id is None:
+                                continue
+                            player_map[resolved_id] = created
+                            players_by_identity[identity] = [created]
+                            roster_repairs.append(resolved_id)
+                        linked_ids = players_by_team.setdefault(team_id, [])
+                        if resolved_id not in linked_ids:
+                            session.add(
+                                TeamPlayer(
+                                    team_id=team_id,
+                                    player_id=resolved_id,
+                                    lineup_slot=idx + 1,
+                                )
+                            )
+                            linked_ids.append(resolved_id)
+                            roster_repairs.append(resolved_id)
+                    side_players = list(players_by_team.get(team_id, []))
                 for pid in side_players:
                     p = player_map.get(pid)
                     chk = player_checkin_map.get((m.id, side_key, pid))
@@ -1519,6 +1591,8 @@ def _build_checkin_snapshot(
                         )
                         fallback_name = slot_candidates[0] if slot_candidates else None
                         if not fallback_name:
+                            continue
+                        if fill_partners and (lookup_row is None or lookup_row.player_id is None):
                             continue
                         represented_names.update(_lookup_name_keys(fallback_name))
                         fallback_player_id = lookup_row.player_id if lookup_row else None
@@ -1603,9 +1677,14 @@ def _build_checkin_snapshot(
     opening_rows = [
         row
         for row in arrival_rows
-        if is_opening_waterfall(row[0]) and (row[0].team_a_id or row[0].team_b_id)
+        if is_opening_waterfall(row[0])
+        and not row[0].source_match_a_id
+        and not row[0].source_match_b_id
+        and (row[0].team_a_id or row[0].team_b_id)
     ]
     _append_checkin_rows(opening_rows, arrival_matches, True, True)
+    if roster_repairs:
+        session.commit()
 
     ready_items: List[ReadyQueueItem] = []
     for cm in checkin_matches:
