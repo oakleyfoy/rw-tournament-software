@@ -541,7 +541,7 @@ def test_later_round_reset_waits_when_court_is_occupied(client, session: Session
     assert held.runtime_status == "SCHEDULED"
     assert held.checkin_reset_pending is False
     body = _snapshot(client, tournament.id, version.id)
-    assert later.id in {row["match_id"] for row in body["ready_assigned_queue"]}
+    assert later.id not in {row["match_id"] for row in body["ready_assigned_queue"]}
     assert later.id not in {row["match_id"] for row in body["now_playing_by_court"].values() if row}
     assert _match_row(body, later.id)["status"] == "SCHEDULED"
 
@@ -609,7 +609,7 @@ def test_unchecking_one_ready_side_returns_later_round_to_waiting(client, sessio
     assert ready.runtime_status == "SCHEDULED"
     assert ready.checkin_reset_pending is False
     before = _snapshot(client, tournament.id, version.id)
-    assert later.id in {row["match_id"] for row in before["ready_assigned_queue"]}
+    assert later.id not in {row["match_id"] for row in before["ready_assigned_queue"]}
 
     unchecked = client.patch(
         f"/api/desk/tournaments/{tournament.id}/matches/{later.id}/checkin/team",

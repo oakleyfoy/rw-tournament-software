@@ -3145,6 +3145,7 @@ export interface DeskMatchItem {
   assignment_id: number | null
   court_number: number | null
   day_date: string | null
+  is_opening?: boolean
 }
 
 export interface BoardCourtSlot {

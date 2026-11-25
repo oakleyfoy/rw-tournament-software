@@ -283,12 +283,17 @@ export function belongsInWaitingForCheckIn(
     | 'source_match_b_id'
     | 'status'
     | 'checkin_reset_pending'
+    | 'is_opening'
   > | null | undefined,
   operationalMatchIds: ReadonlySet<number>,
 ): boolean {
   if (!match) return false
   const status = (match.status || '').toUpperCase()
   if (status === 'IN_PROGRESS' || status === 'PAUSED' || status === 'FINAL') return false
+  if ((match.court_assignment_mode || '').toUpperCase() === 'PREASSIGNED') {
+    const opening = match.is_opening ?? !(match.source_match_a_id || match.source_match_b_id)
+    if (!opening && !match.checkin_reset_pending) return false
+  }
   if (operationalMatchIds.has(match.match_id)) return false
   return true
 }

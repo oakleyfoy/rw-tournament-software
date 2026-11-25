@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 const here = dirname(fileURLToPath(import.meta.url))
 const css = readFileSync(join(here, 'checkinDeskLayout.css'), 'utf8')
 const page = readFileSync(join(here, 'TournamentDeskPage.tsx'), 'utf8')
+const courtSheet = readFileSync(join(here, 'DesignatedCourtSheet.tsx'), 'utf8')
 
 describe('Check-In Desk layout changes', () => {
   it('uses a responsive 1/2/4 column grid for Dynamic Ready To Go', () => {
@@ -16,29 +17,29 @@ describe('Check-In Desk layout changes', () => {
     expect(page).toContain('className="checkin-dynamic-ready-grid"')
     expect(page).toMatch(/compact\b/)
     expect(page).toContain('Return to check-in')
-    expect(page).toContain('handleResetReadyMatch(entry.matchId)')
     expect(page).toContain('handleResetReadyMatch(rq.match_id)')
   })
 
-  it('places Dynamic Ready To Go immediately beneath Ready To Go — Assigned Court', () => {
-    const assignedIdx = page.indexOf('Ready To Go — Assigned Court')
+  it('keeps Dynamic Ready To Go on the check-in sheet and uses a court sheet for designated courts', () => {
     const dynamicIdx = page.indexOf('Dynamic Ready To Go')
     const waitingIdx = page.indexOf('Waiting For Check-In')
-    expect(assignedIdx).toBeGreaterThan(-1)
-    expect(dynamicIdx).toBeGreaterThan(assignedIdx)
-    // Dynamic Ready lives in the right-side stack with Assigned Court, not after Waiting alone.
+    expect(page).not.toContain('Ready To Go — Assigned Court')
+    expect(dynamicIdx).toBeGreaterThan(-1)
     expect(waitingIdx).toBeGreaterThan(-1)
     expect(dynamicIdx).toBeGreaterThan(waitingIdx)
-    // No second Dynamic Ready section left at the bottom of the desk.
     expect(page.match(/Dynamic Ready To Go/g)).toHaveLength(1)
+    expect(page).toContain('First-match check-in')
+    expect(page).toContain('Court sheet')
+    expect(page).toContain('<DesignatedCourtSheet')
+    expect(courtSheet).toContain('data-testid="court-sheet"')
   })
 
-  it('places Check In Time Slot beside Waiting For Check-In and Put courts on beside Assigned Court', () => {
+  it('places Check In Time Slot beside Waiting For Check-In', () => {
     expect(page).toContain('className="checkin-waiting-header"')
     expect(page).toContain('Waiting For Check-In')
     expect(page).toContain('const waitingCheckInSlot = visibleWaitingGroups[0]')
     expect(page).toContain('Check In ${releaseTimeLabel')
-    expect(page).toContain('Put courts on')
+    expect(page).not.toContain('Put courts on')
     expect(page).not.toContain('Release Opening Matches')
     expect(page).not.toContain('Opening WF Round 1')
     expect(page).not.toContain('Release fully checked-in preassigned matches for this opening slot')
@@ -66,7 +67,7 @@ describe('Check-In Desk layout changes', () => {
     expect(page).toContain("'assigned-court'")
     expect(page).toContain("'on-court'")
     expect(page).toContain('surface="score-entry"')
-    expect(page).toContain('photoSurface="ready-assigned"')
+    expect(page).not.toContain('photoSurface="ready-assigned"')
     expect(page).toContain('photoSurface="dynamic-ready"')
     expect(page).toContain('TeamPhotoNameRow')
     expect(page).not.toContain('useOfficialTeamPhotoPolling(tid)')

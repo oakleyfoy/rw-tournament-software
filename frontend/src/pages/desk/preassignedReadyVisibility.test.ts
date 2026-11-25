@@ -439,7 +439,7 @@ describe('preassignedReadyVisibility', () => {
     expect(placed.readyQueue.map((entry) => entry.matchId)).toEqual([202])
     expect(placed.readyQueue[0].statusLabel).toBe('Waiting for Court')
     expect(belongsInWaitingForCheckIn(round2, new Set([202]))).toBe(false)
-    expect(belongsInWaitingForCheckIn(round2, new Set())).toBe(true)
+    expect(belongsInWaitingForCheckIn(round2, new Set())).toBe(false)
   })
 
   it('puts a round 2 match on an open court even when its scheduled time is later', () => {

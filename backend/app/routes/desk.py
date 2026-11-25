@@ -56,7 +56,7 @@ from app.services.preassigned_dispatch import (
     dispatch_after_court_freed,
     dispatch_after_finalize,
     dispatch_court,
-    list_ready_assigned_matches,
+    is_opening_waterfall,
     match_fully_checked_in,
     preview_opening_release,
     put_courts_on,
@@ -647,6 +647,7 @@ class DeskMatchItem(BaseModel):
     assignment_id: Optional[int] = None
     court_number: Optional[int] = None
     day_date: Optional[str] = None
+    is_opening: bool = False
 
 
 class BoardCourtSlot(BaseModel):
@@ -1204,32 +1205,9 @@ def _build_ready_assigned_queue(
     version: ScheduleVersion,
     items: List[DeskMatchItem],
 ) -> List[ReadyAssignedItem]:
-    desk_by_id = {m.match_id: m for m in items}
-    rows: List[ReadyAssignedItem] = []
-    for eligibility in list_ready_assigned_matches(session, tournament, version):
-        desk = desk_by_id.get(eligibility.match_id)
-        if desk is None:
-            continue
-        rows.append(
-            ReadyAssignedItem(
-                match_id=eligibility.match_id,
-                match_number=desk.match_number,
-                match_code=desk.match_code or "",
-                event_name=desk.event_name or "Match",
-                day_label=desk.day_label or "",
-                scheduled_time=eligibility.scheduled_time or desk.scheduled_time,
-                court_name=eligibility.court_name or desk.court_name,
-                team1_display=desk.team1_display or "TBD",
-                team2_display=desk.team2_display or "TBD",
-                status_label=_status_label_for_ready_assigned(eligibility.outcome),
-                waiting_for_court=eligibility.outcome == OUTCOME_WAITING_COURT,
-                slot_key=eligibility.slot_key,
-                is_opening=eligibility.is_opening,
-                court_queued=bool(getattr(session.get(Match, eligibility.match_id), "court_queued", False)),
-                dispatch_outcome=eligibility.outcome,
-            )
-        )
-    return rows
+    """Designated-court matches stay on the court sheet and do not enter Ready To Go."""
+    del session, tournament, version, items
+    return []
 
 
 def _build_checkin_snapshot(
@@ -2072,6 +2050,7 @@ def _build_match_items(
                 assignment_id=a.id if a else None,
                 court_number=slot.court_number if slot else None,
                 day_date=slot.day_date.isoformat() if slot else None,
+                is_opening=court_mode == "PREASSIGNED" and is_opening_waterfall(m),
             )
         )
 
@@ -2192,6 +2171,7 @@ def _match_to_desk_item(
         assignment_id=a.id if a else None,
         court_number=slot.court_number if slot else None,
         day_date=slot.day_date.isoformat() if slot else None,
+        is_opening=is_opening_waterfall(match),
     )
 
 

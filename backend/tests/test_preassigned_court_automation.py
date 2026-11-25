@@ -495,10 +495,9 @@ def test_both_checked_in_free_court_stays_scheduled_until_release(client, sessio
     checkin = {row["match_id"]: row for row in body["checkin_matches"]}
     assert checkin[m1.id]["match_ready"] is True
     assert checkin[m2.id]["match_ready"] is False
-    queue = {row["match_id"]: row for row in body["ready_assigned_queue"]}
-    assert queue[m1.id]["status_label"] == "Waiting for Release"
-    assert queue[m1.id]["court_name"]
-    assert m2.id not in queue
+    queue_ids = {row["match_id"] for row in body["ready_assigned_queue"]}
+    assert m1.id not in queue_ids
+    assert m2.id not in queue_ids
     assert m1.id not in {row["match_id"] for row in body["ready_queue"]}
 
     slot_key = slot_key_for_slot(ctx["slot_a"])
@@ -579,7 +578,7 @@ def test_occupied_court_match_waits_then_starts_when_court_frees(client, session
     body = snap.json()
     assert body["now_playing_by_court"]["Court 2"]["match_id"] == m2.id
     assert later.id not in {row["match_id"] for row in body["now_playing_by_court"].values()}
-    assert later.id in {row["match_id"] for row in body["ready_assigned_queue"]}
+    assert later.id not in {row["match_id"] for row in body["ready_assigned_queue"]}
 
     later_key = slot_key_for_slot(later_slot)
     held = client.post(
@@ -616,7 +615,7 @@ def test_ready_assigned_queue_in_snapshot(client, session: Session):
     assert snap.status_code == 200
     body = snap.json()
     ids = {row["match_id"] for row in body.get("ready_assigned_queue", [])}
-    assert m1.id in ids
+    assert m1.id not in ids
     assert m1.id not in {row["match_id"] for row in body.get("ready_queue", [])}
 
 
