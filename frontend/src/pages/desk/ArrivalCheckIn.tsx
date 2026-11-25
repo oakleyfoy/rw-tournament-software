@@ -410,11 +410,25 @@ function TextModal({
       <div style={{ fontSize: 12, color: '#607d8b' }}>{message.trim().length} characters</div>
       {notice && <div style={{ color: '#c62828', fontSize: 13, fontWeight: 700 }}>{notice}</div>}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button type="button" onClick={onClose} disabled={sending}>Close</button>
-        <button type="button" onClick={() => { void send() }} disabled={sending}>{sending ? 'Sending…' : 'Send Text'}</button>
+        <button type="button" onClick={onClose} disabled={sending} style={dialogButton(false, sending)}>Close</button>
+        <button type="button" onClick={() => { void send() }} disabled={sending} style={dialogButton(true, sending)}>{sending ? 'Sending…' : 'Send Text'}</button>
       </div>
     </Modal>
   )
+}
+
+function dialogButton(primary: boolean, busy: boolean): CSSProperties {
+  return {
+    border: primary ? 'none' : '1px solid #cfd8dc',
+    background: primary ? '#111' : '#fff',
+    color: primary ? '#fff' : '#455a64',
+    borderRadius: 999,
+    padding: '8px 14px',
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: busy ? 'default' : 'pointer',
+    opacity: busy ? 0.6 : 1,
+  }
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {

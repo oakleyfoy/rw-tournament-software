@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 
 export type StaffNote = {
   id: number
@@ -126,13 +126,13 @@ export default function PlayerNotesDialog({
                   {note.updatedAt ? ` · edited ${new Date(note.updatedAt).toLocaleString()}${note.updatedByName ? ` by ${note.updatedByName}` : ''}` : ''}
                 </div>
                 {canManage && (
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                     {editingId === note.id ? (
-                      <button type="button" onClick={() => { void saveEdit() }} disabled={busy}>Save</button>
+                      <button type="button" onClick={() => { void saveEdit() }} disabled={busy} style={noteButton('primary', busy)}>Save</button>
                     ) : (
-                      <button type="button" onClick={() => { setEditingId(note.id); setEditingBody(note.body) }}>Edit</button>
+                      <button type="button" onClick={() => { setEditingId(note.id); setEditingBody(note.body) }} disabled={busy} style={noteButton('quiet', busy)}>Edit</button>
                     )}
-                    <button type="button" onClick={() => { void remove(note.id) }} disabled={busy}>Delete</button>
+                    <button type="button" onClick={() => { void remove(note.id) }} disabled={busy} style={noteButton('danger', busy)}>Delete</button>
                   </div>
                 )}
               </div>
@@ -158,11 +158,32 @@ export default function PlayerNotesDialog({
           </>
         )}
         {notice && <div style={{ color: '#c62828', fontSize: 13 }}>{notice}</div>}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button type="button" onClick={onClose} disabled={busy}>Close</button>
-          {canAdd && <button type="button" onClick={() => { void saveNew() }} disabled={busy}>{busy ? 'Saving…' : 'Save Note'}</button>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" onClick={onClose} disabled={busy} style={noteButton('secondary', busy)}>Close</button>
+          {canAdd && <button type="button" onClick={() => { void saveNew() }} disabled={busy} style={noteButton('primary', busy)}>{busy ? 'Saving…' : 'Save Note'}</button>}
         </div>
       </div>
     </div>
   )
+}
+
+function noteButton(kind: 'quiet' | 'danger' | 'secondary' | 'primary', busy: boolean): CSSProperties {
+  const base: CSSProperties = {
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 800,
+    lineHeight: 1,
+    cursor: busy ? 'default' : 'pointer',
+    opacity: busy ? 0.6 : 1,
+  }
+  if (kind === 'primary') {
+    return { ...base, border: 'none', background: '#111', color: '#fff', padding: '8px 14px' }
+  }
+  if (kind === 'secondary') {
+    return { ...base, border: '1px solid #cfd8dc', background: '#fff', color: '#455a64', padding: '8px 14px' }
+  }
+  if (kind === 'danger') {
+    return { ...base, border: '1px solid #ffcdd2', background: '#fff5f5', color: '#c62828', padding: '4px 10px' }
+  }
+  return { ...base, border: '1px solid #cfd8dc', background: '#fff', color: '#37474f', padding: '4px 10px' }
 }
