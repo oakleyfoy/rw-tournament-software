@@ -97,7 +97,7 @@ export default function CourtSheetPreviewPage() {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#eceff1' }}>
       <div style={{ padding: '6px 10px', fontSize: 12, fontWeight: 800, color: '#1a237e' }}>
-        Local sample Court Sheet. This data is not a tournament and is not saved.
+        Local sample Dashboard. This data is not a tournament and is not saved.
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <div style={{ flex: 1, minWidth: 0 }}>

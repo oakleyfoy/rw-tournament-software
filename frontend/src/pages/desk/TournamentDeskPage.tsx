@@ -9717,7 +9717,7 @@ export default function TournamentDeskPage() {
 
   const [searchText, setSearchText] = useState('')
   const [drawerMatch, setDrawerMatch] = useState<DeskMatchItem | null>(null)
-  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'court_sheet' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms' | 'text_list'>('checkin')
+  const [activeTab, setActiveTab] = useState<'courts' | 'checkin' | 'court_sheet' | 'towels' | 'schedule' | 'draws' | 'impact' | 'pools' | 'bulk' | 'grid' | 'weather' | 'teams' | 'sms' | 'text_list'>('court_sheet')
   const [smsQuickTarget, setSmsQuickTarget] = useState<SmsQuickTargetPrefill | null>(null)
   const [rescheduledMatchIds, setRescheduledMatchIds] = useState<Set<number>>(new Set())
   const [courtStates, setCourtStates] = useState<Record<string, CourtStateItem>>({})
@@ -10040,8 +10040,8 @@ export default function TournamentDeskPage() {
 
   const visibleTabs = useMemo<ReadonlyArray<typeof activeTab>>(
     () => ([
-      'checkin',
       'court_sheet',
+      'checkin',
       'towels',
       'schedule',
       'draws',
@@ -10062,7 +10062,7 @@ export default function TournamentDeskPage() {
 
   useEffect(() => {
     if (!visibleTabs.includes(activeTab)) {
-      setActiveTab('checkin')
+      setActiveTab('court_sheet')
     }
   }, [activeTab, visibleTabs])
 
@@ -11596,7 +11596,7 @@ export default function TournamentDeskPage() {
               marginBottom: -2,
             }}
           >
-            {tab === 'checkin' ? 'Check-In' : tab === 'court_sheet' ? 'Court Sheet' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab === 'text_list' ? 'Text List' : tab}
+            {tab === 'checkin' ? 'Check-In' : tab === 'court_sheet' ? 'Dashboard' : tab === 'towels' ? 'Towels' : tab === 'sms' ? 'SMS' : tab === 'text_list' ? 'Text List' : tab}
           </button>
         ))}
       </div>
@@ -11882,7 +11882,7 @@ export default function TournamentDeskPage() {
                   )}
                   {hasDesignatedCourts && (
                     <div style={{ fontSize: 12, color: '#607d8b', fontWeight: 700 }}>
-                      Check in only the first match, for towels, setup, and announcements. Later matches stay on the court sheet.
+                      Check in only the first match, for towels, setup, and announcements. Later matches stay on the Dashboard.
                     </div>
                   )}
                   {(data.checkin_court_warnings || []).length > 0 && (
