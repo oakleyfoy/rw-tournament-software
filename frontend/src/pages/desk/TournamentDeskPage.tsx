@@ -10057,10 +10057,11 @@ export default function TournamentDeskPage() {
         return { ...match, side_a: sideA, side_b: sideB, match_ready: Boolean(sideA.side_ready && sideB.side_ready) }
       }
       const checkin_matches = (prev.checkin_matches || []).map(patchMatch)
+      const arrival_matches = (prev.arrival_matches || []).map(patchMatch)
       const checkin_slot_rows = Object.fromEntries(
         Object.entries(prev.checkin_slot_rows || {}).map(([key, rows]) => [key, (rows || []).map(patchMatch)])
       )
-      return { ...prev, checkin_matches, checkin_slot_rows }
+      return { ...prev, checkin_matches, arrival_matches, checkin_slot_rows }
     })
   }, [])
 
@@ -10090,7 +10091,13 @@ export default function TournamentDeskPage() {
     }
   }, [tid, data, patchCheckInLocally, queueQuietRefresh, runCheckInWithNotePrompt])
 
-  const checkInArrivalPlayer = useCallback(async (matchId: number, side: 'A' | 'B', playerId: number, checked: boolean) => {
+  const checkInArrivalPlayer = useCallback(async (
+    matchId: number,
+    side: 'A' | 'B',
+    playerId: number,
+    checked: boolean,
+    refresh = true,
+  ) => {
     if (!tid || !data || playerId <= 0 || matchId <= 0) return
     setCheckInPendingIds((prev) => prev.includes(playerId) ? prev : [...prev, playerId])
     patchCheckInLocally(matchId, side, checked, playerId)
@@ -10101,7 +10108,7 @@ export default function TournamentDeskPage() {
         player_id: playerId,
         checked_in: checked,
       }, true, !checked)
-      queueQuietRefresh()
+      if (refresh) queueQuietRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed player check-in update')
       await loadSnapshot(data.version_id)
@@ -11726,9 +11733,13 @@ export default function TournamentDeskPage() {
                     onCheckIn={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, true) }}
                     onUndo={(player) => { void checkInArrivalPlayer(player.matchId, player.side, player.playerId, false) }}
                     onCheckBoth={(tile) => {
-                      for (const player of tile.players) {
-                        if (!player.checkedIn && player.canCheckIn) void checkInArrivalPlayer(player.matchId, player.side, player.playerId, true)
-                      }
+                      const remaining = tile.players.filter((player) => !player.checkedIn && player.canCheckIn)
+                      void (async () => {
+                        for (const player of remaining) {
+                          await checkInArrivalPlayer(player.matchId, player.side, player.playerId, true, false)
+                        }
+                        queueQuietRefresh()
+                      })()
                     }}
                   />
                   </div>

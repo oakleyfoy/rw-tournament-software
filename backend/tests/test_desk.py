@@ -5545,5 +5545,14 @@ def test_opening_checkin_uses_real_player_ids_and_ignores_later_rounds(client, s
     again = second.json()["arrival_matches"][0]["side_a"]["players"]
     assert again[0]["checked_in"] is True
     assert again[1]["checked_in"] is False
-    assert len(second.json()["arrival_matches"]) == 1
+    partner = client.patch(
+        f"/api/desk/tournaments/{tournament.id}/matches/{opening.id}/checkin/player?quick=1",
+        json={"version_id": version.id, "side": "A", "player_id": again[1]["player_id"], "checked_in": True},
+    )
+    assert partner.status_code == 200, partner.text
+    third = client.get(f"/api/desk/tournaments/{tournament.id}/snapshot?version_id={version.id}")
+    assert third.status_code == 200, third.text
+    both = third.json()["arrival_matches"][0]["side_a"]["players"]
+    assert [player["checked_in"] for player in both] == [True, True]
+    assert len(third.json()["arrival_matches"]) == 1
 
