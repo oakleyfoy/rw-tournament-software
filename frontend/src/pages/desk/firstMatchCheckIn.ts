@@ -9,6 +9,8 @@ export type ArrivalPlayer = {
   checkedIn: boolean
   side: 'A' | 'B'
   matchId: number
+  countsInSlot: boolean
+  canCheckIn: boolean
 }
 
 export type ArrivalTile = {
@@ -57,6 +59,8 @@ type Appearance = {
   courtLabel: string
   division: string
   teamKey: string
+  teamId: number | null
+  canCheckIn: boolean
 }
 
 export function playerFirstName(display: string): string {
@@ -67,47 +71,63 @@ export function playerFirstName(display: string): string {
 
 export function matrixLayout(width: number, height: number, teamCount: number): {
   columns: number
+  tileWidth: number
   tileHeight: number
   fontSize: number
+  eggHeight: number
   fits: boolean
   neededHeight: number
 } {
-  if (teamCount <= 0 || width <= 0 || height <= 0) {
-    return { columns: 1, tileHeight: 48, fontSize: 12, fits: true, neededHeight: 0 }
-  }
+  const preferred = { columns: 1, tileWidth: 280, tileHeight: 48, fontSize: 14, eggHeight: 18, fits: true, neededHeight: 0 }
+  if (teamCount <= 0 || width <= 0 || height <= 0) return preferred
   const gap = 4
-  const minTile = 36
-  const minTileWidth = 150
-  const maxColumns = Math.max(1, Math.floor((width + gap) / (minTileWidth + gap)))
-  let columns = teamCount <= 12 ? 4 : teamCount <= 36 ? 6 : teamCount <= 48 ? 8 : 10
-  columns = Math.min(teamCount, maxColumns, Math.max(1, columns))
-  const fitColumns = () => {
-    const rows = Math.ceil(teamCount / columns)
-    const tileHeight = Math.floor((height - gap * Math.max(0, rows - 1)) / rows)
-    return { rows, tileHeight }
+  const minWidth = 150
+  const maxWidth = 300
+  const preferredWidth = 280
+  const minHeight = 36
+  const preferredHeight = 48
+  const columnsFor = (tileWidth: number) => Math.max(1, Math.min(teamCount, Math.floor((width + gap) / (tileWidth + gap))))
+  let columns = columnsFor(preferredWidth)
+  let tileWidth = Math.min(maxWidth, preferredWidth)
+  let tileHeight = preferredHeight
+  const rowsFor = (count: number) => Math.ceil(teamCount / count)
+  const heightFor = (rows: number, rowHeight: number) => rows * rowHeight + gap * Math.max(0, rows - 1)
+  if (heightFor(rowsFor(columns), preferredHeight) > height) {
+    const widest = columnsFor(minWidth)
+    while (columns < widest && heightFor(rowsFor(columns), preferredHeight) > height) columns += 1
+    tileWidth = Math.max(minWidth, Math.min(maxWidth, Math.floor((width - gap * Math.max(0, columns - 1)) / columns)))
+    const rows = rowsFor(columns)
+    const available = Math.floor((height - gap * Math.max(0, rows - 1)) / rows)
+    tileHeight = Math.max(minHeight, Math.min(52, available))
   }
-  let layout = fitColumns()
-  while (layout.tileHeight < minTile && columns < teamCount && columns < maxColumns) {
-    columns += 1
-    layout = fitColumns()
-  }
-  const tileHeight = Math.max(minTile, Math.min(52, layout.tileHeight))
-  const neededHeight = layout.rows * minTile + gap * Math.max(0, layout.rows - 1)
-  const fits = layout.tileHeight >= minTile
-  const fontSize = tileHeight >= 48 ? 12 : tileHeight >= 40 ? 11 : 10
-  return { columns, tileHeight: fits ? tileHeight : minTile, fontSize, fits, neededHeight }
+  const rows = rowsFor(columns)
+  const neededHeight = heightFor(rows, minHeight)
+  const fits = heightFor(rows, tileHeight) <= height && tileWidth >= minWidth
+  const compact = tileWidth < 220 || tileHeight < 44
+  const fontSize = compact ? (tileHeight >= 40 ? 13 : 12) : 14
+  const eggHeight = compact ? 16 : 18
+  return { columns, tileWidth, tileHeight: fits ? tileHeight : minHeight, fontSize, eggHeight, fits, neededHeight }
 }
 
 function rank(day: string, sortTime: string): string {
   return `${day}|${sortTime}`
 }
 
+function unresolvedPlayerId(name: string, assigned: Map<string, number>): number {
+  const key = name.trim().toLowerCase() || 'player'
+  const existing = assigned.get(key)
+  if (existing != null) return existing
+  const id = -(assigned.size + 1)
+  assigned.set(key, id)
+  return id
+}
+
 export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMatchItem[]): ArrivalBoard {
   const deskById = new Map(matches.map((match) => [match.match_id, match]))
+  const missingIds = new Map<string, number>()
   const appearances: Appearance[] = []
   for (const checkin of checkins) {
     const desk = deskById.get(checkin.match_id)
-    if (desk && (desk.court_assignment_mode || '').toUpperCase() !== 'PREASSIGNED') continue
     const scheduledDay = desk?.day_date || ''
     const scheduledTime = checkin.sort_time || desk?.sort_time || ''
     const unscheduled = !scheduledDay || !scheduledTime
@@ -119,10 +139,11 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
     for (const side of ['A', 'B'] as const) {
       const state = side === 'A' ? checkin.side_a : checkin.side_b
       for (const player of state.players) {
-        if (player.player_id == null) continue
+        const fullName = player.player_display || 'Player'
+        const playerId = player.player_id ?? unresolvedPlayerId(fullName, missingIds)
         appearances.push({
-          playerId: player.player_id,
-          fullName: player.player_display || 'Player',
+          playerId,
+          fullName,
           towelColor: player.towel_color,
           checkedIn: Boolean(player.checked_in || state.team_checked_in),
           side,
@@ -134,7 +155,9 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
           courtNumber,
           courtLabel,
           division,
-          teamKey: `${checkin.match_id}|${side}`,
+          teamKey: state.team_id != null ? `team:${state.team_id}` : `side:${checkin.match_id}|${side}`,
+          teamId: state.team_id,
+          canCheckIn: player.player_id != null && checkin.match_id > 0,
         })
       }
     }
@@ -149,31 +172,43 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
     if (row.checkedIn) checked.add(row.playerId)
   }
 
-  const tileMap = new Map<string, ArrivalTile>()
+  const groups = new Map<string, Appearance[]>()
   for (const row of appearances) {
-    if (earliest.get(row.playerId) !== rank(row.day, row.sortTime)) continue
-    const tile = tileMap.get(row.teamKey) || {
-      key: row.teamKey,
-      matchId: row.matchId,
-      side: row.side,
-      courtNumber: row.courtNumber,
-      courtLabel: row.courtLabel || '—',
-      division: row.division,
-      day: row.day,
-      sortTime: row.sortTime,
-      timeLabel: row.timeLabel,
-      players: [],
-    }
-    tile.players.push({
-      playerId: row.playerId,
-      firstName: playerFirstName(row.fullName),
-      fullName: row.fullName,
-      towelColor: row.towelColor,
-      checkedIn: checked.has(row.playerId),
-      side: row.side,
-      matchId: row.matchId,
+    const list = groups.get(row.teamKey) || []
+    list.push(row)
+    groups.set(row.teamKey, list)
+  }
+
+  const tileMap = new Map<string, ArrivalTile>()
+  for (const group of groups.values()) {
+    const ordered = [...group].sort((a, b) => rank(a.day, a.sortTime).localeCompare(rank(b.day, b.sortTime)) || (a.courtNumber ?? 999) - (b.courtNumber ?? 999) || a.matchId - b.matchId)
+    const first = ordered[0]
+    const tileRows = ordered.filter((row) => row.matchId === first.matchId && row.side === first.side)
+    const players = new Map<number, Appearance>()
+    for (const row of tileRows) players.set(row.playerId, row)
+    const tileKey = `${first.matchId}|${first.side}`
+    tileMap.set(tileKey, {
+      key: tileKey,
+      matchId: first.matchId,
+      side: first.side,
+      courtNumber: first.courtNumber,
+      courtLabel: first.courtLabel || '—',
+      division: first.division,
+      day: first.day,
+      sortTime: first.sortTime,
+      timeLabel: first.timeLabel,
+      players: Array.from(players.values()).map((row) => ({
+        playerId: row.playerId,
+        firstName: playerFirstName(row.fullName),
+        fullName: row.fullName,
+        towelColor: row.towelColor,
+        checkedIn: checked.has(row.playerId),
+        side: row.side,
+        matchId: row.matchId,
+        countsInSlot: earliest.get(row.playerId) === rank(first.day, first.sortTime),
+        canCheckIn: row.canCheckIn,
+      })),
     })
-    tileMap.set(row.teamKey, tile)
   }
 
   const slots = new Map<string, ArrivalSlot>()
@@ -196,15 +231,22 @@ export function buildArrivalBoard(checkins: CheckInMatchItem[], matches: DeskMat
     slot.tiles.sort((a, b) => (a.courtNumber ?? 999) - (b.courtNumber ?? 999) || a.matchId - b.matchId || a.side.localeCompare(b.side))
     const ids = new Set<number>()
     for (const tile of slot.tiles) {
-      for (const player of tile.players) ids.add(player.playerId)
+      for (const player of tile.players) {
+        if (player.countsInSlot) ids.add(player.playerId)
+      }
     }
     slot.expectedPlayerIds = Array.from(ids)
     slot.checkedPlayerIds = slot.expectedPlayerIds.filter((id) => checked.has(id))
   }
 
   const ordered = Array.from(slots.values()).sort((a, b) => a.key.localeCompare(b.key))
+  const scheduleDays = matches
+    .map((match) => match.day_date)
+    .filter((day): day is string => Boolean(day))
+  const days = Array.from(new Set([...scheduleDays, ...ordered.map((slot) => slot.day)]))
+    .sort((a, b) => a.localeCompare(b))
   return {
-    days: Array.from(new Set(ordered.map((slot) => slot.day))),
+    days,
     slots: ordered,
     playerIds: Array.from(earliest.keys()),
     checkedPlayerIds: Array.from(checked),

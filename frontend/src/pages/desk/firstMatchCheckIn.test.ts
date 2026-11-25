@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { CheckInMatchItem, DeskMatchItem, MatchCheckInSideState } from '../../api/client'
 import { buildArrivalBoard, matrixLayout, pickArrivalSlot, searchTiles } from './firstMatchCheckIn'
 
-function side(players: Array<[number, string, string | null, boolean]>): MatchCheckInSideState {
+function side(players: Array<[number, string, string | null, boolean]>, teamId = 1): MatchCheckInSideState {
   return {
     side: 'A',
-    team_id: 1,
+    team_id: teamId,
     team_display: 'Team',
     team_checked_in: false,
     team_checked_in_at: null,
@@ -84,12 +84,12 @@ function checkin(
 
 describe('first-match check-in board', () => {
   it('groups a player by the earliest match and keeps one tournament attendance', () => {
-    const soniaEarly = side([[11, 'Sonia Ruiz', 'Blue', false], [12, 'Maria Lopez', 'Pink', true]])
-    const soniaLater = side([[11, 'Sonia Ruiz', 'Blue', false], [19, 'Ana Diaz', 'Yellow', false]])
+    const soniaEarly = side([[11, 'Sonia Ruiz', 'Blue', false], [12, 'Maria Lopez', 'Pink', true]], 101)
+    const soniaLater = side([[11, 'Sonia Ruiz', 'Blue', false], [19, 'Ana Diaz', 'Yellow', false]], 103)
     const board = buildArrivalBoard(
       [
-        checkin(1, '09:00', soniaEarly, side([[21, 'Kim Park', 'Green', false], [22, 'Lee Park', 'White', false]])),
-        checkin(2, '11:00', soniaLater, side([[31, 'Jo Kim', null, false], [32, 'Pat Kim', 'Red', false]])),
+        checkin(1, '09:00', soniaEarly, side([[21, 'Kim Park', 'Green', false], [22, 'Lee Park', 'White', false]], 102)),
+        checkin(2, '11:00', soniaLater, side([[31, 'Jo Kim', null, false], [32, 'Pat Kim', 'Red', false]], 104)),
       ],
       [match(1, '2026-12-04', '09:00', 6, 'WA_WF_R1'), match(2, '2026-12-04', '11:00', 2, 'WA_WF_R2')],
     )
@@ -99,6 +99,7 @@ describe('first-match check-in board', () => {
     expect(nine?.expectedPlayerIds).toContain(11)
     expect(eleven?.expectedPlayerIds).not.toContain(11)
     expect(eleven?.expectedPlayerIds).toContain(19)
+    expect(eleven?.tiles.flatMap((tile) => tile.players).some((player) => player.playerId === 11)).toBe(true)
     const sonia = nine?.tiles.flatMap((tile) => tile.players).find((player) => player.playerId === 11)
     const maria = nine?.tiles.flatMap((tile) => tile.players).find((player) => player.playerId === 12)
     expect(sonia?.towelColor).toBe('Blue')
@@ -109,7 +110,7 @@ describe('first-match check-in board', () => {
 
   it('keeps partners with different first matches on their own arrival tiles', () => {
     const board = buildArrivalBoard(
-      [checkin(7, '09:00', side([[1, 'Amy Stone', 'Blue', false], [2, 'Bea Stone', 'Pink', false]]), side([[3, 'Cara', 'Red', false], [4, 'Dina', 'Navy', false]]))],
+      [checkin(7, '09:00', side([[1, 'Amy Stone', 'Blue', false], [2, 'Bea Stone', 'Pink', false]], 201), side([[3, 'Cara', 'Red', false], [4, 'Dina', 'Navy', false]], 202))],
       [match(7, '2026-12-05', '09:00', 1, 'MX_WF_R1')],
     )
     const tile = board.slots[0].tiles.find((item) => item.side === 'A')
@@ -119,7 +120,7 @@ describe('first-match check-in board', () => {
 
   it('searches the whole tournament and keeps unscheduled players reachable', () => {
     const board = buildArrivalBoard(
-      [checkin(3, '', side([[8, 'Early Ann', 'Orange', false], [9, 'Late Ann', 'Lime', false]]), side([[10, 'Other', 'Black', false], [13, 'More', 'Gray', false]]))],
+      [checkin(3, '', side([[8, 'Early Ann', 'Orange', false], [9, 'Late Ann', 'Lime', false]], 301), side([[10, 'Other', 'Black', false], [13, 'More', 'Gray', false]], 302))],
       [{ ...match(3, '', '', 0, 'WA_WF_R1'), day_date: null, sort_time: null, court_number: null }],
     )
     expect(board.days).toContain('unscheduled')
@@ -129,13 +130,26 @@ describe('first-match check-in board', () => {
   it('does not replace a manually selected time slot', () => {
     const board = buildArrivalBoard(
       [
-        checkin(1, '09:00', side([[1, 'A One', 'Blue', false], [2, 'A Two', 'Pink', false]]), side([[3, 'B One', 'Red', false], [4, 'B Two', 'Navy', false]])),
-        checkin(2, '11:00', side([[5, 'C One', 'Blue', false], [6, 'C Two', 'Pink', false]]), side([[7, 'D One', 'Red', false], [14, 'D Two', 'Navy', false]])),
+        checkin(1, '09:00', side([[1, 'A One', 'Blue', false], [2, 'A Two', 'Pink', false]], 401), side([[3, 'B One', 'Red', false], [4, 'B Two', 'Navy', false]], 402)),
+        checkin(2, '11:00', side([[5, 'C One', 'Blue', false], [6, 'C Two', 'Pink', false]], 403), side([[7, 'D One', 'Red', false], [14, 'D Two', 'Navy', false]], 404)),
       ],
       [match(1, '2026-12-04', '09:00', 1, 'WA_WF_R1'), match(2, '2026-12-04', '11:00', 2, 'WA_WF_R1')],
     )
     expect(pickArrivalSlot(board.slots, 10 * 60, '2026-12-04|11:00')).toBe('2026-12-04|11:00')
     expect(pickArrivalSlot(board.slots, 9 * 60 + 10, null)).toBe('2026-12-04|09:00')
+  })
+
+  it('keeps a named partner who has no player id and still counts a completed match', () => {
+    const paired = side([[41, 'Jeff Horn', 'Black', false], [42, 'Karen Horn', 'Blue', false]], 501)
+    paired.players[1] = { ...paired.players[1], player_id: null }
+    const board = buildArrivalBoard(
+      [checkin(9, '11:00', paired, side([[43, 'Frank Devera', 'Red', true], [44, 'Vicky Vogel', 'Pink', false]], 502))],
+      [{ ...match(9, '2026-12-04', '11:00', 21, 'MX_WF_R1'), status: 'FINAL', court_assignment_mode: 'DYNAMIC_CHECKIN' }],
+    )
+    const names = board.slots.flatMap((slot) => slot.tiles.flatMap((tile) => tile.players.map((player) => player.firstName))).sort()
+    expect(names).toEqual(['Frank', 'Jeff', 'Karen', 'Vicky'])
+    expect(board.playerIds).toHaveLength(4)
+    expect(board.days).toEqual(['2026-12-04'])
   })
 
   it('fits standard desktop time slots and reports a display that is too small', () => {
@@ -152,8 +166,14 @@ describe('first-match check-in board', () => {
         expect(layout.fits, `${teams} teams at ${width}x${height}`).toBe(true)
         expect(layout.tileHeight).toBeGreaterThanOrEqual(36)
         expect(layout.tileHeight).toBeLessThanOrEqual(52)
+        expect(layout.tileWidth).toBeGreaterThanOrEqual(150)
+        expect(layout.tileWidth).toBeLessThanOrEqual(300)
       }
     }
+    const few = matrixLayout(1400, 700, 2)
+    expect(few.columns).toBe(2)
+    expect(few.tileWidth).toBeGreaterThanOrEqual(250)
+    expect(few.tileWidth).toBeLessThanOrEqual(300)
     const tight = matrixLayout(900, 180, 60)
     expect(tight.fits).toBe(false)
     expect(tight.neededHeight).toBeGreaterThan(180)

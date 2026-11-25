@@ -3320,6 +3320,7 @@ export interface DeskSnapshotResponse {
   active_checkin_slot_key: string | null
   checkin_court_warnings: CheckInCourtWarning[]
   ready_assigned_queue: ReadyAssignedItem[]
+  arrival_matches?: CheckInMatchItem[]
 }
 
 export interface TemporaryPlayerLookupItem {

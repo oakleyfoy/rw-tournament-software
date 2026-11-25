@@ -9,6 +9,7 @@ import {
   type ArrivalTile,
 } from './firstMatchCheckIn'
 import type { CheckInMatchItem, DeskMatchItem } from '../../api/client'
+import { TowelColorPill } from './towelColor'
 
 type Props = {
   checkins: CheckInMatchItem[]
@@ -39,44 +40,11 @@ function dayButtonLabel(day: string, fallback: string): string {
   return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-function towelEggStyle(colorName: string): { background: string; border: string } {
-  const key = colorName.trim().toLowerCase()
-  const presets: Record<string, { background: string; border: string }> = {
-    lime: { background: '#c6ff00', border: '#99cc00' },
-    black: { background: '#111111', border: '#000000' },
-    royal: { background: '#4169e1', border: '#2746a6' },
-    navy: { background: '#001f5b', border: '#00143d' },
-    red: { background: '#d32f2f', border: '#9a0007' },
-    purple: { background: '#8e24aa', border: '#5c007a' },
-    orange: { background: '#ef6c00', border: '#b53d00' },
-    pink: { background: '#d81b60', border: '#8e0038' },
-    blue: { background: '#1976d2', border: '#0d47a1' },
-    green: { background: '#2e7d32', border: '#1b5e20' },
-    yellow: { background: '#ffd54f', border: '#c8a415' },
-    white: { background: '#fafafa', border: '#90a4ae' },
-  }
-  return presets[key] || { background: key, border: '#546e7a' }
-}
-
-function TowelEgg({ colorName }: { colorName: string | null }) {
+function TowelEgg({ colorName, eggHeight }: { colorName: string | null; eggHeight: number }) {
   if (!colorName) {
-    return <span title="No towel assigned" style={{ width: 16, height: 18, borderRadius: '50%', border: '1px dashed #90a4ae', display: 'inline-block' }} />
+    return <span title="No towel assigned" style={{ width: eggHeight - 2, height: eggHeight, borderRadius: '50%', border: '1px dashed #90a4ae', display: 'inline-block', flexShrink: 0 }} />
   }
-  const styles = towelEggStyle(colorName)
-  return (
-    <span
-      title={colorName}
-      style={{
-        width: 16,
-        height: 18,
-        borderRadius: '50%',
-        border: `1px solid ${styles.border}`,
-        background: styles.background,
-        display: 'inline-block',
-        flexShrink: 0,
-      }}
-    />
-  )
+  return <TowelColorPill colorName={colorName} labelMode="egg" eggHeight={eggHeight} />
 }
 
 export default function FirstMatchCheckIn({
@@ -185,8 +153,10 @@ export default function FirstMatchCheckIn({
       <div ref={matrixRef} style={{ flex: 1, minHeight: 0, overflow: layout.fits ? 'hidden' : 'auto' }}>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${layout.columns}, ${layout.tileWidth}px)`,
           gridAutoRows: `${layout.tileHeight}px`,
+          justifyContent: 'start',
+          alignContent: 'start',
           gap: 4,
         }}>
           {tiles.map((tile) => (
@@ -195,6 +165,7 @@ export default function FirstMatchCheckIn({
               tile={tile}
               showWhen={searching}
               fontSize={layout.fontSize}
+              eggHeight={layout.eggHeight}
               pendingIds={pendingIds}
               onCheckIn={onCheckIn}
               onUndo={onUndo}
@@ -208,11 +179,12 @@ export default function FirstMatchCheckIn({
 }
 
 function TeamTile({
-  tile, showWhen, fontSize, pendingIds, onCheckIn, onUndo, onCheckBoth,
+  tile, showWhen, fontSize, eggHeight, pendingIds, onCheckIn, onUndo, onCheckBoth,
 }: {
   tile: ArrivalTile
   showWhen: boolean
   fontSize: number
+  eggHeight: number
   pendingIds: number[]
   onCheckIn: (player: ArrivalPlayer) => void
   onUndo: (player: ArrivalPlayer) => void
@@ -234,12 +206,12 @@ function TeamTile({
           <div key={player.playerId} style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, flex: 1, background: player.checkedIn ? '#e8f5e9' : 'transparent', borderRadius: 3, padding: '0 2px' }}>
             <button
               type="button"
-              disabled={player.checkedIn || pendingIds.includes(player.playerId)}
+              disabled={player.checkedIn || !player.canCheckIn || pendingIds.includes(player.playerId)}
               title={player.fullName}
               onClick={() => onCheckIn(player)}
-              style={{ display: 'flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', padding: 0, minWidth: 0, cursor: player.checkedIn ? 'default' : 'pointer', fontSize, fontWeight: 700 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', padding: 0, minWidth: 0, cursor: player.checkedIn || !player.canCheckIn ? 'default' : 'pointer', fontSize, fontWeight: 700 }}
             >
-              <TowelEgg colorName={player.towelColor} />
+              <TowelEgg colorName={player.towelColor} eggHeight={eggHeight} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{player.firstName}</span>
               {player.checkedIn && <span style={{ color: '#2e7d32' }}>✓</span>}
             </button>
@@ -252,7 +224,7 @@ function TeamTile({
       <button
         type="button"
         title="Check In Both Players"
-        disabled={bothDone || tile.players.some((player) => pendingIds.includes(player.playerId))}
+        disabled={bothDone || tile.players.some((player) => pendingIds.includes(player.playerId) || (!player.checkedIn && !player.canCheckIn))}
         onClick={() => onCheckBoth(tile)}
         style={{ border: 'none', background: bothDone ? '#c8e6c9' : '#1a237e', color: bothDone ? '#1b5e20' : '#fff', borderRadius: 4, fontSize: 11, fontWeight: 800, padding: '2px 4px', cursor: bothDone ? 'default' : 'pointer' }}
       >

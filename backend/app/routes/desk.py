@@ -869,6 +869,7 @@ class DeskSnapshotResponse(BaseModel):
     active_checkin_slot_key: Optional[str] = None
     checkin_court_warnings: List[CheckInCourtWarning] = []
     ready_assigned_queue: List[ReadyAssignedItem] = []
+    arrival_matches: List[CheckInMatchItem] = []
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -1225,6 +1226,7 @@ def _build_checkin_snapshot(
     Optional[str],
     List[CheckInCourtWarning],
     List[ReadyAssignedItem],
+    List[CheckInMatchItem],
 ]:
     # region agent log
     _agent_debug_log(
@@ -1293,31 +1295,45 @@ def _build_checkin_snapshot(
         if event_ids
         else {}
     )
-    candidates: List[tuple[Match, MatchAssignment, ScheduleSlot]] = []
+    candidates: List[tuple[Match, Optional[MatchAssignment], Optional[ScheduleSlot]]] = []
+    arrival_rows: List[tuple[Match, Optional[MatchAssignment], Optional[ScheduleSlot]]] = []
     for m in all_matches:
+        a = assignment_map.get(m.id)
+        s = slot_map.get(a.slot_id) if a else None
+        arrival_rows.append((m, a, s))
         status = (m.runtime_status or "SCHEDULED").upper()
         if status in ("FINAL", "IN_PROGRESS", "PAUSED"):
             continue
-        a = assignment_map.get(m.id)
-        if not a:
-            continue
-        s = slot_map.get(a.slot_id)
-        if not s:
+        if not a or not s:
             continue
         candidates.append((m, a, s))
 
-    candidates.sort(key=lambda x: (x[2].day_date, x[2].start_time, x[2].court_number, x[0].id))
-    # Include all scheduled slots so staff can optionally check teams in early for later slots.
+    candidates.sort(key=lambda x: (x[2].day_date, x[2].start_time, x[2].court_number, x[0].id))  # type: ignore[union-attr]
+    # The dynamic desk still lists only matches that have not started.
+    # Arrival check-in keeps every match so a completed player stays in the tournament total.
     eligible = candidates
 
     eligible_match_ids = [m.id for (m, _a, _s) in eligible]
 
+    from app.services.active_roster import team_is_active
+
+    roster_teams = [
+        team
+        for team in session.exec(
+            select(Team).join(Event, Event.id == Team.event_id).where(Event.tournament_id == tournament.id)
+        ).all()
+        if team_is_active(team)
+    ]
     side_team_ids: set[int] = set()
-    for m, _a, _s in eligible:
+    for m in all_matches:
         if m.team_a_id:
             side_team_ids.add(m.team_a_id)
         if m.team_b_id:
             side_team_ids.add(m.team_b_id)
+    for team in roster_teams:
+        if team.id is not None:
+            side_team_ids.add(team.id)
+            team_map.setdefault(team.id, team)
 
     team_player_rows = (
         session.exec(
@@ -1381,28 +1397,14 @@ def _build_checkin_snapshot(
         _known_person_labels(list(tournament_players), tournament_teams)
     )
 
-    team_checkins = (
-        session.exec(
-            select(MatchCheckIn).where(
-                MatchCheckIn.schedule_version_id == version.id,
-                MatchCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
-            )
-        ).all()
-        if eligible_match_ids
-        else []
-    )
+    team_checkins = session.exec(
+        select(MatchCheckIn).where(MatchCheckIn.schedule_version_id == version.id)
+    ).all()
     team_checkin_map = {(r.match_id, (r.side or "").upper()): r for r in team_checkins}
 
-    player_checkins = (
-        session.exec(
-            select(MatchPlayerCheckIn).where(
-                MatchPlayerCheckIn.schedule_version_id == version.id,
-                MatchPlayerCheckIn.match_id.in_(eligible_match_ids),  # type: ignore[arg-type]
-            )
-        ).all()
-        if eligible_match_ids
-        else []
-    )
+    player_checkins = session.exec(
+        select(MatchPlayerCheckIn).where(MatchPlayerCheckIn.schedule_version_id == version.id)
+    ).all()
     player_checkin_map = {(r.match_id, (r.side or "").upper(), r.player_id): r for r in player_checkins}
 
     def _to_day_label(d) -> str:
@@ -1419,161 +1421,240 @@ def _build_checkin_snapshot(
         return t.strftime("%I:%M %p").lstrip("0")
 
     checkin_matches: List[CheckInMatchItem] = []
+    arrival_matches: List[CheckInMatchItem] = []
 
-    for m, a, s in eligible:
-        match_status = (m.runtime_status or "SCHEDULED").upper()
+    def _append_checkin_rows(rows, target: List[CheckInMatchItem], fill_partners: bool) -> None:
+        for m, a, s in rows:
+            match_status = (m.runtime_status or "SCHEDULED").upper()
 
-        def build_side(side: str, team_id: Optional[int], fallback: Optional[str]) -> MatchCheckInSideState:
-            side_key = side.upper()
-            team_row = team_checkin_map.get((m.id, side_key))
-            team_checked = bool(team_row and team_row.team_checked_in)
-            team_checked_at = team_row.checked_in_at if team_row else None
-            show_towels = bool(team_id)
+            def build_side(side: str, team_id: Optional[int], fallback: Optional[str]) -> MatchCheckInSideState:
+                side_key = side.upper()
+                team_row = team_checkin_map.get((m.id, side_key))
+                team_checked = bool(team_row and team_row.team_checked_in)
+                team_checked_at = team_row.checked_in_at if team_row else None
+                show_towels = bool(team_id)
 
-            player_states: List[PlayerCheckInState] = []
-            team_obj = team_map.get(team_id) if team_id else None
-            side_players = players_by_team.get(team_id or -1, [])
-            side_player_times: List[datetime] = []
-            slot_name_candidates: List[List[str]] = [[], []]
-            source_priority = (
-                team_obj.name if team_obj else None,
-                team_obj.display_name if team_obj else None,
-                _team_display(team_id, fallback, team_map),
-            )
-            for idx in range(2):
-                for source in source_priority:
-                    parts = _split_team_player_names(source)
-                    if idx >= len(parts):
-                        continue
-                    part = parts[idx]
-                    if part and part not in slot_name_candidates[idx]:
-                        slot_name_candidates[idx].append(part)
-            for pid in side_players:
-                p = player_map.get(pid)
-                chk = player_checkin_map.get((m.id, side_key, pid))
-                checked = bool(chk and chk.checked_in)
-                checked_at = chk.checked_in_at if chk else None
-                lookup_row = next(
-                    (
-                        row
-                        for row in lookup_rows_by_player_id.get(pid, [])
-                        if p is None or _lookup_row_fits_player(row, p)
-                    ),
-                    None,
+                player_states: List[PlayerCheckInState] = []
+                team_obj = team_map.get(team_id) if team_id else None
+                side_players = players_by_team.get(team_id or -1, [])
+                side_player_times: List[datetime] = []
+                slot_name_candidates: List[List[str]] = [[], []]
+                source_priority = (
+                    team_obj.name if team_obj else None,
+                    team_obj.display_name if team_obj else None,
+                    _team_display(team_id, fallback, team_map),
                 )
-                if lookup_row is None and p is not None:
-                    lookup_row = _lookup_row_for_names(
-                        [p.full_name or "", p.display_name or ""],
-                        lookup_by_name,
-                        unique_lookup_by_short_name,
-                        ambiguous_short_names,
+                for idx in range(2):
+                    for source in source_priority:
+                        parts = _split_team_player_names(source)
+                        if idx >= len(parts):
+                            continue
+                        part = parts[idx]
+                        if part and part not in slot_name_candidates[idx]:
+                            slot_name_candidates[idx].append(part)
+                for pid in side_players:
+                    p = player_map.get(pid)
+                    chk = player_checkin_map.get((m.id, side_key, pid))
+                    checked = bool(chk and chk.checked_in)
+                    checked_at = chk.checked_in_at if chk else None
+                    lookup_row = next(
+                        (
+                            row
+                            for row in lookup_rows_by_player_id.get(pid, [])
+                            if p is None or _lookup_row_fits_player(row, p)
+                        ),
+                        None,
                     )
-                if lookup_row is None:
-                    slot_index = len(player_states)
-                    if slot_index < len(slot_name_candidates):
+                    if lookup_row is None and p is not None:
                         lookup_row = _lookup_row_for_names(
-                            slot_name_candidates[slot_index],
+                            [p.full_name or "", p.display_name or ""],
                             lookup_by_name,
                             unique_lookup_by_short_name,
                             ambiguous_short_names,
                         )
-                if checked and checked_at:
-                    side_player_times.append(checked_at)
-                player_states.append(
-                    PlayerCheckInState(
-                        player_id=pid,
-                        player_display=(p.display_name or p.full_name) if p else f"Player {pid}",
-                        checked_in=checked,
-                        checked_in_at=checked_at.isoformat() if checked_at else None,
-                        towel_color=lookup_row.towel_color if lookup_row else None,
-                        report_url=lookup_row.report_url if lookup_row else None,
-                    )
-                )
-
-            if not player_states:
-                for slot_candidates in slot_name_candidates:
-                    lookup_row = _lookup_row_for_names(
-                        slot_candidates,
-                        lookup_by_name,
-                        unique_lookup_by_short_name,
-                        ambiguous_short_names,
-                    )
-                    fallback_name = slot_candidates[0] if slot_candidates else None
-                    if not fallback_name:
-                        continue
-                    fallback_player_id = lookup_row.player_id if lookup_row else None
-                    fallback_checkin = (
-                        player_checkin_map.get((m.id, side_key, fallback_player_id))
-                        if fallback_player_id is not None
-                        else None
-                    )
-                    fallback_checked = bool(fallback_checkin and fallback_checkin.checked_in)
-                    fallback_checked_at = fallback_checkin.checked_in_at if fallback_checkin else None
-                    if fallback_checked and fallback_checked_at:
-                        side_player_times.append(fallback_checked_at)
+                    if lookup_row is None:
+                        slot_index = len(player_states)
+                        if slot_index < len(slot_name_candidates):
+                            lookup_row = _lookup_row_for_names(
+                                slot_name_candidates[slot_index],
+                                lookup_by_name,
+                                unique_lookup_by_short_name,
+                                ambiguous_short_names,
+                            )
+                    if checked and checked_at:
+                        side_player_times.append(checked_at)
                     player_states.append(
                         PlayerCheckInState(
-                            player_id=fallback_player_id,
-                            player_display=fallback_name,
-                            checked_in=fallback_checked,
-                            checked_in_at=fallback_checked_at.isoformat() if fallback_checked_at else None,
+                            player_id=pid,
+                            player_display=(p.display_name or p.full_name) if p else f"Player {pid}",
+                            checked_in=checked,
+                            checked_in_at=checked_at.isoformat() if checked_at else None,
                             towel_color=lookup_row.towel_color if lookup_row else None,
                             report_url=lookup_row.report_url if lookup_row else None,
                         )
                     )
 
-            players_total = len(side_players) or len([p for p in player_states if p.player_id is not None])
-            players_checked = len([p for p in player_states if p.checked_in])
-            side_ready = team_checked or (players_total > 0 and players_checked == players_total)
-            ready_at_dt: Optional[datetime] = None
-            if team_checked and team_checked_at:
-                ready_at_dt = team_checked_at
-            elif side_ready and side_player_times:
-                ready_at_dt = max(side_player_times)
+                represented_names: set[str] = set()
+                for state in player_states:
+                    represented_names.update(_lookup_name_keys(state.player_display))
+                if fill_partners or not player_states:
+                    for slot_candidates in slot_name_candidates:
+                        slot_keys: set[str] = set()
+                        for name in slot_candidates:
+                            slot_keys.update(_lookup_name_keys(name))
+                        if represented_names.intersection(slot_keys):
+                            continue
+                        lookup_row = _lookup_row_for_names(
+                            slot_candidates,
+                            lookup_by_name,
+                            unique_lookup_by_short_name,
+                            ambiguous_short_names,
+                        )
+                        fallback_name = slot_candidates[0] if slot_candidates else None
+                        if not fallback_name:
+                            continue
+                        represented_names.update(_lookup_name_keys(fallback_name))
+                        fallback_player_id = lookup_row.player_id if lookup_row else None
+                        fallback_checkin = (
+                            player_checkin_map.get((m.id, side_key, fallback_player_id))
+                            if fallback_player_id is not None
+                            else None
+                        )
+                        fallback_checked = bool(fallback_checkin and fallback_checkin.checked_in)
+                        fallback_checked_at = fallback_checkin.checked_in_at if fallback_checkin else None
+                        if fallback_checked and fallback_checked_at:
+                            side_player_times.append(fallback_checked_at)
+                        player_states.append(
+                            PlayerCheckInState(
+                                player_id=fallback_player_id,
+                                player_display=fallback_name,
+                                checked_in=fallback_checked,
+                                checked_in_at=fallback_checked_at.isoformat() if fallback_checked_at else None,
+                                towel_color=lookup_row.towel_color if lookup_row else None,
+                                report_url=lookup_row.report_url if lookup_row else None,
+                            )
+                        )
 
-            return MatchCheckInSideState(
-                side=side_key,
-                team_id=team_id,
-                team_display=_team_display(team_id, fallback, team_map),
-                team_checked_in=team_checked,
-                team_checked_in_at=team_checked_at.isoformat() if team_checked_at else None,
-                show_towels=show_towels,
-                players=player_states,
-                players_checked_in=players_checked,
-                players_total=players_total,
-                side_ready=side_ready,
-                ready_at=ready_at_dt.isoformat() if ready_at_dt else None,
+                players_total = len(side_players) or len([p for p in player_states if p.player_id is not None])
+                players_checked = len([p for p in player_states if p.checked_in])
+                side_ready = team_checked or (players_total > 0 and players_checked == players_total)
+                ready_at_dt: Optional[datetime] = None
+                if team_checked and team_checked_at:
+                    ready_at_dt = team_checked_at
+                elif side_ready and side_player_times:
+                    ready_at_dt = max(side_player_times)
+
+                return MatchCheckInSideState(
+                    side=side_key,
+                    team_id=team_id,
+                    team_display=_team_display(team_id, fallback, team_map),
+                    team_checked_in=team_checked,
+                    team_checked_in_at=team_checked_at.isoformat() if team_checked_at else None,
+                    show_towels=show_towels,
+                    players=player_states,
+                    players_checked_in=players_checked,
+                    players_total=players_total,
+                    side_ready=side_ready,
+                    ready_at=ready_at_dt.isoformat() if ready_at_dt else None,
+                )
+
+            side_a = build_side("A", m.team_a_id, m.placeholder_side_a)
+            side_b = build_side("B", m.team_b_id, m.placeholder_side_b)
+            ready = side_a.side_ready and side_b.side_ready
+            ready_at_vals = [d for d in [side_a.ready_at, side_b.ready_at] if d]
+            ready_at = max(ready_at_vals) if ready_at_vals else None
+
+            ev = event_map.get(m.event_id)
+            event_name = ev.name if ev else "Unknown"
+            target.append(
+                CheckInMatchItem(
+                    match_id=m.id,
+                    match_number=m.id,
+                    match_code=m.match_code or "",
+                    event_id=m.event_id,
+                    event_name=event_name,
+                    day_label=_to_day_label(s.day_date) if s is not None else "Unscheduled",
+                    scheduled_time=_to_sched_label(s.start_time) if s is not None else None,
+                    sort_time=s.start_time.strftime("%H:%M") if s is not None else None,
+                    slot_id=s.id if s is not None else None,
+                    team1_notes=getattr(team_map.get(m.team_a_id), "notes", None) if m.team_a_id else None,
+                    team2_notes=getattr(team_map.get(m.team_b_id), "notes", None) if m.team_b_id else None,
+                    side_a=side_a,
+                    side_b=side_b,
+                    match_ready=ready,
+                    ready_at=ready_at,
+                    checkin_enabled=bool(
+                        m.team_a_id and m.team_b_id and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
+                    ),
+                    checkin_reset_pending=bool(getattr(m, "checkin_reset_pending", False)),
+                )
             )
 
-        side_a = build_side("A", m.team_a_id, m.placeholder_side_a)
-        side_b = build_side("B", m.team_b_id, m.placeholder_side_b)
-        ready = side_a.side_ready and side_b.side_ready
-        ready_at_vals = [d for d in [side_a.ready_at, side_b.ready_at] if d]
-        ready_at = max(ready_at_vals) if ready_at_vals else None
 
-        ev = event_map.get(m.event_id)
-        event_name = ev.name if ev else "Unknown"
-        checkin_matches.append(
-            CheckInMatchItem(
-                match_id=m.id,
-                match_number=m.id,
-                match_code=m.match_code or "",
-                event_id=m.event_id,
-                event_name=event_name,
-                day_label=_to_day_label(s.day_date),
-                scheduled_time=_to_sched_label(s.start_time),
-                sort_time=s.start_time.strftime("%H:%M"),
-                slot_id=s.id,
-                team1_notes=getattr(team_map.get(m.team_a_id), "notes", None) if m.team_a_id else None,
-                team2_notes=getattr(team_map.get(m.team_b_id), "notes", None) if m.team_b_id else None,
-                side_a=side_a,
-                side_b=side_b,
-                match_ready=ready,
-                ready_at=ready_at,
-                checkin_enabled=bool(
-                    m.team_a_id and m.team_b_id and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
+    _append_checkin_rows(eligible, checkin_matches, False)
+    _append_checkin_rows(arrival_rows, arrival_matches, True)
+
+    seen_team_ids = {
+        team_id
+        for item in arrival_matches
+        for team_id in (item.side_a.team_id, item.side_b.team_id)
+        if team_id is not None
+    }
+    checked_player_ids = {row.player_id for row in player_checkins if row.checked_in and row.player_id is not None}
+    for team in roster_teams:
+        if team.id is None or team.id in seen_team_ids:
+            continue
+        player_states = []
+        for pid in players_by_team.get(team.id, []):
+            person = player_map.get(pid)
+            lookup_row = next(
+                (
+                    row
+                    for row in lookup_rows_by_player_id.get(pid, [])
+                    if person is None or _lookup_row_fits_player(row, person)
                 ),
-                checkin_reset_pending=bool(getattr(m, "checkin_reset_pending", False)),
+                None,
+            )
+            if lookup_row is None and person is not None:
+                lookup_row = _lookup_row_for_names(
+                    [person.full_name or "", person.display_name or ""],
+                    lookup_by_name,
+                    unique_lookup_by_short_name,
+                    ambiguous_short_names,
+                )
+            player_states.append(
+                PlayerCheckInState(
+                    player_id=pid,
+                    player_display=(person.display_name or person.full_name) if person else f"Player {pid}",
+                    checked_in=pid in checked_player_ids,
+                    towel_color=lookup_row.towel_color if lookup_row else None,
+                    report_url=lookup_row.report_url if lookup_row else None,
+                )
+            )
+        if not player_states:
+            continue
+        arrival_matches.append(
+            CheckInMatchItem(
+                match_id=0,
+                match_number=0,
+                match_code="",
+                event_id=team.event_id,
+                event_name=event_map.get(team.event_id).name if event_map.get(team.event_id) else "Unscheduled",
+                day_label="Unscheduled",
+                scheduled_time=None,
+                sort_time=None,
+                slot_id=None,
+                side_a=MatchCheckInSideState(
+                    side="A",
+                    team_id=team.id,
+                    team_display=_team_display(team.id, None, team_map),
+                    show_towels=True,
+                    players=player_states,
+                    players_checked_in=len([player for player in player_states if player.checked_in]),
+                    players_total=len(player_states),
+                ),
+                side_b=MatchCheckInSideState(side="B", team_display=""),
+                checkin_enabled=False,
             )
         )
 
@@ -1821,6 +1902,7 @@ def _build_checkin_snapshot(
         active_slot_key,
         checkin_court_warnings,
         ready_assigned_queue,
+        arrival_matches,
     )
 
 
@@ -2332,6 +2414,7 @@ def desk_snapshot(
                 active_checkin_slot_key,
                 checkin_court_warnings,
                 ready_assigned_queue,
+                arrival_matches,
             ) = _build_checkin_snapshot(session, tournament, version, items)
 
         # region agent log
@@ -2375,6 +2458,7 @@ def desk_snapshot(
             active_checkin_slot_key=active_checkin_slot_key,
             checkin_court_warnings=checkin_court_warnings,
             ready_assigned_queue=ready_assigned_queue,
+            arrival_matches=arrival_matches,
         )
         if cache_key[2] == _desk_snapshot_gen:
             _desk_snapshot_cache[cache_key] = (time.monotonic(), response)
@@ -2584,6 +2668,7 @@ def set_team_checkin(
         active_checkin_slot_key,
         checkin_court_warnings,
         ready_assigned_queue,
+        _arrival_matches,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -2758,6 +2843,7 @@ def set_player_checkin(
         active_checkin_slot_key,
         checkin_court_warnings,
         ready_assigned_queue,
+        _arrival_matches,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -2816,6 +2902,7 @@ def get_checkin_queue(
         active_checkin_slot_key,
         checkin_court_warnings,
         ready_assigned_queue,
+        _arrival_matches,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     # region agent log
     _agent_debug_log(
@@ -3072,6 +3159,7 @@ def check_in_time_slot(
         active_checkin_slot_key,
         checkin_court_warnings,
         ready_assigned_queue,
+        _arrival_matches,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     return ReadyQueueResponse(
         tournament_id=tournament_id,
@@ -3508,6 +3596,7 @@ def assign_ready_match_to_slot(
         active_checkin_slot_key,
         _checkin_court_warnings,
         _ready_assigned_queue,
+        _arrival_matches,
     ) = _build_checkin_snapshot(session, tournament, version, items)
     ready_ids = {r.match_id for r in ready_queue}
     if checkin_reset_blocks_start(session, match):
