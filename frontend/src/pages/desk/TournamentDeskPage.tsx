@@ -1355,19 +1355,10 @@ function MatchDrawer({
       setResult(resp)
       setFinalized(true)
       const preview = resp.sms_preview ?? null
-      // When SMS can't send anything because it's turned off (tournament texts
-      // off, post-match automation off, or template inactive), don't bother
-      // popping the preview modal — just finalize.
-      const smsOffReasons = ['texts_disabled', 'automation_disabled', 'template_inactive']
-      const smsFullyOff =
-        preview != null &&
-        preview.recipients.length === 0 &&
-        smsOffReasons.includes(preview.disabled_reason || '')
-      if (smsFullyOff) {
-        setFinalizeSmsPreview(null)
-        setStatusMsg('Match finalized.')
-      } else {
+      if (preview) {
         setFinalizeSmsPreview(preview)
+      } else {
+        setStatusMsg('Match finalized.')
       }
       onRefreshKeepOpen()
     } catch (e) {
@@ -1515,6 +1506,7 @@ function MatchDrawer({
 
   const effectiveMatch = corrResult?.match || result?.match || match
   const effectiveStatus = effectiveMatch.status
+  const scoreLocked = finalized || match.status === 'FINAL' || effectiveStatus === 'FINAL'
   const sc = STATUS_COLORS[effectiveStatus] || STATUS_COLORS.SCHEDULED
   const contextLink = effectiveMatch.stage === 'RR'
     ? `/t/${tournamentId}/draws/${effectiveMatch.event_id}/roundrobin?version_id=${versionId}`
@@ -1652,7 +1644,7 @@ function MatchDrawer({
     return reasons
   }, [finalizeSmsPreview])
 
-  const actionsPanel = isDraft ? (
+  const actionsPanel = isDraft && !scoreLocked ? (
     <div style={{ marginBottom: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
         Match Actions
@@ -1736,26 +1728,6 @@ function MatchDrawer({
           {returningToWaiting ? 'Returning…' : 'Back To Waiting for Check-In'}
         </button>
       )}
-      {match.status === 'FINAL' && (
-        <button
-          onClick={reopenToCurrentlyPlaying}
-          style={{
-            width: '100%',
-            padding: '8px 16px',
-            fontSize: 13,
-            fontWeight: 700,
-            backgroundColor: '#1565c0',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: 'pointer',
-            marginBottom: 12,
-          }}
-        >
-          Reopen To Currently Playing
-        </button>
-      )}
-
       {match.status !== 'FINAL' && (
       <div style={{
         border: '1px solid #e0e0e0',
@@ -1949,9 +1921,10 @@ function MatchDrawer({
         </button>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
-        {actionsPanel}
+      <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column' }}>
+        {actionsPanel && <div style={{ order: 0 }}>{actionsPanel}</div>}
 
+        <div style={{ order: scoreLocked ? 3 : 1 }}>
         <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
           <Badge label={effectiveMatch.stage} bg={STAGE_COLORS[effectiveMatch.stage] || '#757575'} color="#fff" />
           <Badge label={STATUS_LABEL[effectiveStatus] || effectiveStatus} bg={sc.bg} color={sc.text} />
@@ -2025,7 +1998,9 @@ function MatchDrawer({
             {match.court_name} &middot; {match.scheduled_time}
           </div>
         )}
+        </div>
 
+        <div style={{ order: scoreLocked ? 0 : 2 }}>
         {(match.status === 'FINAL' || finalized) && (
           <div style={{
             padding: '12px 16px',
@@ -2204,7 +2179,9 @@ function MatchDrawer({
             Viewing published schedule (read-only). Open Desk Draft to make updates.
           </div>
         )}
+        </div>
 
+        <div style={{ order: scoreLocked ? 1 : 3 }}>
         {error && (
           <div style={{ marginTop: 12, padding: '10px 14px', backgroundColor: '#ffebee', borderRadius: 6, color: '#c62828', fontSize: 13 }}>
             {error}
@@ -2371,9 +2348,33 @@ function MatchDrawer({
             ))}
           </div>
         )}
+        </div>
 
-        {/* Match History Timeline */}
-        <MatchTimeline match={effectiveMatch} />
+        {scoreLocked && isDraft && (
+          <button
+            type="button"
+            onClick={reopenToCurrentlyPlaying}
+            style={{
+              order: 2,
+              width: '100%',
+              marginTop: 12,
+              padding: '8px 16px',
+              fontSize: 13,
+              fontWeight: 700,
+              backgroundColor: '#1565c0',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            Reopen Match
+          </button>
+        )}
+
+        <div style={{ order: 4 }}>
+          <MatchTimeline match={effectiveMatch} />
+        </div>
       </div>
 
       {/* Conflict warnings modal */}

@@ -82,7 +82,7 @@ class SmsAutomationEngine:
         self.send_match_finalized_texts(match)
 
     def preview_match_finalized_texts(self, match: Match) -> Dict[str, Any]:
-        plan = self._match_finalized_sms_plan(match)
+        plan = self._match_finalized_sms_plan(match, ignore_automation_toggle=True)
         jobs = list(plan["jobs"])
         recipients: list[dict[str, Any]] = []
         teams_with_next_match = len(jobs)
@@ -130,7 +130,10 @@ class SmsAutomationEngine:
         *,
         trigger: str = "auto",
     ) -> Dict[str, Any]:
-        plan = self._match_finalized_sms_plan(match)
+        plan = self._match_finalized_sms_plan(
+            match,
+            ignore_automation_toggle=trigger == "finalize_approved",
+        )
         jobs = list(plan["jobs"])
         message_type = str(plan["message_type"])
         aggregate: Dict[str, Any] = {
@@ -952,7 +955,7 @@ class SmsAutomationEngine:
     def _match_finalized_sms_jobs(self, match: Match) -> list[dict[str, Any]]:
         return list(self._match_finalized_sms_plan(match)["jobs"])
 
-    def _match_finalized_sms_plan(self, match: Match) -> Dict[str, Any]:
+    def _match_finalized_sms_plan(self, match: Match, *, ignore_automation_toggle: bool = False) -> Dict[str, Any]:
         if (match.runtime_status or "").upper() != "FINAL":
             return {
                 "message_type": "checkin_post_match_next" if self._is_checkin_management() else "post_match_next",
@@ -968,7 +971,7 @@ class SmsAutomationEngine:
                 "disabled_reason": "texts_disabled",
                 "jobs": [],
             }
-        if not self._is_enabled(toggle_name, default=False):
+        if not ignore_automation_toggle and not self._is_enabled(toggle_name, default=False):
             return {
                 "message_type": message_type,
                 "disabled_reason": "automation_disabled",

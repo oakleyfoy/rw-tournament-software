@@ -565,6 +565,48 @@ def test_finalize_preview_suppresses_auto_post_match_sms_until_approved(client, 
     assert len(post_logs) == 0
 
 
+def test_finalize_preview_opens_when_post_match_automation_is_off(client, session):
+    """The finalize text window is a manual send. The automation checkbox does not hide it."""
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    t.desk_management_mode = "checkin_management"
+    session.add(t)
+    session.commit()
+    _set_team_test_phones(session, teams)
+
+    draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
+    draft_id = draft_resp.json()["version_id"]
+
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
+
+    session.add(
+        TournamentSmsSettings(
+            tournament_id=t.id,
+            auto_checkin_post_match_next=False,
+            texts_enabled=True,
+            test_mode=False,
+        )
+    )
+    session.commit()
+
+    fin_resp = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize",
+        json={
+            "version_id": draft_id,
+            "score": "8-4",
+            "winner_team_id": draft_m1["team1_id"],
+            "send_automation_texts": False,
+            "include_sms_preview": True,
+        },
+    )
+    assert fin_resp.status_code == 200, fin_resp.text
+    preview = fin_resp.json()["sms_preview"]
+    assert preview is not None
+    assert preview["disabled_reason"] is None
+    assert preview["total_messages"] >= 1
+    assert len(preview["recipients"]) >= 1
+
+
 def test_finalize_sms_approval_endpoint_sends_post_match_next(client, session):
     """Approved finalize SMS send writes post-match logs after the match is finalized."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
