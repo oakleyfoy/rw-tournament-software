@@ -101,6 +101,9 @@ export default function FirstMatchCheckIn({
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800 }}>
         <span>First-match check-in</span>
+        {tournamentTotal > 0 && tournamentChecked === tournamentTotal && (
+          <span style={{ background: '#1b5e20', color: '#fff', borderRadius: 4, padding: '2px 8px' }}>CHECK-IN COMPLETE</span>
+        )}
         <span style={{ color: '#2e7d32' }}>Tournament: {tournamentChecked}/{tournamentTotal} checked in</span>
         <span style={{ color: tournamentTotal - tournamentChecked > 0 ? '#e65100' : '#2e7d32' }}>{tournamentTotal - tournamentChecked} remaining</span>
         {!searching && slot && (
@@ -209,10 +212,10 @@ function TeamTile({
               disabled={player.checkedIn || !player.canCheckIn || pendingIds.includes(player.playerId)}
               title={player.fullName}
               onClick={() => onCheckIn(player)}
-              style={{ display: 'flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', padding: 0, minWidth: 0, cursor: player.checkedIn || !player.canCheckIn ? 'default' : 'pointer', fontSize, fontWeight: 700 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 3, border: 'none', background: 'transparent', padding: 0, minWidth: 0, cursor: player.checkedIn || !player.canCheckIn ? 'default' : 'pointer', fontSize, fontWeight: 700, color: '#1a1a1a' }}
             >
               <TowelEgg colorName={player.towelColor} eggHeight={eggHeight} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{player.firstName}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a1a' }}>{player.firstName}</span>
               {player.checkedIn && <span style={{ color: '#2e7d32' }}>✓</span>}
             </button>
             {player.checkedIn && (

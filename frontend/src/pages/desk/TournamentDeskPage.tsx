@@ -11718,7 +11718,7 @@ export default function TournamentDeskPage() {
                 {hasDesignatedCourts ? (
                   <div style={{ height: 'calc(100vh - 196px)', minHeight: 420, display: 'flex', flexDirection: 'column' }}>
                   <ArrivalCheckIn
-                    checkins={(data.arrival_matches && data.arrival_matches.length > 0) ? data.arrival_matches : (data.checkin_matches || [])}
+                    checkins={data.arrival_matches || []}
                     matches={data.matches || []}
                     nowMinutes={scheduleNowMinutes}
                     isToday={(day) => day === tournamentToday(data.tournament_timezone)}

@@ -3208,6 +3208,7 @@ export interface CheckInMatchItem {
   ready_at: string | null
   checkin_enabled: boolean
   checkin_reset_pending?: boolean
+  is_opening_entry?: boolean
 }
 
 export interface ReadyQueueItem {

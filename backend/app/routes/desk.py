@@ -709,6 +709,7 @@ class CheckInMatchItem(BaseModel):
     ready_at: Optional[str] = None
     checkin_enabled: bool = False
     checkin_reset_pending: bool = False
+    is_opening_entry: bool = False
 
 
 class ReadyQueueItem(BaseModel):
@@ -1423,12 +1424,18 @@ def _build_checkin_snapshot(
     checkin_matches: List[CheckInMatchItem] = []
     arrival_matches: List[CheckInMatchItem] = []
 
-    def _append_checkin_rows(rows, target: List[CheckInMatchItem], fill_partners: bool) -> None:
+    def _append_checkin_rows(rows, target: List[CheckInMatchItem], fill_partners: bool, opening_entry: bool) -> None:
         for m, a, s in rows:
             match_status = (m.runtime_status or "SCHEDULED").upper()
 
             def build_side(side: str, team_id: Optional[int], fallback: Optional[str]) -> MatchCheckInSideState:
                 side_key = side.upper()
+                if fill_partners and not team_id:
+                    return MatchCheckInSideState(
+                        side=side_key,
+                        team_id=None,
+                        team_display=_team_display(None, None, team_map),
+                    )
                 team_row = team_checkin_map.get((m.id, side_key))
                 team_checked = bool(team_row and team_row.team_checked_in)
                 team_checked_at = team_row.checked_in_at if team_row else None
@@ -1497,7 +1504,7 @@ def _build_checkin_snapshot(
                 represented_names: set[str] = set()
                 for state in player_states:
                     represented_names.update(_lookup_name_keys(state.player_display))
-                if fill_partners or not player_states:
+                if (fill_partners or not player_states) and len(player_states) < 2:
                     for slot_candidates in slot_name_candidates:
                         slot_keys: set[str] = set()
                         for name in slot_candidates:
@@ -1587,76 +1594,18 @@ def _build_checkin_snapshot(
                         m.team_a_id and m.team_b_id and match_status not in ("IN_PROGRESS", "PAUSED", "FINAL")
                     ),
                     checkin_reset_pending=bool(getattr(m, "checkin_reset_pending", False)),
+                    is_opening_entry=opening_entry,
                 )
             )
 
 
-    _append_checkin_rows(eligible, checkin_matches, False)
-    _append_checkin_rows(arrival_rows, arrival_matches, True)
-
-    seen_team_ids = {
-        team_id
-        for item in arrival_matches
-        for team_id in (item.side_a.team_id, item.side_b.team_id)
-        if team_id is not None
-    }
-    checked_player_ids = {row.player_id for row in player_checkins if row.checked_in and row.player_id is not None}
-    for team in roster_teams:
-        if team.id is None or team.id in seen_team_ids:
-            continue
-        player_states = []
-        for pid in players_by_team.get(team.id, []):
-            person = player_map.get(pid)
-            lookup_row = next(
-                (
-                    row
-                    for row in lookup_rows_by_player_id.get(pid, [])
-                    if person is None or _lookup_row_fits_player(row, person)
-                ),
-                None,
-            )
-            if lookup_row is None and person is not None:
-                lookup_row = _lookup_row_for_names(
-                    [person.full_name or "", person.display_name or ""],
-                    lookup_by_name,
-                    unique_lookup_by_short_name,
-                    ambiguous_short_names,
-                )
-            player_states.append(
-                PlayerCheckInState(
-                    player_id=pid,
-                    player_display=(person.display_name or person.full_name) if person else f"Player {pid}",
-                    checked_in=pid in checked_player_ids,
-                    towel_color=lookup_row.towel_color if lookup_row else None,
-                    report_url=lookup_row.report_url if lookup_row else None,
-                )
-            )
-        if not player_states:
-            continue
-        arrival_matches.append(
-            CheckInMatchItem(
-                match_id=0,
-                match_number=0,
-                match_code="",
-                event_id=team.event_id,
-                event_name=event_map.get(team.event_id).name if event_map.get(team.event_id) else "Unscheduled",
-                day_label="Unscheduled",
-                scheduled_time=None,
-                sort_time=None,
-                slot_id=None,
-                side_a=MatchCheckInSideState(
-                    side="A",
-                    team_id=team.id,
-                    team_display=_team_display(team.id, None, team_map),
-                    show_towels=True,
-                    players=player_states,
-                    players_checked_in=len([player for player in player_states if player.checked_in]),
-                    players_total=len(player_states),
-                ),
-                side_b=MatchCheckInSideState(side="B", team_display=""),
-                checkin_enabled=False,
-            )
-        )
+    _append_checkin_rows(eligible, checkin_matches, False, False)
+    opening_rows = [
+        row
+        for row in arrival_rows
+        if is_opening_waterfall(row[0]) and (row[0].team_a_id or row[0].team_b_id)
+    ]
+    _append_checkin_rows(opening_rows, arrival_matches, True, True)
 
     ready_items: List[ReadyQueueItem] = []
     for cm in checkin_matches:

@@ -148,8 +148,25 @@ describe('first-match check-in board', () => {
     )
     const names = board.slots.flatMap((slot) => slot.tiles.flatMap((tile) => tile.players.map((player) => player.firstName))).sort()
     expect(names).toEqual(['Frank', 'Jeff', 'Karen', 'Vicky'])
-    expect(board.playerIds).toHaveLength(4)
+    expect(board.playerIds).toEqual([41, 43, 44])
+    expect(board.playerIds).not.toContain(42)
     expect(board.days).toEqual(['2026-12-04'])
+  })
+
+  it('ignores later-round matches and keeps a completed opening match', () => {
+    const opening = checkin(1, '12:00', side([[1, 'Ann Cole', 'Blue', true], [2, 'Bea Cole', 'Pink', true]], 11), side([[3, 'Cara', 'Red', false], [4, 'Dina', 'Navy', false]], 12))
+    opening.is_opening_entry = true
+    const later = checkin(2, '15:00', side([[5, 'Winner One', null, false], [6, 'Winner Two', null, false]], 13), side([[7, 'Loser One', null, false], [8, 'Loser Two', null, false]], 14))
+    later.is_opening_entry = false
+    later.match_code = 'MIX_MIX_E32_WF_R2_1'
+    const board = buildArrivalBoard(
+      [opening, later],
+      [match(1, '2026-12-04', '12:00', 4, 'MIX_MIX_E32_WF_R1_1'), { ...match(2, '2026-12-05', '15:00', 4, 'MIX_MIX_E32_WF_R2_1'), status: 'SCHEDULED' }],
+    )
+    expect(board.playerIds).toEqual([1, 2, 3, 4])
+    expect(board.days).toEqual(['2026-12-04'])
+    expect(board.slots.map((slot) => slot.sortTime)).toEqual(['12:00'])
+    expect(board.checkedPlayerIds).toEqual([1, 2])
   })
 
   it('fits standard desktop time slots and reports a display that is too small', () => {
@@ -165,7 +182,7 @@ describe('first-match check-in board', () => {
         const layout = matrixLayout(width - 48, height - chrome, teams)
         expect(layout.fits, `${teams} teams at ${width}x${height}`).toBe(true)
         expect(layout.tileHeight).toBeGreaterThanOrEqual(36)
-        expect(layout.tileHeight).toBeLessThanOrEqual(52)
+        expect(layout.tileHeight).toBeLessThanOrEqual(68)
         expect(layout.tileWidth).toBeGreaterThanOrEqual(150)
         expect(layout.tileWidth).toBeLessThanOrEqual(300)
       }
