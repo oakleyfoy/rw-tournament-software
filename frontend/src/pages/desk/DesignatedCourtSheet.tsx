@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
+import { TeamPhotoThumb } from '../../components/TeamPhotoThumb'
 import MatchTextDialog, { type MatchTextPlayer, type MatchTextResult } from './MatchTextDialog'
 import {
   activeTimeTint,
@@ -144,6 +145,7 @@ export default function DesignatedCourtSheet(props: Props) {
   const slotTimes = schedule.rows.map((row) => row.time)
   const courtCount = Math.max(schedule.courts.length, 1)
   const compact = courtCount >= 16
+  const photoSize = courtCount >= 20 ? 18 : compact ? 22 : courtCount <= 6 ? 34 : 28
   const columns = `64px repeat(${courtCount}, minmax(0, 1fr))`
 
   useEffect(() => {
@@ -293,6 +295,7 @@ export default function DesignatedCourtSheet(props: Props) {
                 cells={cells}
                 covers={covers}
                 compact={compact}
+                photoSize={photoSize}
                 tick={tick}
                 isCopy={isCopy}
                 clockMs={clockMs}
@@ -345,6 +348,7 @@ export default function DesignatedCourtSheet(props: Props) {
                         match={match}
                         matches={matches}
                         compact={compact}
+                        photoSize={photoSize}
                         hasNotes={noteState(match).hasNotes}
                         showNotes={noteState(match).showNotes}
                         canText={textPlayers(match).length > 0}
@@ -410,12 +414,13 @@ function untilLabel(minutes: number | null): string {
 }
 
 function LiveCell({
-  court, cells, covers, compact, tick, isCopy, clockMs, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, recipientCount, slotTimes, onOpen, onText, onOpenNotes, onDrop, onDragState,
+  court, cells, covers, compact, photoSize, tick, isCopy, clockMs, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, recipientCount, slotTimes, onOpen, onText, onOpenNotes, onDrop, onDragState,
 }: {
   court: ScheduleCourt
   cells: ScheduleCell[]
   covers: SlotCover[]
   compact: boolean
+  photoSize: number
   tick: number
   isCopy: boolean
   clockMs: number | null
@@ -445,7 +450,7 @@ function LiveCell({
     return (
       <button type="button" onClick={() => onOpen(playing)} style={{ ...liveCard, background: tint.bg, border: `1px solid ${tint.border}`, color: '#1a1a1a' }}>
         <CardHeading match={playing} compact={compact} />
-        <NameLines a={sideA} b={sideB} compact={compact} />
+        <NameLines a={sideA} b={sideB} teamA={playing.team1_id} teamB={playing.team2_id} compact={compact} photoSize={photoSize} />
         <div style={liveMeta}>{compactScheduledTime(playing.scheduled_time || playing.sort_time)}</div>
         <div style={liveMeta} title={elapsed.title}>{elapsed.text}</div>
         <CardActions compact={compact} canText={recipientCount(playing) > 0} showNotes hasNotes={notes.hasNotes} onText={() => onText(playing)} onNotes={() => onOpenNotes?.(notes.players, notes.teamNotes, notes.teamLabels)} />
@@ -520,18 +525,19 @@ function CardActions({ compact, canText, showNotes, hasNotes, onText, onNotes }:
   if (!canText && !showNotes) return null
   return (
     <div data-card-action style={{ display: 'flex', gap: 3, marginTop: 2 }}>
-      {canText && <span role="button" title="Text players" onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onText() }} style={iconButton(compact)}>T</span>}
-      {showNotes && <span role="button" title={hasNotes ? 'Notes' : 'Add a note'} onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onNotes() }} style={noteMark(hasNotes, compact)}>N</span>}
+      {canText && <span role="button" aria-label="Text Players." title="Text Players." onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onText() }} style={iconButton(compact)}><TextBubbleIcon /></span>}
+      {showNotes && <span role="button" aria-label={hasNotes ? 'Player Notes Exist' : 'Player Notes'} title={hasNotes ? 'Player Notes Exist' : 'Player Notes'} onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onNotes() }} style={noteMark(hasNotes, compact)}><NoteIcon /></span>}
     </div>
   )
 }
 
 function GridCard({
-  match, matches, compact, hasNotes, showNotes, canText, onOpen, onText, onNotes, onDragStart, onDragEnd,
+  match, matches, compact, photoSize, hasNotes, showNotes, canText, onOpen, onText, onNotes, onDragStart, onDragEnd,
 }: {
   match: DeskMatchItem
   matches: DeskMatchItem[]
   compact: boolean
+  photoSize: number
   hasNotes: boolean
   showNotes: boolean
   canText: boolean
@@ -566,29 +572,56 @@ function GridCard({
       style={{ ...cardButton, background: tone.bg, border: `1px solid ${tone.border}`, color: '#1a1a1a' }}
     >
       <CardHeading match={match} compact={compact} />
-      <NameLines a={sideA.label} b={sideB.label} compact={compact} emphasizeA={winnerA} emphasizeB={winnerB} />
+      <NameLines a={sideA.label} b={sideB.label} teamA={match.team1_id} teamB={match.team2_id} compact={compact} photoSize={photoSize} emphasizeA={winnerA} emphasizeB={winnerB} />
       {done && <div style={{ fontSize: compact ? 9 : 11, fontWeight: 800, color: '#1b5e20' }}>✓ {match.score_display || 'Completed'}</div>}
       <CardActions compact={compact} canText={canText} showNotes={showNotes} hasNotes={hasNotes} onText={onText} onNotes={onNotes} />
     </button>
   )
 }
 
-function NameLines({ a, b, compact, emphasizeA = false, emphasizeB = false }: { a: string; b: string; compact: boolean; emphasizeA?: boolean; emphasizeB?: boolean }) {
+function NameLines({ a, b, teamA, teamB, compact, photoSize, emphasizeA = false, emphasizeB = false }: { a: string; b: string; teamA: number | null; teamB: number | null; compact: boolean; photoSize: number; emphasizeA?: boolean; emphasizeB?: boolean }) {
   const groups = [
-    { lines: firstNameLines(a), emphasize: emphasizeA },
-    { lines: firstNameLines(b), emphasize: emphasizeB },
+    { lines: firstNameLines(a), teamId: teamA, emphasize: emphasizeA },
+    { lines: firstNameLines(b), teamId: teamB, emphasize: emphasizeB },
   ]
   return (
     <div style={{ fontSize: compact ? 9 : 11, lineHeight: 1.15 }}>
       {groups.map((group, groupIndex) => (
         <div key={groupIndex}>
           {groupIndex > 0 && <div style={{ borderTop: '1px solid rgba(0,0,0,0.28)', margin: '2px 0' }} />}
-          {group.lines.map((line, index) => (
-            <div key={`${line}-${index}`} style={{ fontWeight: group.emphasize ? 900 : 700, color: group.emphasize ? '#1b5e20' : '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
-          ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 }}>
+            {group.teamId != null && (
+              <span data-card-action onMouseDown={blockCardAction} onClick={blockCardAction}>
+                <TeamPhotoThumb teamId={group.teamId} size={photoSize} surface="dashboard" missing="hide" lazy enlargePreview />
+              </span>
+            )}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {group.lines.map((line, index) => (
+                <div key={`${line}-${index}`} style={{ fontWeight: group.emphasize ? 900 : 700, color: group.emphasize ? '#1b5e20' : '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
+              ))}
+            </div>
+          </div>
         </div>
       ))}
     </div>
+  )
+}
+
+function TextBubbleIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden>
+      <path fill="currentColor" d="M5 3.5h14a2.5 2.5 0 012.5 2.5v8A2.5 2.5 0 0119 16.5H10.2L5.4 20.2A1 1 0 014 19.4V6A2.5 2.5 0 015 3.5z" />
+    </svg>
+  )
+}
+
+function NoteIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round">
+      <path d="M7 3.5h8.2L19 7.2V20a1.2 1.2 0 01-1.2 1.2H7A1.2 1.2 0 015.8 20V4.7A1.2 1.2 0 017 3.5z" />
+      <path d="M15 3.8V7.4h3.6" />
+      <path d="M8.5 12.5h7M8.5 16h4.5" />
+    </svg>
   )
 }
 
@@ -630,8 +663,8 @@ const liveMeta: CSSProperties = { fontSize: 9, fontWeight: 700, marginTop: 1, li
 const unavailableLabel: CSSProperties = { display: 'block', fontSize: 8, fontWeight: 800, lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere' }
 const cardButton: CSSProperties = { display: 'block', width: '100%', textAlign: 'left', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 6, padding: '3px 4px', cursor: 'grab', minWidth: 0 }
 const placeholderButton: CSSProperties = { width: '100%', border: 'none', background: 'transparent', color: '#e65100', fontWeight: 800, fontSize: 10, cursor: 'pointer', padding: 4 }
-const noteMark = (active: boolean, compact: boolean): CSSProperties => ({ width: compact ? 14 : 16, height: compact ? 14 : 16, borderRadius: 3, background: active ? '#f9a825' : '#eceff1', color: active ? '#fff' : '#546e7a', border: active ? '1px solid #f9a825' : '1px solid #cfd8dc', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' })
-const iconButton = (compact: boolean): CSSProperties => ({ width: compact ? 14 : 16, height: compact ? 14 : 16, borderRadius: 3, background: '#1a237e', color: '#fff', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' })
+const noteMark = (active: boolean, compact: boolean): CSSProperties => ({ width: compact ? 16 : 18, height: compact ? 16 : 18, borderRadius: 4, background: active ? '#f9a825' : '#f7f7f7', color: active ? '#fff' : '#757575', border: active ? '1px solid #f9a825' : '1px solid #e0e0e0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 })
+const iconButton = (compact: boolean): CSSProperties => ({ width: compact ? 16 : 18, height: compact ? 16 : 18, borderRadius: 4, background: '#1a237e', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 })
 
 function headerButton(court: ScheduleCourt): CSSProperties {
   const background = court.closed ? '#ffcdd2' : court.unavailable ? '#37474f' : '#e3f2fd'

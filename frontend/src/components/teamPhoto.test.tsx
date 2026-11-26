@@ -45,6 +45,16 @@ describe('team photo operational rendering', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('leaves the name row empty when a dashboard card has no official photo', () => {
+    const { container } = render(
+      <TeamPhotoProvider value={{ photos: {}, refresh: async () => undefined, tournamentId: 1 }}>
+        <TeamPhotoThumb teamId={11} surface="dashboard" missing="hide" />
+      </TeamPhotoProvider>,
+    )
+    expect(container.querySelector('[data-testid="team-photo"]')).toBeNull()
+    expect(container.querySelector('[data-testid="team-photo-placeholder"]')).toBeNull()
+  })
+
   it('keeps the camera file off the photographer card until it is opened', async () => {
     const urls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

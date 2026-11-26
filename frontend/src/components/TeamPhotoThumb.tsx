@@ -71,11 +71,17 @@ export function TeamPhotoThumb({
   size = 28,
   surface,
   frame = 'square',
+  missing = 'placeholder',
+  lazy = false,
+  enlargePreview = false,
 }: {
   teamId?: number | null
   size?: number
   surface?: string
   frame?: 'square' | 'card'
+  missing?: 'placeholder' | 'hide'
+  lazy?: boolean
+  enlargePreview?: boolean
 }) {
   const { photos, thumbUrls } = useTeamPhotos()
   const version = teamId != null ? photos[teamId] : undefined
@@ -171,6 +177,7 @@ export function TeamPhotoThumb({
   }, [frame, open, teamId, version])
 
   if (!version || failed || !src || loadedVersion !== version) {
+    if (missing === 'hide') return null
     return <Placeholder size={size} surface={surface} frame={frame} />
   }
   const card = frame === 'card'
@@ -180,6 +187,9 @@ export function TeamPhotoThumb({
         role="button"
         tabIndex={0}
         aria-label="View larger team photo"
+        onMouseDown={(event) => {
+          event.stopPropagation()
+        }}
         onClick={(event) => {
           event.preventDefault()
           event.stopPropagation()
@@ -209,6 +219,8 @@ export function TeamPhotoThumb({
           data-photo-frame={frame}
           data-photo-version={version}
           draggable={false}
+          loading={lazy ? 'lazy' : undefined}
+          decoding="async"
           src={src}
           alt="Official team photo"
           width={card ? undefined : size}
@@ -252,7 +264,9 @@ export function TeamPhotoThumb({
           <img
             src={frame === 'card' && fullSrc ? fullSrc : src}
             alt="Official team photo"
-            style={{ maxWidth: '92vw', maxHeight: '92vh', objectFit: 'contain', borderRadius: 8 }}
+            style={enlargePreview
+              ? { width: 'min(720px, 92vw)', maxHeight: '92vh', objectFit: 'contain', borderRadius: 8 }
+              : { maxWidth: '92vw', maxHeight: '92vh', objectFit: 'contain', borderRadius: 8 }}
           />
         </div>,
         document.body,

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
+import { TeamPhotoProvider } from '../../components/TeamPhotoThumb'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
 import PlayerNotesDialog from './PlayerNotesDialog'
 import { buildDaySchedule, listScheduleDays } from './courtSheet'
@@ -9,13 +10,19 @@ const TIMES = ['09:00:00', '10:00:00', '11:00:00', '12:00:00']
 const CLOSED_UNTIL_NOON = new Set([1, 3, 7, 9, 10, 11])
 const DRAWS = ["Women's A", "Women's B", 'Mixed A', 'Mixed B']
 
+function previewCourtCount(): number {
+  const requested = Number(new URLSearchParams(window.location.search).get('courts'))
+  return requested === 19 ? 19 : 24
+}
+
 function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
+  const courtCount = previewCourtCount()
   const slots: SnapshotSlot[] = []
   const matches: DeskMatchItem[] = []
   let id = 1
   for (const day of DAYS) {
     for (const time of TIMES) {
-      for (let court = 1; court <= 24; court += 1) {
+      for (let court = 1; court <= courtCount; court += 1) {
         const inactive = CLOSED_UNTIL_NOON.has(court) && time !== '12:00:00'
         const empty = (court === 5 && time !== '11:00:00') || inactive
         const unresolved = CLOSED_UNTIL_NOON.has(court) && time === '12:00:00'
@@ -112,6 +119,7 @@ export default function CourtSheetPreviewPage() {
   }
 
   return (
+    <TeamPhotoProvider value={{ photos: SAMPLE_PHOTO_VERSIONS, thumbUrls: SAMPLE_PHOTO_THUMBS, refresh: async () => undefined, tournamentId: null }}>
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#eceff1' }}>
       <div style={{ padding: '6px 10px', fontSize: 12, fontWeight: 800, color: '#1a237e' }}>
         Local sample Dashboard. This data is not a tournament and is not saved.
@@ -226,5 +234,19 @@ export default function CourtSheetPreviewPage() {
         />
       )}
     </div>
+    </TeamPhotoProvider>
   )
+}
+
+const SAMPLE_PHOTO_VERSIONS: Record<number, string> = { 4242: 'sample-a', 4243: 'sample-b', 5002: 'sample-c' }
+
+function samplePortrait(background: string, shirt: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="${background}"/><circle cx="32" cy="24" r="10" fill="#ffe0b2"/><path d="M16 58c2-14 10-18 16-18s14 4 16 18" fill="${shirt}"/></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+const SAMPLE_PHOTO_THUMBS: Record<number, string> = {
+  4242: samplePortrait('#1565c0', '#0d47a1'),
+  4243: samplePortrait('#6a1b9a', '#4a148c'),
+  5002: samplePortrait('#ef6c00', '#e65100'),
 }
