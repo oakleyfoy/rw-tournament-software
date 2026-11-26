@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator, model_validator
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, func, select, text
 
 from app.database import get_session
@@ -1268,6 +1268,11 @@ def _reset_duplicated_desk_play_state(session: Session, tournament_id: int) -> N
         select(OpeningSlotRelease).where(OpeningSlotRelease.tournament_id == tournament_id)
     ).all():
         session.delete(row)
+    _delete_if_present(
+        session,
+        "DELETE FROM deskdayrun WHERE tournament_id = :tournament_id",
+        {"tournament_id": tournament_id},
+    )
 
 
 @router.post("/tournaments/{tournament_id}/duplicate", response_model=TournamentResponse, status_code=201)
@@ -1285,6 +1290,9 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         source_tournament = session.get(Tournament, tournament_id)
         if not source_tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
+        # A previous delete can leave child rows behind. SQLite then reuses the
+        # freed ids, so those rows would attach to this new copy.
+        _delete_orphaned_tournament_rows(session)
 
         # 1) Create destination tournament shell (exact config snapshot).
         new_tournament = Tournament(
@@ -1852,8 +1860,8 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 TournamentCourtState(
                     tournament_id=new_tournament.id,  # type: ignore[arg-type]
                     court_label=row.court_label,
-                    is_closed=row.is_closed,
-                    note=row.note,
+                    is_closed=False,
+                    note=None,
                     updated_at=row.updated_at,
                 )
             )
@@ -1865,12 +1873,12 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 )
             ).first()
             if existing_sms_settings:
-                existing_sms_settings.auto_first_match = source_sms_settings.auto_first_match
-                existing_sms_settings.auto_post_match_next = source_sms_settings.auto_post_match_next
-                existing_sms_settings.auto_on_deck = source_sms_settings.auto_on_deck
-                existing_sms_settings.auto_up_next = source_sms_settings.auto_up_next
-                existing_sms_settings.auto_court_change = source_sms_settings.auto_court_change
-                existing_sms_settings.texts_enabled = getattr(source_sms_settings, "texts_enabled", True)
+                existing_sms_settings.auto_first_match = False
+                existing_sms_settings.auto_post_match_next = False
+                existing_sms_settings.auto_on_deck = False
+                existing_sms_settings.auto_up_next = False
+                existing_sms_settings.auto_court_change = False
+                existing_sms_settings.texts_enabled = False
                 existing_sms_settings.delivery_mode = getattr(source_sms_settings, "delivery_mode", "live")
                 existing_sms_settings.test_mode = source_sms_settings.test_mode
                 existing_sms_settings.test_allowlist = source_sms_settings.test_allowlist
@@ -1882,12 +1890,12 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 session.add(
                     TournamentSmsSettings(
                         tournament_id=new_tournament.id,  # type: ignore[arg-type]
-                        auto_first_match=source_sms_settings.auto_first_match,
-                        auto_post_match_next=source_sms_settings.auto_post_match_next,
-                        auto_on_deck=source_sms_settings.auto_on_deck,
-                        auto_up_next=source_sms_settings.auto_up_next,
-                        auto_court_change=source_sms_settings.auto_court_change,
-                        texts_enabled=getattr(source_sms_settings, "texts_enabled", True),
+                        auto_first_match=False,
+                        auto_post_match_next=False,
+                        auto_on_deck=False,
+                        auto_up_next=False,
+                        auto_court_change=False,
+                        texts_enabled=False,
                         delivery_mode=getattr(source_sms_settings, "delivery_mode", "live"),
                         test_mode=source_sms_settings.test_mode,
                         test_allowlist=source_sms_settings.test_allowlist,
@@ -1897,6 +1905,14 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                         updated_at=source_sms_settings.updated_at,
                     )
                 )
+        else:
+            session.add(
+                TournamentSmsSettings(
+                    tournament_id=new_tournament.id,  # type: ignore[arg-type]
+                    texts_enabled=False,
+                    auto_court_change=False,
+                )
+            )
 
         # Source data may contain historical duplicate message types; keep the
         # latest template per type and upsert into the destination tournament.
@@ -2038,6 +2054,82 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
         raise HTTPException(status_code=500, detail=f"Failed to duplicate tournament: {str(e)}")
 
 
+def _delete_if_present(session: Session, statement: str, params: Optional[dict] = None) -> None:
+    """Run one cleanup statement. A missing table on an older database is skipped."""
+    try:
+        with session.begin_nested():
+            session.execute(text(statement), params or {})
+    except OperationalError as exc:
+        message = str(exc).lower()
+        if "no such table" in message or "does not exist" in message:
+            return
+        raise
+
+
+def _delete_orphaned_tournament_rows(session: Session) -> None:
+    """Drop child rows whose parent was already deleted.
+
+    SQLite reuses the highest freed id. Without this, a new copy can inherit
+    the previous copy's day run, players, and team memberships.
+    """
+    statements = [
+        "DELETE FROM team_player WHERE team_id NOT IN (SELECT id FROM team)",
+        "DELETE FROM team_avoid_edge WHERE event_id NOT IN (SELECT id FROM event)",
+        "DELETE FROM team WHERE event_id NOT IN (SELECT id FROM event)",
+        "DELETE FROM player WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM player_note WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM deskdayrun WHERE tournament_id NOT IN (SELECT id FROM tournament) OR schedule_version_id NOT IN (SELECT id FROM scheduleversion)",
+        "DELETE FROM openingslotrelease WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM matchplayercheckin WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM matchcheckin WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM tournamentcourtstate WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM sms_log WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM temporary_player_lookup WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM team_official_photo WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM courtdispatchlock WHERE schedule_version_id NOT IN (SELECT id FROM scheduleversion)",
+    ]
+    for statement in statements:
+        _delete_if_present(session, statement)
+
+
+def _purge_tournament_owned_rows(session: Session, tournament_id: int) -> None:
+    """Remove every operational and roster row owned by one tournament."""
+    params = {"tournament_id": tournament_id}
+    for statement in (
+        "DELETE FROM deskdayrun WHERE tournament_id = :tournament_id OR schedule_version_id IN (SELECT id FROM scheduleversion WHERE tournament_id = :tournament_id)",
+        "DELETE FROM courtdispatchlock WHERE schedule_version_id IN (SELECT id FROM scheduleversion WHERE tournament_id = :tournament_id)",
+        "DELETE FROM openingslotrelease WHERE tournament_id = :tournament_id",
+        "DELETE FROM matchplayercheckin WHERE tournament_id = :tournament_id",
+        "DELETE FROM matchcheckin WHERE tournament_id = :tournament_id",
+        "DELETE FROM matchlock WHERE schedule_version_id IN (SELECT id FROM scheduleversion WHERE tournament_id = :tournament_id)",
+        "DELETE FROM slotlock WHERE schedule_version_id IN (SELECT id FROM scheduleversion WHERE tournament_id = :tournament_id)",
+        "DELETE FROM policyrun WHERE tournament_id = :tournament_id",
+        "DELETE FROM startoverbaselineassignment WHERE tournament_id = :tournament_id",
+        "DELETE FROM tournamentcourtstate WHERE tournament_id = :tournament_id",
+        "DELETE FROM sms_log WHERE tournament_id = :tournament_id",
+        "DELETE FROM sms_template WHERE tournament_id = :tournament_id",
+        "DELETE FROM tournament_sms_settings WHERE tournament_id = :tournament_id",
+        "DELETE FROM sms_phone_list_member WHERE phone_list_id IN (SELECT id FROM sms_phone_list WHERE tournament_id = :tournament_id)",
+        "DELETE FROM sms_phone_list WHERE tournament_id = :tournament_id",
+        "DELETE FROM sms_consent_event WHERE tournament_id = :tournament_id",
+        "DELETE FROM player_note WHERE tournament_id = :tournament_id",
+        "DELETE FROM temporary_player_lookup WHERE tournament_id = :tournament_id",
+        "DELETE FROM team_photo_print WHERE tournament_id = :tournament_id",
+        "DELETE FROM team_photo_capture WHERE tournament_id = :tournament_id",
+        "DELETE FROM team_photo_watermark WHERE tournament_id = :tournament_id",
+        "DELETE FROM team_official_photo WHERE tournament_id = :tournament_id",
+        "DELETE FROM tournament_photo_watermark WHERE tournament_id = :tournament_id",
+        "DELETE FROM tournament_group_photo_print WHERE tournament_id = :tournament_id",
+        "DELETE FROM tournament_group_photo WHERE tournament_id = :tournament_id",
+        "DELETE FROM photographer_tournament_access WHERE tournament_id = :tournament_id",
+        "DELETE FROM team_player WHERE team_id IN (SELECT team.id FROM team JOIN event ON event.id = team.event_id WHERE event.tournament_id = :tournament_id)",
+        "DELETE FROM team_avoid_edge WHERE event_id IN (SELECT id FROM event WHERE tournament_id = :tournament_id)",
+        "DELETE FROM team WHERE event_id IN (SELECT id FROM event WHERE tournament_id = :tournament_id)",
+        "DELETE FROM player WHERE tournament_id = :tournament_id",
+    ):
+        _delete_if_present(session, statement, params)
+
+
 @router.delete("/tournaments/{tournament_id}", status_code=204)
 def delete_tournament(tournament_id: int, session: Session = Depends(get_session)):
     """Delete a tournament and all its related data (events, days, time windows, etc.)"""
@@ -2052,6 +2144,10 @@ def delete_tournament(tournament_id: int, session: Session = Depends(get_session
         # This prevents any relationship handling or tracking
         # Using parameterized queries to prevent SQL injection
         # Order matters: delete child records before parent records
+
+        # Child rows are removed explicitly. SQLite does not enforce these foreign
+        # keys, and it reuses the highest deleted id for the next insert.
+        _purge_tournament_owned_rows(session, tournament_id)
 
         # 0. Delete RW-OS import/planning rows owned by this tournament.
         # These have FKs to tournament.id but are not covered by the later deletes.

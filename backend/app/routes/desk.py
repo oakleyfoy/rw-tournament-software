@@ -1604,10 +1604,19 @@ def _build_checkin_snapshot(
                         if part and part not in slot_name_candidates[idx]:
                             slot_name_candidates[idx].append(part)
                 if fill_partners and team_id:
+                    linked_identities: set[str] = set()
+                    for linked_id in players_by_team.get(team_id, []):
+                        linked_person = player_map.get(linked_id)
+                        if linked_person is None:
+                            continue
+                        for source in (linked_person.full_name, linked_person.display_name):
+                            linked_key = _player_identity_key(source)
+                            if linked_key:
+                                linked_identities.add(linked_key)
                     for idx, candidates in enumerate(slot_name_candidates):
                         label = _clean_registered_person(candidates[0] if candidates else None)
                         identity = _player_identity_key(label)
-                        if not label or not identity:
+                        if not label or not identity or identity in linked_identities:
                             continue
                         matches = players_by_identity.get(identity, [])
                         if matches and matches[0].id is not None:
