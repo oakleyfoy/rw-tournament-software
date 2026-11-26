@@ -113,20 +113,39 @@ def _bump_desk_snapshot() -> None:
         _desk_snapshot_cache.clear()
 
 
+def _ensure_desk_day_run_table(bind) -> None:
+    """Create the dashboard-day table when a deploy started before it existed."""
+    from app.models.desk_day_run import DeskDayRun
+
+    DeskDayRun.__table__.create(bind, checkfirst=True)
+
+
 def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["DashboardDayState"]:
     if version_id is None:
         return []
+    from sqlalchemy.exc import OperationalError
+
     from app.services.dashboard_progression import day_states
 
-    return [
-        DashboardDayState(
-            day_date=run.day_date.isoformat(),
-            started=True,
-            paused=bool(run.paused),
-            started_at=run.started_at.isoformat() if run.started_at else None,
+    try:
+        runs = day_states(session, version_id)
+    except OperationalError:
+        session.rollback()
+        _ensure_desk_day_run_table(session.get_bind())
+        runs = day_states(session, version_id)
+    states: List[DashboardDayState] = []
+    for run in runs:
+        day_value = run.day_date
+        started_at = run.started_at
+        states.append(
+            DashboardDayState(
+                day_date=day_value.isoformat() if hasattr(day_value, "isoformat") else str(day_value),
+                started=True,
+                paused=bool(run.paused),
+                started_at=started_at.isoformat() if hasattr(started_at, "isoformat") else None,
+            )
         )
-        for run in day_states(session, version_id)
-    ]
+    return states
 
 
 def _arrived_team_ids(session: Session, version_id: Optional[int]) -> List[int]:
@@ -1508,7 +1527,7 @@ def _build_checkin_snapshot(
             if not identity:
                 continue
             bucket = players_by_identity.setdefault(identity, [])
-            if person not in bucket:
+            if all(existing.id != person.id for existing in bucket):
                 bucket.append(person)
     roster_repairs: List[int] = []
 
@@ -2583,6 +2602,11 @@ def desk_snapshot(
         if cache_key[2] == _desk_snapshot_gen:
             _desk_snapshot_cache[cache_key] = (time.monotonic(), response)
         return response
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Desk snapshot failed for tournament %s", tournament_id)
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
     finally:
         _desk_snapshot_build_lock.release()
 

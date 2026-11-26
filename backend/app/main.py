@@ -237,6 +237,9 @@ app.include_router(avoid_edges.router, prefix="/api", tags=["avoid-edges"], depe
 @app.on_event("startup")
 def on_startup():
     init_db()  # Use centralized init_db() which imports models and creates tables
+    from app.routes.desk import _ensure_desk_day_run_table
+
+    _ensure_desk_day_run_table(engine)
     ensure_event_columns(engine)
     ensure_tournament_columns(engine)
     ensure_tournament_import_columns(engine)
