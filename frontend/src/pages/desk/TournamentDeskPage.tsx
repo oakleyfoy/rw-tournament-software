@@ -9750,7 +9750,7 @@ export default function TournamentDeskPage() {
   const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
   const [playerNotes, setPlayerNotes] = useState<StaffNote[]>([])
   const [deskTeams, setDeskTeams] = useState<DeskTeamItem[]>([])
-  const [sheetNotes, setSheetNotes] = useState<{ players: { id: number; name: string }[]; teamNotes: { label: string; body: string }[] } | null>(null)
+  const [sheetNotes, setSheetNotes] = useState<{ players: { id: number; name: string; team?: 1 | 2 }[]; teamNotes: { label: string; body: string }[]; teamLabels?: { 1: string; 2: string } } | null>(null)
   const rememberNotes = (rows: Array<{ id: number; player_id: number; player_name?: string; body: string; created_at: string; created_by_name: string | null; updated_at?: string | null; updated_by_name?: string | null }>) => {
     setPlayerNotes(rows.map((row) => ({
       id: row.id,
@@ -12280,7 +12280,7 @@ export default function TournamentDeskPage() {
               }}
               notedPlayerIds={playerNotes.map((note) => note.playerId)}
               teamNotesById={Object.fromEntries(deskTeams.map((team) => [team.team_id, team.notes]))}
-              onOpenNotes={(players, teamNotes) => setSheetNotes({ players, teamNotes })}
+              onOpenNotes={(players, teamNotes, teamLabels) => setSheetNotes({ players, teamNotes, teamLabels })}
             />
           </div>
         )}
@@ -12943,6 +12943,13 @@ export default function TournamentDeskPage() {
           players={sheetNotes.players}
           notes={playerNotes.filter((note) => sheetNotes.players.some((player) => player.id === note.playerId))}
           teamNotes={sheetNotes.teamNotes}
+          teamLabels={sheetNotes.teamLabels}
+          canAdd
+          picker="players"
+          onAdd={async (playerIds, body) => {
+            if (!tid) return
+            rememberNotes(await createPlayerNotes(tid, playerIds, body))
+          }}
           onClose={() => setSheetNotes(null)}
         />
       )}

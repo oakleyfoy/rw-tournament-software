@@ -57,7 +57,7 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
           source_match_a_id: court === 6 ? 1 : null,
           source_match_b_id: null,
           created_at: null,
-          started_at: status === 'IN_PROGRESS' ? '2026-12-04T09:00:00' : null,
+          started_at: status === 'IN_PROGRESS' ? (time === '10:00:00' ? '2026-12-04T10:00:00' : '2026-12-04T09:00:00') : null,
           completed_at: status === 'FINAL' ? '2026-12-04T15:40:00Z' : null,
           winner_display: null,
           slot_id: empty ? null : id,
@@ -79,10 +79,10 @@ export default function CourtSheetPreviewPage() {
   const [matches, setMatches] = useState(sample.matches)
   const [day, setDay] = useState(DAYS[0])
   const [openMatch, setOpenMatch] = useState<DeskMatchItem | null>(null)
-  const [notesOpen, setNotesOpen] = useState(false)
+  const [sheetNotes, setSheetNotes] = useState<{ players: { id: number; name: string; team?: 1 | 2 }[]; teamNotes: { label: string; body: string }[]; teamLabels?: { 1: string; 2: string } } | null>(null)
   const alex = { id: 42421, name: 'Alex Bose' }
   const jennifer = { id: 42422, name: 'Jennifer Myers' }
-  const sampleNotes = [{ id: 1, playerId: alex.id, body: 'Arriving after announcements', createdAt: '2026-11-25T18:00:00Z', createdByName: 'Staff' }]
+  const [sampleNotes, setSampleNotes] = useState([{ id: 1, playerId: alex.id, body: 'Arriving after announcements', createdAt: '2026-11-25T18:00:00Z', createdByName: 'Staff' }])
   const [score, setScore] = useState('8-6')
   const [started, setStarted] = useState(true)
   const [serverNow, setServerNow] = useState(() => new Date().toISOString())
@@ -183,8 +183,8 @@ export default function CourtSheetPreviewPage() {
               ],
             }}
             onSendMatchText={async (players) => players.map((player) => ({ playerId: player.id, status: 'dry_run', error: null }))}
-            notedPlayerIds={[alex.id]}
-            onOpenNotes={() => setNotesOpen(true)}
+            notedPlayerIds={sampleNotes.map((note) => note.playerId)}
+            onOpenNotes={(players, teamNotes, teamLabels) => setSheetNotes({ players, teamNotes, teamLabels })}
           />
         </div>
         {openMatch && (
@@ -193,7 +193,7 @@ export default function CourtSheetPreviewPage() {
             <div style={{ fontSize: 13 }}>{openMatch.team1_display}</div>
             <div style={{ fontSize: 13, marginBottom: 8 }}>{openMatch.team2_display}</div>
             {openMatch.team1_id === 4242 && (
-              <button type="button" onClick={() => setNotesOpen(true)} style={{ marginBottom: 8, border: '1px solid #f9a825', background: '#fff8e1', color: '#e65100', fontWeight: 800 }}>Notes</button>
+              <button type="button" onClick={() => setSheetNotes({ players: [{ ...alex, team: 1 }, { ...jennifer, team: 1 }], teamNotes: [], teamLabels: { 1: 'Alex Bose / Jennifer Myers', 2: 'Team 2' } })} style={{ marginBottom: 8, border: '1px solid #f9a825', background: '#fff8e1', color: '#e65100', fontWeight: 800 }}>Notes</button>
             )}
             <input value={score} onChange={(event) => setScore(event.target.value)} style={{ width: '100%', marginBottom: 8 }} />
             <button
@@ -208,11 +208,21 @@ export default function CourtSheetPreviewPage() {
           </aside>
         )}
       </div>
-      {notesOpen && (
+      {sheetNotes && (
         <PlayerNotesDialog
-          players={[alex, jennifer]}
-          notes={sampleNotes}
-          onClose={() => setNotesOpen(false)}
+          players={sheetNotes.players}
+          notes={sampleNotes.filter((note) => sheetNotes.players.some((player) => player.id === note.playerId))}
+          teamNotes={sheetNotes.teamNotes}
+          teamLabels={sheetNotes.teamLabels}
+          canAdd
+          picker="players"
+          onAdd={async (playerIds, body) => {
+            setSampleNotes((current) => [
+              ...current,
+              ...playerIds.map((playerId, index) => ({ id: Date.now() + index, playerId, body, createdAt: new Date().toISOString(), createdByName: 'Staff' })),
+            ])
+          }}
+          onClose={() => setSheetNotes(null)}
         />
       )}
     </div>

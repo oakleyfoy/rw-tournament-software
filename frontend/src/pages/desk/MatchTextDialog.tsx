@@ -118,8 +118,8 @@ export default function MatchTextDialog({
         <div style={{ fontSize: 12, color: '#607d8b' }}>{message.length} characters · {chosen.length} selected</div>
         {notice && <div style={{ color: notice.startsWith('Test Mode') ? '#b71c1c' : '#c62828', fontSize: 13, fontWeight: 700 }}>{notice}</div>}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button type="button" onClick={onClose} disabled={sending}>Cancel</button>
-          <button type="button" onClick={() => { void send() }} disabled={sending || chosen.length === 0}>{sending ? 'Sending…' : isCopy ? 'Simulate Send' : 'Send Text'}</button>
+          <button type="button" onClick={onClose} disabled={sending} style={actionButton(false, sending)}>Cancel</button>
+          <button type="button" onClick={() => { void send() }} disabled={sending || chosen.length === 0} style={actionButton(true, sending || chosen.length === 0)}>{sending ? 'Sending…' : isCopy ? 'Simulate Send' : 'Send Text'}</button>
         </div>
       </div>
     </div>
@@ -127,3 +127,18 @@ export default function MatchTextDialog({
 }
 
 const chip: CSSProperties = { border: '1px solid #90a4ae', background: '#fff', borderRadius: 999, padding: '3px 8px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }
+
+function actionButton(primary: boolean, busy: boolean): CSSProperties {
+  return {
+    border: primary ? 'none' : '1px solid #cfd8dc',
+    background: primary ? '#111' : '#fff',
+    color: primary ? '#fff' : '#455a64',
+    borderRadius: 999,
+    padding: '8px 14px',
+    fontSize: 12,
+    fontWeight: 800,
+    lineHeight: 1,
+    cursor: busy ? 'default' : 'pointer',
+    opacity: busy ? 0.6 : 1,
+  }
+}

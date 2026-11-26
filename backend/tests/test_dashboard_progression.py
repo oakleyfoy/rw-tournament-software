@@ -17,7 +17,7 @@ from app.models.team import Team
 from app.models.tournament import Tournament
 from app.services.court_assignment_mode import MODE_PREASSIGNED, replace_court_assignment_modes
 from app.models.desk_day_run import DeskDayRun
-from app.services.dashboard_progression import operational_simulated_at, progress_version_day, send_resolved_next_texts, set_paused, set_test_clock, start_day
+from app.services.dashboard_progression import ensure_clock_anchor, operational_simulated_at, progress_version_day, send_resolved_next_texts, set_paused, set_test_clock, start_day
 
 
 def _build(session: Session):
@@ -336,3 +336,31 @@ def test_copy_clock_advances_freezes_independently_and_rejects_backward_time(ses
 
     with pytest.raises(ValueError, match="cannot move backward"):
         set_test_clock(session, tournament, version, date(2026, 12, 4), time(8, 0))
+
+
+def test_a_copy_clock_without_an_anchor_starts_running_without_moving_backward(session: Session):
+    tournament, version, event = _build(session)
+    tournament.name = "Palm Springs 2026 (Copy)"
+    session.add(tournament)
+    match = _place(session, tournament, version, event, 4, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "ANCHOR")
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 11, 26, 16, 0, tzinfo=timezone.utc))
+    run = session.exec(select(DeskDayRun).where(DeskDayRun.schedule_version_id == version.id)).one()
+    opening = run.simulated_at
+    run.clock_anchor_at = None
+    session.add(run)
+    session.flush()
+    assert ensure_clock_anchor(run) is True
+    assert run.simulated_at == opening
+    assert run.clock_anchor_at is not None
+    assert operational_simulated_at(run, run.clock_anchor_at) == opening
+
+    playing = session.get(Match, match.id)
+    assert playing.started_at is not None
+    assert playing.started_at.date() == date(2026, 12, 4)
+    playing.started_at = datetime(2026, 11, 26, 17, 36)
+    session.add(playing)
+    session.flush()
+    preserved = session.get(Match, match.id)
+    assert preserved.started_at == datetime(2026, 11, 26, 17, 36)

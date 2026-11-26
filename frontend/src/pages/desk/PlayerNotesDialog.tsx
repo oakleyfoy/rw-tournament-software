@@ -14,6 +14,7 @@ export type StaffNote = {
 export type NotePlayer = {
   id: number
   name: string
+  team?: 1 | 2
 }
 
 export type TeamLevelNote = {
@@ -32,6 +33,8 @@ export default function PlayerNotesDialog({
   teamNotes = [],
   canAdd = false,
   canManage = false,
+  picker,
+  teamLabels,
   onAdd,
   onEdit,
   onDelete,
@@ -42,6 +45,8 @@ export default function PlayerNotesDialog({
   teamNotes?: TeamLevelNote[]
   canAdd?: boolean
   canManage?: boolean
+  picker?: 'players'
+  teamLabels?: { 1: string; 2: string }
   onAdd?: (playerIds: number[], body: string) => Promise<void>
   onEdit?: (noteId: number, body: string) => Promise<void>
   onDelete?: (noteId: number) => Promise<void>
@@ -49,21 +54,32 @@ export default function PlayerNotesDialog({
 }) {
   const [body, setBody] = useState('')
   const [target, setTarget] = useState<'0' | '1' | 'both'>('0')
+  const [selected, setSelected] = useState<number[]>(() => players.map((player) => player.id))
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingBody, setEditingBody] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const ordered = [...notes].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  const grouped = players.some((player) => player.team != null)
+  const selectTeam = (team: 1 | 2 | 'all' | 'none') => {
+    setSelected(players.filter((player) => team === 'all' || (team !== 'none' && player.team === team)).map((player) => player.id))
+  }
   const saveNew = async () => {
     const text = body.trim()
     if (!text) {
       setNotice('Enter a note.')
       return
     }
-    const ids = target === 'both'
-      ? players.map((player) => player.id)
-      : [players[Number(target)]?.id].filter((id): id is number => id != null)
-    if (!onAdd || ids.length === 0) return
+    const ids = picker === 'players'
+      ? selected.filter((id) => players.some((player) => player.id === id))
+      : target === 'both'
+        ? players.map((player) => player.id)
+        : [players[Number(target)]?.id].filter((id): id is number => id != null)
+    if (ids.length === 0) {
+      setNotice('Select a player.')
+      return
+    }
+    if (!onAdd) return
     setBusy(true)
     setNotice('')
     try {
@@ -110,7 +126,43 @@ export default function PlayerNotesDialog({
     <div role="presentation" onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 16 }}>
       <div role="dialog" aria-label="Player notes" onClick={(event) => event.stopPropagation()} style={{ width: 460, maxWidth: '100%', maxHeight: '80vh', overflow: 'auto', background: '#fff', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontSize: 16, fontWeight: 800 }}>Player notes</div>
-        {players.map((player) => (
+        {picker === 'players' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <button type="button" onClick={() => selectTeam('all')} style={chip}>All 4 Players</button>
+            <button type="button" onClick={() => selectTeam(1)} style={chip}>Team 1</button>
+            <button type="button" onClick={() => selectTeam(2)} style={chip}>Team 2</button>
+            <button type="button" onClick={() => selectTeam('none')} style={chip}>Clear Selection</button>
+          </div>
+        )}
+        {grouped ? ([1, 2] as const).map((team) => {
+          const rows = players.filter((player) => player.team === team)
+          return (
+            <div key={team} style={{ display: 'grid', gap: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#37474f' }}>{teamLabels?.[team] || `Team ${team}`}</div>
+              {rows.length === 0 && <div style={{ fontSize: 12, color: '#90a4ae' }}>No resolved players</div>}
+              {rows.map((player) => (
+                <div key={player.id}>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {picker === 'players' && (
+                      <input
+                        type="checkbox"
+                        aria-label={player.name}
+                        checked={selected.includes(player.id)}
+                        disabled={busy}
+                        onChange={(event) => setSelected((current) => event.target.checked ? [...current, player.id] : current.filter((id) => id !== player.id))}
+                      />
+                    )}
+                    <span style={{ fontWeight: 800 }}>{player.name}</span>
+                  </label>
+                  {ordered.filter((note) => note.playerId === player.id).map((note) => (
+                    <div key={note.id} style={{ fontSize: 13, margin: '4px 0 8px' }}>{note.body}</div>
+                  ))}
+                  {ordered.every((note) => note.playerId !== player.id) && <div style={{ color: '#90a4ae', fontSize: 13, marginBottom: 8 }}>No notes</div>}
+                </div>
+              ))}
+            </div>
+          )
+        }) : players.map((player) => (
           <div key={player.id}>
             <div style={{ fontWeight: 800 }}>{player.name}</div>
             {ordered.filter((note) => note.playerId === player.id).map((note) => (
@@ -148,13 +200,13 @@ export default function PlayerNotesDialog({
         ))}
         {canAdd && (
           <>
-            <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={3} placeholder="Add a note" style={{ width: '100%', boxSizing: 'border-box', fontSize: 14, padding: 8 }} />
-            <div style={{ display: 'flex', gap: 8, fontSize: 13, flexWrap: 'wrap' }}>
+            <textarea aria-label="Note" value={body} onChange={(event) => setBody(event.target.value)} rows={3} placeholder="Add a note" style={{ width: '100%', boxSizing: 'border-box', fontSize: 14, padding: 8 }} />
+            {picker !== 'players' && <div style={{ display: 'flex', gap: 8, fontSize: 13, flexWrap: 'wrap' }}>
               {players.slice(0, 2).map((player, index) => (
                 <label key={player.id}><input type="radio" name="note-target" checked={target === String(index)} onChange={() => setTarget(String(index) as '0' | '1')} /> {player.name.split(' ')[0]}</label>
               ))}
               {players.length > 1 && <label><input type="radio" name="note-target" checked={target === 'both'} onChange={() => setTarget('both')} /> Both players</label>}
-            </div>
+            </div>}
           </>
         )}
         {notice && <div style={{ color: '#c62828', fontSize: 13 }}>{notice}</div>}
@@ -166,6 +218,8 @@ export default function PlayerNotesDialog({
     </div>
   )
 }
+
+const chip: CSSProperties = { border: '1px solid #90a4ae', background: '#fff', borderRadius: 999, padding: '3px 8px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }
 
 function noteButton(kind: 'quiet' | 'danger' | 'secondary' | 'primary', busy: boolean): CSSProperties {
   const base: CSSProperties = {

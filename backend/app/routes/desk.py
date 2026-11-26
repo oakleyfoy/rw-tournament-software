@@ -148,13 +148,18 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
         session.rollback()
         _ensure_desk_day_run_table(session.get_bind())
         runs = day_states(session, version_id)
+    from app.services.dashboard_progression import clock_reading, ensure_clock_anchor
+
+    measured_at = datetime.utcnow()
+    repaired = False
     states: List[DashboardDayState] = []
     for run in runs:
         day_value = run.day_date
         started_at = run.started_at
-        from app.services.dashboard_progression import operational_simulated_at
-
-        simulated = operational_simulated_at(run)
+        if ensure_clock_anchor(run, measured_at):
+            session.add(run)
+            repaired = True
+        simulated, _measured = clock_reading(run, measured_at)
         states.append(
             DashboardDayState(
                 day_date=day_value.isoformat() if hasattr(day_value, "isoformat") else str(day_value),
@@ -163,9 +168,11 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
                 started_at=started_at.isoformat() if hasattr(started_at, "isoformat") else None,
                 simulated_at=simulated.isoformat() if hasattr(simulated, "isoformat") else None,
                 clock_frozen=bool(getattr(run, "clock_frozen", False)),
-                server_now=datetime.utcnow().isoformat() + "Z",
+                server_now=measured_at.isoformat() + "Z",
             )
         )
+    if repaired:
+        session.commit()
     return states
 
 
@@ -2282,7 +2289,7 @@ def _build_match_items(
                 source_match_a_id=m.source_match_a_id,
                 source_match_b_id=m.source_match_b_id,
                 created_at=m.created_at.isoformat() if m.created_at else None,
-                started_at=m.started_at.isoformat() if m.started_at else None,
+                started_at=_started_at_iso(m.started_at, tournament),
                 completed_at=m.completed_at.isoformat() if m.completed_at else None,
                 winner_display=winner_disp,
                 winner_team_id=m.winner_team_id,
@@ -4979,7 +4986,9 @@ def set_match_status(
     if payload.reset_started_at:
         match.started_at = None
     if payload.status == "IN_PROGRESS" and (match.started_at is None or payload.reset_started_at):
-        match.started_at = datetime.utcnow()
+        from app.services.dashboard_progression import activation_time
+
+        match.started_at = activation_time(session, tournament, match)
     if payload.status != "FINAL":
         match.completed_at = None
 
@@ -6900,9 +6909,9 @@ def start_dashboard_day(
 
 
 def _dashboard_day_state(run) -> DashboardDayState:
-    from app.services.dashboard_progression import operational_simulated_at
+    from app.services.dashboard_progression import clock_reading
 
-    simulated = operational_simulated_at(run)
+    simulated, measured_at = clock_reading(run)
     return DashboardDayState(
         day_date=run.day_date.isoformat(),
         started=True,
@@ -6910,7 +6919,7 @@ def _dashboard_day_state(run) -> DashboardDayState:
         started_at=run.started_at.isoformat() if run.started_at else None,
         simulated_at=simulated.isoformat() if hasattr(simulated, "isoformat") else None,
         clock_frozen=bool(getattr(run, "clock_frozen", False)),
-        server_now=datetime.utcnow().isoformat() + "Z",
+        server_now=measured_at.isoformat() + "Z",
     )
 
 

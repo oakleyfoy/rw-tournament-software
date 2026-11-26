@@ -507,6 +507,64 @@ export function autoStartDecision(args: {
   return { start: true, reason: 'Eligible to start' }
 }
 
+export function formatElapsed(minutes: number): string {
+  return `${Math.max(0, Math.floor(minutes))}m`
+}
+
+export function compactScheduledTime(value: string | null | undefined): string {
+  const text = (value || '').trim()
+  if (!text) return ''
+  if (/[AP]M$/i.test(text)) return text
+  const [hourRaw, minuteRaw] = text.split(':')
+  const hour = Number(hourRaw)
+  const minute = Number(minuteRaw || 0)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return text
+  const suffix = hour < 12 ? 'AM' : 'PM'
+  return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
+export function parseTimelineMs(value: string): number {
+  const text = value.trim()
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(text)) return Date.parse(text)
+  return Date.parse(`${text}Z`)
+}
+
+export function simulatedClockMs(simulatedAt: string | null, serverNow: string | null, frozen: boolean, tick: number): number | null {
+  if (!simulatedAt || !serverNow) return null
+  const base = parseTimelineMs(simulatedAt)
+  const server = parseTimelineMs(serverNow)
+  if (!Number.isFinite(base) || !Number.isFinite(server)) return null
+  return frozen ? base : base + (tick - server)
+}
+
+export type ClockHold = { operationalMs: number; at: number; frozen: boolean }
+
+export function settleClock(previous: ClockHold | null, sample: number | null, tick: number, frozen: boolean): ClockHold | null {
+  if (previous && previous.at === tick && previous.frozen === frozen) return previous
+  if (frozen) {
+    if (sample == null) return previous
+    return { operationalMs: sample, at: tick, frozen }
+  }
+  if (sample == null) {
+    if (!previous) return null
+    return { operationalMs: previous.operationalMs + (tick - previous.at), at: tick, frozen }
+  }
+  const projected = previous ? previous.operationalMs + (tick - previous.at) : null
+  if (projected != null && sample + 1500 < projected) {
+    return { operationalMs: projected, at: tick, frozen }
+  }
+  return { operationalMs: sample, at: tick, frozen }
+}
+
+export function elapsedMinutes(startedAt: string | null, nowMs: number, matchDay: string | null, isCopy: boolean): number | null {
+  if (!startedAt) return 0
+  const startedDay = startedAt.slice(0, 10)
+  if (isCopy && matchDay && startedDay !== matchDay) return null
+  const started = parseTimelineMs(startedAt)
+  if (!Number.isFinite(started)) return 0
+  return Math.max(0, Math.floor((nowMs - started) / 60000))
+}
+
 export function earliestUnfinished(matches: DeskMatchItem[]): DeskMatchItem | null {
   const ordered = [...matches].sort((a, b) => (a.sort_time || '').localeCompare(b.sort_time || '') || a.match_id - b.match_id)
   return ordered.find((match) => (match.status || '').toUpperCase() !== 'FINAL') || null

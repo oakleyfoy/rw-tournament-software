@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
-import { activeTimeTint, autoStartDecision, buildDaySchedule, buildLiveCourts, cellTone, courtHeaderTone, courtOpenAt, divisionAbbreviation, drawAbbreviation, earliestUnfinished, listScheduleDays, liveBoardLayout, matchNeedsReassignment, readableSide, scheduleColumnLayout, slotAcceptsMove, summarizeDay } from './courtSheet'
+import { activeTimeTint, autoStartDecision, buildDaySchedule, buildLiveCourts, cellTone, compactScheduledTime, courtHeaderTone, courtOpenAt, divisionAbbreviation, drawAbbreviation, earliestUnfinished, elapsedMinutes, formatElapsed, listScheduleDays, liveBoardLayout, matchNeedsReassignment, readableSide, scheduleColumnLayout, settleClock, simulatedClockMs, slotAcceptsMove, summarizeDay } from './courtSheet'
 
 function match(overrides: Partial<DeskMatchItem> & { match_id: number }): DeskMatchItem {
   return {
@@ -248,5 +248,32 @@ describe('court sheet schedule', () => {
     expect(drawAbbreviation('Mixed A', 'MXA_WF_R1')).toBe('MXA')
     expect(divisionAbbreviation('Division II')).toBe('DII')
     expect(divisionAbbreviation(null)).toBe('')
+  })
+
+  it('shows elapsed time as total minutes on one operational timeline', () => {
+    expect(formatElapsed(0)).toBe('0m')
+    expect(formatElapsed(19)).toBe('19m')
+    expect(formatElapsed(60)).toBe('60m')
+    expect(formatElapsed(84)).toBe('84m')
+    expect(formatElapsed(125)).toBe('125m')
+    expect(compactScheduledTime('09:00')).toBe('9:00 AM')
+    const started = Date.parse('2026-12-04T09:00:00Z')
+    const later = started + 15 * 60000
+    expect(elapsedMinutes('2026-12-04T09:00:00', later, '2026-12-04', true)).toBe(15)
+    expect(elapsedMinutes('2026-11-26T17:36:00', later, '2026-12-04', true)).toBeNull()
+    expect(elapsedMinutes('2026-11-26T17:36:00Z', later, '2026-12-04', false)).toBeGreaterThan(60)
+  })
+
+  it('keeps the simulated clock from snapping backward when a refresh is stale', () => {
+    const tick = Date.parse('2026-11-26T19:00:00Z')
+    const sample = simulatedClockMs('2026-12-04T09:10:00', '2026-11-26T19:00:00Z', false, tick)
+    const held = settleClock(null, sample, tick, false)
+    const stale = simulatedClockMs('2026-12-04T09:00:00', '2026-11-26T19:00:05Z', false, tick + 5000)
+    const next = settleClock(held, stale, tick + 5000, false)
+    expect(next?.operationalMs).toBe((held?.operationalMs || 0) + 5000)
+    const ahead = simulatedClockMs('2026-12-04T09:25:00', '2026-11-26T19:00:06Z', false, tick + 6000)
+    expect(settleClock(next, ahead, tick + 6000, false)?.operationalMs).toBe(ahead)
+    const frozen = simulatedClockMs('2026-12-04T09:25:00', '2026-11-26T19:00:05Z', true, tick + 65000)
+    expect(settleClock(next, frozen, tick + 65000, true)?.operationalMs).toBe(frozen)
   })
 })

@@ -1,18 +1,24 @@
-import { useEffect, useState, type CSSProperties, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
 import MatchTextDialog, { type MatchTextPlayer, type MatchTextResult } from './MatchTextDialog'
 import {
   activeTimeTint,
   autoStartDecision,
+  compactScheduledTime,
   COMPLETED_CARD,
   courtOpenAt,
   divisionAbbreviation,
   drawAbbreviation,
   earliestUnfinished,
+  elapsedMinutes,
   firstNameLines,
+  formatElapsed,
   formatSlotTime,
   readableSide,
   SCHEDULED_CARD,
+  settleClock,
+  simulatedClockMs,
+  type ClockHold,
   type DaySchedule,
   type ScheduleCell,
   type ScheduleCourt,
@@ -45,7 +51,11 @@ type Props = {
   onSendMatchText?: (players: MatchTextPlayer[], message: string) => Promise<MatchTextResult[]>
   notedPlayerIds?: number[]
   teamNotesById?: Record<number, string | null>
-  onOpenNotes?: (players: { id: number; name: string }[], teamNotes: { label: string; body: string }[]) => void
+  onOpenNotes?: (
+    players: { id: number; name: string; team?: 1 | 2 }[],
+    teamNotes: { label: string; body: string }[],
+    teamLabels?: { 1: string; 2: string },
+  ) => void
   dayStarted?: boolean
   dayPaused?: boolean
   arrivedTeamIds?: number[]
@@ -78,31 +88,12 @@ function minutesFromSort(value: string): number | null {
   return hour * 60 + minute
 }
 
-function formatElapsed(minutes: number): string {
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  return rest ? `${hours}h ${rest}m` : `${hours}h`
-}
-
-function absoluteMs(value: string): number {
-  return Date.parse(value.endsWith('Z') || value.includes('+') ? value : `${value}Z`)
-}
-
-function simulatedNowMs(simulatedAt: string | null, serverNow: string | null, frozen: boolean, tick: number): number | null {
-  if (!simulatedAt || !serverNow) return null
-  const base = absoluteMs(simulatedAt)
-  const server = Date.parse(serverNow)
-  if (!Number.isFinite(base) || !Number.isFinite(server)) return null
-  return frozen ? base : base + (tick - server)
-}
-
-function elapsedLabel(startedAt: string | null, tick: number, isCopy: boolean, clockMs: number | null): string {
-  if (!startedAt) return '0m'
-  const started = absoluteMs(startedAt)
-  if (!Number.isFinite(started)) return '0m'
-  const now = isCopy && clockMs != null ? clockMs : tick
-  return formatElapsed(Math.max(0, Math.floor((now - started) / 60000)))
+function elapsedLabel(startedAt: string | null, nowMs: number, isCopy: boolean, matchDay: string | null): { text: string; title: string } {
+  const minutes = elapsedMinutes(startedAt, nowMs, matchDay, isCopy)
+  if (minutes == null) {
+    return { text: '—', title: 'This match was started before the test clock. Duplicate a fresh copy to rehearse it.' }
+  }
+  return { text: formatElapsed(minutes), title: '' }
 }
 
 function clockLabelFromMs(clockMs: number): string {
@@ -111,10 +102,6 @@ function clockLabelFromMs(clockMs: number): string {
   const minute = date.getUTCMinutes()
   const suffix = hour < 12 ? 'AM' : 'PM'
   return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${suffix}`
-}
-
-function participantsFor(match: DeskMatchItem, roster: Record<number, { id: number; name: string }[]>) {
-  return [match.team1_id, match.team2_id].flatMap((teamId) => (teamId == null ? [] : roster[teamId] || []))
 }
 
 function courtMatches(schedule: DaySchedule, courtNumber: number): { court: ScheduleCourt; cells: ScheduleCell[]; covers: SlotCover[] } {
@@ -145,7 +132,10 @@ export default function DesignatedCourtSheet(props: Props) {
   const [noteDraft, setNoteDraft] = useState('')
   const [tick, setTick] = useState(() => Date.now())
   const [textMatch, setTextMatch] = useState<DeskMatchItem | null>(null)
-  const clockMs = isCopy ? simulatedNowMs(simulatedAt, serverNow, clockFrozen, tick) : null
+  const clockState = useRef<ClockHold | null>(null)
+  if (!isCopy) clockState.current = null
+  else clockState.current = settleClock(clockState.current, simulatedClockMs(simulatedAt, serverNow, clockFrozen, tick), tick, clockFrozen)
+  const clockMs = isCopy ? clockState.current?.operationalMs ?? null : null
   const liveMinutes = clockMs != null
     ? new Date(clockMs).getUTCHours() * 60 + new Date(clockMs).getUTCMinutes()
     : nowMinutes
@@ -184,12 +174,21 @@ export default function DesignatedCourtSheet(props: Props) {
   }
 
   const noteState = (match: DeskMatchItem) => {
-    const players = participantsFor(match, rosterByTeam)
+    const fromTeam = (teamId: number | null, team: 1 | 2) => (
+      teamId == null ? [] : (rosterByTeam[teamId] || []).map((player) => ({ id: player.id, name: player.name, team }))
+    )
+    const players = [...fromTeam(match.team1_id, 1), ...fromTeam(match.team2_id, 2)]
     const teamNotes = [match.team1_id, match.team2_id].flatMap((teamId, index) => {
       const body = teamId == null ? '' : (teamNotesById[teamId] || '')
       return body ? [{ label: index === 0 ? 'Team 1 note' : 'Team 2 note', body }] : []
     })
-    return { players, teamNotes, hasNotes: players.some((player) => noted.has(player.id)) || teamNotes.length > 0 }
+    return {
+      players,
+      teamNotes,
+      teamLabels: { 1: match.team1_display || 'Team 1', 2: match.team2_display || 'Team 2' } as { 1: string; 2: string },
+      hasNotes: players.some((player) => noted.has(player.id)) || teamNotes.length > 0,
+      showNotes: (match.status || '').toUpperCase() === 'FINAL' || LIVE.has((match.status || '').toUpperCase()) || players.length > 0,
+    }
   }
 
   const dropOnSlot = (matchId: number, slot: SnapshotSlot, courtClosed: boolean) => {
@@ -347,12 +346,13 @@ export default function DesignatedCourtSheet(props: Props) {
                         matches={matches}
                         compact={compact}
                         hasNotes={noteState(match).hasNotes}
+                        showNotes={noteState(match).showNotes}
                         canText={textPlayers(match).length > 0}
                         onOpen={() => onOpenMatch(match)}
                         onText={() => setTextMatch(match)}
                         onNotes={() => {
                           const notes = noteState(match)
-                          onOpenNotes?.(notes.players, notes.teamNotes)
+                          onOpenNotes?.(notes.players, notes.teamNotes, notes.teamLabels)
                         }}
                         onDragStart={() => { setDragMatchId(match.match_id); hold(true) }}
                         onDragEnd={() => { setDragMatchId(null); hold(false) }}
@@ -424,12 +424,12 @@ function LiveCell({
   nowMinutes: number | null
   liveTeamIds: Set<number>
   matches: DeskMatchItem[]
-  noteFor: (match: DeskMatchItem) => { players: { id: number; name: string }[]; teamNotes: { label: string; body: string }[]; hasNotes: boolean }
+  noteFor: (match: DeskMatchItem) => { players: { id: number; name: string; team?: 1 | 2 }[]; teamNotes: { label: string; body: string }[]; teamLabels: { 1: string; 2: string }; hasNotes: boolean; showNotes: boolean }
   recipientCount: (match: DeskMatchItem) => number
   slotTimes: string[]
   onOpen: (match: DeskMatchItem) => void
   onText: (match: DeskMatchItem) => void
-  onOpenNotes?: (players: { id: number; name: string }[], teamNotes: { label: string; body: string }[]) => void
+  onOpenNotes?: (players: { id: number; name: string; team?: 1 | 2 }[], teamNotes: { label: string; body: string }[], teamLabels?: { 1: string; 2: string }) => void
   onDrop: (matchId: number) => void
   onDragState: (active: boolean) => void
 }) {
@@ -441,12 +441,14 @@ function LiveCell({
     const sideA = readableSide(playing, 'A', matches).label
     const sideB = readableSide(playing, 'B', matches).label
     const tint = activeTimeTint(playing.sort_time, slotTimes)
+    const elapsed = elapsedLabel(playing.started_at, isCopy && clockMs != null ? clockMs : tick, isCopy, playing.day_date)
     return (
       <button type="button" onClick={() => onOpen(playing)} style={{ ...liveCard, background: tint.bg, border: `1px solid ${tint.border}`, color: '#1a1a1a' }}>
         <CardHeading match={playing} compact={compact} />
         <NameLines a={sideA} b={sideB} compact={compact} />
-        <div style={liveMeta}>{playing.scheduled_time || ''} · {elapsedLabel(playing.started_at, tick, isCopy, clockMs)}</div>
-        <CardActions compact={compact} canText={recipientCount(playing) > 0} hasNotes={notes.hasNotes} onText={() => onText(playing)} onNotes={() => onOpenNotes?.(notes.players, notes.teamNotes)} />
+        <div style={liveMeta}>{compactScheduledTime(playing.scheduled_time || playing.sort_time)}</div>
+        <div style={liveMeta} title={elapsed.title}>{elapsed.text}</div>
+        <CardActions compact={compact} canText={recipientCount(playing) > 0} showNotes hasNotes={notes.hasNotes} onText={() => onText(playing)} onNotes={() => onOpenNotes?.(notes.players, notes.teamNotes, notes.teamLabels)} />
       </button>
     )
   }
@@ -458,7 +460,7 @@ function LiveCell({
     const until = untilLabel(availability.untilMinutes)
     return (
       <div style={{ ...liveCard, background: '#37474f', color: '#eceff1' }}>
-        <b>UNAVAILABLE</b>
+        <b style={unavailableLabel}>UNAVAILABLE</b>
         {until && <div style={liveMeta}>Until {until}</div>}
       </div>
     )
@@ -514,23 +516,24 @@ function blockCardAction(event: { stopPropagation: () => void; preventDefault: (
   event.preventDefault()
 }
 
-function CardActions({ compact, canText, hasNotes, onText, onNotes }: { compact: boolean; canText: boolean; hasNotes: boolean; onText: () => void; onNotes: () => void }) {
-  if (!canText && !hasNotes) return null
+function CardActions({ compact, canText, showNotes, hasNotes, onText, onNotes }: { compact: boolean; canText: boolean; showNotes: boolean; hasNotes: boolean; onText: () => void; onNotes: () => void }) {
+  if (!canText && !showNotes) return null
   return (
     <div data-card-action style={{ display: 'flex', gap: 3, marginTop: 2 }}>
       {canText && <span role="button" title="Text players" onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onText() }} style={iconButton(compact)}>T</span>}
-      {hasNotes && <span role="button" title="Player notes exist." onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onNotes() }} style={noteMark}>N</span>}
+      {showNotes && <span role="button" title={hasNotes ? 'Notes' : 'Add a note'} onMouseDown={blockCardAction} onClick={(event) => { blockCardAction(event); onNotes() }} style={noteMark(hasNotes, compact)}>N</span>}
     </div>
   )
 }
 
 function GridCard({
-  match, matches, compact, hasNotes, canText, onOpen, onText, onNotes, onDragStart, onDragEnd,
+  match, matches, compact, hasNotes, showNotes, canText, onOpen, onText, onNotes, onDragStart, onDragEnd,
 }: {
   match: DeskMatchItem
   matches: DeskMatchItem[]
   compact: boolean
   hasNotes: boolean
+  showNotes: boolean
   canText: boolean
   onOpen: () => void
   onText: () => void
@@ -565,7 +568,7 @@ function GridCard({
       <CardHeading match={match} compact={compact} />
       <NameLines a={sideA.label} b={sideB.label} compact={compact} emphasizeA={winnerA} emphasizeB={winnerB} />
       {done && <div style={{ fontSize: compact ? 9 : 11, fontWeight: 800, color: '#1b5e20' }}>✓ {match.score_display || 'Completed'}</div>}
-      <CardActions compact={compact} canText={canText} hasNotes={hasNotes} onText={onText} onNotes={onNotes} />
+      <CardActions compact={compact} canText={canText} showNotes={showNotes} hasNotes={hasNotes} onText={onText} onNotes={onNotes} />
     </button>
   )
 }
@@ -623,10 +626,11 @@ const startedPill: CSSProperties = { background: '#e8f5e9', color: '#1b5e20', bo
 const corner: CSSProperties = { background: '#1a237e', color: '#fff', fontSize: 10, fontWeight: 800, padding: '6px 2px', textAlign: 'center', borderRadius: 4 }
 const timeCell: CSSProperties = { fontSize: 10, fontWeight: 800, color: '#37474f', padding: '4px 2px', textAlign: 'center' }
 const liveCard: CSSProperties = { minHeight: 72, borderRadius: 6, padding: '4px 5px', textAlign: 'left', border: '1px solid rgba(0,0,0,0.08)', minWidth: 0, overflow: 'hidden' }
-const liveMeta: CSSProperties = { fontSize: 9, fontWeight: 700, marginTop: 2 }
+const liveMeta: CSSProperties = { fontSize: 9, fontWeight: 700, marginTop: 1, lineHeight: 1.15 }
+const unavailableLabel: CSSProperties = { display: 'block', fontSize: 8, fontWeight: 800, lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere' }
 const cardButton: CSSProperties = { display: 'block', width: '100%', textAlign: 'left', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 6, padding: '3px 4px', cursor: 'grab', minWidth: 0 }
 const placeholderButton: CSSProperties = { width: '100%', border: 'none', background: 'transparent', color: '#e65100', fontWeight: 800, fontSize: 10, cursor: 'pointer', padding: 4 }
-const noteMark: CSSProperties = { width: 14, height: 14, borderRadius: 3, background: '#f9a825', color: '#fff', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }
+const noteMark = (active: boolean, compact: boolean): CSSProperties => ({ width: compact ? 14 : 16, height: compact ? 14 : 16, borderRadius: 3, background: active ? '#f9a825' : '#eceff1', color: active ? '#fff' : '#546e7a', border: active ? '1px solid #f9a825' : '1px solid #cfd8dc', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' })
 const iconButton = (compact: boolean): CSSProperties => ({ width: compact ? 14 : 16, height: compact ? 14 : 16, borderRadius: 3, background: '#1a237e', color: '#fff', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' })
 
 function headerButton(court: ScheduleCourt): CSSProperties {

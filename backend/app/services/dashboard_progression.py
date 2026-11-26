@@ -202,24 +202,63 @@ def _team_busy(session: Session, version_id: int, team_ids: set[int], ignore_mat
     return False
 
 
+def _naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def operational_simulated_at(run: DeskDayRun, real_now: Optional[datetime] = None) -> Optional[datetime]:
     """The copy's current test time. A frozen clock stays on its anchor."""
     anchor = run.simulated_at
     if anchor is None:
         return None
+    anchor = _naive_utc(anchor)
     if bool(getattr(run, "clock_frozen", False)):
         return anchor
     real_anchor = getattr(run, "clock_anchor_at", None)
     if real_anchor is None:
         return anchor
-    current = real_now or datetime.utcnow()
-    if current.tzinfo is not None:
-        current = current.astimezone(timezone.utc).replace(tzinfo=None)
-    if real_anchor.tzinfo is not None:
-        real_anchor = real_anchor.astimezone(timezone.utc).replace(tzinfo=None)
-    if anchor.tzinfo is not None:
-        anchor = anchor.replace(tzinfo=None)
+    current = _naive_utc(real_now or datetime.utcnow())
+    real_anchor = _naive_utc(real_anchor)
     return anchor + (current - real_anchor)
+
+
+def ensure_clock_anchor(run: DeskDayRun, real_now: Optional[datetime] = None) -> bool:
+    """A running copy clock needs one real anchor.
+
+    Without it the server keeps returning the original simulated time while
+    each refresh carries a new real timestamp, and every open dashboard snaps
+    backward to that original time.
+    """
+    if run.simulated_at is None or bool(getattr(run, "clock_frozen", False)):
+        return False
+    if getattr(run, "clock_anchor_at", None) is not None:
+        return False
+    run.clock_anchor_at = _naive_utc(real_now or datetime.utcnow())
+    return True
+
+
+def clock_reading(run: DeskDayRun, real_now: Optional[datetime] = None) -> tuple[Optional[datetime], datetime]:
+    """Operational simulated time and the real UTC instant it was measured."""
+    current = _naive_utc(real_now or datetime.utcnow())
+    return operational_simulated_at(run, current), current
+
+
+def activation_time(session: Session, tournament: Tournament, match: Match) -> datetime:
+    """Copy activations use the simulated clock. Real tournaments use UTC now."""
+    run = None
+    if match.schedule_version_id and match.id:
+        assignment = session.exec(
+            select(MatchAssignment).where(
+                MatchAssignment.schedule_version_id == match.schedule_version_id,
+                MatchAssignment.match_id == match.id,
+            )
+        ).first()
+        slot = session.get(ScheduleSlot, assignment.slot_id) if assignment and assignment.slot_id else None
+        if slot is not None:
+            run = _day_run(session, match.schedule_version_id, slot.day_date)
+    return _activation_stamp(tournament, run)
 
 
 def _court_open_at(slots: list[ScheduleSlot], court_number: int, now_minutes: int) -> bool:
@@ -254,6 +293,9 @@ def progress_version_day(
     run = _day_run(session, version.id, day)
     if run is None or run.paused:
         return []
+    if ensure_clock_anchor(run):
+        session.add(run)
+        session.flush()
     simulated = operational_simulated_at(run)
     if simulated is not None:
         local_now = tournament_local_now(tournament, _as_aware(tournament, simulated))
@@ -374,6 +416,9 @@ def start_day(
         run.simulated_at = datetime.combine(day, _opening_time(session, version.id, day))
         run.clock_anchor_at = datetime.utcnow()
         run.clock_frozen = False
+        session.add(run)
+        session.flush()
+    if is_tournament_copy(tournament) and ensure_clock_anchor(run):
         session.add(run)
         session.flush()
     progress_version_day(session, tournament, version, day, now=now)
