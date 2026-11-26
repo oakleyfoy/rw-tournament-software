@@ -121,10 +121,17 @@ def _ensure_desk_day_run_table(bind) -> None:
 
     DeskDayRun.__table__.create(bind, checkfirst=True)
     columns = {column["name"] for column in inspect(bind).get_columns("deskdayrun")}
-    if "simulated_at" in columns:
+    missing = {
+        "simulated_at": "DATETIME",
+        "clock_anchor_at": "DATETIME",
+        "clock_frozen": "BOOLEAN DEFAULT 0",
+    }
+    pending = [(name, column_type) for name, column_type in missing.items() if name not in columns]
+    if not pending:
         return
     with bind.begin() as conn:
-        conn.execute(text("ALTER TABLE deskdayrun ADD COLUMN simulated_at DATETIME"))
+        for name, column_type in pending:
+            conn.execute(text(f"ALTER TABLE deskdayrun ADD COLUMN {name} {column_type}"))
 
 
 def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["DashboardDayState"]:
@@ -145,7 +152,9 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
     for run in runs:
         day_value = run.day_date
         started_at = run.started_at
-        simulated = getattr(run, "simulated_at", None)
+        from app.services.dashboard_progression import operational_simulated_at
+
+        simulated = operational_simulated_at(run)
         states.append(
             DashboardDayState(
                 day_date=day_value.isoformat() if hasattr(day_value, "isoformat") else str(day_value),
@@ -153,6 +162,8 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
                 paused=bool(run.paused),
                 started_at=started_at.isoformat() if hasattr(started_at, "isoformat") else None,
                 simulated_at=simulated.isoformat() if hasattr(simulated, "isoformat") else None,
+                clock_frozen=bool(getattr(run, "clock_frozen", False)),
+                server_now=datetime.utcnow().isoformat() + "Z",
             )
         )
     return states
@@ -993,6 +1004,8 @@ class DashboardDayState(BaseModel):
     paused: bool = False
     started_at: Optional[str] = None
     simulated_at: Optional[str] = None
+    clock_frozen: bool = False
+    server_now: Optional[str] = None
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -1144,6 +1157,7 @@ class FinalizeSmsPreviewResponse(BaseModel):
     deduped: int = 0
     redirected: int = 0
     disabled_reason: Optional[str] = None
+    test_only: bool = False
 
 
 class FinalizeSmsSendRequest(BaseModel):
@@ -2304,6 +2318,18 @@ def _select_in_progress_matches(matches: List[DeskMatchItem]) -> List[DeskMatchI
     return in_progress
 
 
+def _started_at_iso(value: Optional[datetime], tournament: Tournament) -> Optional[str]:
+    """Real activations are UTC. Copy activations stay on the simulated clock."""
+    if value is None:
+        return None
+    text = value.isoformat()
+    from app.services.dashboard_progression import is_tournament_copy
+
+    if is_tournament_copy(tournament) or value.tzinfo is not None or text.endswith("Z"):
+        return text
+    return text + "Z"
+
+
 def _match_to_desk_item(
     match: Match,
     session: Session,
@@ -2389,7 +2415,7 @@ def _match_to_desk_item(
         source_match_a_id=match.source_match_a_id,
         source_match_b_id=match.source_match_b_id,
         created_at=match.created_at.isoformat() if match.created_at else None,
-        started_at=match.started_at.isoformat() if match.started_at else None,
+        started_at=_started_at_iso(match.started_at, tournament),
         completed_at=match.completed_at.isoformat() if match.completed_at else None,
         winner_display=winner_disp,
         winner_team_id=match.winner_team_id,
@@ -4406,23 +4432,13 @@ def finalize_match(
 
     sms_preview = None
     try:
-        automation = SmsAutomationEngine(session, tournament, payload.version_id)
-        if payload.send_automation_texts:
-            automation.send_match_finalized_texts(match)
-        elif preassigned_day:
-            from app.services.dashboard_progression import send_resolved_next_texts
+        from app.services.dashboard_progression import is_tournament_copy
 
-            notify_ids = [row["match_id"] for row in raw_updates]
-            current_slot = finalized_slot
-            for team_id in (match.team_a_id, match.team_b_id):
-                if not team_id:
-                    continue
-                pair = automation._next_match_for_team(team_id, match.id, current_slot)
-                if pair and pair[0].id:
-                    notify_ids.append(pair[0].id)
-            send_resolved_next_texts(session, tournament, payload.version_id, notify_ids)
-        elif payload.include_sms_preview:
-            preview_data = automation.preview_match_finalized_texts(match)
+        automation = SmsAutomationEngine(session, tournament, payload.version_id)
+        if payload.send_automation_texts and not is_tournament_copy(tournament):
+            automation.send_match_finalized_texts(match)
+        elif preassigned_day or payload.include_sms_preview:
+            preview_data = automation.preview_match_finalized_texts(match, for_confirmation=True)
             sms_preview = FinalizeSmsPreviewResponse(
                 message_type=str(preview_data.get("message_type") or "post_match_next"),
                 total_messages=int(preview_data.get("total_messages") or 0),
@@ -4437,6 +4453,7 @@ def finalize_match(
                     if preview_data.get("disabled_reason") is not None
                     else None
                 ),
+                test_only=is_tournament_copy(tournament),
                 recipients=[
                     FinalizeSmsPreviewRecipient(
                         team_id=row.get("team_id"),
@@ -4498,6 +4515,19 @@ def send_finalize_match_sms(
         raise HTTPException(status_code=400, detail="Match does not belong to this version")
     if (match.runtime_status or "SCHEDULED").upper() != "FINAL":
         raise HTTPException(status_code=400, detail="Match must be finalized before sending post-match SMS")
+
+    from app.services.dashboard_progression import is_tournament_copy
+
+    if is_tournament_copy(tournament):
+        return FinalizeSmsSendResponse(
+            total=0,
+            sent=0,
+            failed=0,
+            skipped_no_phone=0,
+            skipped_test_mode=0,
+            message_type="post_match_next",
+            results=[],
+        )
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
@@ -5995,6 +6025,8 @@ class DeskTeamItem(BaseModel):
     player1_name: Optional[str] = None
     player2_id: Optional[int] = None
     player2_name: Optional[str] = None
+    player1_sms_consent: Optional[str] = None
+    player2_sms_consent: Optional[str] = None
     is_defaulted: bool = False
     notes: Optional[str] = None
 
@@ -6353,13 +6385,13 @@ def get_desk_teams(
         for link in links_by_team.get(team.id or -1, []):
             player = linked_player_map.get(link.player_id)
             if slot_for_player_on_team(team, player, link.lineup_slot) == slot and player is not None:
-                return player.id, player.full_name
-        return None, None
+                return player.id, player.full_name, player.sms_consent_status
+        return None, None, None
 
     items = []
     for t in sorted(teams, key=lambda t: (event_map.get(t.event_id, ""), display_seed.get(t.id) or 9999, t.id)):
-        player1_id, player1_name = roster_slot(t, 1)
-        player2_id, player2_name = roster_slot(t, 2)
+        player1_id, player1_name, player1_consent = roster_slot(t, 1)
+        player2_id, player2_name, player2_consent = roster_slot(t, 2)
         items.append(
             DeskTeamItem(
                 team_id=t.id,
@@ -6377,6 +6409,8 @@ def get_desk_teams(
                 player1_name=player1_name,
                 player2_id=player2_id,
                 player2_name=player2_name,
+                player1_sms_consent=player1_consent,
+                player2_sms_consent=player2_consent,
                 is_defaulted=t.is_defaulted if t.is_defaulted else False,
                 notes=t.notes,
             )
@@ -6866,13 +6900,17 @@ def start_dashboard_day(
 
 
 def _dashboard_day_state(run) -> DashboardDayState:
-    simulated = getattr(run, "simulated_at", None)
+    from app.services.dashboard_progression import operational_simulated_at
+
+    simulated = operational_simulated_at(run)
     return DashboardDayState(
         day_date=run.day_date.isoformat(),
         started=True,
         paused=bool(run.paused),
         started_at=run.started_at.isoformat() if run.started_at else None,
         simulated_at=simulated.isoformat() if hasattr(simulated, "isoformat") else None,
+        clock_frozen=bool(getattr(run, "clock_frozen", False)),
+        server_now=datetime.utcnow().isoformat() + "Z",
     )
 
 
@@ -6902,6 +6940,8 @@ class DashboardClockRequest(BaseModel):
     version_id: int
     day_date: str
     clock_time: Optional[str] = None
+    advance_minutes: Optional[int] = None
+    frozen: Optional[bool] = None
 
 
 @router.post("/desk/tournaments/{tournament_id}/dashboard/test-clock", response_model=DashboardDayState)
@@ -6927,7 +6967,15 @@ def set_dashboard_test_clock(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="clock_time must be HH:MM") from exc
     try:
-        run = set_test_clock(session, tournament, version, day, clock)
+        run = set_test_clock(
+            session,
+            tournament,
+            version,
+            day,
+            clock,
+            advance_minutes=payload.advance_minutes,
+            frozen=payload.frozen,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.commit()

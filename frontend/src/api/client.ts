@@ -3325,7 +3325,7 @@ export interface DeskSnapshotResponse {
   checkin_court_warnings: CheckInCourtWarning[]
   ready_assigned_queue: ReadyAssignedItem[]
   arrival_matches?: CheckInMatchItem[]
-  dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null; simulated_at?: string | null }[]
+  dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null; simulated_at?: string | null; clock_frozen?: boolean; server_now?: string | null }[]
   arrived_team_ids?: number[]
 }
 
@@ -3440,6 +3440,7 @@ export interface FinalizeSmsPreview {
   deduped: number
   redirected?: number
   disabled_reason: string | null
+  test_only?: boolean
 }
 
 export interface FinalizeSmsSendResult {
@@ -3867,8 +3868,8 @@ export async function startDashboardDay(
 
 export async function setDashboardTestClock(
   tournamentId: number,
-  payload: { version_id: number; day_date: string; clock_time: string | null }
-): Promise<{ day_date: string; started: boolean; paused: boolean; simulated_at?: string | null }> {
+  payload: { version_id: number; day_date: string; clock_time?: string | null; advance_minutes?: number; frozen?: boolean }
+): Promise<{ day_date: string; started: boolean; paused: boolean; simulated_at?: string | null; clock_frozen?: boolean; server_now?: string | null }> {
   return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/dashboard/test-clock`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -4476,6 +4477,8 @@ export interface DeskTeamItem {
   player1_name?: string | null
   player2_id?: number | null
   player2_name?: string | null
+  player1_sms_consent?: string | null
+  player2_sms_consent?: string | null
   is_defaulted: boolean
   notes: string | null
 }

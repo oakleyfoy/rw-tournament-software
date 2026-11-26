@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
-import { autoStartDecision, buildDaySchedule, buildLiveCourts, cellTone, courtHeaderTone, earliestUnfinished, listScheduleDays, liveBoardLayout, matchNeedsReassignment, readableSide, scheduleColumnLayout, slotAcceptsMove, summarizeDay } from './courtSheet'
+import { activeTimeTint, autoStartDecision, buildDaySchedule, buildLiveCourts, cellTone, courtHeaderTone, courtOpenAt, divisionAbbreviation, drawAbbreviation, earliestUnfinished, listScheduleDays, liveBoardLayout, matchNeedsReassignment, readableSide, scheduleColumnLayout, slotAcceptsMove, summarizeDay } from './courtSheet'
 
 function match(overrides: Partial<DeskMatchItem> & { match_id: number }): DeskMatchItem {
   return {
@@ -221,5 +221,32 @@ describe('court sheet schedule', () => {
       scheduledMinutes: 12 * 60, nowMinutes: 11 * 60 + 45,
     } })
     expect(released.start).toBe(true)
+  })
+
+  it('keeps a court unavailable until its covering slot is active', () => {
+    const slots = [
+      { minutes: 9 * 60, active: false },
+      { minutes: 10 * 60, active: false },
+      { minutes: 11 * 60, active: false },
+      { minutes: 12 * 60, active: true },
+    ]
+    expect(courtOpenAt(slots, 9 * 60)).toEqual({ open: false, untilMinutes: 12 * 60 })
+    expect(courtOpenAt(slots, 11 * 60 + 45)).toEqual({ open: false, untilMinutes: 12 * 60 })
+    expect(courtOpenAt(slots, 12 * 60)).toEqual({ open: true, untilMinutes: null })
+  })
+
+  it('gives each scheduled time its own active color', () => {
+    const times = ['09:00', '10:00', '11:00', '12:00']
+    const colors = times.map((time) => activeTimeTint(time, times).bg)
+    expect(new Set(colors).size).toBe(4)
+    expect(activeTimeTint('09:00', times)).toEqual(activeTimeTint('09:00', times))
+    expect(activeTimeTint('10:00', times).bg).not.toBe(activeTimeTint('09:00', times).bg)
+  })
+
+  it('reads the draw from the event name and keeps the division separate from the stage', () => {
+    expect(drawAbbreviation("Women's B", 'WB_WF_R1')).toBe('WB')
+    expect(drawAbbreviation('Mixed A', 'MXA_WF_R1')).toBe('MXA')
+    expect(divisionAbbreviation('Division II')).toBe('DII')
+    expect(divisionAbbreviation(null)).toBe('')
   })
 })

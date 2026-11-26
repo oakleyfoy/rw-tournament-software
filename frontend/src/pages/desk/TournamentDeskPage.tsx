@@ -1460,9 +1460,11 @@ function MatchDrawer({
         resp.skipped_dedupe +
         resp.skipped_test_mode
       setStatusMsg(
-        sentCount > 0 || blockedCount > 0
-          ? `Finalize texts processed: ${sentCount} sent${blockedCount > 0 ? `, ${blockedCount} skipped` : ''}.`
-          : 'No finalize texts were sent.'
+        finalizeSmsPreview.test_only
+          ? 'Test Mode — Texts Off. No messages were transmitted.'
+          : sentCount > 0 || blockedCount > 0
+            ? `Finalize texts processed: ${sentCount} sent${blockedCount > 0 ? `, ${blockedCount} skipped` : ''}.`
+            : 'No finalize texts were sent.'
       )
       setFinalizeSmsPreview(null)
     } catch (e) {
@@ -2320,6 +2322,9 @@ function MatchDrawer({
               <div style={{ fontWeight: 700, fontSize: 16, color: '#2e7d32' }}>
                 Finalize Match SMS Preview
               </div>
+              {finalizeSmsPreview.test_only && (
+                <div style={{ marginTop: 6, fontWeight: 800, color: '#b71c1c' }}>Test Mode — Texts Off</div>
+              )}
               <div style={{ fontSize: 12, color: '#2e7d32', marginTop: 2 }}>
                 Match finalized. Review recipients and message text before sending.
               </div>
@@ -2403,7 +2408,7 @@ function MatchDrawer({
                     cursor: sendingFinalizeSms ? 'default' : 'pointer',
                   }}
                 >
-                  Finalize Without Sending
+                  Do Not Send
                 </button>
                 <button
                   onClick={sendFinalizeTexts}
@@ -2419,7 +2424,7 @@ function MatchDrawer({
                     cursor: sendingFinalizeSms || finalizeSmsPreview.recipients.length === 0 ? 'default' : 'pointer',
                   }}
                 >
-                  {sendingFinalizeSms ? 'Sending...' : 'Send Text And Finalize'}
+                  {sendingFinalizeSms ? 'Sending...' : finalizeSmsPreview.test_only ? 'Simulate Send' : 'Send'}
                 </button>
               </div>
             </div>
@@ -11139,13 +11144,35 @@ export default function TournamentDeskPage() {
   }
 
   const handleTestClock = async (day: string, clock: string | null) => {
-    if (!tid || !data || !isDraft) return
+    if (!tid || !data || !isDraft || !clock) return
     setCourtActionError(null)
     try {
       await setDashboardTestClock(tid, { version_id: data.version_id, day_date: day, clock_time: clock })
       await loadSnapshot(data.version_id)
     } catch (e) {
-      setCourtActionError(e instanceof Error ? e.message : 'Failed to set the test clock')
+      setCourtActionError(e instanceof Error ? e.message : 'The test clock cannot move backward. Duplicate a fresh copy to rehearse an earlier time.')
+    }
+  }
+
+  const handleAdvanceClock = async (day: string, minutes: number) => {
+    if (!tid || !data || !isDraft) return
+    setCourtActionError(null)
+    try {
+      await setDashboardTestClock(tid, { version_id: data.version_id, day_date: day, advance_minutes: minutes })
+      await loadSnapshot(data.version_id)
+    } catch (e) {
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to advance the test clock')
+    }
+  }
+
+  const handleFreezeClock = async (day: string, frozen: boolean) => {
+    if (!tid || !data || !isDraft) return
+    setCourtActionError(null)
+    try {
+      await setDashboardTestClock(tid, { version_id: data.version_id, day_date: day, frozen })
+      await loadSnapshot(data.version_id)
+    } catch (e) {
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to freeze the test clock')
     }
   }
 
@@ -12209,7 +12236,12 @@ export default function TournamentDeskPage() {
               onSetPaused={(paused) => { void handleDashboardDay(selectedScheduleDay, paused ? 'pause' : 'resume') }}
               isCopy={tournamentIsCopy}
               testClock={testClock}
+              simulatedAt={selectedDayRun?.simulated_at || null}
+              serverNow={selectedDayRun?.server_now || null}
+              clockFrozen={Boolean(selectedDayRun?.clock_frozen)}
               onSetTestClock={(clock) => { void handleTestClock(selectedScheduleDay, clock) }}
+              onAdvanceClock={(minutes) => { void handleAdvanceClock(selectedScheduleDay, minutes) }}
+              onFreezeClock={(frozen) => { void handleFreezeClock(selectedScheduleDay, frozen) }}
               courtNotes={Object.fromEntries(Object.values(courtStates).map((state) => [state.court_label, state.note || '']))}
               onMove={(matchId, slotId) => { void handleCourtSheetMove(matchId, slotId) }}
               onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
@@ -12217,9 +12249,35 @@ export default function TournamentDeskPage() {
               onCourtState={(courtLabel, closed, note) => { void handleCourtStateChange(courtLabel, { is_closed: closed, note }) }}
               onInteractionChange={(active) => { courtSheetHold.current = active }}
               rosterByTeam={Object.fromEntries(deskTeams.map((team) => [team.team_id, [
-                team.player1_id ? { id: team.player1_id, name: team.player1_name || 'Player 1' } : null,
-                team.player2_id ? { id: team.player2_id, name: team.player2_name || 'Player 2' } : null,
-              ].filter((player): player is { id: number; name: string } => player != null)]))}
+                team.player1_id ? { id: team.player1_id, name: team.player1_name || 'Player 1', phone: team.player1_cellphone, consent: team.player1_sms_consent, slot: 1 as const } : null,
+                team.player2_id ? { id: team.player2_id, name: team.player2_name || 'Player 2', phone: team.player2_cellphone, consent: team.player2_sms_consent, slot: 2 as const } : null,
+              ].filter((player): player is { id: number; name: string; phone: string | null; consent: string | null | undefined; slot: 1 | 2 } => player != null)]))}
+              onSendMatchText={async (players, message) => {
+                if (tournamentIsCopy) return players.map((player) => ({ playerId: player.id, status: 'dry_run', error: null }))
+                if (!tid) return []
+                const results: Array<{ playerId: number; status: string; error: string | null }> = []
+                const seen = new Set<string>()
+                for (const player of players) {
+                  const phone = (player.phone || '').replace(/\s+/g, '')
+                  if (!phone || player.consent === 'opted_out') {
+                    results.push({ playerId: player.id, status: 'failed', error: player.consent === 'opted_out' ? 'Opted out of texts' : 'No cellphone on file' })
+                    continue
+                  }
+                  if (seen.has(phone)) {
+                    results.push({ playerId: player.id, status: 'shared_number', error: null })
+                    continue
+                  }
+                  seen.add(phone)
+                  try {
+                    const response = await sendSmsPlayer(tid, player.id, { message })
+                    const row = response.results[0]
+                    results.push({ playerId: player.id, status: row?.status || (response.sent > 0 ? 'sent' : 'failed'), error: row?.error || null })
+                  } catch (error) {
+                    results.push({ playerId: player.id, status: 'failed', error: error instanceof Error ? error.message : 'Text failed' })
+                  }
+                }
+                return results
+              }}
               notedPlayerIds={playerNotes.map((note) => note.playerId)}
               teamNotesById={Object.fromEntries(deskTeams.map((team) => [team.team_id, team.notes]))}
               onOpenNotes={(players, teamNotes) => setSheetNotes({ players, teamNotes })}

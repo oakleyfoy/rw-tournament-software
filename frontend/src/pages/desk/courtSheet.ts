@@ -418,6 +418,70 @@ export function releaseClockLabel(sortTime: string): string {
   return `${hour12}:${String(minute).padStart(2, '0')} ${suffix}`
 }
 
+export function drawAbbreviation(eventName: string | null | undefined, matchCode: string | null | undefined): string {
+  const name = (eventName || '').replace(/['’]/g, '')
+  const women = name.match(/\bwomen'?s?\s+([a-z0-9]+)/i)
+  if (women) return `W${women[1].toUpperCase()}`
+  const mixed = name.match(/\bmixed\s+([a-z0-9]+)/i)
+  if (mixed) return `MX${mixed[1].toUpperCase()}`
+  const men = name.match(/\bmen'?s?\s+([a-z0-9]+)/i)
+  if (men) return `M${men[1].toUpperCase()}`
+  const prefix = (matchCode || '').split('_')[0]
+  if (prefix && !['WF', 'RR', 'CONS'].includes(prefix.toUpperCase())) return prefix.toUpperCase()
+  return ''
+}
+
+export function divisionAbbreviation(divisionName: string | null | undefined): string {
+  const roman = (divisionName || '').match(/division\s+([ivx]+|\d+)/i)
+  if (!roman) return ''
+  const mapped: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V' }
+  return `D${mapped[roman[1].toUpperCase()] || roman[1].toUpperCase()}`
+}
+
+export type SlotCover = { minutes: number; active: boolean }
+
+export const ACTIVE_TIME_TINTS = [
+  { bg: '#fff8e1', border: '#f9a825' },
+  { bg: '#f3e5f5', border: '#8e24aa' },
+  { bg: '#fce4ec', border: '#c2185b' },
+  { bg: '#e0f7fa', border: '#00838f' },
+  { bg: '#fff3e0', border: '#ef6c00' },
+  { bg: '#ede7f6', border: '#4527a0' },
+  { bg: '#f9fbe7', border: '#827717' },
+  { bg: '#e1f5fe', border: '#0277bd' },
+] as const
+
+export const COMPLETED_CARD = { bg: '#cfd8dc', border: '#78909c' }
+export const SCHEDULED_CARD = { bg: '#e3f2fd', border: '#90caf9' }
+
+export function activeTimeTint(sortTime: string | null | undefined, times: string[]): { bg: string; border: string } {
+  const key = (sortTime || '').slice(0, 5)
+  const ordered = [...new Set(times.map((time) => time.slice(0, 5)).filter(Boolean))].sort()
+  const found = ordered.indexOf(key)
+  return ACTIVE_TIME_TINTS[(found < 0 ? 0 : found) % ACTIVE_TIME_TINTS.length]
+}
+
+export function courtOpenAt(slots: SlotCover[], nowMinutes: number | null): { open: boolean; untilMinutes: number | null } {
+  const ordered = [...slots].sort((a, b) => a.minutes - b.minutes)
+  if (!ordered.length) return { open: false, untilMinutes: null }
+  if (nowMinutes == null) {
+    const first = ordered[0]
+    if (first.active) return { open: true, untilMinutes: null }
+    const next = ordered.find((slot) => slot.minutes > first.minutes && slot.active)
+    return { open: false, untilMinutes: next ? next.minutes : null }
+  }
+  let cover = ordered[0]
+  for (const slot of ordered) {
+    if (slot.minutes <= nowMinutes) cover = slot
+  }
+  if (nowMinutes < cover.minutes || !cover.active) {
+    const after = nowMinutes < cover.minutes ? nowMinutes : cover.minutes
+    const next = ordered.find((slot) => slot.minutes > after && slot.active)
+    return { open: false, untilMinutes: next ? next.minutes : null }
+  }
+  return { open: true, untilMinutes: null }
+}
+
 export function autoStartDecision(args: {
   dayStarted: boolean
   paused: boolean

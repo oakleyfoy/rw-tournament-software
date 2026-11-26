@@ -1,6 +1,8 @@
 """Dashboard day start and designated-court automatic progression."""
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
+
+import pytest
 
 from sqlmodel import Session, select
 
@@ -15,7 +17,7 @@ from app.models.team import Team
 from app.models.tournament import Tournament
 from app.services.court_assignment_mode import MODE_PREASSIGNED, replace_court_assignment_modes
 from app.models.desk_day_run import DeskDayRun
-from app.services.dashboard_progression import progress_version_day, send_resolved_next_texts, set_test_clock, start_day
+from app.services.dashboard_progression import operational_simulated_at, progress_version_day, send_resolved_next_texts, set_paused, set_test_clock, start_day
 
 
 def _build(session: Session):
@@ -266,3 +268,71 @@ def test_a_copy_uses_a_simulated_opening_clock_and_does_not_text(session: Sessio
     send_resolved_next_texts(session, tournament, version.id, [noon.id])
     session.commit()
     assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []
+    started = session.get(Match, nine.id)
+    assert started.started_at is not None
+    assert started.started_at.date() == date(2026, 12, 4)
+    assert started.started_at.hour == 9
+
+
+def test_an_unavailable_court_holds_its_noon_match_through_the_early_window(session: Session):
+    tournament, version, event = _build(session)
+    for hour in (9, 10, 11):
+        session.add(
+            ScheduleSlot(
+                tournament_id=tournament.id,
+                schedule_version_id=version.id,
+                day_date=date(2026, 12, 4),
+                start_time=time(hour, 0),
+                end_time=time(hour + 1, 0),
+                court_number=10,
+                court_label="10",
+                block_minutes=60,
+                is_active=False,
+            )
+        )
+    noon = _place(session, tournament, version, event, 10, time(12, 0), _pair(session, event, ("Amy", "Holly")), "NOON")
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 17, 45, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, noon.id) == "SCHEDULED"
+
+    progress_version_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 18, 0, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, noon.id) == "IN_PROGRESS"
+
+
+def test_copy_clock_advances_freezes_independently_and_rejects_backward_time(session: Session):
+    tournament, version, event = _build(session)
+    tournament.name = "Palm Springs 2026 (Copy)"
+    session.add(tournament)
+    _place(session, tournament, version, event, 4, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "CLOCK")
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 11, 26, 16, 0, tzinfo=timezone.utc))
+    run = session.exec(select(DeskDayRun).where(DeskDayRun.schedule_version_id == version.id)).one()
+    run.clock_anchor_at = datetime.utcnow() - timedelta(minutes=5)
+    session.add(run)
+    session.flush()
+    advanced = operational_simulated_at(run)
+    assert advanced is not None
+    assert advanced.hour == 9
+    assert advanced.minute >= 4
+
+    set_paused(session, tournament, version, date(2026, 12, 4), True)
+    paused = session.exec(select(DeskDayRun).where(DeskDayRun.schedule_version_id == version.id)).one()
+    assert paused.paused is True
+    assert paused.clock_frozen is False
+    still_moving = operational_simulated_at(paused)
+    assert still_moving is not None
+    assert still_moving >= advanced
+
+    set_test_clock(session, tournament, version, date(2026, 12, 4), frozen=True)
+    frozen = session.exec(select(DeskDayRun).where(DeskDayRun.schedule_version_id == version.id)).one()
+    assert frozen.clock_frozen is True
+    held = operational_simulated_at(frozen)
+    assert held is not None
+    assert held.minute == frozen.simulated_at.minute
+
+    with pytest.raises(ValueError, match="cannot move backward"):
+        set_test_clock(session, tournament, version, date(2026, 12, 4), time(8, 0))

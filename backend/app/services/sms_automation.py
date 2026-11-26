@@ -81,8 +81,12 @@ class SmsAutomationEngine:
         """Run post-final automations for active desk management mode."""
         self.send_match_finalized_texts(match)
 
-    def preview_match_finalized_texts(self, match: Match) -> Dict[str, Any]:
-        plan = self._match_finalized_sms_plan(match, ignore_automation_toggle=True)
+    def preview_match_finalized_texts(self, match: Match, *, for_confirmation: bool = False) -> Dict[str, Any]:
+        plan = self._match_finalized_sms_plan(
+            match,
+            ignore_automation_toggle=True,
+            ignore_texts_enabled=for_confirmation,
+        )
         jobs = list(plan["jobs"])
         recipients: list[dict[str, Any]] = []
         teams_with_next_match = len(jobs)
@@ -108,6 +112,7 @@ class SmsAutomationEngine:
                     message=job["message"],
                     message_type=job["message_type"],
                     dedupe_key=job["dedupe_key"],
+                    for_confirmation=for_confirmation,
                 )
             )
         message_type = str(plan["message_type"])
@@ -842,6 +847,7 @@ class SmsAutomationEngine:
         message: str,
         message_type: str,
         dedupe_key: str,
+        for_confirmation: bool = False,
     ) -> list[dict[str, Any]]:
         from app.routes.sms import (
             _allowlist_set,
@@ -886,16 +892,17 @@ class SmsAutomationEngine:
             )
             if existing:
                 continue
-            if delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST and phone not in allowlist:
+            if not for_confirmation and delivery_mode == SMS_DELIVERY_MODE_ALLOWLIST and phone not in allowlist:
                 continue
-            is_allowed, _consent = _is_phone_send_allowed(
-                session=self.session,
-                tournament_id=self.tournament.id,  # type: ignore[arg-type]
-                phone_e164=phone,
-            )
-            if not is_allowed:
-                continue
-            if delivery_mode == SMS_DELIVERY_MODE_REDIRECT and redirect_phone:
+            if not for_confirmation:
+                is_allowed, _consent = _is_phone_send_allowed(
+                    session=self.session,
+                    tournament_id=self.tournament.id,  # type: ignore[arg-type]
+                    phone_e164=phone,
+                )
+                if not is_allowed:
+                    continue
+            if not for_confirmation and delivery_mode == SMS_DELIVERY_MODE_REDIRECT and redirect_phone:
                 preview_phone = redirect_phone
                 preview_message = _redirect_body(phone, message)
             else:
@@ -917,7 +924,13 @@ class SmsAutomationEngine:
     def _match_finalized_sms_jobs(self, match: Match) -> list[dict[str, Any]]:
         return list(self._match_finalized_sms_plan(match)["jobs"])
 
-    def _match_finalized_sms_plan(self, match: Match, *, ignore_automation_toggle: bool = False) -> Dict[str, Any]:
+    def _match_finalized_sms_plan(
+        self,
+        match: Match,
+        *,
+        ignore_automation_toggle: bool = False,
+        ignore_texts_enabled: bool = False,
+    ) -> Dict[str, Any]:
         if (match.runtime_status or "").upper() != "FINAL":
             return {
                 "message_type": "checkin_post_match_next" if self._is_checkin_management() else "post_match_next",
@@ -927,7 +940,7 @@ class SmsAutomationEngine:
         is_checkin_mode = self._is_checkin_management()
         toggle_name = "auto_checkin_post_match_next" if is_checkin_mode else "auto_post_match_next"
         message_type = "checkin_post_match_next" if is_checkin_mode else "post_match_next"
-        if not self._texts_enabled():
+        if not ignore_texts_enabled and not self._texts_enabled():
             return {
                 "message_type": message_type,
                 "disabled_reason": "texts_disabled",

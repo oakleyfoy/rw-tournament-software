@@ -20,3 +20,5 @@ class DeskDayRun(SQLModel, table=True):
     started_at: datetime = Field(default_factory=datetime.utcnow)
     paused: bool = Field(default=False)
     simulated_at: Optional[datetime] = Field(default=None)
+    clock_anchor_at: Optional[datetime] = Field(default=None)
+    clock_frozen: bool = Field(default=False)

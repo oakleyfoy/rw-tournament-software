@@ -202,6 +202,45 @@ def _team_busy(session: Session, version_id: int, team_ids: set[int], ignore_mat
     return False
 
 
+def operational_simulated_at(run: DeskDayRun, real_now: Optional[datetime] = None) -> Optional[datetime]:
+    """The copy's current test time. A frozen clock stays on its anchor."""
+    anchor = run.simulated_at
+    if anchor is None:
+        return None
+    if bool(getattr(run, "clock_frozen", False)):
+        return anchor
+    real_anchor = getattr(run, "clock_anchor_at", None)
+    if real_anchor is None:
+        return anchor
+    current = real_now or datetime.utcnow()
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
+    if real_anchor.tzinfo is not None:
+        real_anchor = real_anchor.astimezone(timezone.utc).replace(tzinfo=None)
+    if anchor.tzinfo is not None:
+        anchor = anchor.replace(tzinfo=None)
+    return anchor + (current - real_anchor)
+
+
+def _court_open_at(slots: list[ScheduleSlot], court_number: int, now_minutes: int) -> bool:
+    """A court is open only when the slot covering the operational time is active."""
+    court_slots = sorted(
+        (slot for slot in slots if slot.court_number == court_number and slot.start_time is not None),
+        key=lambda slot: slot.start_time or time.min,
+    )
+    if not court_slots or now_minutes < 0:
+        return False
+    cover = court_slots[0]
+    for slot in court_slots:
+        if _minutes(slot.start_time) <= now_minutes:
+            cover = slot
+        else:
+            break
+    if now_minutes < _minutes(cover.start_time):
+        return False
+    return cover.is_active is not False
+
+
 def progress_version_day(
     session: Session,
     tournament: Tournament,
@@ -215,8 +254,9 @@ def progress_version_day(
     run = _day_run(session, version.id, day)
     if run is None or run.paused:
         return []
-    if run.simulated_at is not None:
-        local_now = tournament_local_now(tournament, _as_aware(tournament, run.simulated_at))
+    simulated = operational_simulated_at(run)
+    if simulated is not None:
+        local_now = tournament_local_now(tournament, _as_aware(tournament, simulated))
     else:
         local_now = tournament_local_now(tournament, now)
     if local_now.date() > day:
@@ -227,6 +267,14 @@ def progress_version_day(
         now_minutes = _minutes(local_now.time())
 
     closed = _closed_labels(session, tournament.id or 0)
+    day_slots = list(
+        session.exec(
+            select(ScheduleSlot).where(
+                ScheduleSlot.schedule_version_id == version.id,
+                ScheduleSlot.day_date == day,
+            )
+        ).all()
+    )
     by_court: dict[int, list[tuple[Match, ScheduleSlot]]] = {}
     for match, slot in _assignment_rows(session, version.id, day):
         by_court.setdefault(slot.court_number, []).append((match, slot))
@@ -250,6 +298,8 @@ def progress_version_day(
         if not is_preassigned(event, day):
             continue
         team_ids = {team_id for team_id in (match.team_a_id, match.team_b_id) if team_id}
+        if not _court_open_at(day_slots, court_number, now_minutes):
+            continue
         allowed, _reason = auto_start_decision(
             day_started=True,
             paused=False,
@@ -264,12 +314,19 @@ def progress_version_day(
         )
         if not allowed:
             continue
-        if _activate(session, match, slot):
+        if _activate(session, match, slot, _activation_stamp(tournament, run)):
             started.append(match.id or 0)
     return started
 
 
-def _activate(session: Session, match: Match, slot: ScheduleSlot) -> bool:
+def _activation_stamp(tournament: Tournament, run: Optional[DeskDayRun]) -> datetime:
+    simulated = operational_simulated_at(run) if run is not None else None
+    if simulated is not None and is_tournament_copy(tournament):
+        return simulated
+    return datetime.utcnow()
+
+
+def _activate(session: Session, match: Match, slot: ScheduleSlot, started_at: datetime) -> bool:
     if match.schedule_version_id is None or match.id is None:
         return False
     with court_dispatch_lock(
@@ -286,7 +343,7 @@ def _activate(session: Session, match: Match, slot: ScheduleSlot) -> bool:
             return False
         match.runtime_status = "IN_PROGRESS"
         if match.started_at is None:
-            match.started_at = datetime.utcnow()
+            match.started_at = started_at
         session.add(match)
         session.flush()
     return True
@@ -315,6 +372,8 @@ def start_day(
     real_now = tournament_local_now(tournament, now)
     if run.simulated_at is None and is_tournament_copy(tournament) and real_now.date() != day:
         run.simulated_at = datetime.combine(day, _opening_time(session, version.id, day))
+        run.clock_anchor_at = datetime.utcnow()
+        run.clock_frozen = False
         session.add(run)
         session.flush()
     progress_version_day(session, tournament, version, day, now=now)
@@ -389,8 +448,9 @@ def staff_activate(
             break
     if earlier is not None and not allow_skip_earlier:
         return False, f"Match #{earlier.id} is still assigned earlier on this court"
-    if run.simulated_at is not None:
-        local_now = tournament_local_now(tournament, _as_aware(tournament, run.simulated_at))
+    simulated = operational_simulated_at(run)
+    if simulated is not None:
+        local_now = tournament_local_now(tournament, _as_aware(tournament, simulated))
         now_minutes = _minutes(local_now.time())
     else:
         local_now = tournament_local_now(tournament, now)
@@ -413,7 +473,7 @@ def staff_activate(
     )
     if occupant is not None:
         return False, "That court already has a match playing"
-    if not _activate(session, match, slot):
+    if not _activate(session, match, slot, _activation_stamp(tournament, run)):
         return False, "Could not start the match"
     return True, "started"
 
@@ -423,10 +483,13 @@ def set_test_clock(
     tournament: Tournament,
     version: ScheduleVersion,
     day: date,
-    clock_time: Optional[time],
+    clock_time: Optional[time] = None,
+    *,
+    advance_minutes: Optional[int] = None,
+    frozen: Optional[bool] = None,
     now: Optional[datetime] = None,
 ) -> DeskDayRun:
-    """Move a copy's operational clock. The published tournament dates stay unchanged."""
+    """Move or freeze a copy's operational clock. The published dates stay unchanged."""
     if not is_tournament_copy(tournament):
         raise ValueError("The test clock is only available on a tournament copy")
     if version.id is None:
@@ -434,7 +497,21 @@ def set_test_clock(
     run = _day_run(session, version.id, day)
     if run is None:
         raise ValueError("Day has not been started")
-    run.simulated_at = None if clock_time is None else datetime.combine(day, clock_time)
+    current = operational_simulated_at(run) or datetime.combine(day, _opening_time(session, version.id, day))
+    if advance_minutes is not None:
+        target = current + timedelta(minutes=advance_minutes)
+    elif clock_time is not None:
+        target = datetime.combine(day, clock_time)
+    else:
+        target = current
+    current_minute = current.replace(second=0, microsecond=0)
+    target_minute = target.replace(second=0, microsecond=0)
+    if target_minute < current_minute:
+        raise ValueError("The test clock cannot move backward. Duplicate a fresh copy to rehearse an earlier time.")
+    run.simulated_at = target
+    run.clock_anchor_at = datetime.utcnow()
+    if frozen is not None:
+        run.clock_frozen = frozen
     session.add(run)
     session.flush()
     if not run.paused:
