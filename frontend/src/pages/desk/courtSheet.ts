@@ -426,7 +426,6 @@ export function autoStartDecision(args: {
   status: string
   teamsKnown: boolean
   feedersFinal: boolean
-  playersArrived: boolean
   participantBusy: boolean
   scheduledMinutes: number | null
   nowMinutes: number | null
@@ -438,7 +437,6 @@ export function autoStartDecision(args: {
   if (args.courtClosed) return { start: false, reason: 'Court is closed' }
   if (!args.slotActive) return { start: false, reason: 'Court is unavailable' }
   if (!args.teamsKnown || !args.feedersFinal) return { start: false, reason: 'Awaiting result' }
-  if (!args.playersArrived) return { start: false, reason: 'Waiting for players' }
   if (args.participantBusy) return { start: false, reason: 'Player is on another court' }
   if (args.scheduledMinutes == null || args.nowMinutes == null) return { start: false, reason: 'Scheduled time is missing' }
   if (args.nowMinutes < args.scheduledMinutes - EARLY_START_MINUTES) return { start: false, reason: 'Not yet in the release window' }

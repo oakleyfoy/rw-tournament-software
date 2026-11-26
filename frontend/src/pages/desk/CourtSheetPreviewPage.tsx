@@ -14,7 +14,8 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
   for (const day of DAYS) {
     for (const time of TIMES) {
       for (let court = 1; court <= 24; court += 1) {
-        const inactive = court === 8 && time === '11:00:00'
+        const inactive = (court === 7 && time === '09:00:00') || (court === 8 && time === '11:00:00')
+        const empty = (court === 5 && time !== '11:00:00') || (court === 7 && time === '09:00:00')
         const status = day === DAYS[0] && time === '09:00:00' && court === 3
           ? 'IN_PROGRESS'
           : day === DAYS[0] && time === '09:00:00' && court < 3
@@ -29,7 +30,7 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
           court_label: String(court),
           block_minutes: 60,
           is_active: !inactive,
-          assigned_match_id: id,
+          assigned_match_id: empty ? null : id,
         })
         matches.push({
           match_id: id,
@@ -47,9 +48,9 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
           court_assignment_mode: 'PREASSIGNED',
           status,
           team1_id: court === 4 ? 4242 : status === 'SCHEDULED' && court === 6 ? null : id * 10,
-          team1_display: court === 4 ? 'Alex Bose / Jennifer Myers' : status === 'SCHEDULED' && court === 6 ? 'WINNER:WA_WF_R1_M1' : `Alex ${court}`,
+          team1_display: status === 'IN_PROGRESS' ? 'Carol Smith / Olivia Jones' : court === 4 ? 'Alex Bose / Jennifer Myers' : status === 'SCHEDULED' && court === 6 ? 'WINNER:WA_WF_R1_M1' : `Alex ${court}`,
           team2_id: id * 10 + 1,
-          team2_display: `Blake ${court}`,
+          team2_display: status === 'IN_PROGRESS' ? 'Jennifer Lee / Helen Park' : `Blake ${court}`,
           score_display: status === 'FINAL' ? '8-5' : null,
           source_match_a_id: court === 6 ? 1 : null,
           source_match_b_id: null,
@@ -57,8 +58,8 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
           started_at: status === 'IN_PROGRESS' ? '2026-12-04T15:00:00Z' : null,
           completed_at: status === 'FINAL' ? '2026-12-04T15:40:00Z' : null,
           winner_display: null,
-          slot_id: id,
-          assignment_id: id,
+          slot_id: empty ? null : id,
+          assignment_id: empty ? null : id,
           court_number: court,
           day_date: day,
           is_opening: court !== 6,
@@ -81,7 +82,7 @@ export default function CourtSheetPreviewPage() {
   const jennifer = { id: 42422, name: 'Jennifer Myers' }
   const sampleNotes = [{ id: 1, playerId: alex.id, body: 'Arriving after announcements', createdAt: '2026-11-25T18:00:00Z', createdByName: 'Staff' }]
   const [score, setScore] = useState('8-6')
-  const [started, setStarted] = useState(false)
+  const [started, setStarted] = useState(true)
   const [paused, setPaused] = useState(false)
   const days = listScheduleDays(slots)
   const schedule = buildDaySchedule({ day, slots, matches, closedCourtLabels: ['2'] })
@@ -130,6 +131,8 @@ export default function CourtSheetPreviewPage() {
             onUndo={() => undefined}
             onCourtState={() => undefined}
             dayStarted={started}
+            isCopy
+            testClock="09:20"
             dayPaused={paused}
             arrivedTeamIds={matches.flatMap((match) => [match.team1_id, match.team2_id].filter((id): id is number => id != null))}
             onStartDay={() => setStarted(true)}

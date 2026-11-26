@@ -195,7 +195,6 @@ describe('court sheet schedule', () => {
       status: 'SCHEDULED',
       teamsKnown: false,
       feedersFinal: false,
-      playersArrived: true,
       participantBusy: false,
       scheduledMinutes: 10 * 60 + 30,
       nowMinutes: 10 * 60 + 45,
@@ -210,7 +209,6 @@ describe('court sheet schedule', () => {
       status: 'SCHEDULED',
       teamsKnown: true,
       feedersFinal: true,
-      playersArrived: true,
       participantBusy: false,
       scheduledMinutes: 12 * 60,
       nowMinutes: 10 * 60 + 45,
@@ -219,7 +217,7 @@ describe('court sheet schedule', () => {
     expect(tooEarly.reason).toBe('Not yet in the release window')
     const released = autoStartDecision({ ...{
       dayStarted: true, paused: false, courtClosed: false, slotActive: true, status: 'SCHEDULED',
-      teamsKnown: true, feedersFinal: true, playersArrived: true, participantBusy: false,
+      teamsKnown: true, feedersFinal: true, participantBusy: false,
       scheduledMinutes: 12 * 60, nowMinutes: 11 * 60 + 45,
     } })
     expect(released.start).toBe(true)

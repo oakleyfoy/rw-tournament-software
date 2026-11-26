@@ -3325,7 +3325,7 @@ export interface DeskSnapshotResponse {
   checkin_court_warnings: CheckInCourtWarning[]
   ready_assigned_queue: ReadyAssignedItem[]
   arrival_matches?: CheckInMatchItem[]
-  dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null }[]
+  dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null; simulated_at?: string | null }[]
   arrived_team_ids?: number[]
 }
 
@@ -3860,6 +3860,16 @@ export async function startDashboardDay(
   payload: { version_id: number; day_date: string }
 ): Promise<{ day_date: string; started: boolean; paused: boolean }> {
   return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/dashboard/start-day`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function setDashboardTestClock(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; clock_time: string | null }
+): Promise<{ day_date: string; started: boolean; paused: boolean; simulated_at?: string | null }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/dashboard/test-clock`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })

@@ -48,7 +48,6 @@ def auto_start_decision(
     status: str,
     teams_known: bool,
     feeders_final: bool,
-    players_arrived: bool,
     participant_busy: bool,
     scheduled_minutes: Optional[int],
     now_minutes: Optional[int],
@@ -67,8 +66,6 @@ def auto_start_decision(
         return False, "Court is unavailable"
     if not teams_known or not feeders_final:
         return False, "Awaiting result"
-    if not players_arrived:
-        return False, "Waiting for players"
     if participant_busy:
         return False, "Player is on another court"
     if scheduled_minutes is None or now_minutes is None:
@@ -80,6 +77,11 @@ def auto_start_decision(
 
 def _minutes(value: time) -> int:
     return value.hour * 60 + value.minute
+
+
+def is_tournament_copy(tournament: Tournament) -> bool:
+    """Copies keep the published dates and must not text the original players."""
+    return "(Copy)" in (tournament.name or "")
 
 
 def tournament_local_now(tournament: Tournament, now: Optional[datetime] = None) -> datetime:
@@ -213,7 +215,10 @@ def progress_version_day(
     run = _day_run(session, version.id, day)
     if run is None or run.paused:
         return []
-    local_now = tournament_local_now(tournament, now)
+    if run.simulated_at is not None:
+        local_now = tournament_local_now(tournament, _as_aware(tournament, run.simulated_at))
+    else:
+        local_now = tournament_local_now(tournament, now)
     if local_now.date() > day:
         now_minutes = 24 * 60
     elif local_now.date() < day:
@@ -221,7 +226,6 @@ def progress_version_day(
     else:
         now_minutes = _minutes(local_now.time())
 
-    arrived = set(arrived_team_ids(session, version.id))
     closed = _closed_labels(session, tournament.id or 0)
     by_court: dict[int, list[tuple[Match, ScheduleSlot]]] = {}
     for match, slot in _assignment_rows(session, version.id, day):
@@ -254,7 +258,6 @@ def progress_version_day(
             status=status,
             teams_known=match.team_a_id is not None and match.team_b_id is not None,
             feeders_final=_feeders_final(session, match),
-            players_arrived=bool(team_ids) and team_ids <= arrived,
             participant_busy=_team_busy(session, version.id, team_ids, match.id or 0),
             scheduled_minutes=_minutes(slot.start_time) if slot.start_time else None,
             now_minutes=now_minutes,
@@ -307,6 +310,11 @@ def start_day(
             started_at=datetime.utcnow(),
             paused=False,
         )
+        session.add(run)
+        session.flush()
+    real_now = tournament_local_now(tournament, now)
+    if run.simulated_at is None and is_tournament_copy(tournament) and real_now.date() != day:
+        run.simulated_at = datetime.combine(day, _opening_time(session, version.id, day))
         session.add(run)
         session.flush()
     progress_version_day(session, tournament, version, day, now=now)
@@ -381,9 +389,18 @@ def staff_activate(
             break
     if earlier is not None and not allow_skip_earlier:
         return False, f"Match #{earlier.id} is still assigned earlier on this court"
-    local_now = tournament_local_now(tournament, now)
+    if run.simulated_at is not None:
+        local_now = tournament_local_now(tournament, _as_aware(tournament, run.simulated_at))
+        now_minutes = _minutes(local_now.time())
+    else:
+        local_now = tournament_local_now(tournament, now)
+        if local_now.date() < slot.day_date:
+            now_minutes = -1
+        elif local_now.date() > slot.day_date:
+            now_minutes = 24 * 60
+        else:
+            now_minutes = _minutes(local_now.time())
     scheduled = _minutes(slot.start_time) if slot.start_time else None
-    now_minutes = _minutes(local_now.time())
     if scheduled is not None and now_minutes < scheduled - EARLY_MINUTES and not allow_early:
         return False, "This match is before its 15-minute release window"
     occupant = next(
@@ -401,8 +418,54 @@ def staff_activate(
     return True, "started"
 
 
+def set_test_clock(
+    session: Session,
+    tournament: Tournament,
+    version: ScheduleVersion,
+    day: date,
+    clock_time: Optional[time],
+    now: Optional[datetime] = None,
+) -> DeskDayRun:
+    """Move a copy's operational clock. The published tournament dates stay unchanged."""
+    if not is_tournament_copy(tournament):
+        raise ValueError("The test clock is only available on a tournament copy")
+    if version.id is None:
+        raise ValueError("Schedule version is missing")
+    run = _day_run(session, version.id, day)
+    if run is None:
+        raise ValueError("Day has not been started")
+    run.simulated_at = None if clock_time is None else datetime.combine(day, clock_time)
+    session.add(run)
+    session.flush()
+    if not run.paused:
+        progress_version_day(session, tournament, version, day, now=now)
+    return run
+
+
+def _opening_time(session: Session, version_id: int, day: date) -> time:
+    starts = [
+        slot.start_time
+        for _match, slot in _assignment_rows(session, version_id, day)
+        if slot.is_active is not False and slot.start_time is not None
+    ]
+    return min(starts) if starts else time(9, 0)
+
+
+def _as_aware(tournament: Tournament, value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        return value
+    zone_name = tournament.timezone or "UTC"
+    try:
+        zone = ZoneInfo(zone_name)
+    except Exception:
+        zone = ZoneInfo("UTC")
+    return value.replace(tzinfo=zone)
+
+
 def send_resolved_next_texts(session: Session, tournament: Tournament, version_id: int, match_ids: list[int]) -> None:
     """Send one next-match text per team once the next match has both teams, a time, and a court."""
+    if is_tournament_copy(tournament):
+        return
     from app.services.sms_automation import SmsAutomationEngine
 
     engine = SmsAutomationEngine(session, tournament, version_id)

@@ -14,7 +14,8 @@ from app.models.sms_log import SmsLog
 from app.models.team import Team
 from app.models.tournament import Tournament
 from app.services.court_assignment_mode import MODE_PREASSIGNED, replace_court_assignment_modes
-from app.services.dashboard_progression import progress_version_day, start_day
+from app.models.desk_day_run import DeskDayRun
+from app.services.dashboard_progression import progress_version_day, send_resolved_next_texts, set_test_clock, start_day
 
 
 def _build(session: Session):
@@ -55,7 +56,7 @@ def _pair(session: Session, event: Event, names: tuple[str, str]) -> tuple[Team,
     return teams[0], teams[1]
 
 
-def _place(session, tournament, version, event, court, start, teams, code):
+def _place(session, tournament, version, event, court, start, teams, code, checked=True):
     slot = ScheduleSlot(
         tournament_id=tournament.id,
         schedule_version_id=version.id,
@@ -88,17 +89,18 @@ def _place(session, tournament, version, event, court, start, teams, code):
     session.add(match)
     session.flush()
     session.add(MatchAssignment(schedule_version_id=version.id, match_id=match.id, slot_id=slot.id, assigned_by="MANUAL"))
-    for side, team in (("A", teams[0]), ("B", teams[1])):
-        session.add(
-            MatchCheckIn(
-                tournament_id=tournament.id,
-                schedule_version_id=version.id,
-                match_id=match.id,
-                team_id=team.id,
-                side=side,
-                team_checked_in=True,
+    if checked:
+        for side, team in (("A", teams[0]), ("B", teams[1])):
+            session.add(
+                MatchCheckIn(
+                    tournament_id=tournament.id,
+                    schedule_version_id=version.id,
+                    match_id=match.id,
+                    team_id=team.id,
+                    side=side,
+                    team_checked_in=True,
+                )
             )
-        )
     session.flush()
     return match
 
@@ -204,3 +206,63 @@ def test_saturday_does_not_start_when_friday_starts(session: Session):
     session.commit()
     assert _status(session, friday.id) == "IN_PROGRESS"
     assert _status(session, saturday.id) == "SCHEDULED"
+
+
+def test_opening_matches_start_with_zero_check_ins(session: Session):
+    tournament, version, event = _build(session)
+    nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "OPEN", checked=False)
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 15, 5, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, nine.id) == "IN_PROGRESS"
+    assert session.exec(select(MatchCheckIn).where(MatchCheckIn.schedule_version_id == version.id)).all() == []
+
+
+def test_a_future_calendar_date_does_not_start_a_published_tournament(session: Session):
+    tournament, version, event = _build(session)
+    nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "FUTURE", checked=False)
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 11, 26, 15, 5, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, nine.id) == "SCHEDULED"
+    run = session.exec(select(DeskDayRun).where(DeskDayRun.schedule_version_id == version.id)).one()
+    assert run.simulated_at is None
+
+
+def test_a_copy_uses_a_simulated_opening_clock_and_does_not_text(session: Session):
+    tournament, version, event = _build(session)
+    tournament.name = "Palm Springs 2026 (Copy)"
+    session.add(tournament)
+    nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "COPY9", checked=False)
+    noon = _place(session, tournament, version, event, 2, time(12, 0), _pair(session, event, ("Amy", "Holly")), "COPY12", checked=False)
+    blocked = _place(session, tournament, version, event, 7, time(9, 0), _pair(session, event, ("Deana", "Katherine")), "COPY7", checked=False)
+    blocked_slot = session.exec(
+        select(ScheduleSlot).where(ScheduleSlot.schedule_version_id == version.id, ScheduleSlot.court_number == 7)
+    ).one()
+    blocked_slot.is_active = False
+    session.add(blocked_slot)
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 11, 26, 16, 0, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, nine.id) == "IN_PROGRESS"
+    assert _status(session, noon.id) == "SCHEDULED"
+    assert _status(session, blocked.id) == "SCHEDULED"
+    run = session.exec(select(DeskDayRun).where(DeskDayRun.schedule_version_id == version.id)).one()
+    assert run.simulated_at is not None
+    assert run.simulated_at.hour == 9
+
+    nine.runtime_status = "FINAL"
+    session.add(nine)
+    set_test_clock(session, tournament, version, date(2026, 12, 4), time(10, 45))
+    session.commit()
+    assert _status(session, noon.id) == "SCHEDULED"
+
+    set_test_clock(session, tournament, version, date(2026, 12, 4), time(11, 45))
+    session.commit()
+    assert _status(session, noon.id) == "IN_PROGRESS"
+    send_resolved_next_texts(session, tournament, version.id, [noon.id])
+    session.commit()
+    assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []

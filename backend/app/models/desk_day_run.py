@@ -19,3 +19,4 @@ class DeskDayRun(SQLModel, table=True):
     day_date: date = Field(index=True)
     started_at: datetime = Field(default_factory=datetime.utcnow)
     paused: bool = Field(default=False)
+    simulated_at: Optional[datetime] = Field(default=None)

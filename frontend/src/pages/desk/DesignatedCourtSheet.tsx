@@ -6,7 +6,6 @@ import {
   firstNameLines,
   formatSlotTime,
   readableSide,
-  releaseClockLabel,
   type DaySchedule,
   type ScheduleCell,
   type ScheduleCourt,
@@ -44,6 +43,9 @@ type Props = {
   onStartDay?: () => void
   onSetPaused?: (paused: boolean) => void
   courtNotes?: Record<string, string>
+  isCopy?: boolean
+  testClock?: string | null
+  onSetTestClock?: (time: string | null) => void
 }
 
 const LIVE = new Set(['IN_PROGRESS', 'PAUSED'])
@@ -89,17 +91,17 @@ function courtMatches(schedule: DaySchedule, courtNumber: number): { court: Sche
 
 export default function DesignatedCourtSheet(props: Props) {
   const {
-    schedule, days, selectedDay, onSelectDay, matches, nowMinutes, isToday, clockLabel, syncedLabel,
+    schedule, days, selectedDay, onSelectDay, matches, nowMinutes, clockLabel, syncedLabel,
     isDraft, canUndo, onOpenMatch, onMove, onSwap, onUndo, onCourtState, onInteractionChange,
     rosterByTeam = {}, notedPlayerIds = [], teamNotesById = {}, onOpenNotes,
-    dayStarted = false, dayPaused = false, arrivedTeamIds = [], onStartDay, onSetPaused, courtNotes = {},
+    dayStarted = false, dayPaused = false, onStartDay, onSetPaused, courtNotes = {},
+    isCopy = false, testClock = null, onSetTestClock,
   } = props
   const [dragMatchId, setDragMatchId] = useState<number | null>(null)
   const [courtPanel, setCourtPanel] = useState<number | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [tick, setTick] = useState(() => Date.now())
   const noted = new Set(notedPlayerIds)
-  const arrived = new Set(arrivedTeamIds)
   const courtCount = Math.max(schedule.courts.length, 1)
   const compact = courtCount >= 16
   const columns = `64px repeat(${courtCount}, minmax(0, 1fr))`
@@ -187,6 +189,18 @@ export default function DesignatedCourtSheet(props: Props) {
             {dayPaused ? 'Resume' : 'Pause'}
           </button>
         )}
+        {isCopy && dayStarted && (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 800, color: '#37474f' }}>
+            Test clock
+            <input
+              type="time"
+              value={testClock || ''}
+              onChange={(event) => onSetTestClock?.(event.target.value || null)}
+              style={{ fontSize: 12 }}
+            />
+            <span style={{ fontWeight: 700, color: '#b71c1c' }}>Texts off</span>
+          </label>
+        )}
         <button type="button" disabled={!canUndo || !isDraft} onClick={onUndo} style={chip(false)}>Undo Move</button>
         <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: '#37474f' }}>{clockLabel} · {syncedLabel}</span>
       </div>
@@ -211,8 +225,7 @@ export default function DesignatedCourtSheet(props: Props) {
                 tick={tick}
                 dayStarted={dayStarted}
                 dayPaused={dayPaused}
-                nowMinutes={isToday ? nowMinutes : null}
-                arrived={arrived}
+                nowMinutes={nowMinutes}
                 liveTeamIds={liveTeamIds}
                 matches={matches}
                 noteFor={noteState}
@@ -265,10 +278,12 @@ export default function DesignatedCourtSheet(props: Props) {
                         onDragStart={() => { setDragMatchId(match.match_id); hold(true) }}
                         onDragEnd={() => { setDragMatchId(null); hold(false) }}
                       />
-                    ) : cell && cell.slot.is_active === false ? (
+                    ) : !cell || cell.slot.is_active === false ? (
                       <span style={{ fontSize: 10, fontWeight: 800, color: '#eceff1' }}>Unavailable</span>
+                    ) : court.closed ? (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#b71c1c' }}>Closed</span>
                     ) : (
-                      <span style={{ fontSize: 10, fontWeight: 800, color: '#90a4ae' }}>{court.closed ? 'Closed' : 'Open'}</span>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#1b5e20' }}>Open</span>
                     )}
                   </div>
                 )
@@ -296,8 +311,26 @@ export default function DesignatedCourtSheet(props: Props) {
   )
 }
 
+function slotCovering(cells: ScheduleCell[], nowMinutes: number | null): ScheduleCell | null {
+  const ordered = [...cells].sort((a, b) => (minutesFromSort(a.slot.start_time || '') ?? 0) - (minutesFromSort(b.slot.start_time || '') ?? 0))
+  if (!ordered.length) return null
+  if (nowMinutes == null) return ordered[0]
+  let current = ordered[0]
+  for (const cell of ordered) {
+    if ((minutesFromSort(cell.slot.start_time || '') ?? 0) <= nowMinutes) current = cell
+  }
+  return current
+}
+
+function nextActiveLabel(cells: ScheduleCell[], afterMinutes: number): string {
+  const next = [...cells]
+    .filter((cell) => cell.slot.is_active !== false && (minutesFromSort(cell.slot.start_time || '') ?? 0) > afterMinutes)
+    .sort((a, b) => (minutesFromSort(a.slot.start_time || '') ?? 0) - (minutesFromSort(b.slot.start_time || '') ?? 0))[0]
+  return next ? formatSlotTime(next.slot.start_time) : ''
+}
+
 function LiveCell({
-  court, cells, compact, tick, dayStarted, dayPaused, nowMinutes, arrived, liveTeamIds, matches, noteFor, onOpen, onOpenNotes, onDrop, onDragState,
+  court, cells, compact, tick, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, onOpen, onOpenNotes, onDrop, onDragState,
 }: {
   court: ScheduleCourt
   cells: ScheduleCell[]
@@ -306,7 +339,6 @@ function LiveCell({
   dayStarted: boolean
   dayPaused: boolean
   nowMinutes: number | null
-  arrived: Set<number>
   liveTeamIds: Set<number>
   matches: DeskMatchItem[]
   noteFor: (match: DeskMatchItem) => { players: { id: number; name: string }[]; teamNotes: { label: string; body: string }[]; hasNotes: boolean }
@@ -339,10 +371,17 @@ function LiveCell({
     )
   }
   if (court.closed) {
-    return <div style={{ ...liveCard, background: '#ffcdd2', color: '#b71c1c' }}><b>Closed</b></div>
+    return <div style={{ ...liveCard, background: '#ffcdd2', color: '#b71c1c' }}><b>CLOSED</b></div>
   }
-  if (court.unavailable) {
-    return <div style={{ ...liveCard, background: '#37474f', color: '#eceff1' }}><b>Unavailable</b></div>
+  const focus = slotCovering(cells, nowMinutes)
+  if (!focus || focus.slot.is_active === false) {
+    const until = nextActiveLabel(cells, focus ? minutesFromSort(focus.slot.start_time || '') ?? -1 : -1)
+    return (
+      <div style={{ ...liveCard, background: '#37474f', color: '#eceff1' }}>
+        <b>UNAVAILABLE</b>
+        {until && <div style={liveMeta}>Until {until}</div>}
+      </div>
+    )
   }
   const onDragOver = (event: DragEvent) => event.preventDefault()
   const onDropEvent = (event: DragEvent) => {
@@ -352,29 +391,28 @@ function LiveCell({
     onDragState(false)
   }
   if (!earliest) {
-    return <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20' }}><b>Open</b></div>
+    return <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20' }}><b>OPEN</b></div>
   }
+  const earliestCell = cells.find((cell) => cell.match?.match_id === earliest.match_id)
   const decision = autoStartDecision({
     dayStarted,
     paused: dayPaused,
     courtClosed: false,
-    slotActive: true,
+    slotActive: earliestCell?.slot.is_active !== false,
     status: earliest.status,
     teamsKnown: Boolean(earliest.team1_id && earliest.team2_id),
     feedersFinal: !earliest.source_match_a_id && !earliest.source_match_b_id || matches.filter((match) => match.match_id === earliest.source_match_a_id || match.match_id === earliest.source_match_b_id).every((match) => (match.status || '').toUpperCase() === 'FINAL'),
-    playersArrived: Boolean(earliest.team1_id && earliest.team2_id && arrived.has(earliest.team1_id) && arrived.has(earliest.team2_id)),
     participantBusy: Boolean((earliest.team1_id && liveTeamIds.has(earliest.team1_id)) || (earliest.team2_id && liveTeamIds.has(earliest.team2_id))),
     scheduledMinutes: minutesFromSort(earliest.sort_time || ''),
     nowMinutes,
   })
-  const waiting = decision.reason === 'Awaiting result' || decision.reason === 'Waiting for players' || decision.reason === 'Player is on another court'
-  const release = releaseClockLabel(earliest.sort_time || '')
+  const waiting = decision.reason === 'Awaiting result' || decision.reason === 'Player is on another court'
+  const nextLabel = earliest.scheduled_time || formatSlotTime(earliest.sort_time || '')
   return (
     <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: waiting ? '#fff59d' : '#e8f5e9', color: waiting ? '#e65100' : '#1b5e20' }}>
-      <b>{waiting ? 'Waiting' : 'Open'}</b>
-      <div style={liveMeta}>Next {earliest.scheduled_time || formatSlotTime(earliest.sort_time || '')}</div>
-      {decision.reason === 'Not yet in the release window' && <div style={liveMeta}>Release {release}</div>}
-      {waiting && <div style={liveMeta}>{decision.reason}</div>}
+      <b>{waiting ? 'WAITING' : 'OPEN'}</b>
+      {!waiting && <div style={liveMeta}>Next: {nextLabel}</div>}
+      {waiting && <div style={liveMeta}>{decision.reason === 'Awaiting result' ? 'Awaiting result' : 'Player is on another court'}</div>}
     </div>
   )
 }
@@ -423,9 +461,14 @@ function NameLines({ a, b, compact, emphasizeA = false, emphasizeB = false }: { 
   ]
   return (
     <div style={{ fontSize: compact ? 9 : 11, lineHeight: 1.15 }}>
-      {groups.flatMap((group) => group.lines.map((line, index) => (
-        <div key={`${line}-${index}-${group.emphasize}`} style={{ fontWeight: group.emphasize ? 900 : 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
-      )))}
+      {groups.map((group, groupIndex) => (
+        <div key={groupIndex}>
+          {groupIndex > 0 && <div style={{ borderTop: '1px solid rgba(0,0,0,0.28)', margin: '2px 0' }} />}
+          {group.lines.map((line, index) => (
+            <div key={`${line}-${index}`} style={{ fontWeight: group.emphasize ? 900 : 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }
@@ -478,7 +521,7 @@ function headerButton(court: ScheduleCourt): CSSProperties {
 
 function gridCellStyle(cell: ScheduleCell | null, court: ScheduleCourt, playing: boolean): CSSProperties {
   let background = '#e8f5e9'
-  if (!cell || cell.slot.is_active === false || court.unavailable) background = '#37474f'
+  if (!cell || cell.slot.is_active === false) background = '#37474f'
   else if (court.closed) background = '#ffcdd2'
   else if (playing) background = '#ffe0b2'
   else if (cell.match && (cell.match.status || '').toUpperCase() === 'FINAL') background = '#eceff1'

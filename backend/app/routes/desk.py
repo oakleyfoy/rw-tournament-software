@@ -115,9 +115,16 @@ def _bump_desk_snapshot() -> None:
 
 def _ensure_desk_day_run_table(bind) -> None:
     """Create the dashboard-day table when a deploy started before it existed."""
+    from sqlalchemy import inspect, text
+
     from app.models.desk_day_run import DeskDayRun
 
     DeskDayRun.__table__.create(bind, checkfirst=True)
+    columns = {column["name"] for column in inspect(bind).get_columns("deskdayrun")}
+    if "simulated_at" in columns:
+        return
+    with bind.begin() as conn:
+        conn.execute(text("ALTER TABLE deskdayrun ADD COLUMN simulated_at DATETIME"))
 
 
 def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["DashboardDayState"]:
@@ -127,6 +134,7 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
 
     from app.services.dashboard_progression import day_states
 
+    _ensure_desk_day_run_table(session.get_bind())
     try:
         runs = day_states(session, version_id)
     except OperationalError:
@@ -137,12 +145,14 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
     for run in runs:
         day_value = run.day_date
         started_at = run.started_at
+        simulated = getattr(run, "simulated_at", None)
         states.append(
             DashboardDayState(
                 day_date=day_value.isoformat() if hasattr(day_value, "isoformat") else str(day_value),
                 started=True,
                 paused=bool(run.paused),
                 started_at=started_at.isoformat() if hasattr(started_at, "isoformat") else None,
+                simulated_at=simulated.isoformat() if hasattr(simulated, "isoformat") else None,
             )
         )
     return states
@@ -982,6 +992,7 @@ class DashboardDayState(BaseModel):
     started: bool = True
     paused: bool = False
     started_at: Optional[str] = None
+    simulated_at: Optional[str] = None
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -6834,6 +6845,7 @@ def start_dashboard_day(
     from app.services.dashboard_progression import start_day
 
     tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    _ensure_desk_day_run_table(session.get_bind())
     try:
         day = date.fromisoformat(payload.day_date)
     except ValueError as exc:
@@ -6841,11 +6853,17 @@ def start_dashboard_day(
     run = start_day(session, tournament, version, day)
     session.commit()
     _bump_desk_snapshot()
+    return _dashboard_day_state(run)
+
+
+def _dashboard_day_state(run) -> DashboardDayState:
+    simulated = getattr(run, "simulated_at", None)
     return DashboardDayState(
         day_date=run.day_date.isoformat(),
         started=True,
         paused=bool(run.paused),
         started_at=run.started_at.isoformat() if run.started_at else None,
+        simulated_at=simulated.isoformat() if hasattr(simulated, "isoformat") else None,
     )
 
 
@@ -6868,12 +6886,44 @@ def pause_dashboard_day(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session.commit()
     _bump_desk_snapshot()
-    return DashboardDayState(
-        day_date=run.day_date.isoformat(),
-        started=True,
-        paused=bool(run.paused),
-        started_at=run.started_at.isoformat() if run.started_at else None,
-    )
+    return _dashboard_day_state(run)
+
+
+class DashboardClockRequest(BaseModel):
+    version_id: int
+    day_date: str
+    clock_time: Optional[str] = None
+
+
+@router.post("/desk/tournaments/{tournament_id}/dashboard/test-clock", response_model=DashboardDayState)
+def set_dashboard_test_clock(
+    tournament_id: int,
+    payload: DashboardClockRequest,
+    session: Session = Depends(get_session),
+):
+    from datetime import time as time_of_day
+
+    from app.services.dashboard_progression import set_test_clock
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+    clock = None
+    if payload.clock_time:
+        try:
+            hour, minute = payload.clock_time.split(":")[:2]
+            clock = time_of_day(int(hour), int(minute))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="clock_time must be HH:MM") from exc
+    try:
+        run = set_test_clock(session, tournament, version, day, clock)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session.commit()
+    _bump_desk_snapshot()
+    return _dashboard_day_state(run)
 
 
 @router.post("/desk/tournaments/{tournament_id}/matches/{match_id}/dashboard/activate")

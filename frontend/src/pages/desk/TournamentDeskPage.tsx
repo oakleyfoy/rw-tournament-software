@@ -34,6 +34,7 @@ import {
   deskReturnMatchToWaitingCheckIn,
   deskMoveMatch,
   deskSwapMatches,
+  setDashboardTestClock,
   startDashboardDay,
   pauseDashboardDay,
   activateDashboardMatch,
@@ -11104,6 +11105,12 @@ export default function TournamentDeskPage() {
   })
   const scheduleNowMinutes = nowMinutesInZone(data.tournament_timezone)
   const scheduleIsToday = selectedScheduleDay === tournamentToday(data.tournament_timezone)
+  const selectedDayRun = (data.dashboard_days || []).find((day) => day.day_date === selectedScheduleDay)
+  const testClock = selectedDayRun?.simulated_at ? selectedDayRun.simulated_at.slice(11, 16) : null
+  const operationalMinutes = testClock
+    ? Number(testClock.slice(0, 2)) * 60 + Number(testClock.slice(3, 5))
+    : (scheduleIsToday ? scheduleNowMinutes : null)
+  const tournamentIsCopy = (data.tournament_name || '').includes('(Copy)')
 
   const handleCourtSheetStart = async (matchId: number) => {
     if (!tid || !data || !isDraft) return
@@ -11128,6 +11135,17 @@ export default function TournamentDeskPage() {
       await loadSnapshot(data.version_id)
     } catch (e) {
       setCourtActionError(e instanceof Error ? e.message : 'Failed to update the day')
+    }
+  }
+
+  const handleTestClock = async (day: string, clock: string | null) => {
+    if (!tid || !data || !isDraft) return
+    setCourtActionError(null)
+    try {
+      await setDashboardTestClock(tid, { version_id: data.version_id, day_date: day, clock_time: clock })
+      await loadSnapshot(data.version_id)
+    } catch (e) {
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to set the test clock')
     }
   }
 
@@ -12174,9 +12192,9 @@ export default function TournamentDeskPage() {
               onSelectDay={setCourtSheetDay}
               checkinReadyByMatchId={checkinReadyByMatchId}
               matches={data.matches || []}
-              nowMinutes={scheduleNowMinutes}
-              isToday={scheduleIsToday}
-              clockLabel={new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              nowMinutes={operationalMinutes}
+              isToday={scheduleIsToday || Boolean(testClock)}
+              clockLabel={testClock ? `Test ${testClock}` : new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
               syncedLabel={deskSyncedAt ? `Synced ${deskSyncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Waiting for sync'}
               isDraft={isDraft}
               busyMatchId={courtSheetBusyId}
@@ -12189,6 +12207,9 @@ export default function TournamentDeskPage() {
               arrivedTeamIds={data.arrived_team_ids || []}
               onStartDay={() => { void handleDashboardDay(selectedScheduleDay, 'start') }}
               onSetPaused={(paused) => { void handleDashboardDay(selectedScheduleDay, paused ? 'pause' : 'resume') }}
+              isCopy={tournamentIsCopy}
+              testClock={testClock}
+              onSetTestClock={(clock) => { void handleTestClock(selectedScheduleDay, clock) }}
               courtNotes={Object.fromEntries(Object.values(courtStates).map((state) => [state.court_label, state.note || '']))}
               onMove={(matchId, slotId) => { void handleCourtSheetMove(matchId, slotId) }}
               onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
