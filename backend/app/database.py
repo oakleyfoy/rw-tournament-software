@@ -92,6 +92,7 @@ def init_db() -> None:
     # Import all models to ensure they're registered with SQLModel metadata
     from app.models.auth_session import AuthSession  # noqa: F401
     from app.models.court_dispatch_lock import CourtDispatchLock  # noqa: F401
+    from app.models.desk_day_run import DeskDayRun  # noqa: F401
     from app.models.court_state import TournamentCourtState  # noqa: F401
     from app.models.event import Event  # noqa: F401
     from app.models.match import Match  # noqa: F401

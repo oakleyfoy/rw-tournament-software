@@ -1,0 +1,206 @@
+"""Dashboard day start and designated-court automatic progression."""
+
+from datetime import date, datetime, time, timezone
+
+from sqlmodel import Session, select
+
+from app.models.event import Event
+from app.models.match import Match
+from app.models.match_assignment import MatchAssignment
+from app.models.match_checkin import MatchCheckIn
+from app.models.schedule_slot import ScheduleSlot
+from app.models.schedule_version import ScheduleVersion
+from app.models.sms_log import SmsLog
+from app.models.team import Team
+from app.models.tournament import Tournament
+from app.services.court_assignment_mode import MODE_PREASSIGNED, replace_court_assignment_modes
+from app.services.dashboard_progression import progress_version_day, start_day
+
+
+def _build(session: Session):
+    tournament = Tournament(
+        name="Dashboard Day",
+        location="Palm",
+        timezone="America/Chicago",
+        start_date=date(2026, 12, 4),
+        end_date=date(2026, 12, 6),
+        desk_management_mode="checkin_management",
+    )
+    session.add(tournament)
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+    event = Event(tournament_id=tournament.id, category="womens", name="Women's", team_count=4)
+    session.add(event)
+    session.flush()
+    replace_court_assignment_modes(event, {"2026-12-04": MODE_PREASSIGNED, "2026-12-05": MODE_PREASSIGNED})
+    session.add(event)
+    session.flush()
+    return tournament, version, event
+
+
+_SEED = 1
+
+
+def _pair(session: Session, event: Event, names: tuple[str, str]) -> tuple[Team, Team]:
+    global _SEED
+    teams = []
+    for name in names:
+        team = Team(event_id=event.id, name=name, display_name=name, seed=_SEED)
+        _SEED += 1
+        session.add(team)
+        teams.append(team)
+    session.flush()
+    return teams[0], teams[1]
+
+
+def _place(session, tournament, version, event, court, start, teams, code):
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 12, 4),
+        start_time=start,
+        end_time=time(start.hour + 1, 0),
+        court_number=court,
+        court_label=str(court),
+        block_minutes=60,
+        is_active=True,
+    )
+    session.add(slot)
+    session.flush()
+    match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code=code,
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="SCHEDULED",
+    )
+    session.add(match)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=match.id, slot_id=slot.id, assigned_by="MANUAL"))
+    for side, team in (("A", teams[0]), ("B", teams[1])):
+        session.add(
+            MatchCheckIn(
+                tournament_id=tournament.id,
+                schedule_version_id=version.id,
+                match_id=match.id,
+                team_id=team.id,
+                side=side,
+                team_checked_in=True,
+            )
+        )
+    session.flush()
+    return match
+
+
+def _status(session: Session, match_id: int) -> str:
+    session.expire_all()
+    match = session.get(Match, match_id)
+    return (match.runtime_status or "").upper()
+
+
+def test_start_day_is_idempotent_and_does_not_text(session: Session):
+    tournament, version, event = _build(session)
+    nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "M9")
+    noon = _place(session, tournament, version, event, 2, time(12, 0), _pair(session, event, ("Amy", "Holly")), "M12")
+    session.commit()
+
+    before = progress_version_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 9, 5, tzinfo=timezone.utc))
+    assert before == []
+    assert _status(session, nine.id) == "SCHEDULED"
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 15, 5, tzinfo=timezone.utc))
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 15, 5, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, nine.id) == "IN_PROGRESS"
+    assert _status(session, noon.id) == "SCHEDULED"
+    assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []
+
+
+def test_open_court_holds_the_noon_match_until_its_release_window(session: Session):
+    tournament, version, event = _build(session)
+    nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "M9")
+    noon = _place(session, tournament, version, event, 2, time(12, 0), _pair(session, event, ("Amy", "Holly")), "M12")
+    nine.runtime_status = "FINAL"
+    session.add(nine)
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 16, 45, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, noon.id) == "SCHEDULED"
+
+    progress_version_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 17, 45, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, noon.id) == "IN_PROGRESS"
+
+
+def test_a_blocked_earlier_match_is_not_skipped_and_courts_are_not_reassigned(session: Session):
+    tournament, version, event = _build(session)
+    early = _place(session, tournament, version, event, 2, time(10, 30), _pair(session, event, ("Beth", "Jenn")), "M1030")
+    later = _place(session, tournament, version, event, 2, time(12, 0), _pair(session, event, ("Amy", "Holly")), "M12")
+    other = _place(session, tournament, version, event, 7, time(10, 30), _pair(session, event, ("Deana", "Katherine")), "M7")
+    early.team_b_id = None
+    session.add(early)
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 17, 0, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, early.id) == "SCHEDULED"
+    assert _status(session, later.id) == "SCHEDULED"
+    assert _status(session, other.id) == "IN_PROGRESS"
+    assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == later.id)).one()
+    slot = session.get(ScheduleSlot, assignment.slot_id)
+    assert slot.court_number == 2
+
+
+def test_saturday_does_not_start_when_friday_starts(session: Session):
+    tournament, version, event = _build(session)
+    friday = _place(session, tournament, version, event, 1, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "FRI")
+    slot = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=date(2026, 12, 5),
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=1,
+        court_label="1",
+        block_minutes=60,
+    )
+    session.add(slot)
+    session.flush()
+    teams = _pair(session, event, ("Sat A", "Sat B"))
+    saturday = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="SAT",
+        match_type="WF",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=teams[0].id,
+        team_b_id=teams[1].id,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="SCHEDULED",
+    )
+    session.add(saturday)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=saturday.id, slot_id=slot.id, assigned_by="MANUAL"))
+    session.commit()
+
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 15, 0, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, friday.id) == "IN_PROGRESS"
+    assert _status(session, saturday.id) == "SCHEDULED"

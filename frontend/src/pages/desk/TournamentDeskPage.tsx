@@ -34,6 +34,9 @@ import {
   deskReturnMatchToWaitingCheckIn,
   deskMoveMatch,
   deskSwapMatches,
+  startDashboardDay,
+  pauseDashboardDay,
+  activateDashboardMatch,
   deskAddSlots,
   deskDeleteSlots,
   deskAddCourt,
@@ -11107,13 +11110,30 @@ export default function TournamentDeskPage() {
     setCourtActionError(null)
     setCourtSheetBusyId(matchId)
     try {
-      await deskSetMatchStatus(tid, matchId, { version_id: data.version_id, status: 'IN_PROGRESS' })
+      await activateDashboardMatch(tid, matchId, { version_id: data.version_id, allow_early: true, allow_skip_earlier: true })
       await loadSnapshot(data.version_id)
     } catch (e) {
       setCourtActionError(e instanceof Error ? e.message : 'Failed to start match')
     } finally {
       setCourtSheetBusyId(null)
     }
+  }
+
+  const handleDashboardDay = async (day: string, action: 'start' | 'pause' | 'resume') => {
+    if (!tid || !data || !isDraft) return
+    setCourtActionError(null)
+    try {
+      if (action === 'start') await startDashboardDay(tid, { version_id: data.version_id, day_date: day })
+      else await pauseDashboardDay(tid, { version_id: data.version_id, day_date: day, paused: action === 'pause' })
+      await loadSnapshot(data.version_id)
+    } catch (e) {
+      setCourtActionError(e instanceof Error ? e.message : 'Failed to update the day')
+    }
+  }
+
+  const handleDashboardActivate = async (matchId: number, slotId: number | null) => {
+    if (slotId != null) await handleCourtSheetMove(matchId, slotId)
+    await handleCourtSheetStart(matchId)
   }
 
   const handleCourtSheetMove = async (matchId: number, slotId: number) => {
@@ -12163,6 +12183,13 @@ export default function TournamentDeskPage() {
               canUndo={courtSheetUndo != null}
               onOpenMatch={setDrawerMatch}
               onStart={(matchId) => { void handleCourtSheetStart(matchId) }}
+              onActivate={(matchId, slotId) => { void handleDashboardActivate(matchId, slotId) }}
+              dayStarted={Boolean((data.dashboard_days || []).find((day) => day.day_date === selectedScheduleDay)?.started)}
+              dayPaused={Boolean((data.dashboard_days || []).find((day) => day.day_date === selectedScheduleDay)?.paused)}
+              arrivedTeamIds={data.arrived_team_ids || []}
+              onStartDay={() => { void handleDashboardDay(selectedScheduleDay, 'start') }}
+              onSetPaused={(paused) => { void handleDashboardDay(selectedScheduleDay, paused ? 'pause' : 'resume') }}
+              courtNotes={Object.fromEntries(Object.values(courtStates).map((state) => [state.court_label, state.note || '']))}
               onMove={(matchId, slotId) => { void handleCourtSheetMove(matchId, slotId) }}
               onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
               onUndo={() => { void handleCourtSheetUndo() }}

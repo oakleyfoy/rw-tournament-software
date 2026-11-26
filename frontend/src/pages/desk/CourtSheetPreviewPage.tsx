@@ -81,6 +81,8 @@ export default function CourtSheetPreviewPage() {
   const jennifer = { id: 42422, name: 'Jennifer Myers' }
   const sampleNotes = [{ id: 1, playerId: alex.id, body: 'Arriving after announcements', createdAt: '2026-11-25T18:00:00Z', createdByName: 'Staff' }]
   const [score, setScore] = useState('8-6')
+  const [started, setStarted] = useState(false)
+  const [paused, setPaused] = useState(false)
   const days = listScheduleDays(slots)
   const schedule = buildDaySchedule({ day, slots, matches, closedCourtLabels: ['2'] })
   const ready = new Map(matches.filter((match) => match.team1_id && match.team2_id).map((match) => [match.match_id, true]))
@@ -127,6 +129,11 @@ export default function CourtSheetPreviewPage() {
             }}
             onUndo={() => undefined}
             onCourtState={() => undefined}
+            dayStarted={started}
+            dayPaused={paused}
+            arrivedTeamIds={matches.flatMap((match) => [match.team1_id, match.team2_id].filter((id): id is number => id != null))}
+            onStartDay={() => setStarted(true)}
+            onSetPaused={setPaused}
             rosterByTeam={{ 4242: [alex, jennifer] }}
             notedPlayerIds={[alex.id]}
             onOpenNotes={() => setNotesOpen(true)}

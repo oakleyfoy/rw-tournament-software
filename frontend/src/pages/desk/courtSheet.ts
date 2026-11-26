@@ -386,6 +386,70 @@ export function liveBoardLayout(width: number, height: number, courtCount: numbe
   }
 }
 
+export const EARLY_START_MINUTES = 15
+
+export function firstNameLines(label: string): string[] {
+  const trimmed = (label || '').trim()
+  if (!trimmed) return ['TBD']
+  const winner = trimmed.match(/^winner of match #(\d+)/i)
+  if (winner) return [`Winner #${winner[1]}`]
+  const loser = trimmed.match(/^loser of match #(\d+)/i)
+  if (loser) return [`Loser #${loser[1]}`]
+  if (/^(winner|loser|seed|awaiting|tbd)/i.test(trimmed)) return [trimmed]
+  const names = trimmed
+    .split('/')
+    .map((part) => part.trim().split(/\s+/).filter(Boolean)[0] || '')
+    .filter(Boolean)
+  return names.length > 0 ? names : [trimmed]
+}
+
+export function shortSideLabel(label: string): string {
+  return firstNameLines(label).join(' / ')
+}
+
+export function releaseClockLabel(sortTime: string): string {
+  const start = minutesFromTime(sortTime)
+  if (start == null) return ''
+  const release = Math.max(0, start - EARLY_START_MINUTES)
+  const hour = Math.floor(release / 60)
+  const minute = release % 60
+  const suffix = hour < 12 ? 'AM' : 'PM'
+  const hour12 = hour % 12 || 12
+  return `${hour12}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
+export function autoStartDecision(args: {
+  dayStarted: boolean
+  paused: boolean
+  courtClosed: boolean
+  slotActive: boolean
+  status: string
+  teamsKnown: boolean
+  feedersFinal: boolean
+  playersArrived: boolean
+  participantBusy: boolean
+  scheduledMinutes: number | null
+  nowMinutes: number | null
+}): { start: boolean; reason: string } {
+  if (!args.dayStarted) return { start: false, reason: 'Day has not started' }
+  if (args.paused) return { start: false, reason: 'Automatic progression is paused' }
+  const status = (args.status || 'SCHEDULED').toUpperCase()
+  if (status === 'FINAL' || status === 'IN_PROGRESS' || status === 'PAUSED') return { start: false, reason: status }
+  if (args.courtClosed) return { start: false, reason: 'Court is closed' }
+  if (!args.slotActive) return { start: false, reason: 'Court is unavailable' }
+  if (!args.teamsKnown || !args.feedersFinal) return { start: false, reason: 'Awaiting result' }
+  if (!args.playersArrived) return { start: false, reason: 'Waiting for players' }
+  if (args.participantBusy) return { start: false, reason: 'Player is on another court' }
+  if (args.scheduledMinutes == null || args.nowMinutes == null) return { start: false, reason: 'Scheduled time is missing' }
+  if (args.nowMinutes < args.scheduledMinutes - EARLY_START_MINUTES) return { start: false, reason: 'Not yet in the release window' }
+  return { start: true, reason: 'Eligible to start' }
+}
+
+export function earliestUnfinished(matches: DeskMatchItem[]): DeskMatchItem | null {
+  const ordered = [...matches].sort((a, b) => (a.sort_time || '').localeCompare(b.sort_time || '') || a.match_id - b.match_id)
+  return ordered.find((match) => (match.status || '').toUpperCase() !== 'FINAL') || null
+}
+
 export function scheduleColumnLayout(width: number, courtCount: number): {
   columnWidth: number
   fits: boolean

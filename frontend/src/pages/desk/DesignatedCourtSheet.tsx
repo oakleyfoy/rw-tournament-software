@@ -1,32 +1,16 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties, type DragEvent } from 'react'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
-import { getCompactDivisionLabel } from '../../utils/matchDivisionLabel'
 import {
-  COURT_TONE,
-  buildLiveCourts,
-  cardStatus,
-  cellTone,
-  courtHeaderTone,
-  isDelayed,
-  liveBoardLayout,
-  matchNeedsReassignment,
+  autoStartDecision,
+  earliestUnfinished,
+  firstNameLines,
+  formatSlotTime,
   readableSide,
-  scheduleColumnLayout,
-  slotAcceptsMove,
-  summarizeDay,
-  type CardStatus,
+  releaseClockLabel,
   type DaySchedule,
+  type ScheduleCell,
+  type ScheduleCourt,
 } from './courtSheet'
-
-const STATUS_STYLE: Record<CardStatus, { bg: string; label: string }> = {
-  playing: { bg: '#ffe0b2', label: 'In progress' },
-  ready: { bg: '#c8e6c9', label: 'Ready to play' },
-  waiting: { bg: '#fff59d', label: 'Waiting for players' },
-  awaiting: { bg: '#fff59d', label: 'Awaiting result' },
-  scheduled: { bg: '#e3f2fd', label: 'Scheduled' },
-  completed: { bg: '#eceff1', label: 'Completed' },
-  delayed: { bg: '#ffebee', label: 'Delayed' },
-}
 
 type Props = {
   schedule: DaySchedule
@@ -44,6 +28,7 @@ type Props = {
   canUndo: boolean
   onOpenMatch: (match: DeskMatchItem) => void
   onStart: (matchId: number) => void
+  onActivate?: (matchId: number, slotId: number | null) => void
   onMove: (matchId: number, slotId: number) => void
   onSwap: (matchId: number, occupantId: number) => void
   onUndo: () => void
@@ -53,11 +38,15 @@ type Props = {
   notedPlayerIds?: number[]
   teamNotesById?: Record<number, string | null>
   onOpenNotes?: (players: { id: number; name: string }[], teamNotes: { label: string; body: string }[]) => void
+  dayStarted?: boolean
+  dayPaused?: boolean
+  arrivedTeamIds?: number[]
+  onStartDay?: () => void
+  onSetPaused?: (paused: boolean) => void
+  courtNotes?: Record<string, string>
 }
 
-function participantsFor(match: DeskMatchItem, roster: Record<number, { id: number; name: string }[]>) {
-  return [match.team1_id, match.team2_id].flatMap((teamId) => (teamId == null ? [] : roster[teamId] || []))
-}
+const LIVE = new Set(['IN_PROGRESS', 'PAUSED'])
 
 function dayLabel(day: string): string {
   const date = new Date(`${day}T12:00:00`)
@@ -65,412 +54,229 @@ function dayLabel(day: string): string {
   return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-function MatchCard({
-  match,
-  matches,
-  checkinReady,
-  nowMinutes,
-  compact,
-  reassign,
-  onOpen,
-  onDragStart,
-  onDragEnd,
-  hasNotes,
-  onNotes,
-}: {
-  match: DeskMatchItem
-  matches: DeskMatchItem[]
-  checkinReady: boolean
-  nowMinutes: number | null
-  compact: boolean
-  reassign?: boolean
-  onOpen: () => void
-  onDragStart?: () => void
-  onDragEnd?: () => void
-  hasNotes?: boolean
-  onNotes?: () => void
-}) {
-  const status = cardStatus(match, checkinReady, nowMinutes)
-  const delayed = isDelayed(match, nowMinutes)
-  const tone = STATUS_STYLE[delayed ? 'delayed' : status]
-  const sideA = readableSide(match, 'A', matches)
-  const sideB = readableSide(match, 'B', matches)
-  const division = getCompactDivisionLabel(match.match_code)
-  return (
-    <button
-      type="button"
-      draggable={(match.status || '').toUpperCase() !== 'FINAL'}
-      onDragStart={(event) => {
-        event.dataTransfer.setData('text/match-id', String(match.match_id))
-        event.dataTransfer.effectAllowed = 'move'
-        onDragStart?.()
-      }}
-      onDragEnd={() => onDragEnd?.()}
-      onClick={onOpen}
-      title={`${sideA.label} vs ${sideB.label}`}
-      style={{
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        border: delayed ? '2px solid #c62828' : '1px solid rgba(0,0,0,0.12)',
-        background: tone.bg,
-        borderRadius: 6,
-        padding: compact ? '3px 4px' : '6px 7px',
-        cursor: 'grab',
-        minWidth: 0,
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, fontSize: compact ? 9 : 10, fontWeight: 800 }}>
-        <span>#{match.match_number}</span>
-        <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          {hasNotes && (
-            <span
-              role="button"
-              title="Player notes exist."
-              onClick={(event) => {
-                event.stopPropagation()
-                onNotes?.()
-              }}
-              style={{ width: 14, height: 14, borderRadius: 3, background: '#f9a825', color: '#fff', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              N
-            </span>
-          )}
-          <span style={{ background: '#455a64', color: '#fff', borderRadius: 3, padding: '0 3px' }}>{division}</span>
-        </span>
-      </div>
-      <div style={{ fontSize: compact ? 10 : 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sideA.label}</div>
-      <div style={{ fontSize: compact ? 10 : 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sideB.label}</div>
-      <div style={{ fontSize: 9, fontWeight: 800, marginTop: 2 }}>{delayed ? 'Delayed' : tone.label}{match.scheduled_time ? ` · ${match.scheduled_time}` : ''}{reassign ? ' · Reassign' : ''}</div>
-    </button>
-  )
+function minutesFromSort(value: string): number | null {
+  const [hourRaw, minuteRaw] = (value || '').split(':')
+  const hour = Number(hourRaw)
+  const minute = Number(minuteRaw || 0)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  return hour * 60 + minute
+}
+
+function elapsedLabel(startedAt: string | null, tick: number): string {
+  if (!startedAt) return ''
+  const started = new Date(startedAt).getTime()
+  if (!Number.isFinite(started)) return ''
+  const minutes = Math.max(0, Math.floor((tick - started) / 60000))
+  if (minutes < 180) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours} hr`
+  return `${Math.floor(hours / 24)} d`
+}
+
+function participantsFor(match: DeskMatchItem, roster: Record<number, { id: number; name: string }[]>) {
+  return [match.team1_id, match.team2_id].flatMap((teamId) => (teamId == null ? [] : roster[teamId] || []))
+}
+
+function courtMatches(schedule: DaySchedule, courtNumber: number): { court: ScheduleCourt; cells: ScheduleCell[] } {
+  const index = schedule.courts.findIndex((court) => court.courtNumber === courtNumber)
+  const court = schedule.courts[index]
+  const cells = schedule.rows.flatMap((row) => {
+    const cell = row.cells[index]
+    return cell ? [cell] : []
+  })
+  return { court, cells }
 }
 
 export default function DesignatedCourtSheet(props: Props) {
   const {
-    schedule, days, selectedDay, onSelectDay, checkinReadyByMatchId, matches,
-    nowMinutes, isToday, clockLabel, syncedLabel, isDraft, busyMatchId, canUndo,
-    onOpenMatch, onStart, onMove, onSwap, onUndo, onCourtState, onInteractionChange,
+    schedule, days, selectedDay, onSelectDay, matches, nowMinutes, isToday, clockLabel, syncedLabel,
+    isDraft, canUndo, onOpenMatch, onMove, onSwap, onUndo, onCourtState, onInteractionChange,
     rosterByTeam = {}, notedPlayerIds = [], teamNotesById = {}, onOpenNotes,
+    dayStarted = false, dayPaused = false, arrivedTeamIds = [], onStartDay, onSetPaused, courtNotes = {},
   } = props
+  const [dragMatchId, setDragMatchId] = useState<number | null>(null)
+  const [courtPanel, setCourtPanel] = useState<number | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [tick, setTick] = useState(() => Date.now())
   const noted = new Set(notedPlayerIds)
+  const arrived = new Set(arrivedTeamIds)
+  const courtCount = Math.max(schedule.courts.length, 1)
+  const compact = courtCount >= 16
+  const columns = `64px repeat(${courtCount}, minmax(0, 1fr))`
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const hold = (active: boolean) => onInteractionChange?.(active)
+  const matchById = new Map(matches.map((match) => [match.match_id, match]))
+  const liveTeamIds = new Set<number>()
+  for (const match of matches) {
+    if (!LIVE.has((match.status || '').toUpperCase())) continue
+    if (match.team1_id) liveTeamIds.add(match.team1_id)
+    if (match.team2_id) liveTeamIds.add(match.team2_id)
+  }
+
   const noteState = (match: DeskMatchItem) => {
     const players = participantsFor(match, rosterByTeam)
     const teamNotes = [match.team1_id, match.team2_id].flatMap((teamId, index) => {
       const body = teamId == null ? '' : (teamNotesById[teamId] || '')
       return body ? [{ label: index === 0 ? 'Team 1 note' : 'Team 2 note', body }] : []
     })
-    const hasPlayerNote = players.some((player) => noted.has(player.id))
-    return { players, teamNotes, hasNotes: hasPlayerNote || teamNotes.length > 0 }
+    return { players, teamNotes, hasNotes: players.some((player) => noted.has(player.id)) || teamNotes.length > 0 }
   }
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const boardRef = useRef<HTMLDivElement | null>(null)
-  const [view, setView] = useState<'schedule' | 'live'>('schedule')
-  const [fitAll, setFitAll] = useState(true)
-  const [showCompleted, setShowCompleted] = useState(false)
-  const [dragMatchId, setDragMatchId] = useState<number | null>(null)
-  const [hoverSlotId, setHoverSlotId] = useState<number | null>(null)
-  const [courtPanel, setCourtPanel] = useState<number | null>(null)
-  const [noteDraft, setNoteDraft] = useState('')
-  const [box, setBox] = useState({ width: 1280, height: 640 })
-  const summary = summarizeDay(schedule, checkinReadyByMatchId, isToday ? nowMinutes : null)
-  const live = buildLiveCourts(schedule)
-  const courtCount = Math.max(schedule.courts.length, 1)
-  const compact = box.width / courtCount < 120
-  const liveLayout = liveBoardLayout(box.width, box.height, schedule.courts.length)
-  const columnLayout = scheduleColumnLayout(box.width, schedule.courts.length)
-
-  useEffect(() => {
-    const node = boardRef.current
-    if (!node) return
-    const measure = () => setBox({ width: node.clientWidth, height: node.clientHeight })
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [view, schedule.day, schedule.courts.length])
-
-  const hold = (active: boolean) => onInteractionChange?.(active)
-
-  const hoverCell = () => {
-    for (const row of schedule.rows) {
-      for (let index = 0; index < row.cells.length; index += 1) {
-        const cell = row.cells[index]
-        if (cell?.slot.slot_id === hoverSlotId) return { cell, court: schedule.courts[index] }
-      }
-    }
-    return null
-  }
-  const hovered = hoverCell()
-  const hoverValid = hovered ? slotAcceptsMove(hovered.cell.slot, hovered.court.closed) : false
 
   const dropOnSlot = (matchId: number, slot: SnapshotSlot, courtClosed: boolean) => {
-    if (!slotAcceptsMove(slot, courtClosed)) return
-    const match = matches.find((row) => row.match_id === matchId)
+    if (courtClosed || slot.is_active === false) return
+    const match = matchById.get(matchId)
     if (!match || match.slot_id === slot.slot_id) return
+    if (LIVE.has((match.status || '').toUpperCase())) return
     const occupantId = slot.assigned_match_id
     if (occupantId && occupantId !== match.match_id) {
-      const occupant = matches.find((row) => row.match_id === occupantId)
-      const swap = window.confirm(`Swap #${match.match_number} with #${occupant?.match_number || occupantId}?`)
-      if (!swap) return
+      const occupant = matchById.get(occupantId)
+      if (!window.confirm(`Swap #${match.match_number} with #${occupant?.match_number || occupantId}?`)) return
       onSwap(match.match_id, occupantId)
       return
-    }
-    if (['IN_PROGRESS', 'PAUSED'].includes((match.status || '').toUpperCase())) {
-      const ok = window.confirm(`Match #${match.match_number} is already playing. Move it anyway?`)
-      if (!ok) return
     }
     onMove(match.match_id, slot.slot_id)
   }
 
-  const requestFullscreen = () => {
-    const node = rootRef.current
-    if (!node) return
-    if (document.fullscreenElement) void document.exitFullscreen()
-    else void node.requestFullscreen()
+  const dropOnLive = (matchId: number, court: ScheduleCourt) => {
+    const match = matchById.get(matchId)
+    if (!match || !isDraft || court.closed || court.unavailable) return
+    if (LIVE.has((match.status || '').toUpperCase())) return
+    const { cells } = courtMatches(schedule, court.courtNumber)
+    const playing = cells.find((cell) => cell.match && LIVE.has((cell.match.status || '').toUpperCase()))
+    if (playing) return
+    const target = cells.find((cell) => cell.slot.start_time.slice(0, 5) === (match.sort_time || '').slice(0, 5))
+    if (match.court_number !== court.courtNumber) {
+      if (!target) return
+      if (target.match && target.match.match_id !== match.match_id) {
+        if (!window.confirm(`Swap #${match.match_number} with #${target.match.match_number}?`)) return
+        onSwap(match.match_id, target.match.match_id)
+        return
+      }
+      onMove(match.match_id, target.slot.slot_id)
+    }
+    const earliest = earliestUnfinished(cells.flatMap((cell) => (cell.match ? [cell.match] : [])))
+    const scheduledMinutes = minutesFromSort(match.sort_time || '')
+    const early = scheduledMinutes != null && nowMinutes != null && nowMinutes < scheduledMinutes - 15
+    if (early && !window.confirm(`#${match.match_number} is before its 15-minute release window. Start it now?`)) return
+    if (earliest && earliest.match_id !== match.match_id && (earliest.status || '').toUpperCase() !== 'FINAL') {
+      if (!window.confirm(`#${earliest.match_number} is still assigned earlier on ${court.courtName}. Start #${match.match_number} anyway?`)) return
+    }
+    const slotId = match.court_number === court.courtNumber ? null : (target?.slot.slot_id ?? null)
+    if (props.onActivate) props.onActivate(match.match_id, slotId)
+    else props.onStart(match.match_id)
   }
 
   return (
-    <div ref={rootRef} data-testid="court-sheet" style={{ background: '#f7f8fa', padding: 8, display: 'flex', flexDirection: 'column', gap: 8, height: '100%', minHeight: 0, overflow: 'hidden' }}>
+    <div data-testid="court-sheet" style={{ background: '#f4f6f8', display: 'flex', flexDirection: 'column', gap: 8, height: '100%', minHeight: 0, overflow: 'hidden' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         {days.map((day) => (
-          <button key={day} type="button" onClick={() => onSelectDay(day)} style={chip(selectedDay === day)}>
-            {dayLabel(day)}
-          </button>
+          <button key={day} type="button" onClick={() => onSelectDay(day)} style={chip(selectedDay === day)}>{dayLabel(day)}</button>
         ))}
-        <button type="button" onClick={() => setView('schedule')} style={chip(view === 'schedule')}>Full Schedule</button>
-        <button type="button" onClick={() => setView('live')} style={chip(view === 'live')}>Live Courts</button>
-        <button type="button" onClick={() => setFitAll((value) => !value)} style={chip(fitAll)}>Fit all courts</button>
-        <button type="button" onClick={requestFullscreen} style={chip(false)}>Full screen</button>
-        <button type="button" onClick={() => setShowCompleted((value) => !value)} style={chip(showCompleted)}>Completed in live view</button>
-        <button type="button" disabled={!canUndo || !isDraft} onClick={onUndo} style={chip(false)}>Undo move</button>
-        <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: '#455a64' }}>{clockLabel} · {syncedLabel}</span>
+        {dayStarted ? (
+          <span style={startedPill}>Day Started</span>
+        ) : (
+          <button type="button" disabled={!isDraft} onClick={onStartDay} style={startButton}>Start Day</button>
+        )}
+        {dayStarted && (
+          <button type="button" disabled={!isDraft} onClick={() => onSetPaused?.(!dayPaused)} style={chip(dayPaused)}>
+            {dayPaused ? 'Resume' : 'Pause'}
+          </button>
+        )}
+        <button type="button" disabled={!canUndo || !isDraft} onClick={onUndo} style={chip(false)}>Undo Move</button>
+        <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: '#37474f' }}>{clockLabel} · {syncedLabel}</span>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, fontWeight: 800, color: '#37474f' }}>
-        <span>{summary.totalCourts} courts</span>
-        <span>{summary.openCourts} open</span>
-        <span>{summary.inUse} in use</span>
-        <span>{summary.closed} closed</span>
-        <span>{summary.unavailable} unavailable</span>
-        <span>{summary.inProgress} playing</span>
-        <span>{summary.ready} ready</span>
-        <span>{summary.waiting} waiting</span>
-        <span>{summary.completed} completed</span>
-        <span>{summary.remaining} remaining</span>
-        <span>{summary.delayed} delayed</span>
-      </div>
-
-      {!columnLayout.fits && view === 'schedule' && fitAll && (
-        <div style={{ fontSize: 11, fontWeight: 800, color: '#b71c1c' }}>
-          {schedule.courts.length} courts need about {columnLayout.neededWidth}px of width. This board is {box.width}px wide.
-        </div>
-      )}
-      {!liveLayout.fits && view === 'live' && (
-        <div style={{ fontSize: 11, fontWeight: 800, color: '#b71c1c' }}>
-          {schedule.courts.length} courts need about {liveLayout.neededWidth}×{liveLayout.neededHeight}px. This board is {box.width}×{box.height}.
-        </div>
-      )}
-      {view === 'schedule' ? (
-        <div ref={boardRef} data-testid="court-schedule-board" style={{ flex: 1, minHeight: 0, overflowX: fitAll ? 'hidden' : 'auto', overflowY: 'auto' }}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: fitAll
-                ? `56px repeat(${courtCount}, minmax(0, 1fr))`
-                : `56px repeat(${courtCount}, minmax(150px, 1fr))`,
-              width: fitAll ? '100%' : 'max-content',
-              minWidth: fitAll ? 0 : undefined,
-              gap: 3,
-            }}
-          >
-            <div style={headerCell}>Time</div>
-            {schedule.courts.map((court, courtIndex) => {
-              const playing = schedule.rows.some((row) => {
-                const status = (row.cells[courtIndex]?.match?.status || '').toUpperCase()
-                return status === 'IN_PROGRESS' || status === 'PAUSED'
-              })
-              const tone = COURT_TONE[courtHeaderTone(court, playing)]
-              return (
-              <button
-                key={court.courtNumber}
-                type="button"
-                onClick={() => {
-                  setCourtPanel(court.courtNumber)
-                  setNoteDraft('')
-                  hold(true)
-                }}
-                style={{
-                  ...headerCell,
-                  background: tone.bg,
-                  color: tone.fg,
-                  cursor: 'pointer',
-                }}
-              >
-                {court.courtName}
-                <div style={{ fontSize: 9 }}>{tone.label}</div>
-              </button>
-              )
-            })}
-            {schedule.rows.map((row) => {
-              const rowMinutes = Number(row.time.slice(0, 2)) * 60 + Number(row.time.slice(3, 5))
-              const current = isToday && nowMinutes != null && rowMinutes <= nowMinutes && nowMinutes < rowMinutes + 60
-              return (
-                <div key={row.time} style={{ display: 'contents' }}>
-                  <div style={{ ...timeCell, boxShadow: current ? 'inset 3px 0 0 #1565c0' : undefined }}>{row.timeLabel}</div>
-                  {row.cells.map((cell, index) => {
-                    const court = schedule.courts[index]
-                    const hot = cell?.slot.slot_id === hoverSlotId
-                    const tone = COURT_TONE[cellTone(cell, court)]
-                    return (
-                      <div
-                        key={`${row.time}-${court.courtNumber}`}
-                        onDragOver={(event) => {
-                          if (!cell) return
-                          event.preventDefault()
-                          const id = Number(event.dataTransfer.getData('text/match-id') || dragMatchId || 0)
-                          if (id) setDragMatchId(id)
-                          setHoverSlotId(cell.slot.slot_id)
-                          hold(true)
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault()
-                          if (!cell) return
-                          const id = Number(event.dataTransfer.getData('text/match-id'))
-                          if (id) dropOnSlot(id, cell.slot, court.closed)
-                          setHoverSlotId(null)
-                          setDragMatchId(null)
-                          hold(false)
-                        }}
-                        style={{
-                          minHeight: compact ? 58 : 72,
-                          minWidth: 0,
-                          borderRadius: 6,
-                          padding: 2,
-                          background: hot ? (hoverValid ? '#a5d6a7' : '#ef9a9a') : tone.bg,
-                          color: tone.fg,
-                        }}
-                      >
-                        {cell?.match && (
-                          <MatchCard
-                            match={cell.match}
-                            matches={matches}
-                            checkinReady={Boolean(checkinReadyByMatchId.get(cell.match.match_id))}
-                            nowMinutes={isToday ? nowMinutes : null}
-                            compact={compact}
-                            reassign={matchNeedsReassignment(cell, court)}
-                            onDragStart={() => hold(true)}
-                            onDragEnd={() => hold(false)}
-                            onOpen={() => onOpenMatch(cell.match as DeskMatchItem)}
-                            hasNotes={noteState(cell.match as DeskMatchItem).hasNotes}
-                            onNotes={() => {
-                              const state = noteState(cell.match as DeskMatchItem)
-                              onOpenNotes?.(state.players, state.teamNotes)
-                            }}
-                          />
-                        )}
-                        {cell && !cell.match && (
-                          <div style={{ fontSize: 10, fontWeight: 800, padding: 4 }}>{tone.label}</div>
-                        )}
-                        {!cell && <div style={{ fontSize: 10, fontWeight: 800, padding: 4 }}>UNAVAILABLE</div>}
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      ) : (
-        <div
-          ref={boardRef}
-          data-testid="court-live-board"
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflow: liveLayout.fits ? 'hidden' : 'auto',
-            display: 'grid',
-            gridTemplateColumns: `repeat(${liveLayout.columns}, minmax(0, 1fr))`,
-            gridTemplateRows: liveLayout.fits ? `repeat(${liveLayout.rows}, minmax(0, 1fr))` : undefined,
-            gap: 6,
-          }}
-        >
-          {live.map((column) => {
-            const tone = COURT_TONE[courtHeaderTone(column.court, Boolean(column.playing))]
-            const current = column.playing || column.upcoming[0] || null
-            const laterCount = column.playing ? column.upcoming.length : Math.max(0, column.upcoming.length - 1)
-            const currentCell = current
-              ? schedule.rows.flatMap((row) => row.cells).find((cell) => cell?.match?.match_id === current.match_id) || null
-              : null
-            const currentCourtIndex = schedule.courts.findIndex((court) => court.courtNumber === column.court.courtNumber)
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: columns, gap: 3, position: 'sticky', top: 0, zIndex: 3, background: '#f4f6f8', paddingBottom: 4 }}>
+          <div style={corner}>Time</div>
+          {schedule.courts.map((court) => (
+            <button key={court.courtNumber} type="button" onClick={() => { setCourtPanel(court.courtNumber); setNoteDraft(courtNotes[court.courtLabel] || courtNotes[String(court.courtNumber)] || '') }} style={headerButton(court)}>
+              {court.courtName.replace(/^Court\s+/i, '')}
+            </button>
+          ))}
+          <div style={{ ...corner, fontSize: 9 }}>Now</div>
+          {schedule.courts.map((court) => {
+            const { cells } = courtMatches(schedule, court.courtNumber)
             return (
-            <div
-              key={column.court.courtNumber}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault()
-                const id = Number(event.dataTransfer.getData('text/match-id'))
-                if (!id) return
-                const sourceRow = schedule.rows.find((row) => row.cells.some((cell) => cell?.match?.match_id === id))
-                const destIndex = schedule.courts.findIndex((court) => court.courtNumber === column.court.courtNumber)
-                const dest = sourceRow?.cells[destIndex]
-                if (dest) dropOnSlot(id, dest.slot, column.court.closed)
-                hold(false)
-              }}
-              style={{ border: `2px solid ${tone.fg}`, borderRadius: 8, background: tone.bg, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setCourtPanel(column.court.courtNumber)
-                  hold(true)
-                }}
-                style={{ ...headerCell, width: '100%', background: tone.bg, color: tone.fg }}
-              >
-                {column.court.courtName}
-                <div style={{ fontSize: 9 }}>{tone.label}</div>
-              </button>
-              <div style={{ padding: 4, display: 'grid', gap: 4, minHeight: 0 }}>
-                {current ? (
-                  <MatchCard
-                    match={current}
-                    matches={matches}
-                    checkinReady={Boolean(checkinReadyByMatchId.get(current.match_id))}
-                    nowMinutes={isToday ? nowMinutes : null}
-                    compact={compact}
-                    reassign={matchNeedsReassignment(currentCell, schedule.courts[currentCourtIndex] || column.court)}
-                    onDragStart={() => hold(true)}
-                    onDragEnd={() => hold(false)}
-                    onOpen={() => onOpenMatch(current)}
-                    hasNotes={noteState(current).hasNotes}
-                    onNotes={() => {
-                      const state = noteState(current)
-                      onOpenNotes?.(state.players, state.teamNotes)
-                    }}
-                  />
-                ) : (
-                  <div style={{ fontSize: 12, fontWeight: 800, color: tone.fg, padding: 6 }}>{tone.label}</div>
-                )}
-                {!column.playing && current && cardStatus(current, Boolean(checkinReadyByMatchId.get(current.match_id)), isToday ? nowMinutes : null) === 'ready' && (
-                  <button
-                    type="button"
-                    disabled={!isDraft || busyMatchId != null}
-                    onClick={() => onStart(current.match_id)}
-                    style={{ fontSize: 10, fontWeight: 800 }}
-                  >
-                    Start
-                  </button>
-                )}
-                {laterCount > 0 && <div style={{ fontSize: 10, fontWeight: 800 }}>+{laterCount} later</div>}
-                {showCompleted && column.completed.length > 0 && (
-                  <div style={{ fontSize: 10, fontWeight: 800 }}>{column.completed.length} completed</div>
-                )}
-              </div>
-            </div>
+              <LiveCell
+                key={`live-${court.courtNumber}`}
+                court={court}
+                cells={cells}
+                compact={compact}
+                tick={tick}
+                dayStarted={dayStarted}
+                dayPaused={dayPaused}
+                nowMinutes={isToday ? nowMinutes : null}
+                arrived={arrived}
+                liveTeamIds={liveTeamIds}
+                matches={matches}
+                noteFor={noteState}
+                onOpen={onOpenMatch}
+                onOpenNotes={onOpenNotes}
+                onDrop={(matchId) => dropOnLive(matchId, court)}
+                onDragState={hold}
+              />
             )
           })}
         </div>
-      )}
+
+        <div style={{ fontSize: 11, fontWeight: 800, color: '#1a237e', padding: '6px 2px' }}>Today's schedule</div>
+        <div style={{ display: 'grid', gridTemplateColumns: columns, gap: 3 }}>
+          {schedule.rows.map((row) => (
+            <div key={row.time} style={{ display: 'contents' }}>
+              <div style={timeCell}>{row.timeLabel}</div>
+              {row.cells.map((cell, index) => {
+                const court = schedule.courts[index]
+                const match = cell?.match || null
+                const playing = match != null && LIVE.has((match.status || '').toUpperCase())
+                return (
+                  <div
+                    key={`${row.time}-${court.courtNumber}`}
+                    onDragOver={(event) => { if (dragMatchId) event.preventDefault() }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      const matchId = Number(event.dataTransfer.getData('text/match-id'))
+                      if (cell) dropOnSlot(matchId, cell.slot, court.closed)
+                      setDragMatchId(null)
+                      hold(false)
+                    }}
+                    style={gridCellStyle(cell, court, playing)}
+                  >
+                    {playing && match ? (
+                      <button type="button" onClick={() => onOpenMatch(match)} style={placeholderButton}>
+                        ↑ Playing #{match.match_number}
+                      </button>
+                    ) : match ? (
+                      <GridCard
+                        match={match}
+                        matches={matches}
+                        compact={compact}
+                        hasNotes={noteState(match).hasNotes}
+                        onOpen={() => onOpenMatch(match)}
+                        onNotes={() => {
+                          const notes = noteState(match)
+                          onOpenNotes?.(notes.players, notes.teamNotes)
+                        }}
+                        onDragStart={() => { setDragMatchId(match.match_id); hold(true) }}
+                        onDragEnd={() => { setDragMatchId(null); hold(false) }}
+                      />
+                    ) : cell && cell.slot.is_active === false ? (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#eceff1' }}>Unavailable</span>
+                    ) : (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#90a4ae' }}>{court.closed ? 'Closed' : 'Open'}</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {courtPanel != null && (
         <CourtPanel
@@ -481,13 +287,145 @@ export default function DesignatedCourtSheet(props: Props) {
           onClose={() => { setCourtPanel(null); hold(false) }}
           onSave={(closed) => {
             const court = schedule.courts.find((row) => row.courtNumber === courtPanel)
-            if (!court) return
-            onCourtState(court.courtLabel, closed, noteDraft)
+            if (court) onCourtState(court.courtLabel, closed, noteDraft)
             setCourtPanel(null)
-            hold(false)
           }}
         />
       )}
+    </div>
+  )
+}
+
+function LiveCell({
+  court, cells, compact, tick, dayStarted, dayPaused, nowMinutes, arrived, liveTeamIds, matches, noteFor, onOpen, onOpenNotes, onDrop, onDragState,
+}: {
+  court: ScheduleCourt
+  cells: ScheduleCell[]
+  compact: boolean
+  tick: number
+  dayStarted: boolean
+  dayPaused: boolean
+  nowMinutes: number | null
+  arrived: Set<number>
+  liveTeamIds: Set<number>
+  matches: DeskMatchItem[]
+  noteFor: (match: DeskMatchItem) => { players: { id: number; name: string }[]; teamNotes: { label: string; body: string }[]; hasNotes: boolean }
+  onOpen: (match: DeskMatchItem) => void
+  onOpenNotes?: (players: { id: number; name: string }[], teamNotes: { label: string; body: string }[]) => void
+  onDrop: (matchId: number) => void
+  onDragState: (active: boolean) => void
+}) {
+  const playing = cells.find((cell) => cell.match && LIVE.has((cell.match.status || '').toUpperCase()))?.match || null
+  const upcoming = cells.flatMap((cell) => (cell.match ? [cell.match] : []))
+  const earliest = earliestUnfinished(upcoming)
+  if (playing) {
+    const notes = noteFor(playing)
+    const sideA = readableSide(playing, 'A', matches).label
+    const sideB = readableSide(playing, 'B', matches).label
+    return (
+      <button type="button" onClick={() => onOpen(playing)} style={{ ...liveCard, background: '#ffe0b2' }}>
+        <div style={liveTop}>
+          <span>#{playing.match_number}</span>
+          <span>
+            {notes.hasNotes && (
+              <span role="button" title="Player notes exist." onClick={(event) => { event.stopPropagation(); onOpenNotes?.(notes.players, notes.teamNotes) }} style={noteMark}>N</span>
+            )}
+            {' '}Playing
+          </span>
+        </div>
+        <NameLines a={sideA} b={sideB} compact={compact} />
+        <div style={liveMeta}>{playing.scheduled_time || ''} · {elapsedLabel(playing.started_at, tick)}</div>
+      </button>
+    )
+  }
+  if (court.closed) {
+    return <div style={{ ...liveCard, background: '#ffcdd2', color: '#b71c1c' }}><b>Closed</b></div>
+  }
+  if (court.unavailable) {
+    return <div style={{ ...liveCard, background: '#37474f', color: '#eceff1' }}><b>Unavailable</b></div>
+  }
+  const onDragOver = (event: DragEvent) => event.preventDefault()
+  const onDropEvent = (event: DragEvent) => {
+    event.preventDefault()
+    const matchId = Number(event.dataTransfer.getData('text/match-id'))
+    if (matchId) onDrop(matchId)
+    onDragState(false)
+  }
+  if (!earliest) {
+    return <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20' }}><b>Open</b></div>
+  }
+  const decision = autoStartDecision({
+    dayStarted,
+    paused: dayPaused,
+    courtClosed: false,
+    slotActive: true,
+    status: earliest.status,
+    teamsKnown: Boolean(earliest.team1_id && earliest.team2_id),
+    feedersFinal: !earliest.source_match_a_id && !earliest.source_match_b_id || matches.filter((match) => match.match_id === earliest.source_match_a_id || match.match_id === earliest.source_match_b_id).every((match) => (match.status || '').toUpperCase() === 'FINAL'),
+    playersArrived: Boolean(earliest.team1_id && earliest.team2_id && arrived.has(earliest.team1_id) && arrived.has(earliest.team2_id)),
+    participantBusy: Boolean((earliest.team1_id && liveTeamIds.has(earliest.team1_id)) || (earliest.team2_id && liveTeamIds.has(earliest.team2_id))),
+    scheduledMinutes: minutesFromSort(earliest.sort_time || ''),
+    nowMinutes,
+  })
+  const waiting = decision.reason === 'Awaiting result' || decision.reason === 'Waiting for players' || decision.reason === 'Player is on another court'
+  const release = releaseClockLabel(earliest.sort_time || '')
+  return (
+    <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: waiting ? '#fff59d' : '#e8f5e9', color: waiting ? '#e65100' : '#1b5e20' }}>
+      <b>{waiting ? 'Waiting' : 'Open'}</b>
+      <div style={liveMeta}>Next {earliest.scheduled_time || formatSlotTime(earliest.sort_time || '')}</div>
+      {decision.reason === 'Not yet in the release window' && <div style={liveMeta}>Release {release}</div>}
+      {waiting && <div style={liveMeta}>{decision.reason}</div>}
+    </div>
+  )
+}
+
+function GridCard({
+  match, matches, compact, hasNotes, onOpen, onNotes, onDragStart, onDragEnd,
+}: {
+  match: DeskMatchItem
+  matches: DeskMatchItem[]
+  compact: boolean
+  hasNotes: boolean
+  onOpen: () => void
+  onNotes: () => void
+  onDragStart: () => void
+  onDragEnd: () => void
+}) {
+  const status = (match.status || '').toUpperCase()
+  const done = status === 'FINAL'
+  const sideA = readableSide(match, 'A', matches)
+  const sideB = readableSide(match, 'B', matches)
+  const winnerA = done && match.winner_team_id != null && match.winner_team_id === match.team1_id
+  const winnerB = done && match.winner_team_id != null && match.winner_team_id === match.team2_id
+  return (
+    <button
+      type="button"
+      draggable={!done}
+      onDragStart={(event) => { event.dataTransfer.setData('text/match-id', String(match.match_id)); event.dataTransfer.effectAllowed = 'move'; onDragStart() }}
+      onDragEnd={onDragEnd}
+      onClick={onOpen}
+      style={{ ...cardButton, background: done ? '#eceff1' : '#e3f2fd' }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 2, fontSize: compact ? 9 : 10, fontWeight: 800 }}>
+        <span>#{match.match_number}</span>
+        {hasNotes && <span role="button" title="Player notes exist." onClick={(event) => { event.stopPropagation(); onNotes() }} style={noteMark}>N</span>}
+      </div>
+      <NameLines a={sideA.label} b={sideB.label} compact={compact} emphasizeA={winnerA} emphasizeB={winnerB} />
+      {done && <div style={{ fontSize: 10, fontWeight: 800 }}>{match.score_display || 'Completed'}</div>}
+    </button>
+  )
+}
+
+function NameLines({ a, b, compact, emphasizeA = false, emphasizeB = false }: { a: string; b: string; compact: boolean; emphasizeA?: boolean; emphasizeB?: boolean }) {
+  const groups = [
+    { lines: firstNameLines(a), emphasize: emphasizeA },
+    { lines: firstNameLines(b), emphasize: emphasizeB },
+  ]
+  return (
+    <div style={{ fontSize: compact ? 9 : 11, lineHeight: 1.15 }}>
+      {groups.flatMap((group) => group.lines.map((line, index) => (
+        <div key={`${line}-${index}-${group.emphasize}`} style={{ fontWeight: group.emphasize ? 900 : 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
+      )))}
     </div>
   )
 }
@@ -504,17 +442,9 @@ function CourtPanel({
 }) {
   const court = schedule.courts.find((row) => row.courtNumber === courtNumber)
   if (!court) return null
-  const affected = schedule.rows.flatMap((row) => {
-    const index = schedule.courts.findIndex((item) => item.courtNumber === courtNumber)
-    const match = row.cells[index]?.match
-    if (!match || (match.status || '').toUpperCase() === 'FINAL') return []
-    return [`#${match.match_number} · ${row.timeLabel}`]
-  })
   return (
     <div style={{ border: '1px solid #cfd8dc', borderRadius: 8, background: '#fff', padding: 10, display: 'grid', gap: 8 }}>
       <div style={{ fontWeight: 800 }}>{court.courtName}</div>
-      <div style={{ fontSize: 12 }}>{court.closed ? 'Closed' : court.unavailable ? 'Unavailable' : 'Open'}. Assigned matches stay on the schedule.</div>
-      {affected.length > 0 && <div style={{ fontSize: 12 }}>{affected.join(' · ')}</div>}
       <input value={note} onChange={(event) => onNote(event.target.value)} placeholder="Closure reason" style={{ padding: 6 }} />
       <div style={{ display: 'flex', gap: 8 }}>
         <button type="button" onClick={() => onSave(true)}>Close court</button>
@@ -526,38 +456,32 @@ function CourtPanel({
 }
 
 function chip(active: boolean): CSSProperties {
-  return {
-    border: '1px solid #1a237e',
-    background: active ? '#1a237e' : '#fff',
-    color: active ? '#fff' : '#1a237e',
-    borderRadius: 6,
-    padding: '4px 8px',
-    fontSize: 12,
-    fontWeight: 800,
-    cursor: 'pointer',
-  }
+  return { border: '1px solid #1a237e', background: active ? '#1a237e' : '#fff', color: active ? '#fff' : '#1a237e', borderRadius: 6, padding: '4px 8px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }
 }
 
-const headerCell: CSSProperties = {
-  position: 'sticky',
-  top: 0,
-  zIndex: 2,
-  background: '#eceff1',
-  fontSize: 11,
-  fontWeight: 800,
-  padding: '4px 2px',
-  textAlign: 'center',
-  border: 'none',
-  minWidth: 0,
-  overflow: 'hidden',
+const startButton: CSSProperties = { border: 'none', background: '#2e7d32', color: '#fff', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }
+const startedPill: CSSProperties = { background: '#e8f5e9', color: '#1b5e20', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 800 }
+const corner: CSSProperties = { background: '#1a237e', color: '#fff', fontSize: 10, fontWeight: 800, padding: '6px 2px', textAlign: 'center', borderRadius: 4 }
+const timeCell: CSSProperties = { fontSize: 10, fontWeight: 800, color: '#37474f', padding: '4px 2px', textAlign: 'center' }
+const liveCard: CSSProperties = { minHeight: 72, borderRadius: 6, padding: '4px 5px', textAlign: 'left', border: '1px solid rgba(0,0,0,0.08)', minWidth: 0, overflow: 'hidden' }
+const liveTop: CSSProperties = { display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 800 }
+const liveMeta: CSSProperties = { fontSize: 9, fontWeight: 700, marginTop: 2 }
+const cardButton: CSSProperties = { display: 'block', width: '100%', textAlign: 'left', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 6, padding: '3px 4px', cursor: 'grab', minWidth: 0 }
+const placeholderButton: CSSProperties = { width: '100%', border: 'none', background: 'transparent', color: '#e65100', fontWeight: 800, fontSize: 10, cursor: 'pointer', padding: 4 }
+const noteMark: CSSProperties = { width: 14, height: 14, borderRadius: 3, background: '#f9a825', color: '#fff', fontSize: 9, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }
+
+function headerButton(court: ScheduleCourt): CSSProperties {
+  const background = court.closed ? '#ffcdd2' : court.unavailable ? '#37474f' : '#e3f2fd'
+  const color = court.unavailable && !court.closed ? '#eceff1' : '#1a237e'
+  return { background, color, border: 'none', borderRadius: 4, fontSize: 10, fontWeight: 800, padding: '6px 2px', cursor: 'pointer', minWidth: 0 }
 }
 
-const timeCell: CSSProperties = {
-  position: 'sticky',
-  left: 0,
-  zIndex: 1,
-  background: '#fff',
-  fontSize: 10,
-  fontWeight: 800,
-  padding: '4px 2px',
+function gridCellStyle(cell: ScheduleCell | null, court: ScheduleCourt, playing: boolean): CSSProperties {
+  let background = '#e8f5e9'
+  if (!cell || cell.slot.is_active === false || court.unavailable) background = '#37474f'
+  else if (court.closed) background = '#ffcdd2'
+  else if (playing) background = '#ffe0b2'
+  else if (cell.match && (cell.match.status || '').toUpperCase() === 'FINAL') background = '#eceff1'
+  else if (cell.match) background = '#e3f2fd'
+  return { minHeight: 58, borderRadius: 6, padding: 2, minWidth: 0, background }
 }

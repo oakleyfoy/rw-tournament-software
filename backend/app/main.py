@@ -65,6 +65,7 @@ from app.routes import (
     wf_conflicts,
     wf_grouping,
 )
+from app.services.dashboard_progression import start_dashboard_progression_runner
 from app.services.sms_automation import start_first_match_runner_if_enabled
 
 app = FastAPI(title="RW Tournament Software API")
@@ -271,6 +272,7 @@ def on_startup():
     ensure_team_photo_print_tables(engine)
     ensure_tournament_group_photo_tables(engine)
     start_first_match_runner_if_enabled()
+    start_dashboard_progression_runner()
 
     # Print all registered routes for debugging (full path stack)
     print("\n" + "=" * 80)

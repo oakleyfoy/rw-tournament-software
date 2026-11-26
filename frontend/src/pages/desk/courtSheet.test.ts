@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DeskMatchItem, SnapshotSlot } from '../../api/client'
-import { buildDaySchedule, buildLiveCourts, cellTone, courtHeaderTone, listScheduleDays, liveBoardLayout, matchNeedsReassignment, readableSide, scheduleColumnLayout, slotAcceptsMove, summarizeDay } from './courtSheet'
+import { autoStartDecision, buildDaySchedule, buildLiveCourts, cellTone, courtHeaderTone, earliestUnfinished, listScheduleDays, liveBoardLayout, matchNeedsReassignment, readableSide, scheduleColumnLayout, slotAcceptsMove, summarizeDay } from './courtSheet'
 
 function match(overrides: Partial<DeskMatchItem> & { match_id: number }): DeskMatchItem {
   return {
@@ -181,5 +181,47 @@ describe('court sheet schedule', () => {
     const tight = liveBoardLayout(700, 180, 24)
     expect(tight.fits).toBe(false)
     expect(tight.neededHeight).toBeGreaterThan(180)
+  })
+
+  it('keeps a noon match in the grid until 15 minutes before its start', () => {
+    const noon = match({ match_id: 12, sort_time: '12:00', scheduled_time: '12:00 PM', status: 'SCHEDULED' })
+    const tenThirty = match({ match_id: 10, sort_time: '10:30', scheduled_time: '10:30 AM', status: 'SCHEDULED' })
+    expect(earliestUnfinished([noon, tenThirty])?.match_id).toBe(10)
+    const blocked = autoStartDecision({
+      dayStarted: true,
+      paused: false,
+      courtClosed: false,
+      slotActive: true,
+      status: 'SCHEDULED',
+      teamsKnown: false,
+      feedersFinal: false,
+      playersArrived: true,
+      participantBusy: false,
+      scheduledMinutes: 10 * 60 + 30,
+      nowMinutes: 10 * 60 + 45,
+    })
+    expect(blocked.start).toBe(false)
+    expect(blocked.reason).toBe('Awaiting result')
+    const tooEarly = autoStartDecision({
+      dayStarted: true,
+      paused: false,
+      courtClosed: false,
+      slotActive: true,
+      status: 'SCHEDULED',
+      teamsKnown: true,
+      feedersFinal: true,
+      playersArrived: true,
+      participantBusy: false,
+      scheduledMinutes: 12 * 60,
+      nowMinutes: 10 * 60 + 45,
+    })
+    expect(tooEarly.start).toBe(false)
+    expect(tooEarly.reason).toBe('Not yet in the release window')
+    const released = autoStartDecision({ ...{
+      dayStarted: true, paused: false, courtClosed: false, slotActive: true, status: 'SCHEDULED',
+      teamsKnown: true, feedersFinal: true, playersArrived: true, participantBusy: false,
+      scheduledMinutes: 12 * 60, nowMinutes: 11 * 60 + 45,
+    } })
+    expect(released.start).toBe(true)
   })
 })

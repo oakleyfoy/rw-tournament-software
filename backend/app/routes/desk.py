@@ -113,6 +113,49 @@ def _bump_desk_snapshot() -> None:
         _desk_snapshot_cache.clear()
 
 
+def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["DashboardDayState"]:
+    if version_id is None:
+        return []
+    from app.services.dashboard_progression import day_states
+
+    return [
+        DashboardDayState(
+            day_date=run.day_date.isoformat(),
+            started=True,
+            paused=bool(run.paused),
+            started_at=run.started_at.isoformat() if run.started_at else None,
+        )
+        for run in day_states(session, version_id)
+    ]
+
+
+def _arrived_team_ids(session: Session, version_id: Optional[int]) -> List[int]:
+    if version_id is None:
+        return []
+    from app.services.dashboard_progression import arrived_team_ids
+
+    return arrived_team_ids(session, version_id)
+
+
+def _progress_started_days(session: Session, tournament: Tournament, version: Optional[ScheduleVersion]) -> None:
+    if version is None or version.id is None or version.status != "draft":
+        return
+    try:
+        from app.services.dashboard_progression import day_states, progress_version_day
+
+        started = False
+        for run in day_states(session, version.id):
+            if run.paused:
+                continue
+            if progress_version_day(session, tournament, version, run.day_date):
+                started = True
+        if started:
+            session.commit()
+            _bump_desk_snapshot()
+    except Exception:
+        logger.exception("dashboard progression failed tournament=%s", getattr(tournament, "id", None))
+
+
 def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
     try:
         payload = {
@@ -911,6 +954,15 @@ class DeskSnapshotResponse(BaseModel):
     checkin_court_warnings: List[CheckInCourtWarning] = []
     ready_assigned_queue: List[ReadyAssignedItem] = []
     arrival_matches: List[CheckInMatchItem] = []
+    dashboard_days: List["DashboardDayState"] = []
+    arrived_team_ids: List[int] = []
+
+
+class DashboardDayState(BaseModel):
+    day_date: str
+    started: bool = True
+    paused: bool = False
+    started_at: Optional[str] = None
 
 
 class DeskManagementModeResponse(BaseModel):
@@ -2525,6 +2577,8 @@ def desk_snapshot(
             checkin_court_warnings=checkin_court_warnings,
             ready_assigned_queue=ready_assigned_queue,
             arrival_matches=arrival_matches,
+            dashboard_days=_dashboard_day_states(session, version.id),
+            arrived_team_ids=_arrived_team_ids(session, version.id),
         )
         if cache_key[2] == _desk_snapshot_gen:
             _desk_snapshot_cache[cache_key] = (time.monotonic(), response)
@@ -2888,6 +2942,7 @@ def set_player_checkin(
         )
     session.commit()
     session.refresh(match)
+    _progress_started_days(session, tournament, version)
     clear_checkin_reset_if_ready(session, match)
     if not payload.checked_in:
         arm_checkin_reset_if_not_ready(session, match)
@@ -4091,10 +4146,20 @@ def finalize_match(
 
     raw_updates = adv_result.get("downstream_updates", [])
 
-    if preassigned_day:
-        # The score is saved and the draw is already advanced. The next
-        # designated-court match stays on its scheduled time until staff start it.
-        pass
+    if preassigned_day and finalized_slot is not None:
+        try:
+            from app.services.dashboard_progression import progress_version_day
+
+            started_ids = progress_version_day(session, tournament, version, finalized_slot.day_date)
+            session.commit()
+            if auto_started_match_id is None and started_ids:
+                auto_started_match_id = started_ids[0]
+        except Exception:
+            logger.exception(
+                "dashboard progression after finalize failed tournament=%s match=%s",
+                tournament_id,
+                match_id,
+            )
     elif management_mode != MODE_CHECKIN_MANAGEMENT and finalized_assignment and finalized_slot:
         court_num = finalized_slot.court_number
         court_slots = session.exec(
@@ -4300,6 +4365,18 @@ def finalize_match(
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
         if payload.send_automation_texts:
             automation.send_match_finalized_texts(match)
+        elif preassigned_day:
+            from app.services.dashboard_progression import send_resolved_next_texts
+
+            notify_ids = [row["match_id"] for row in raw_updates]
+            current_slot = finalized_slot
+            for team_id in (match.team_a_id, match.team_b_id):
+                if not team_id:
+                    continue
+                pair = automation._next_match_for_team(team_id, match.id, current_slot)
+                if pair and pair[0].id:
+                    notify_ids.append(pair[0].id)
+            send_resolved_next_texts(session, tournament, payload.version_id, notify_ids)
         elif payload.include_sms_preview:
             preview_data = automation.preview_match_finalized_texts(match)
             sms_preview = FinalizeSmsPreviewResponse(
@@ -6677,6 +6754,15 @@ def patch_court_state(
 
     session.commit()
     session.refresh(existing)
+    drafts = session.exec(
+        select(ScheduleVersion).where(
+            ScheduleVersion.tournament_id == tournament_id,
+            ScheduleVersion.status == "draft",
+        )
+    ).all()
+    draft = max(drafts, key=lambda row: row.id or 0) if drafts else None
+    if draft is not None:
+        _progress_started_days(session, tournament, draft)
 
     return CourtStateItem(
         court_label=existing.court_label,
@@ -6684,6 +6770,113 @@ def patch_court_state(
         note=existing.note,
         updated_at=existing.updated_at.isoformat() if existing.updated_at else None,
     )
+
+
+class DashboardDayRequest(BaseModel):
+    version_id: int
+    day_date: str
+
+
+class DashboardPauseRequest(BaseModel):
+    version_id: int
+    day_date: str
+    paused: bool
+
+
+class DashboardActivateRequest(BaseModel):
+    version_id: int
+    allow_early: bool = False
+    allow_skip_earlier: bool = False
+
+
+def _draft_version_or_400(session: Session, tournament_id: int, version_id: int) -> tuple[Tournament, ScheduleVersion]:
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    if version.status != "draft":
+        raise HTTPException(status_code=400, detail="Dashboard changes are only allowed on a draft")
+    return tournament, version
+
+
+@router.post("/desk/tournaments/{tournament_id}/dashboard/start-day", response_model=DashboardDayState)
+def start_dashboard_day(
+    tournament_id: int,
+    payload: DashboardDayRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.dashboard_progression import start_day
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+    run = start_day(session, tournament, version, day)
+    session.commit()
+    _bump_desk_snapshot()
+    return DashboardDayState(
+        day_date=run.day_date.isoformat(),
+        started=True,
+        paused=bool(run.paused),
+        started_at=run.started_at.isoformat() if run.started_at else None,
+    )
+
+
+@router.post("/desk/tournaments/{tournament_id}/dashboard/pause", response_model=DashboardDayState)
+def pause_dashboard_day(
+    tournament_id: int,
+    payload: DashboardPauseRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.dashboard_progression import set_paused
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+    try:
+        run = set_paused(session, tournament, version, day, payload.paused)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session.commit()
+    _bump_desk_snapshot()
+    return DashboardDayState(
+        day_date=run.day_date.isoformat(),
+        started=True,
+        paused=bool(run.paused),
+        started_at=run.started_at.isoformat() if run.started_at else None,
+    )
+
+
+@router.post("/desk/tournaments/{tournament_id}/matches/{match_id}/dashboard/activate")
+def activate_dashboard_match(
+    tournament_id: int,
+    match_id: int,
+    payload: DashboardActivateRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.dashboard_progression import staff_activate
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    match = session.get(Match, match_id)
+    if not match or match.schedule_version_id != version.id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    ok, detail = staff_activate(
+        session,
+        tournament,
+        match,
+        allow_early=payload.allow_early,
+        allow_skip_earlier=payload.allow_skip_earlier,
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail=detail)
+    session.commit()
+    _bump_desk_snapshot()
+    return {"match_id": match.id, "status": match.runtime_status}
 
 
 # ── Match Move endpoint ──────────────────────────────────────────────────
@@ -6806,6 +6999,7 @@ def move_match(
     session.commit()
     _bump_desk_snapshot()
     session.refresh(match)
+    _progress_started_days(session, tournament, version)
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)

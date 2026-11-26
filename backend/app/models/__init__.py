@@ -1,6 +1,7 @@
 from app.models.auth_session import AuthSession
 from app.models.court_dispatch_lock import CourtDispatchLock
 from app.models.court_state import TournamentCourtState
+from app.models.desk_day_run import DeskDayRun
 from app.models.event import Event, EventCategory
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment

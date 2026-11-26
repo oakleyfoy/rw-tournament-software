@@ -3325,6 +3325,8 @@ export interface DeskSnapshotResponse {
   checkin_court_warnings: CheckInCourtWarning[]
   ready_assigned_queue: ReadyAssignedItem[]
   arrival_matches?: CheckInMatchItem[]
+  dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null }[]
+  arrived_team_ids?: number[]
 }
 
 export interface TemporaryPlayerLookupItem {
@@ -3851,6 +3853,37 @@ export interface SwapMatchesResponse {
   match_a: DeskMatchItem
   match_b: DeskMatchItem
   warnings: string[]
+}
+
+export async function startDashboardDay(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string }
+): Promise<{ day_date: string; started: boolean; paused: boolean }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/dashboard/start-day`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function pauseDashboardDay(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; paused: boolean }
+): Promise<{ day_date: string; started: boolean; paused: boolean }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/dashboard/pause`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function activateDashboardMatch(
+  tournamentId: number,
+  matchId: number,
+  payload: { version_id: number; allow_early?: boolean; allow_skip_earlier?: boolean }
+): Promise<{ match_id: number; status: string }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/dashboard/activate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function deskMoveMatch(
