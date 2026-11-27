@@ -60,6 +60,8 @@ function buildSample(): { slots: SnapshotSlot[]; matches: DeskMatchItem[] } {
           team2_id: court === 8 ? 5002 : court === 4 ? 4243 : id * 10 + 1,
           team2_display: court === 8 && playing ? 'Fran Ng / Gina Ortiz' : playing ? 'Jennifer Lee / Helen Park' : `Blake ${court}`,
           score_display: status === 'FINAL' ? '8-5' : null,
+          championship_final: day === DAYS[0] && ((completed && court === 2) || (playing && court === 4) || (court === 6 && time === '09:00:00')),
+          rr_final_team_ids: playing && court === 8 ? [5001] : [],
           winner_team_id: status === 'FINAL' ? (court === 4 ? 4242 : id * 10) : null,
           source_match_a_id: court === 6 ? 1 : null,
           source_match_b_id: null,
@@ -168,6 +170,8 @@ export default function CourtSheetPreviewPage() {
             }}
             onAdvanceClock={(minutes) => moveClock(currentClock() + minutes * 60000)}
             onFreezeClock={setClockFrozen}
+            trophyPending={2}
+            onOpenTrophies={() => undefined}
             dayPaused={paused}
             arrivedTeamIds={matches.flatMap((match) => [match.team1_id, match.team2_id].filter((id): id is number => id != null))}
             onStartDay={() => setStarted(true)}

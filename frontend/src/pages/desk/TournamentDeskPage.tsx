@@ -9,6 +9,7 @@ import {
 import './checkinDeskLayout.css'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
 import SimulateResultsDialog from './SimulateResultsDialog'
+import TrophyDistributionDialog from './TrophyDistributionDialog'
 import PlayerNotesDialog, { type StaffNote } from './PlayerNotesDialog'
 import ArrivalCheckIn from './ArrivalCheckIn'
 import { TowelColorPill, TowelCountBar } from './towelColor'
@@ -9754,6 +9755,7 @@ export default function TournamentDeskPage() {
   const [checkInPendingIds, setCheckInPendingIds] = useState<number[]>([])
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
   const [simulateOpen, setSimulateOpen] = useState(false)
+  const [trophyOpen, setTrophyOpen] = useState(false)
   const [simulationSlots, setSimulationSlots] = useState<SimulationSlot[]>([])
   const [simulationSlot, setSimulationSlot] = useState<string | null>(null)
   const [simulationBusy, setSimulationBusy] = useState(false)
@@ -12305,6 +12307,8 @@ export default function TournamentDeskPage() {
               onFreezeClock={(frozen) => { void handleFreezeClock(selectedScheduleDay, frozen) }}
               canSimulate={Boolean(data.simulation_allowed)}
               onOpenSimulation={() => { void handleOpenSimulation() }}
+              trophyPending={data.trophy_pending || 0}
+              onOpenTrophies={() => setTrophyOpen(true)}
               courtNotes={Object.fromEntries(Object.values(courtStates).map((state) => [state.court_label, state.note || '']))}
               onMove={(matchId, slotId) => { void handleCourtSheetMove(matchId, slotId) }}
               onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
@@ -12345,6 +12349,14 @@ export default function TournamentDeskPage() {
               teamNotesById={Object.fromEntries(deskTeams.map((team) => [team.team_id, team.notes]))}
               onOpenNotes={(players, teamNotes, teamLabels) => setSheetNotes({ players, teamNotes, teamLabels })}
             />
+            {trophyOpen && tid != null && (
+              <TrophyDistributionDialog
+                tournamentId={tid}
+                versionId={data.version_id}
+                onClose={() => setTrophyOpen(false)}
+                onChanged={() => { void loadSnapshot(data.version_id) }}
+              />
+            )}
             {simulateOpen && (
               <SimulateResultsDialog
                 dayLabel={selectedScheduleDay}

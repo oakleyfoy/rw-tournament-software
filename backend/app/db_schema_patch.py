@@ -663,6 +663,21 @@ def ensure_sms_phone_list_columns(engine: Engine) -> None:
         logger.warning(f"Failed to ensure sms phone list columns (this is OK if table doesn't exist yet): {e}")
 
 
+def ensure_trophy_distribution_table(engine: Engine) -> None:
+    """Ensure trophydistribution exists. Safe to run at every startup."""
+    try:
+        from app.models.trophy_distribution import TrophyDistribution
+
+        table = TrophyDistribution.__table__
+        with engine.begin() as conn:
+            table.create(conn, checkfirst=True)
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to ensure trophydistribution table: {e}")
+
+
 def ensure_start_over_baseline_assignment_table(engine: Engine) -> None:
     """
     Ensure start_over_baseline_assignment table exists.

@@ -27,6 +27,7 @@ from app.models.team_photo import PhotographerTournamentAccess, TeamOfficialPhot
 from app.models.team_photo_print import TeamPhotoPrint, TeamPhotoWatermark, TournamentPhotoWatermark
 from app.models.team_player import TeamPlayer
 from app.models.temporary_player_lookup import TemporaryPlayerLookup
+from app.models.trophy_distribution import TrophyDistribution
 from app.models.tournament import Tournament
 from app.models.tournament_day import TournamentDay
 from app.models.tournament_import import TournamentDrawPlan, TournamentImport
@@ -54,6 +55,7 @@ __all__ = [
     "CourtDispatchLock",
     "SlotLock",
     "StartOverBaselineAssignment",
+    "TrophyDistribution",
     "Team",
     "TeamAvoidEdge",
     "TournamentGroupPhoto",

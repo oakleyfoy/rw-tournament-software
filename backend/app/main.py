@@ -26,6 +26,7 @@ from app.db_schema_patch import (
     ensure_sms_log_columns,
     ensure_sms_phone_list_columns,
     ensure_start_over_baseline_assignment_table,
+    ensure_trophy_distribution_table,
     ensure_team_columns,
     ensure_temporary_player_lookup_columns,
     ensure_tournament_columns,
@@ -247,6 +248,7 @@ def on_startup():
     ensure_sms_log_columns(engine)
     ensure_player_note_columns(engine)
     ensure_start_over_baseline_assignment_table(engine)
+    ensure_trophy_distribution_table(engine)
     import logging as _logging
 
     _startup_log = _logging.getLogger(__name__)

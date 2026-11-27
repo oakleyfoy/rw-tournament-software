@@ -182,6 +182,13 @@ def _desk_simulation_allowed(tournament: Tournament) -> bool:
     return simulation_allowed(tournament)
 
 
+def _desk_trophy_pending(session: Session, tournament_id: int, version_id: int) -> int:
+    from app.services.trophy import pending_award_count
+
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version_id)).all()
+    return pending_award_count(session, tournament_id, matches)
+
+
 def _arrived_team_ids(session: Session, version_id: Optional[int]) -> List[int]:
     if version_id is None:
         return []
@@ -780,6 +787,8 @@ class DeskMatchItem(BaseModel):
     court_number: Optional[int] = None
     day_date: Optional[str] = None
     is_opening: bool = False
+    championship_final: bool = False
+    rr_final_team_ids: List[int] = []
 
 
 class BoardCourtSlot(BaseModel):
@@ -1010,6 +1019,7 @@ class DeskSnapshotResponse(BaseModel):
     dashboard_days: List["DashboardDayState"] = []
     arrived_team_ids: List[int] = []
     simulation_allowed: bool = False
+    trophy_pending: int = 0
 
 
 class DashboardDayState(BaseModel):
@@ -2207,6 +2217,10 @@ def _build_match_items(
 
     items: List[DeskMatchItem] = []
     courts_set: set = set()
+    from app.services.trophy import championship_final_ids, rr_last_match_teams
+
+    final_ids = championship_final_ids(all_matches)
+    last_rr = rr_last_match_teams(all_matches)
 
     for m in all_matches:
         ev = event_map.get(m.event_id)
@@ -2316,6 +2330,8 @@ def _build_match_items(
                 court_number=slot.court_number if slot else None,
                 day_date=slot.day_date.isoformat() if slot else None,
                 is_opening=court_mode == "PREASSIGNED" and is_opening_waterfall(m),
+                championship_final=m.id in final_ids,
+                rr_final_team_ids=last_rr.get(m.id, []),
             )
         )
 
@@ -2659,6 +2675,7 @@ def desk_snapshot(
             dashboard_days=_dashboard_day_states(session, version.id),
             arrived_team_ids=_arrived_team_ids(session, version.id),
             simulation_allowed=_desk_simulation_allowed(tournament),
+            trophy_pending=_desk_trophy_pending(session, tournament.id, version.id),
         )
         if cache_key[2] == _desk_snapshot_gen:
             _desk_snapshot_cache[cache_key] = (time.monotonic(), response)
@@ -5764,8 +5781,6 @@ def get_standings(
     session: Session = Depends(get_session),
 ):
     """Live RR standings computed from FINAL matches in the given version."""
-    from app.services.score_parser import parse_score
-
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -5835,140 +5850,11 @@ def get_standings(
         else:
             div_name = _POOL_LABELS.get(pool) if pool else None
 
-        # Collect all teams in this pool (from all matches, not just FINAL)
-        pool_team_ids: set = set()
-        for m in matches:
-            if m.team_a_id:
-                pool_team_ids.add(m.team_a_id)
-            if m.team_b_id:
-                pool_team_ids.add(m.team_b_id)
+        from app.services.rr_standings import build_pool_standings
 
-        # Init rows
-        rows: Dict[int, dict] = {}
-        for tid in pool_team_ids:
-            rows[tid] = {
-                "wins": 0,
-                "losses": 0,
-                "sets_won": 0,
-                "sets_lost": 0,
-                "games_won": 0,
-                "games_lost": 0,
-                "played": 0,
-            }
-        warnings: List[Dict[str, Any]] = []
-
-        # Process only FINAL matches
-        for m in matches:
-            status = (m.runtime_status or "SCHEDULED").upper()
-            if status != "FINAL":
-                continue
-            if not m.team_a_id or not m.team_b_id:
-                continue
-
-            a_id = m.team_a_id
-            b_id = m.team_b_id
-
-            # Win/loss from winner_team_id
-            if m.winner_team_id == a_id:
-                rows.setdefault(
-                    a_id,
-                    {
-                        "wins": 0,
-                        "losses": 0,
-                        "sets_won": 0,
-                        "sets_lost": 0,
-                        "games_won": 0,
-                        "games_lost": 0,
-                        "played": 0,
-                    },
-                )
-                rows.setdefault(
-                    b_id,
-                    {
-                        "wins": 0,
-                        "losses": 0,
-                        "sets_won": 0,
-                        "sets_lost": 0,
-                        "games_won": 0,
-                        "games_lost": 0,
-                        "played": 0,
-                    },
-                )
-                rows[a_id]["wins"] += 1
-                rows[b_id]["losses"] += 1
-            elif m.winner_team_id == b_id:
-                rows.setdefault(
-                    a_id,
-                    {
-                        "wins": 0,
-                        "losses": 0,
-                        "sets_won": 0,
-                        "sets_lost": 0,
-                        "games_won": 0,
-                        "games_lost": 0,
-                        "played": 0,
-                    },
-                )
-                rows.setdefault(
-                    b_id,
-                    {
-                        "wins": 0,
-                        "losses": 0,
-                        "sets_won": 0,
-                        "sets_lost": 0,
-                        "games_won": 0,
-                        "games_lost": 0,
-                        "played": 0,
-                    },
-                )
-                rows[b_id]["wins"] += 1
-                rows[a_id]["losses"] += 1
-
-            rows[a_id]["played"] += 1
-            rows[b_id]["played"] += 1
-
-            # Parse score for sets/games
-            parsed = parse_score(m.score_json)
-            if parsed:
-                a_sets_won = parsed.team_a_sets_won
-                b_sets_won = parsed.team_b_sets_won
-                a_games = parsed.team_a_games
-                b_games = parsed.team_b_games
-
-                retired = _is_retired_score(m.score_json)
-                # If score orientation conflicts with selected winner, treat score as winner-first.
-                # This prevents inverted set/game stats when staff enter winner-side scores.
-                # Retired matches are intentionally left in literal entered orientation.
-                if not retired and m.winner_team_id == a_id and b_sets_won > a_sets_won:
-                    a_sets_won, b_sets_won = b_sets_won, a_sets_won
-                    a_games, b_games = b_games, a_games
-                elif not retired and m.winner_team_id == b_id and a_sets_won > b_sets_won:
-                    a_sets_won, b_sets_won = b_sets_won, a_sets_won
-                    a_games, b_games = b_games, a_games
-
-                rows[a_id]["sets_won"] += a_sets_won
-                rows[a_id]["sets_lost"] += b_sets_won
-                rows[b_id]["sets_won"] += b_sets_won
-                rows[b_id]["sets_lost"] += a_sets_won
-                rows[a_id]["games_won"] += a_games
-                rows[a_id]["games_lost"] += b_games
-                rows[b_id]["games_won"] += b_games
-                rows[b_id]["games_lost"] += a_games
-            elif m.score_json:
-                warnings.append({"match_number": m.id, "reason": "SCORE_PARSE_FAILED"})
-
-        # Base sort: overall record, then sets lost (fewer is better),
-        # then total game differential, then name.
-        base_sorted_rows = sorted(
-            rows.items(),
-            key=lambda item: (
-                -item[1]["wins"],
-                item[1]["sets_lost"],
-                -(item[1]["games_won"] - item[1]["games_lost"]),
-                _t_disp(item[0]),
-            ),
-        )
-        sorted_rows = base_sorted_rows
+        built = build_pool_standings(matches, _t_disp)
+        sorted_rows = built.sorted_rows
+        warnings = built.warnings
 
         label_suffix = f" — {div_name}" if div_name else ""
         standings_events.append(
@@ -7072,6 +6958,65 @@ def advance_simulation_slot(
         raise _simulation_http(exc) from exc
     _bump_desk_snapshot()
     return result
+
+
+class TrophyDistributionRequest(BaseModel):
+    version_id: int
+    award_key: str
+    team_id: Optional[int] = None
+
+
+@router.get("/desk/tournaments/{tournament_id}/trophies")
+def list_trophies(
+    tournament_id: int,
+    version_id: int,
+    session: Session = Depends(get_session),
+):
+    from app.services.trophy import trophy_board
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    matches = session.exec(select(Match).where(Match.schedule_version_id == version.id)).all()
+    return trophy_board(session, tournament_id, matches)
+
+
+@router.post("/desk/tournaments/{tournament_id}/trophies")
+def distribute_trophy(
+    tournament_id: int,
+    payload: TrophyDistributionRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.trophy import mark_distributed
+
+    if payload.team_id is None:
+        raise HTTPException(status_code=400, detail="team_id is required")
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        mark_distributed(session, tournament.id, version.id, payload.award_key, payload.team_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _bump_desk_snapshot()
+    return {"ok": True}
+
+
+@router.post("/desk/tournaments/{tournament_id}/trophies/undo")
+def undo_trophy(
+    tournament_id: int,
+    payload: TrophyDistributionRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.trophy import undo_distribution
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    undo_distribution(session, tournament_id, payload.award_key)
+    _bump_desk_snapshot()
+    return {"ok": True}
 
 
 @router.post("/desk/tournaments/{tournament_id}/matches/{match_id}/dashboard/activate")

@@ -3146,6 +3146,8 @@ export interface DeskMatchItem {
   court_number: number | null
   day_date: string | null
   is_opening?: boolean
+  championship_final?: boolean
+  rr_final_team_ids?: number[]
 }
 
 export interface BoardCourtSlot {
@@ -3328,6 +3330,7 @@ export interface DeskSnapshotResponse {
   dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null; simulated_at?: string | null; clock_frozen?: boolean; server_now?: string | null }[]
   arrived_team_ids?: number[]
   simulation_allowed?: boolean
+  trophy_pending?: number
 }
 
 export interface TemporaryPlayerLookupItem {
@@ -3939,6 +3942,66 @@ export async function advanceSimulationSlot(
   payload: { version_id: number; day_date: string; slot_time: string },
 ): Promise<{ day_date: string; slot_label: string; simulated_at: string | null }> {
   return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/simulate-results/advance`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export interface TrophyAward {
+  award_key: string
+  role: 'champion' | 'runner_up'
+  team_id: number
+  team_name: string
+  players: string[]
+  distributed: boolean
+  review_required: boolean
+  confirmed_team_id: number | null
+  confirmed_team_name: string | null
+}
+
+export interface TrophyFinal {
+  match_id: number
+  match_code: string
+  event_name: string
+  division_name: string | null
+  awards: TrophyAward[]
+}
+
+export interface TrophyGroup {
+  event_id: number
+  pool: string
+  event_name: string
+  division_name: string | null
+  official: boolean
+  unresolved_reason: string | null
+  awards: TrophyAward[]
+}
+
+export interface TrophyBoard {
+  finals: TrophyFinal[]
+  groups: TrophyGroup[]
+  pending: number
+}
+
+export async function listTrophies(tournamentId: number, versionId: number): Promise<TrophyBoard> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/trophies?version_id=${versionId}`)
+}
+
+export async function markTrophyDistributed(
+  tournamentId: number,
+  payload: { version_id: number; award_key: string; team_id: number },
+): Promise<{ ok: boolean }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/trophies`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function undoTrophyDistributed(
+  tournamentId: number,
+  payload: { version_id: number; award_key: string },
+): Promise<{ ok: boolean }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/trophies/undo`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })
