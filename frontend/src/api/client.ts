@@ -3327,6 +3327,7 @@ export interface DeskSnapshotResponse {
   arrival_matches?: CheckInMatchItem[]
   dashboard_days?: { day_date: string; started: boolean; paused: boolean; started_at: string | null; simulated_at?: string | null; clock_frozen?: boolean; server_now?: string | null }[]
   arrived_team_ids?: number[]
+  simulation_allowed?: boolean
 }
 
 export interface TemporaryPlayerLookupItem {
@@ -3871,6 +3872,73 @@ export async function setDashboardTestClock(
   payload: { version_id: number; day_date: string; clock_time?: string | null; advance_minutes?: number; frozen?: boolean }
 ): Promise<{ day_date: string; started: boolean; paused: boolean; simulated_at?: string | null; clock_frozen?: boolean; server_now?: string | null }> {
   return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/dashboard/test-clock`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export interface SimulationSlot {
+  start_time: string
+  label: string
+  match_count: number
+  completed: number
+  active: number
+  remaining: number
+}
+
+export interface SimulationNotice {
+  team_name?: string | null
+  player_name?: string | null
+  message: string
+}
+
+export interface SimulationMatchResult {
+  match_id: number
+  match_code: string
+  court: string
+  team1: string
+  team2: string
+  winner: string | null
+  score: string | null
+  status: 'completed' | 'skipped' | 'blocked' | 'failed'
+  reason: string | null
+  notifications?: SimulationNotice[]
+}
+
+export interface SimulationSummary {
+  day_date: string
+  slot_label: string
+  completed: number
+  skipped: number
+  blocked: number
+  failed: number
+  notification_count: number
+  results: SimulationMatchResult[]
+}
+
+export async function listSimulationSlots(
+  tournamentId: number,
+  versionId: number,
+  day: string,
+): Promise<{ day_date: string; day_started: boolean; slots: SimulationSlot[] }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/simulate-results?version_id=${versionId}&day_date=${encodeURIComponent(day)}`)
+}
+
+export async function simulateTimeSlot(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; slot_time: string },
+): Promise<SimulationSummary> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/simulate-results`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function advanceSimulationSlot(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; slot_time: string },
+): Promise<{ day_date: string; slot_label: string; simulated_at: string | null }> {
+  return fetchJson(`${API_BASE_URL}/desk/tournaments/${tournamentId}/simulate-results/advance`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })

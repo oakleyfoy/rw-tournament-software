@@ -95,6 +95,37 @@ def validate_score_for_duration(score_text: str, duration_minutes: int) -> Tuple
     return True, None
 
 
+_PRO_SET_8 = [(8, loser) for loser in range(0, 7)] + [(9, 7), (9, 8)]
+_PRO_SET_4 = [(4, 0), (4, 1), (4, 2), (5, 3), (5, 4)]
+_REGULAR_SET = [(6, loser) for loser in range(0, 5)] + [(7, 5), (7, 6)]
+
+
+def random_valid_score(duration_minutes: int, *, team_a_wins: bool, rng) -> str:
+    """A score the existing validator accepts, oriented to the chosen winner."""
+    modes = scoring_modes_for_duration(duration_minutes or 0)
+    mode = rng.choice(modes)
+    if mode == "PRO_SET_4":
+        return _oriented_set(rng.choice(_PRO_SET_4), team_a_wins)
+    if mode == "PRO_SET_8":
+        return _oriented_set(rng.choice(_PRO_SET_8), team_a_wins)
+    first = rng.choice(_REGULAR_SET)
+    if rng.random() < 0.75:
+        second = rng.choice(_REGULAR_SET)
+        if team_a_wins:
+            return f"{_oriented_set(first, True)}, {_oriented_set(second, True)}"
+        return f"{_oriented_set(first, False)}, {_oriented_set(second, False)}"
+    split_first = _oriented_set(first, True)
+    split_second = _oriented_set(rng.choice(_REGULAR_SET), False)
+    tiebreak = "1-0" if team_a_wins else "0-1"
+    return f"{split_first}, {split_second}, {tiebreak}"
+
+
+def _oriented_set(score: Tuple[int, int], team_a_wins: bool) -> str:
+    winner, loser = score
+    pair = (winner, loser) if team_a_wins else (loser, winner)
+    return f"{pair[0]}-{pair[1]}"
+
+
 def scoring_modes_for_duration(duration_minutes: int) -> List[str]:
     """Infer acceptable scoring modes from duration.
 

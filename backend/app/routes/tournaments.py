@@ -1308,6 +1308,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             court_names=list(source_tournament.court_names or []),
             source_rw_os_tournament_id=source_tournament.source_rw_os_tournament_id,
             source_rw_os_organization_slug=source_tournament.source_rw_os_organization_slug,
+            duplicated_from_tournament_id=source_tournament.id,
         )
         session.add(new_tournament)
         session.flush()

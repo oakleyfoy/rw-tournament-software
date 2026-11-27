@@ -71,6 +71,8 @@ type Props = {
   onSetTestClock?: (time: string | null) => void
   onAdvanceClock?: (minutes: number) => void
   onFreezeClock?: (frozen: boolean) => void
+  canSimulate?: boolean
+  onOpenSimulation?: () => void
 }
 
 const LIVE = new Set(['IN_PROGRESS', 'PAUSED'])
@@ -126,7 +128,7 @@ export default function DesignatedCourtSheet(props: Props) {
     rosterByTeam = {}, notedPlayerIds = [], teamNotesById = {}, onOpenNotes,
     dayStarted = false, dayPaused = false, onStartDay, onSetPaused, courtNotes = {},
     isCopy = false, testClock = null, simulatedAt = null, serverNow = null, clockFrozen = false,
-    onSetTestClock, onAdvanceClock, onFreezeClock,
+    onSetTestClock, onAdvanceClock, onFreezeClock, canSimulate = false, onOpenSimulation,
   } = props
   const [dragMatchId, setDragMatchId] = useState<number | null>(null)
   const [courtPanel, setCourtPanel] = useState<number | null>(null)
@@ -270,6 +272,7 @@ export default function DesignatedCourtSheet(props: Props) {
             <button type="button" onClick={() => onFreezeClock?.(!clockFrozen)} style={chip(clockFrozen)}>
               {clockFrozen ? 'Resume clock' : 'Freeze clock'}
             </button>
+            {canSimulate && <button type="button" onClick={onOpenSimulation} style={chip(false)}>Simulate Results</button>}
             <span style={{ fontWeight: 700, color: '#b71c1c' }}>Texts off</span>
           </span>
         )}

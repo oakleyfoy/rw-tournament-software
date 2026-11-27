@@ -28,6 +28,7 @@ REQUIRED_TOURNAMENT_COLUMNS: List[Tuple[str, str, str]] = [
     ("event_schedule_day_orders_json", "TEXT", "TEXT"),
     ("source_rw_os_tournament_id", "INTEGER", "INTEGER"),
     ("source_rw_os_organization_slug", "TEXT", "TEXT"),
+    ("duplicated_from_tournament_id", "INTEGER", "INTEGER"),
 ]
 
 REQUIRED_TOURNAMENT_TIME_WINDOW_COLUMNS: List[Tuple[str, str, str]] = [
@@ -237,6 +238,7 @@ def ensure_tournament_columns(engine: Engine) -> None:
                         "event_schedule_day_orders_json",
                         "source_rw_os_tournament_id",
                         "source_rw_os_organization_slug",
+                        "duplicated_from_tournament_id",
                     ):
                         default = "DEFAULT NULL"
                     else:
@@ -270,6 +272,7 @@ def ensure_tournament_columns(engine: Engine) -> None:
                         "event_schedule_day_orders_json",
                         "source_rw_os_tournament_id",
                         "source_rw_os_organization_slug",
+                        "duplicated_from_tournament_id",
                     ):
                         default = "DEFAULT NULL"
                     else:

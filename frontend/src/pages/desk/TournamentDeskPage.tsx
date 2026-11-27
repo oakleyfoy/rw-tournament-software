@@ -8,6 +8,7 @@ import {
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
+import SimulateResultsDialog from './SimulateResultsDialog'
 import PlayerNotesDialog, { type StaffNote } from './PlayerNotesDialog'
 import ArrivalCheckIn from './ArrivalCheckIn'
 import { TowelColorPill, TowelCountBar } from './towelColor'
@@ -35,6 +36,11 @@ import {
   deskMoveMatch,
   deskSwapMatches,
   setDashboardTestClock,
+  type SimulationSlot,
+  type SimulationSummary,
+  listSimulationSlots,
+  simulateTimeSlot,
+  advanceSimulationSlot,
   startDashboardDay,
   pauseDashboardDay,
   activateDashboardMatch,
@@ -9747,6 +9753,12 @@ export default function TournamentDeskPage() {
   const [courtSheetBusyId, setCourtSheetBusyId] = useState<number | null>(null)
   const [checkInPendingIds, setCheckInPendingIds] = useState<number[]>([])
   const [courtActionError, setCourtActionError] = useState<string | null>(null)
+  const [simulateOpen, setSimulateOpen] = useState(false)
+  const [simulationSlots, setSimulationSlots] = useState<SimulationSlot[]>([])
+  const [simulationSlot, setSimulationSlot] = useState<string | null>(null)
+  const [simulationBusy, setSimulationBusy] = useState(false)
+  const [simulationSummary, setSimulationSummary] = useState<SimulationSummary | null>(null)
+  const [simulationError, setSimulationError] = useState<string | null>(null)
   const teamPhotoLive = useOfficialTeamPhotoPolling(tid)
   const [playerNotes, setPlayerNotes] = useState<StaffNote[]>([])
   const [deskTeams, setDeskTeams] = useState<DeskTeamItem[]>([])
@@ -11176,6 +11188,55 @@ export default function TournamentDeskPage() {
     }
   }
 
+  const refreshSimulationSlots = async () => {
+    if (!tid || !data) return
+    const board = await listSimulationSlots(tid, data.version_id, selectedScheduleDay)
+    setSimulationSlots(board.slots)
+    setSimulationSlot((current) => (current && board.slots.some((slot) => slot.start_time === current) ? current : board.slots[0]?.start_time || null))
+  }
+
+  const handleOpenSimulation = async () => {
+    setSimulationError(null)
+    setSimulationSummary(null)
+    setSimulateOpen(true)
+    try {
+      await refreshSimulationSlots()
+    } catch (e) {
+      setSimulationError(e instanceof Error ? e.message : 'Result simulation is only available on a duplicated test tournament')
+    }
+  }
+
+  const handleSimulateSlot = async () => {
+    if (!tid || !data || !simulationSlot || simulationBusy) return
+    setSimulationBusy(true)
+    setSimulationError(null)
+    try {
+      const summary = await simulateTimeSlot(tid, { version_id: data.version_id, day_date: selectedScheduleDay, slot_time: simulationSlot })
+      setSimulationSummary(summary)
+      await loadSnapshot(data.version_id)
+      await refreshSimulationSlots()
+    } catch (e) {
+      setSimulationError(e instanceof Error ? e.message : 'Simulation failed')
+    } finally {
+      setSimulationBusy(false)
+    }
+  }
+
+  const handleAdvanceSimulation = async () => {
+    if (!tid || !data || !simulationSlot || simulationBusy) return
+    setSimulationBusy(true)
+    setSimulationError(null)
+    try {
+      await advanceSimulationSlot(tid, { version_id: data.version_id, day_date: selectedScheduleDay, slot_time: simulationSlot })
+      await loadSnapshot(data.version_id)
+      await refreshSimulationSlots()
+    } catch (e) {
+      setSimulationError(e instanceof Error ? e.message : 'The test clock cannot move to that time slot')
+    } finally {
+      setSimulationBusy(false)
+    }
+  }
+
   const handleDashboardActivate = async (matchId: number, slotId: number | null) => {
     if (slotId != null) await handleCourtSheetMove(matchId, slotId)
     await handleCourtSheetStart(matchId)
@@ -12242,6 +12303,8 @@ export default function TournamentDeskPage() {
               onSetTestClock={(clock) => { void handleTestClock(selectedScheduleDay, clock) }}
               onAdvanceClock={(minutes) => { void handleAdvanceClock(selectedScheduleDay, minutes) }}
               onFreezeClock={(frozen) => { void handleFreezeClock(selectedScheduleDay, frozen) }}
+              canSimulate={Boolean(data.simulation_allowed)}
+              onOpenSimulation={() => { void handleOpenSimulation() }}
               courtNotes={Object.fromEntries(Object.values(courtStates).map((state) => [state.court_label, state.note || '']))}
               onMove={(matchId, slotId) => { void handleCourtSheetMove(matchId, slotId) }}
               onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
@@ -12282,6 +12345,20 @@ export default function TournamentDeskPage() {
               teamNotesById={Object.fromEntries(deskTeams.map((team) => [team.team_id, team.notes]))}
               onOpenNotes={(players, teamNotes, teamLabels) => setSheetNotes({ players, teamNotes, teamLabels })}
             />
+            {simulateOpen && (
+              <SimulateResultsDialog
+                dayLabel={selectedScheduleDay}
+                slots={simulationSlots}
+                selected={simulationSlot}
+                busy={simulationBusy}
+                summary={simulationSummary}
+                error={simulationError}
+                onSelect={setSimulationSlot}
+                onSimulate={() => { void handleSimulateSlot() }}
+                onAdvance={() => { void handleAdvanceSimulation() }}
+                onClose={() => setSimulateOpen(false)}
+              />
+            )}
           </div>
         )}
 

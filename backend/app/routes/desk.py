@@ -176,6 +176,12 @@ def _dashboard_day_states(session: Session, version_id: Optional[int]) -> List["
     return states
 
 
+def _desk_simulation_allowed(tournament: Tournament) -> bool:
+    from app.services.result_simulator import simulation_allowed
+
+    return simulation_allowed(tournament)
+
+
 def _arrived_team_ids(session: Session, version_id: Optional[int]) -> List[int]:
     if version_id is None:
         return []
@@ -1003,6 +1009,7 @@ class DeskSnapshotResponse(BaseModel):
     arrival_matches: List[CheckInMatchItem] = []
     dashboard_days: List["DashboardDayState"] = []
     arrived_team_ids: List[int] = []
+    simulation_allowed: bool = False
 
 
 class DashboardDayState(BaseModel):
@@ -2651,6 +2658,7 @@ def desk_snapshot(
             arrival_matches=arrival_matches,
             dashboard_days=_dashboard_day_states(session, version.id),
             arrived_team_ids=_arrived_team_ids(session, version.id),
+            simulation_allowed=_desk_simulation_allowed(tournament),
         )
         if cache_key[2] == _desk_snapshot_gen:
             _desk_snapshot_cache[cache_key] = (time.monotonic(), response)
@@ -6990,6 +6998,80 @@ def set_dashboard_test_clock(
     session.commit()
     _bump_desk_snapshot()
     return _dashboard_day_state(run)
+
+
+class SimulateSlotRequest(BaseModel):
+    version_id: int
+    day_date: str
+    slot_time: str
+
+
+def _simulation_http(exc: ValueError) -> HTTPException:
+    message = str(exc)
+    if "only available" in message:
+        return HTTPException(status_code=403, detail=message)
+    if "already running" in message:
+        return HTTPException(status_code=409, detail=message)
+    return HTTPException(status_code=400, detail=message)
+
+
+@router.get("/desk/tournaments/{tournament_id}/simulate-results")
+def list_simulation_slots(
+    tournament_id: int,
+    version_id: int,
+    day_date: str,
+    session: Session = Depends(get_session),
+):
+    from app.services.result_simulator import slot_board
+
+    tournament, version = _draft_version_or_400(session, tournament_id, version_id)
+    try:
+        day = date.fromisoformat(day_date)
+        return slot_board(session, tournament, version, day)
+    except ValueError as exc:
+        raise _simulation_http(exc) from exc
+
+
+@router.post("/desk/tournaments/{tournament_id}/simulate-results")
+def simulate_results(
+    tournament_id: int,
+    payload: SimulateSlotRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.result_simulator import simulate_time_slot
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+    try:
+        result = simulate_time_slot(session, tournament, version, day, payload.slot_time)
+    except ValueError as exc:
+        raise _simulation_http(exc) from exc
+    _bump_desk_snapshot()
+    return result
+
+
+@router.post("/desk/tournaments/{tournament_id}/simulate-results/advance")
+def advance_simulation_slot(
+    tournament_id: int,
+    payload: SimulateSlotRequest,
+    session: Session = Depends(get_session),
+):
+    from app.services.result_simulator import advance_to_next_slot
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD") from exc
+    try:
+        result = advance_to_next_slot(session, tournament, version, day, payload.slot_time)
+    except ValueError as exc:
+        raise _simulation_http(exc) from exc
+    _bump_desk_snapshot()
+    return result
 
 
 @router.post("/desk/tournaments/{tournament_id}/matches/{match_id}/dashboard/activate")
