@@ -135,17 +135,15 @@ function courtMatches(schedule: DaySchedule, courtNumber: number): { court: Sche
 export default function DesignatedCourtSheet(props: Props) {
   const {
     schedule, days, selectedDay, onSelectDay, matches, nowMinutes, clockLabel, syncedLabel,
-    isDraft, canUndo, onOpenMatch, onMove, onSwap, onUndo, onCourtState, onInteractionChange,
+    isDraft, canUndo, onOpenMatch, onMove, onSwap, onUndo, onInteractionChange,
     rosterByTeam = {}, notedPlayerIds = [], teamNotesById = {}, onOpenNotes,
-    dayStarted = false, dayPaused = false, onStartDay, onSetPaused, courtNotes = {},
+    dayStarted = false, dayPaused = false, onStartDay, onSetPaused,
     isCopy = false, testClock = null, simulatedAt = null, serverNow = null, clockFrozen = false,
     onSetTestClock, onAdvanceClock, onFreezeClock, canSimulate = false, onOpenSimulation,
     trophyPending = 0, onOpenTrophies, onMakeCourtAvailable, onRestoreCourtAvailability,
   } = props
-  const [availabilityCourt, setAvailabilityCourt] = useState<{ court: ScheduleCourt; slot: SnapshotSlot } | null>(null)
+  const [availabilityCourt, setAvailabilityCourt] = useState<{ court: ScheduleCourt; slot: SnapshotSlot; scope?: 'slot' | 'range' | 'rest' } | null>(null)
   const [dragMatchId, setDragMatchId] = useState<number | null>(null)
-  const [courtPanel, setCourtPanel] = useState<number | null>(null)
-  const [noteDraft, setNoteDraft] = useState('')
   const [tick, setTick] = useState(() => Date.now())
   const [textMatch, setTextMatch] = useState<DeskMatchItem | null>(null)
   const clockState = useRef<ClockHold | null>(null)
@@ -303,7 +301,11 @@ export default function DesignatedCourtSheet(props: Props) {
         <div style={{ display: 'grid', gridTemplateColumns: columns, gap: 3, position: 'sticky', top: 0, zIndex: 3, background: '#f4f6f8', paddingBottom: 4 }}>
           <div style={corner}>Time</div>
           {schedule.courts.map((court) => (
-            <button key={court.courtNumber} type="button" onClick={() => { setCourtPanel(court.courtNumber); setNoteDraft(courtNotes[court.courtLabel] || courtNotes[String(court.courtNumber)] || '') }} style={headerButton(court)}>
+            <button key={court.courtNumber} type="button" onClick={() => {
+              const { cells } = courtMatches(schedule, court.courtNumber)
+              const slot = coveringCell(cells, liveMinutes)?.slot || cells[0]?.slot
+              if (slot) setAvailabilityCourt({ court, slot, scope: 'rest' })
+            }} style={headerButton(court)}>
               {court.courtName.replace(/^Court\s+/i, '')}
             </button>
           ))}
@@ -414,26 +416,13 @@ export default function DesignatedCourtSheet(props: Props) {
         </div>
       </div>
 
-      {courtPanel != null && (
-        <CourtPanel
-          schedule={schedule}
-          courtNumber={courtPanel}
-          note={noteDraft}
-          onNote={setNoteDraft}
-          onClose={() => { setCourtPanel(null); hold(false) }}
-          onSave={(closed) => {
-            const court = schedule.courts.find((row) => row.courtNumber === courtPanel)
-            if (court) onCourtState(court.courtLabel, closed, noteDraft)
-            setCourtPanel(null)
-          }}
-        />
-      )}
       {availabilityCourt && (
         <CourtAvailabilityDialog
           schedule={schedule}
           court={availabilityCourt.court}
           slot={availabilityCourt.slot}
           day={selectedDay}
+          initialScope={availabilityCourt.scope}
           onClose={() => setAvailabilityCourt(null)}
           onMake={onMakeCourtAvailable}
           onRestore={onRestoreCourtAvailability}
@@ -727,31 +716,6 @@ function NoteIcon() {
   )
 }
 
-function CourtPanel({
-  schedule, courtNumber, note, onNote, onClose, onSave,
-}: {
-  schedule: DaySchedule
-  courtNumber: number
-  note: string
-  onNote: (value: string) => void
-  onClose: () => void
-  onSave: (closed: boolean) => void
-}) {
-  const court = schedule.courts.find((row) => row.courtNumber === courtNumber)
-  if (!court) return null
-  return (
-    <div style={{ border: '1px solid #cfd8dc', borderRadius: 8, background: '#fff', padding: 10, display: 'grid', gap: 8 }}>
-      <div style={{ fontWeight: 800 }}>{court.courtName}</div>
-      <input value={note} onChange={(event) => onNote(event.target.value)} placeholder="Closure reason" style={{ padding: 6 }} />
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" onClick={() => onSave(true)}>Close court</button>
-        <button type="button" onClick={() => onSave(false)}>Open court</button>
-        <button type="button" onClick={onClose}>Done</button>
-      </div>
-    </div>
-  )
-}
-
 function chip(active: boolean): CSSProperties {
   return { border: '1px solid #1a237e', background: active ? '#1a237e' : '#fff', color: active ? '#fff' : '#1a237e', borderRadius: 6, padding: '4px 8px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }
 }
@@ -800,12 +764,13 @@ function formatHhmm(value: string): string {
 }
 
 function CourtAvailabilityDialog({
-  schedule, court, slot, day, onClose, onMake, onRestore,
+  schedule, court, slot, day, initialScope = 'slot', onClose, onMake, onRestore,
 }: {
   schedule: DaySchedule
   court: ScheduleCourt
   slot: SnapshotSlot
   day: string
+  initialScope?: 'slot' | 'range' | 'rest'
   onClose: () => void
   onMake?: (input: {
     dayDate: string
@@ -822,7 +787,7 @@ function CourtAvailabilityDialog({
   const originallyOpen = cells.filter((cell) => cell.slot.scheduled_active !== false)
   const firstOpen = originallyOpen[0]?.slot.start_time || null
   const overrideActive = cells.some((cell) => (cell.slot.scheduled_active !== false) !== (cell.slot.is_active !== false))
-  const [scope, setScope] = useState<'slot' | 'range' | 'rest'>('slot')
+  const [scope, setScope] = useState<'slot' | 'range' | 'rest'>(initialScope)
   const [rangeEnd, setRangeEnd] = useState(slot.end_time)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
