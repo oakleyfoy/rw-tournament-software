@@ -4246,6 +4246,12 @@ def finalize_match(
             status_code=400,
             detail=f"winner_team_id must be team_a ({match.team_a_id}) or team_b ({match.team_b_id})",
         )
+    if payload.score is not None and not payload.is_default and not payload.is_retired:
+        from app.services.score_parser import score_supports_winner
+
+        _validate_score_text_for_match(payload.score, match)
+        if not score_supports_winner(payload.score, team_a_wins=payload.winner_team_id == match.team_a_id):
+            raise HTTPException(status_code=400, detail="Selected winner does not match the entered score.")
 
     # Apply finalization
     match.runtime_status = "FINAL"
@@ -4260,7 +4266,6 @@ def finalize_match(
         actual_score = payload.score or "0-0"
         match.score_json = {"display": f"{actual_score} (RET)", "actual": actual_score}
     elif payload.score is not None:
-        _validate_score_text_for_match(payload.score, match)
         match.score_json = {"display": payload.score}
     session.add(match)
     session.commit()
@@ -4566,6 +4571,68 @@ def finalize_match(
     )
 
 
+class NextPreviewRequest(BaseModel):
+    version_id: int
+    winner_team_id: int
+
+
+class NextPreviewPlayer(BaseModel):
+    player_id: Optional[int] = None
+    name: str
+    phone: str = ""
+    eligible: bool = False
+    ineligible_reason: Optional[str] = None
+    message: str = ""
+
+
+class NextPreviewCard(BaseModel):
+    team_id: int
+    team_label: str
+    role: str
+    kind: str
+    next_match_id: Optional[int] = None
+    date_label: Optional[str] = None
+    time_label: Optional[str] = None
+    court_label: Optional[str] = None
+    opponent_label: Optional[str] = None
+    opponent_pending: bool = False
+    schedule_pending: bool = False
+    status_label: Optional[str] = None
+    players: List[NextPreviewPlayer] = []
+
+
+class NextPreviewResponse(BaseModel):
+    format_label: str
+    preview_key: str
+    cards: List[NextPreviewCard] = []
+
+
+@router.post(
+    "/desk/tournaments/{tournament_id}/matches/{match_id}/next-preview",
+    response_model=NextPreviewResponse,
+)
+def preview_next_matches(
+    tournament_id: int,
+    match_id: int,
+    payload: NextPreviewRequest,
+    session: Session = Depends(get_session),
+):
+    """Project both teams' next matches without saving a score or changing the draw."""
+    from app.services.next_match_preview import project_next_matches
+
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    version = session.get(ScheduleVersion, payload.version_id)
+    if not version or version.tournament_id != tournament_id:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+    match = session.get(Match, match_id)
+    if not match or match.tournament_id != tournament_id or match.schedule_version_id != payload.version_id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    projected = project_next_matches(session, match, payload.winner_team_id)
+    return NextPreviewResponse(**projected)
+
+
 @router.post(
     "/desk/tournaments/{tournament_id}/matches/{match_id}/finalize-sms",
     response_model=FinalizeSmsSendResponse,
@@ -4691,7 +4758,11 @@ def correct_match(
             detail=f"winner_team_id must be team_a ({match.team_a_id}) or team_b ({match.team_b_id})",
         )
 
+    from app.services.score_parser import score_supports_winner
+
     _validate_score_text_for_match(payload.score, match)
+    if not score_supports_winner(payload.score, team_a_wins=payload.winner_team_id == match.team_a_id):
+        raise HTTPException(status_code=400, detail="Selected winner does not match the entered score.")
 
     winner_changed = match.winner_team_id != payload.winner_team_id
     warnings: List[Dict[str, Any]] = []

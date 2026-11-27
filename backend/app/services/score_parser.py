@@ -326,3 +326,15 @@ def _is_valid_regular_match(sets: List[Tuple[int, int]]) -> bool:
         return False
     # Third set only valid when first two are split.
     return a_first_two == 1 and b_first_two == 1
+
+
+def score_supports_winner(score_text: str, *, team_a_wins: bool) -> bool:
+    """True when the entered sets give the selected side more sets than the other."""
+    sets = _parse_sets_from_raw(score_text)
+    if not sets:
+        return False
+    team_a_sets = sum(1 for team_a, team_b in sets if team_a > team_b)
+    team_b_sets = sum(1 for team_a, team_b in sets if team_b > team_a)
+    if team_a_wins:
+        return team_a_sets > team_b_sets
+    return team_b_sets > team_a_sets

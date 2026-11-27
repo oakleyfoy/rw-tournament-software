@@ -8,6 +8,7 @@ import {
 } from './preassignedReadyVisibility'
 import './checkinDeskLayout.css'
 import DesignatedCourtSheet from './DesignatedCourtSheet'
+import MatchScoreDrawer from './MatchScoreDrawer'
 import SimulateResultsDialog from './SimulateResultsDialog'
 import TrophyDistributionDialog from './TrophyDistributionDialog'
 import PlayerNotesDialog, { type StaffNote } from './PlayerNotesDialog'
@@ -30,7 +31,6 @@ import {
   checkDeskConflicts,
   createWorkingDraft,
   deskFinalizeMatch,
-  deskSendFinalizeSms,
   deskCorrectMatch,
   deskSetMatchStatus,
   deskReturnMatchToWaitingCheckIn,
@@ -79,7 +79,6 @@ import {
   MatchCheckInSideState,
   PlayerCheckInState,
   FinalizeResponse,
-  FinalizeSmsPreview,
   PoolProjectionResponse,
   EventProjection,
   StandingsResponse,
@@ -1116,197 +1115,6 @@ function editableScore(display: string | null | undefined): string {
   return (display || '').replace(/\s*\(\s*RET\s*\)/gi, '').trim()
 }
 
-function ScoreEntryPanel({
-  score,
-  onScore,
-  winnerId,
-  onWinner,
-  team1Id,
-  team1Display,
-  team2Id,
-  team2Display,
-  submitting,
-  stage,
-  primaryLabel,
-  onPrimary,
-  showOutcomeActions,
-  onDefault,
-  onRetired,
-}: {
-  score: string
-  onScore: (value: string) => void
-  winnerId: number | null
-  onWinner: (teamId: number | null) => void
-  team1Id: number | null
-  team1Display: string
-  team2Id: number | null
-  team2Display: string
-  submitting: boolean
-  stage: string
-  primaryLabel: string
-  onPrimary: () => void
-  showOutcomeActions: boolean
-  onDefault?: () => void
-  onRetired?: () => void
-}) {
-  const ready = Boolean(winnerId && score.trim())
-  return (
-    <div style={{
-      border: '1px solid #e0e0e0',
-      borderRadius: 6,
-      padding: 14,
-      backgroundColor: '#fafafa',
-    }}>
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: '#333' }}>
-        Finalize Match
-      </div>
-      <div style={{ marginBottom: 8 }}>
-        <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
-        <input
-          type="text"
-          placeholder="e.g. 8-4"
-          value={score}
-          onChange={e => onScore(e.target.value)}
-          style={{
-            width: '100%',
-            padding: '6px 10px',
-            fontSize: 13,
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            marginTop: 4,
-            boxSizing: 'border-box',
-          }}
-        />
-      </div>
-      <div style={{ marginBottom: 10 }}>
-        <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Winner</label>
-        <div aria-label="Score Entry" data-testid="score-entry-photos" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-          {team1Id && (
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: 13,
-              cursor: 'pointer',
-              padding: '6px 10px',
-              borderRadius: 4,
-              border: winnerId === team1Id ? '2px solid #1a237e' : '1px solid #ddd',
-              backgroundColor: winnerId === team1Id ? '#e8eaf6' : '#fff',
-            }}>
-              <input
-                type="radio"
-                name="winner"
-                checked={winnerId === team1Id}
-                onChange={() => onWinner(team1Id)}
-              />
-              <TeamPhotoNameRow teamId={team1Id} name={team1Display} size={28} surface="score-entry" />
-            </label>
-          )}
-          {team2Id && (
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: 13,
-              cursor: 'pointer',
-              padding: '6px 10px',
-              borderRadius: 4,
-              border: winnerId === team2Id ? '2px solid #1a237e' : '1px solid #ddd',
-              backgroundColor: winnerId === team2Id ? '#e8eaf6' : '#fff',
-            }}>
-              <input
-                type="radio"
-                name="winner"
-                checked={winnerId === team2Id}
-                onChange={() => onWinner(team2Id)}
-              />
-              <TeamPhotoNameRow teamId={team2Id} name={team2Display} size={28} surface="score-entry" />
-            </label>
-          )}
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={onPrimary}
-          disabled={!ready || submitting}
-          style={{
-            flex: 1,
-            aspectRatio: '1 / 1',
-            minHeight: 56,
-            padding: '6px',
-            fontSize: 12,
-            fontWeight: 600,
-            backgroundColor: ready ? '#2e7d32' : '#ccc',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: ready ? 'pointer' : 'default',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textAlign: 'center',
-          }}
-        >
-          {submitting ? 'Submitting...' : primaryLabel}
-        </button>
-        {showOutcomeActions && team1Id && team2Id && (
-          <button
-            onClick={onDefault}
-            disabled={!winnerId || submitting}
-            style={{
-              flex: 1,
-              aspectRatio: '1 / 1',
-              minHeight: 56,
-              padding: '6px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: winnerId ? '#e65100' : '#ccc',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: winnerId ? 'pointer' : 'default',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            {submitting ? 'Submitting...' : stage === 'WF' ? 'Default (WF)' : 'Default Win'}
-          </button>
-        )}
-        {showOutcomeActions && team1Id && team2Id && (
-          <button
-            onClick={onRetired}
-            disabled={!ready || submitting}
-            title="Enter the score at point of retirement, select the winning team, then click Retired"
-            style={{
-              flex: 1,
-              aspectRatio: '1 / 1',
-              minHeight: 56,
-              padding: '6px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: ready ? '#6a1b9a' : '#ccc',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: ready ? 'pointer' : 'default',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            {submitting ? 'Submitting...' : 'Retired'}
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Match Drawer (right slideout) ──────────────────────────────────────
-
 function MatchDrawer({
   match,
   isDraft,
@@ -1318,6 +1126,10 @@ function MatchDrawer({
   allMatches,
   rosterPlayers = [],
   playerNotes = [],
+  isCopy = false,
+  textRoster = [],
+  onSendTexts,
+  onOpenTrophies,
 }: {
   match: DeskMatchItem
   isDraft: boolean
@@ -1329,6 +1141,10 @@ function MatchDrawer({
   allMatches: DeskMatchItem[]
   rosterPlayers?: { id: number; name: string }[]
   playerNotes?: StaffNote[]
+  isCopy?: boolean
+  textRoster?: Array<{ id: number; name: string; phone: string | null; consent: string | null; team: 1 | 2 }>
+  onSendTexts?: (items: Array<{ playerId: number; message: string }>) => Promise<number>
+  onOpenTrophies?: () => void
 }) {
   const [score, setScore] = useState(() => match.status === 'FINAL' ? editableScore(match.score_display) : '')
   const [winnerId, setWinnerId] = useState<number | null>(match.status === 'FINAL' ? (match.winner_team_id ?? null) : null)
@@ -1337,42 +1153,15 @@ function MatchDrawer({
   const [error, setError] = useState<string | null>(null)
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
   const [finalized, setFinalized] = useState(match.status === 'FINAL')
-  const [finalizeSmsPreview, setFinalizeSmsPreview] = useState<FinalizeSmsPreview | null>(null)
-  const [sendingFinalizeSms, setSendingFinalizeSms] = useState(false)
   const [pendingConflicts, setPendingConflicts] = useState<ConflictItem[] | null>(null)
   const [pendingAction, setPendingAction] = useState<{ label: string; fn: () => void } | null>(null)
 
   const [corrResult, setCorrResult] = useState<FinalizeResponse | null>(null)
 
-  const [noteTeamId, setNoteTeamId] = useState<number | null>(null)
-  const [noteEventId, setNoteEventId] = useState<number | null>(null)
-  const [noteText, setNoteText] = useState('')
-  const [noteSaving, setNoteSaving] = useState(false)
-  const [returningToWaiting, setReturningToWaiting] = useState(false)
   const [playerNotesOpen, setPlayerNotesOpen] = useState(false)
   const matchPlayerNotes = playerNotes.filter((note) => rosterPlayers.some((player) => player.id === note.playerId))
   const hasPlayerNotes = matchPlayerNotes.length > 0 || Boolean(match.team1_notes || match.team2_notes)
   const waitingResetLock = useRef(false)
-
-  const openNote = useCallback((teamId: number, currentNote: string | null) => {
-    setNoteTeamId(teamId)
-    setNoteEventId(match.event_id)
-    setNoteText(currentNote || '')
-  }, [match.event_id])
-
-  const saveNote = useCallback(async () => {
-    if (noteTeamId == null || noteEventId == null) return
-    setNoteSaving(true)
-    try {
-      await updateTeam(noteEventId, noteTeamId, { notes: noteText })
-      setNoteTeamId(null)
-      onRefreshKeepOpen()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save note')
-    } finally {
-      setNoteSaving(false)
-    }
-  }, [noteTeamId, noteEventId, noteText, onRefreshKeepOpen])
 
   const runWithConflictCheck = useCallback(async (
     actionType: string,
@@ -1397,14 +1186,13 @@ function MatchDrawer({
   }, [tournamentId, versionId, match.match_id])
 
   const finalizeWithPreview = useCallback(async (options?: { score?: string; is_default?: boolean; is_retired?: boolean }) => {
-    if (!winnerId) return
-    if (!options?.is_default && !options?.is_retired && !score.trim()) return
-    if (options?.is_retired && !score.trim()) return
+    if (!winnerId) return false
+    if (!options?.is_default && !options?.is_retired && !score.trim()) return false
+    if (options?.is_retired && !score.trim()) return false
     setSubmitting(true)
     setError(null)
     setResult(null)
     setStatusMsg(null)
-    setFinalizeSmsPreview(null)
     try {
       const resp = await deskFinalizeMatch(tournamentId, match.match_id, {
         version_id: versionId,
@@ -1413,54 +1201,32 @@ function MatchDrawer({
         is_default: options?.is_default,
         is_retired: options?.is_retired,
         send_automation_texts: false,
-        include_sms_preview: true,
+        include_sms_preview: false,
       })
       setResult(resp)
       setFinalized(true)
-      const preview = resp.sms_preview ?? null
-      if (preview) {
-        setFinalizeSmsPreview(preview)
-      } else {
-        setStatusMsg('Match finalized.')
-      }
+      setStatusMsg('Match finalized.')
       onRefreshKeepOpen()
+      return true
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to finalize')
+      return false
     } finally {
       setSubmitting(false)
     }
   }, [tournamentId, match.match_id, versionId, score, winnerId, onRefreshKeepOpen])
 
-  const doFinalize = useCallback(async () => {
-    await finalizeWithPreview()
-  }, [finalizeWithPreview])
-
-  const handleFinalize = useCallback(() => {
-    if (!winnerId) return
-    runWithConflictCheck('FINALIZE', 'Finalize Match', doFinalize)
-  }, [winnerId, runWithConflictCheck, doFinalize])
-
   const doDefault = useCallback(async () => {
-    await finalizeWithPreview({ is_default: true })
+    return finalizeWithPreview({ is_default: true })
   }, [finalizeWithPreview])
-
-  const handleDefault = useCallback(() => {
-    if (!winnerId) return
-    runWithConflictCheck('FINALIZE', 'Default Match', doDefault)
-  }, [winnerId, runWithConflictCheck, doDefault])
 
   const doRetired = useCallback(async () => {
-    await finalizeWithPreview({ score, is_retired: true })
+    return finalizeWithPreview({ score, is_retired: true })
   }, [finalizeWithPreview, score])
-
-  const handleRetired = useCallback(() => {
-    if (!winnerId || !score.trim()) return
-    runWithConflictCheck('FINALIZE', 'Retired Match', doRetired)
-  }, [winnerId, score, runWithConflictCheck, doRetired])
 
   const submitCorrection = useCallback(async () => {
     const scoreText = score.trim()
-    if (!winnerId || !scoreText) return
+    if (!winnerId || !scoreText) return false
     const originalWinner = match.winner_team_id
     if (originalWinner && winnerId !== originalWinner) {
       const downstream = allMatches.filter((item) => (
@@ -1487,7 +1253,7 @@ function MatchDrawer({
         title: 'Winner is changing',
         confirmLabel: 'Save corrected winner',
       })
-      if (!confirmed) return
+      if (!confirmed) return false
     }
     setSubmitting(true)
     setError(null)
@@ -1501,8 +1267,10 @@ function MatchDrawer({
       setScore(editableScore(resp.match.score_display) || scoreText)
       setWinnerId(resp.match.winner_team_id ?? winnerId)
       onRefreshKeepOpen()
+      return true
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to correct match')
+      return false
     } finally {
       setSubmitting(false)
     }
@@ -1523,22 +1291,6 @@ function MatchDrawer({
     }
   }, [tournamentId, match.match_id, versionId, onRefreshAndClose])
 
-  const moveBackToReady = useCallback(async () => {
-    setError(null)
-    setStatusMsg(null)
-    try {
-      await deskSetMatchStatus(tournamentId, match.match_id, {
-        version_id: versionId,
-        status: 'SCHEDULED',
-        reset_started_at: true,
-      })
-      setStatusMsg('Moved back to Ready To Go')
-      onRefreshAndClose()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to move match back to ready queue')
-    }
-  }, [tournamentId, match.match_id, versionId, onRefreshAndClose])
-
   const returnToWaitingCheckIn = useCallback(async () => {
     if (waitingResetLock.current) return
     const confirmed = await confirmDialog(
@@ -1547,7 +1299,6 @@ function MatchDrawer({
     )
     if (!confirmed || waitingResetLock.current) return
     waitingResetLock.current = true
-    setReturningToWaiting(true)
     setError(null)
     setStatusMsg(null)
     try {
@@ -1560,7 +1311,6 @@ function MatchDrawer({
       setError(e instanceof Error ? e.message : 'Failed to return match to Waiting for Check-In')
     } finally {
       waitingResetLock.current = false
-      setReturningToWaiting(false)
     }
   }, [tournamentId, match.match_id, match.match_number, match.team1_display, match.team2_display, versionId, onRefreshAndClose])
 
@@ -1598,292 +1348,15 @@ function MatchDrawer({
     setScore(editableScore(effectiveMatch.score_display))
     setWinnerId(effectiveMatch.winner_team_id ?? null)
   }, [match.match_id, scoreLocked])
-  const sc = STATUS_COLORS[effectiveStatus] || STATUS_COLORS.SCHEDULED
-  const contextLink = effectiveMatch.stage === 'RR'
-    ? `/t/${tournamentId}/draws/${effectiveMatch.event_id}/roundrobin?version_id=${versionId}`
-    : `/t/${tournamentId}/draws/${effectiveMatch.event_id}/waterfall?version_id=${versionId}`
-  const contextLinkLabel = effectiveMatch.stage === 'RR'
-    ? 'View Round Robin'
-    : 'View Waterfall Bracket'
 
-  const nextScheduledByTeam = useMemo(() => {
-    if (effectiveMatch.stage !== 'RR' || effectiveStatus !== 'FINAL') return []
-    if (result && result.downstream_updates.length > 0) return []
-
-    const sourceMatchId = effectiveMatch.match_id
-    const sourceDay = effectiveMatch.day_index || 0
-    const sourceTime = effectiveMatch.sort_time || ''
-    const teamPairs: Array<{ teamId: number; teamName: string }> = []
-    if (effectiveMatch.team1_id) {
-      teamPairs.push({ teamId: effectiveMatch.team1_id, teamName: effectiveMatch.team1_display })
-    }
-    if (effectiveMatch.team2_id) {
-      teamPairs.push({ teamId: effectiveMatch.team2_id, teamName: effectiveMatch.team2_display })
-    }
-
-    const rows: Array<{ teamId: number; teamName: string; nextMatch: DeskMatchItem; opponent: string }> = []
-    for (const t of teamPairs) {
-      const candidates = allMatches
-        .filter(m =>
-          m.match_id !== sourceMatchId &&
-          (m.team1_id === t.teamId || m.team2_id === t.teamId) &&
-          m.status !== 'FINAL' &&
-          m.status !== 'CANCELLED' &&
-          !!m.scheduled_time &&
-          m.day_index > 0
-        )
-        .filter(m => {
-          if (m.day_index > sourceDay) return true
-          if (m.day_index < sourceDay) return false
-          if (!sourceTime || !m.sort_time) return true
-          return m.sort_time >= sourceTime
-        })
-        .sort((a, b) =>
-          (a.day_index - b.day_index) ||
-          (a.sort_time || '').localeCompare(b.sort_time || '') ||
-          (a.court_name || '').localeCompare(b.court_name || '')
-        )
-
-      const nextMatch = candidates[0]
-      if (!nextMatch) continue
-      const opponent = nextMatch.team1_id === t.teamId ? nextMatch.team2_display : nextMatch.team1_display
-      rows.push({ teamId: t.teamId, teamName: t.teamName, nextMatch, opponent })
-    }
-    return rows
-  }, [
-    result,
-    allMatches,
-    effectiveStatus,
-    effectiveMatch.stage,
-    effectiveMatch.match_id,
-    effectiveMatch.day_index,
-    effectiveMatch.sort_time,
-    effectiveMatch.team1_id,
-    effectiveMatch.team2_id,
-    effectiveMatch.team1_display,
-    effectiveMatch.team2_display,
-  ])
-
-  const sendFinalizeTexts = useCallback(async () => {
-    if (!finalizeSmsPreview) {
-      setStatusMsg('Match finalized without sending texts.')
-      return
-    }
-    setSendingFinalizeSms(true)
-    setError(null)
-    setStatusMsg(null)
-    try {
-      const resp = await deskSendFinalizeSms(tournamentId, match.match_id, {
-        version_id: versionId,
-      })
-      const sentCount = resp.sent
-      const blockedCount =
-        resp.skipped_no_phone +
-        resp.skipped_consent +
-        resp.skipped_dedupe +
-        resp.skipped_test_mode
-      setStatusMsg(
-        finalizeSmsPreview.test_only
-          ? 'Test Mode — Texts Off. No messages were transmitted.'
-          : sentCount > 0 || blockedCount > 0
-            ? `Finalize texts processed: ${sentCount} sent${blockedCount > 0 ? `, ${blockedCount} skipped` : ''}.`
-            : 'No finalize texts were sent.'
-      )
-      setFinalizeSmsPreview(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to send finalize texts')
-    } finally {
-      setSendingFinalizeSms(false)
-    }
-  }, [finalizeSmsPreview, tournamentId, match.match_id, versionId])
-
-  const finalizeSmsEmptyReason = useMemo(() => {
-    if (!finalizeSmsPreview || finalizeSmsPreview.recipients.length > 0) return null
-    switch (finalizeSmsPreview.disabled_reason) {
-      case 'texts_disabled':
-        return 'Texts are currently turned off for this tournament.'
-      case 'automation_disabled':
-        return 'Post-match check-in SMS is currently turned off.'
-      case 'template_inactive':
-        return 'The post-match SMS template is inactive.'
-      case 'match_not_final':
-        return 'This match must be finalized before any SMS can be queued.'
-      default:
-        if (finalizeSmsPreview.teams_with_next_match === 0) {
-          return 'No post-match texts are queued because these teams do not have any next matches.'
-        }
-        return 'No post-match texts are queued for this result.'
-    }
-  }, [finalizeSmsPreview])
-
-  const finalizeSmsBlockedReasons = useMemo(() => {
-    if (!finalizeSmsPreview || finalizeSmsPreview.recipients.length > 0) return []
-    const reasons: string[] = []
-    if (finalizeSmsPreview.teams_with_next_match > 0) {
-      reasons.push(`${finalizeSmsPreview.teams_with_next_match} team${finalizeSmsPreview.teams_with_next_match === 1 ? '' : 's'} have next matches`)
-    }
-    if (finalizeSmsPreview.teams_without_phone > 0) {
-      reasons.push(`${finalizeSmsPreview.teams_without_phone} team${finalizeSmsPreview.teams_without_phone === 1 ? '' : 's'} missing phone numbers`)
-    }
-    if (finalizeSmsPreview.blocked_test_mode > 0) {
-      reasons.push(`${finalizeSmsPreview.blocked_test_mode} recipient${finalizeSmsPreview.blocked_test_mode === 1 ? '' : 's'} blocked by test mode`)
-    }
-    if (finalizeSmsPreview.blocked_consent > 0) {
-      reasons.push(`${finalizeSmsPreview.blocked_consent} recipient${finalizeSmsPreview.blocked_consent === 1 ? '' : 's'} blocked by consent settings`)
-    }
-    if (finalizeSmsPreview.deduped > 0) {
-      reasons.push(`${finalizeSmsPreview.deduped} text${finalizeSmsPreview.deduped === 1 ? '' : 's'} already sent for this matchup`)
-    }
-    return reasons
-  }, [finalizeSmsPreview])
-
-  const actionsPanel = isDraft && !scoreLocked ? (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: '#333' }}>
-        Match Actions
-      </div>
-
-      {(match.status === 'SCHEDULED' || match.status === 'DELAYED') && (
-        <button
-          onClick={() => handleSetStatus('IN_PROGRESS')}
-          style={{
-            width: '100%',
-            padding: '8px 16px',
-            fontSize: 13,
-            fontWeight: 600,
-            backgroundColor: '#e65100',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: 'pointer',
-            marginBottom: 12,
-          }}
-        >
-          Set In Progress
-        </button>
-      )}
-      {match.status === 'PAUSED' && (
-        <button
-          onClick={() => handleSetStatus('IN_PROGRESS')}
-          style={{
-            width: '100%',
-            padding: '8px 16px',
-            fontSize: 13,
-            fontWeight: 600,
-            backgroundColor: '#e65100',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: 'pointer',
-            marginBottom: 12,
-          }}
-        >
-          Resume Match
-        </button>
-      )}
-      {(match.status === 'IN_PROGRESS' || match.status === 'PAUSED') && (
-        <button
-          onClick={moveBackToReady}
-          style={{
-            width: '100%',
-            padding: '8px 16px',
-            fontSize: 13,
-            fontWeight: 600,
-            backgroundColor: '#455a64',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: 'pointer',
-            marginBottom: 12,
-          }}
-        >
-          Back To Ready To Go
-        </button>
-      )}
-      {match.status !== 'FINAL' && (
-        <button
-          type="button"
-          onClick={returnToWaitingCheckIn}
-          disabled={returningToWaiting}
-          style={{
-            width: '100%',
-            padding: '8px 16px',
-            fontSize: 13,
-            fontWeight: 700,
-            backgroundColor: '#fff',
-            color: '#b71c1c',
-            border: '2px solid #b71c1c',
-            borderRadius: 4,
-            cursor: returningToWaiting ? 'not-allowed' : 'pointer',
-            marginBottom: 12,
-          }}
-        >
-          {returningToWaiting ? 'Returning…' : 'Back To Waiting for Check-In'}
-        </button>
-      )}
-      {match.status !== 'FINAL' && (
-        <ScoreEntryPanel
-          score={score}
-          onScore={setScore}
-          winnerId={winnerId}
-          onWinner={setWinnerId}
-          team1Id={match.team1_id}
-          team1Display={match.team1_display}
-          team2Id={match.team2_id}
-          team2Display={match.team2_display}
-          submitting={submitting}
-          stage={match.stage}
-          primaryLabel="Finalize Match"
-          onPrimary={handleFinalize}
-          showOutcomeActions
-          onDefault={handleDefault}
-          onRetired={handleRetired}
-        />
-      )}
-    </div>
-  ) : null
+  const warningLines = [
+    ...(result?.warnings || []).map((warning) => warning.detail || warning.reason),
+    ...(corrResult?.warnings || []).map((warning) => warning.detail || warning.reason),
+  ]
+  const designatedCourt = (match.court_assignment_mode || '').toUpperCase() === 'PREASSIGNED'
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      right: 0,
-      width: 380,
-      height: '100vh',
-      backgroundColor: '#fff',
-      boxShadow: '-4px 0 20px rgba(0,0,0,0.15)',
-      zIndex: 1000,
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-    }}>
-      <div style={{
-        padding: '16px 20px',
-        borderBottom: '1px solid #e0e0e0',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-      }}>
-        <span style={{ fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-          Match #{match.match_number}
-          {hasPlayerNotes && (
-            <button type="button" onClick={() => setPlayerNotesOpen(true)} title="Player notes exist." style={{ border: '1px solid #f9a825', background: '#fff8e1', color: '#e65100', borderRadius: 999, fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>Notes</button>
-          )}
-        </span>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none',
-            border: 'none',
-            fontSize: 20,
-            cursor: 'pointer',
-            color: '#888',
-            padding: '4px 8px',
-          }}
-        >
-          &times;
-        </button>
-      </div>
+    <>
       {playerNotesOpen && (
         <PlayerNotesDialog
           players={rosterPlayers}
@@ -1895,539 +1368,53 @@ function MatchDrawer({
           onClose={() => setPlayerNotesOpen(false)}
         />
       )}
-
-      <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column' }}>
-        {actionsPanel && <div style={{ order: 0 }}>{actionsPanel}</div>}
-
-        <div style={{ order: scoreLocked ? 3 : 1 }}>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-          <Badge label={effectiveMatch.stage} bg={STAGE_COLORS[effectiveMatch.stage] || '#757575'} color="#fff" />
-          <Badge label={STATUS_LABEL[effectiveStatus] || effectiveStatus} bg={sc.bg} color={sc.text} />
-        </div>
-
-        <div style={{ marginBottom: 12, fontSize: 13, color: '#888' }}>
-          {effectiveMatch.event_name}
-          {effectiveMatch.division_name ? ` — ${effectiveMatch.division_name}` : ''}
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: 15, color: '#222', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-            {match.team1_display}
-            {match.team1_notes && <NoteIcon note={match.team1_notes} />}
-            {match.team1_id && isDraft && (
-              <button onClick={() => openNote(match.team1_id!, match.team1_notes ?? null)} title="Add/edit note" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: match.team1_notes ? '#ef6c00' : '#bbb' }}>
-                &#9998;
-              </button>
-            )}
-          </div>
-          <div style={{ color: '#999', fontSize: 12 }}>vs</div>
-          <div style={{ fontWeight: 600, fontSize: 15, color: '#222', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-            {match.team2_display}
-            {match.team2_notes && <NoteIcon note={match.team2_notes} />}
-            {match.team2_id && isDraft && (
-              <button onClick={() => openNote(match.team2_id!, match.team2_notes ?? null)} title="Add/edit note" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 13, color: match.team2_notes ? '#ef6c00' : '#bbb' }}>
-                &#9998;
-              </button>
-            )}
-          </div>
-        </div>
-
-        {noteTeamId != null && (
-          <div style={{
-            padding: '10px 14px',
-            backgroundColor: '#fff8e1',
-            border: '1px solid #ffe082',
-            borderRadius: 6,
-            marginBottom: 16,
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#e65100', marginBottom: 6 }}>
-              Note for {noteTeamId === match.team1_id ? match.team1_display : match.team2_display}
-            </div>
-            <textarea
-              value={noteText}
-              onChange={e => setNoteText(e.target.value)}
-              rows={2}
-              style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, padding: '6px 8px', border: '1px solid #ccc', borderRadius: 4, resize: 'vertical' }}
-              placeholder="e.g. Leaving early Sunday, need to play by 11 AM..."
-            />
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <button
-                onClick={saveNote}
-                disabled={noteSaving}
-                style={{ padding: '4px 12px', fontSize: 12, fontWeight: 600, backgroundColor: '#e65100', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer' }}
-              >
-                {noteSaving ? 'Saving...' : 'Save Note'}
-              </button>
-              <button
-                onClick={() => setNoteTeamId(null)}
-                style={{ padding: '4px 12px', fontSize: 12, fontWeight: 600, backgroundColor: '#fff', color: '#555', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {match.court_name && (
-          <div style={{ fontSize: 13, color: '#555', marginBottom: 4 }}>
-            {match.court_name} &middot; {match.scheduled_time}
-          </div>
-        )}
-        </div>
-
-        <div style={{ order: scoreLocked ? 0 : 2 }}>
-        {(match.status === 'FINAL' || finalized) && (
-          <div style={{
-            padding: '12px 16px',
-            backgroundColor: '#e8f5e9',
-            borderRadius: 6,
-            border: '1px solid #c8e6c9',
-            marginBottom: 16,
-          }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#2e7d32', marginBottom: 4 }}>
-              Completed
-            </div>
-            {(corrResult?.match.score_display || result?.match.score_display || match.score_display) && (
-              <div style={{ fontSize: 14, fontWeight: 600, color: '#333' }}>
-                Score: {corrResult?.match.score_display || result?.match.score_display || match.score_display}
-              </div>
-            )}
-            {(corrResult?.match || result?.match || match.winner_team_id || match.winner_display) && (
-              <div style={{ fontSize: 13, color: '#555', marginTop: 4 }}>
-                Winner: {(() => {
-                  const wid = corrResult?.match.winner_team_id ?? result?.match.winner_team_id ?? match.winner_team_id ?? winnerId
-                  if (wid) return wid === match.team1_id ? match.team1_display : match.team2_display
-                  return match.winner_display || 'Unknown'
-                })()}
-              </div>
-            )}
-
-            {isDraft && scoreLocked && (
-              <div style={{ marginTop: 12 }}>
-                <ScoreEntryPanel
-                  score={score}
-                  onScore={setScore}
-                  winnerId={winnerId}
-                  onWinner={setWinnerId}
-                  team1Id={match.team1_id}
-                  team1Display={match.team1_display}
-                  team2Id={match.team2_id}
-                  team2Display={match.team2_display}
-                  submitting={submitting}
-                  stage={match.stage}
-                  primaryLabel="Save Corrected Score"
-                  onPrimary={submitCorrection}
-                  showOutcomeActions={false}
-                />
-                <button
-                  type="button"
-                  onClick={reopenToCurrentlyPlaying}
-                  style={{
-                    width: '100%',
-                    marginTop: 14,
-                    padding: '7px 12px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    backgroundColor: '#fff',
-                    color: '#546e7a',
-                    border: '1px solid #b0bec5',
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Reopen Match
-                </button>
-                <div style={{ marginTop: 4, fontSize: 11, color: '#78909c' }}>
-                  Reopen only when this match needs to return to an unfinished state.
-                </div>
-              </div>
-            )}
-
-            {corrResult && corrResult.warnings && corrResult.warnings.length > 0 && (
-              <div style={{ marginTop: 8, padding: '8px 10px', backgroundColor: '#fff3e0', borderRadius: 4, border: '1px solid #ffe0b2' }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: '#e65100', marginBottom: 4 }}>Warnings</div>
-                {corrResult.warnings.map((w, i) => (
-                  <div key={i} style={{ fontSize: 12, color: '#bf360c', marginBottom: 2 }}>
-                    {w.detail || w.reason}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {corrResult && corrResult.downstream_updates && corrResult.downstream_updates.length > 0 && (
-              <div style={{ marginTop: 8, padding: '8px 10px', backgroundColor: '#e3f2fd', borderRadius: 4, border: '1px solid #bbdefb' }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: '#1565c0', marginBottom: 4 }}>Advancement Updated</div>
-                {corrResult.downstream_updates.map((u, i) => (
-                  <div key={i} style={{ fontSize: 12, color: '#333', marginBottom: 2 }}>
-                    {u.team_name} → Match #{u.match_id} (slot {u.slot_filled})
-                    {u.next_court && <span> — {u.next_court}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {!isDraft && (
-          <div style={{
-            padding: '12px 16px',
-            backgroundColor: '#fff3e0',
-            borderRadius: 6,
-            fontSize: 13,
-            color: '#e65100',
-            marginTop: 16,
-          }}>
-            Viewing published schedule (read-only). Open Desk Draft to make updates.
-          </div>
-        )}
-        </div>
-
-        <div style={{ order: scoreLocked ? 1 : 3 }}>
-        {error && (
-          <div style={{ marginTop: 12, padding: '10px 14px', backgroundColor: '#ffebee', borderRadius: 6, color: '#c62828', fontSize: 13 }}>
-            {error}
-          </div>
-        )}
-        {statusMsg && (
-          <div style={{ marginTop: 12, padding: '10px 14px', backgroundColor: '#e8f5e9', borderRadius: 6, color: '#2e7d32', fontSize: 13 }}>
-            {statusMsg}
-          </div>
-        )}
-        {result && (
-          <div style={{ marginTop: 16 }}>
-            {result.downstream_updates.length > 0 && (
-              <div style={{
-                padding: '12px 16px',
-                backgroundColor: '#e8f5e9',
-                borderRadius: 6,
-                border: '1px solid #c8e6c9',
-                fontSize: 13,
-                marginBottom: 10,
-              }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: '#2e7d32' }}>
-                  Next Matches
-                </div>
-                {result.downstream_updates.map((u, i) => (
-                  <div key={i} style={{ padding: '8px 0', borderTop: i > 0 ? '1px solid #c8e6c9' : 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <span style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: '#fff',
-                        backgroundColor: u.role === 'WINNER' ? '#2e7d32' : '#e65100',
-                        padding: '1px 6px',
-                        borderRadius: 3,
-                        textTransform: 'uppercase',
-                      }}>
-                        {u.role}
-                      </span>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>{u.team_name}</span>
-                    </div>
-                    <div style={{ fontSize: 13, color: '#333', marginLeft: 2 }}>
-                      {u.next_day && <div>{u.next_day}</div>}
-                      {u.next_time && u.next_court && (
-                        <div style={{ fontWeight: 600 }}>{u.next_time} &middot; {u.next_court}</div>
-                      )}
-                      {u.opponent ? (
-                        <div style={{ marginTop: 2 }}>vs <strong>{u.opponent}</strong></div>
-                      ) : (() => {
-                        const nextMatch = allMatches.find(m => m.match_id === u.match_id)
-                        const otherSourceId = nextMatch
-                          ? (nextMatch.source_match_a_id === match.match_id
-                              ? nextMatch.source_match_b_id
-                              : nextMatch.source_match_a_id)
-                          : null
-                        const feeder = otherSourceId ? allMatches.find(m => m.match_id === otherSourceId) : null
-                        return (
-                          <div style={{ marginTop: 2 }}>
-                            <div style={{ color: '#999', fontStyle: 'italic' }}>Opponent TBD</div>
-                            {feeder && (
-                              <FeederMatchInfo sourceMatchId={feeder.match_id} allMatches={allMatches} />
-                            )}
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {result.downstream_updates.length === 0 && nextScheduledByTeam.length === 0 && result.warnings.length === 0 && (
-              <div style={{
-                padding: '12px 16px',
-                backgroundColor: '#f5f5f5',
-                borderRadius: 6,
-                fontSize: 13,
-                color: '#888',
-              }}>
-                {effectiveMatch.stage === 'RR'
-                  ? 'Round Robin has no bracket advancement path.'
-                  : 'No downstream matches to advance into.'}
-              </div>
-            )}
-            {result.warnings.length > 0 && (
-              <div style={{
-                padding: '12px 16px',
-                backgroundColor: '#fff3e0',
-                borderRadius: 6,
-                border: '1px solid #ffe0b2',
-                fontSize: 13,
-              }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: '#e65100' }}>
-                  Warnings
-                </div>
-                {result.warnings.map((w, i) => (
-                  <div key={i} style={{ padding: '4px 0', borderTop: i > 0 ? '1px solid #ffe0b2' : 'none' }}>
-                    <strong>{w.reason}</strong>: {w.detail}
-                  </div>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={() => window.open(
-                contextLink,
-                '_blank'
-              )}
-              style={{
-                width: '100%',
-                marginTop: 12,
-                padding: '8px 16px',
-                fontSize: 13,
-                fontWeight: 600,
-                backgroundColor: '#1a237e',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                cursor: 'pointer',
-              }}
-            >
-              {contextLinkLabel}
-            </button>
-            {result.auto_started && (
-              <div style={{
-                marginTop: 12,
-                padding: '10px 14px',
-                backgroundColor: '#fff3e0',
-                borderRadius: 6,
-                border: '1px solid #ffe0b2',
-                fontSize: 13,
-              }}>
-                <div style={{ fontWeight: 700, color: '#e65100', marginBottom: 4 }}>
-                  Now Playing on {result.auto_started.court_name}
-                </div>
-                <div style={{ fontWeight: 600 }}>
-                  Match #{result.auto_started.match_number}: {result.auto_started.team1_display} vs {result.auto_started.team2_display}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {nextScheduledByTeam.length > 0 && (!result || result.downstream_updates.length === 0) && (
-          <div style={{
-            marginTop: 12,
-            padding: '12px 16px',
-            backgroundColor: '#e8f5e9',
-            borderRadius: 6,
-            border: '1px solid #c8e6c9',
-            fontSize: 13,
-          }}>
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: '#2e7d32' }}>
-              Next Scheduled Matches
-            </div>
-            {nextScheduledByTeam.map((row, i) => (
-              <div key={`${row.teamId}-${row.nextMatch.match_id}`} style={{ padding: '8px 0', borderTop: i > 0 ? '1px solid #c8e6c9' : 'none' }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{row.teamName}</div>
-                <div style={{ marginTop: 2 }}>
-                  Match #{row.nextMatch.match_number} &middot; {row.nextMatch.day_label}
-                </div>
-                <div style={{ fontWeight: 600 }}>
-                  {row.nextMatch.scheduled_time} &middot; {row.nextMatch.court_name}
-                </div>
-                <div style={{ marginTop: 2 }}>vs <strong>{row.opponent}</strong></div>
-              </div>
-            ))}
-          </div>
-        )}
-        </div>
-
-        <div style={{ order: 4 }}>
-          <MatchTimeline match={effectiveMatch} />
-        </div>
-      </div>
-
-      {/* Conflict warnings modal */}
+      <MatchScoreDrawer
+        match={effectiveMatch}
+        isDraft={isDraft}
+        versionId={versionId}
+        tournamentId={tournamentId}
+        isCopy={isCopy}
+        completed={scoreLocked}
+        score={score}
+        onScore={setScore}
+        winnerId={winnerId}
+        onWinner={setWinnerId}
+        submitting={submitting}
+        error={error}
+        notice={statusMsg}
+        warnings={warningLines}
+        showBackToWaiting={!designatedCourt}
+        roster={textRoster}
+        hasNotes={hasPlayerNotes}
+        onClose={onClose}
+        onSave={async () => (scoreLocked ? submitCorrection() : Boolean(await finalizeWithPreview()))}
+        onDefault={async () => Boolean(await doDefault())}
+        onRetired={async () => Boolean(await doRetired())}
+        onReopen={reopenToCurrentlyPlaying}
+        onSetInProgress={() => handleSetStatus('IN_PROGRESS')}
+        onBackToWaiting={() => { void returnToWaitingCheckIn() }}
+        onOpenNotes={() => setPlayerNotesOpen(true)}
+        onOpenTrophies={() => onOpenTrophies?.()}
+        onSendTexts={async (items) => onSendTexts ? onSendTexts(items) : 0}
+        onComplete={onClose}
+        history={<MatchTimeline match={effectiveMatch} />}
+      />
       {pendingConflicts && pendingAction && (
         <ConflictWarningsModal
           actionLabel={pendingAction.label}
           conflicts={pendingConflicts}
+          onCancel={() => { setPendingConflicts(null); setPendingAction(null) }}
           onProceed={() => {
-            const fn = pendingAction.fn
+            const action = pendingAction
             setPendingConflicts(null)
             setPendingAction(null)
-            fn()
-          }}
-          onCancel={() => {
-            setPendingConflicts(null)
-            setPendingAction(null)
+            action.fn()
           }}
         />
       )}
-      {finalizeSmsPreview && (
-        <>
-          <div
-            onClick={() => {
-              if (sendingFinalizeSms) return
-              setFinalizeSmsPreview(null)
-              setStatusMsg('Match finalized without sending texts.')
-            }}
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              width: '100vw',
-              height: '100vh',
-              backgroundColor: 'rgba(0,0,0,0.45)',
-              zIndex: 2000,
-            }}
-          />
-          <div style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: 560,
-            maxWidth: 'calc(100vw - 24px)',
-            maxHeight: '80vh',
-            backgroundColor: '#fff',
-            borderRadius: 10,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-            zIndex: 2001,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '16px 20px',
-              borderBottom: '1px solid #e0e0e0',
-              backgroundColor: '#e8f5e9',
-            }}>
-              <div style={{ fontWeight: 700, fontSize: 16, color: '#2e7d32' }}>
-                Finalize Match SMS Preview
-              </div>
-              {finalizeSmsPreview.test_only && (
-                <div style={{ marginTop: 6, fontWeight: 800, color: '#b71c1c' }}>Test Mode — Texts Off</div>
-              )}
-              <div style={{ fontSize: 12, color: '#2e7d32', marginTop: 2 }}>
-                Match finalized. Review recipients and message text before sending.
-              </div>
-            </div>
-            <div style={{ padding: '14px 20px', overflow: 'auto', flex: 1 }}>
-              {finalizeSmsPreview.recipients.length === 0 ? (
-                <div style={{
-                  padding: '12px 14px',
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: 6,
-                  color: '#666',
-                  fontSize: 13,
-                }}>
-                  <div>{finalizeSmsEmptyReason}</div>
-                  {finalizeSmsBlockedReasons.length > 0 && (
-                    <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
-                      {finalizeSmsBlockedReasons.map(reason => (
-                        <div key={reason}>- {reason}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {finalizeSmsPreview.recipients.map((recipient, index) => (
-                    <div key={`${recipient.phone}-${index}`} style={{
-                      border: '1px solid #e0e0e0',
-                      borderRadius: 6,
-                      padding: '10px 12px',
-                      backgroundColor: '#fafafa',
-                    }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#333' }}>
-                        {recipient.player_name || recipient.team_name || 'Recipient'}
-                      </div>
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
-                        {recipient.team_name ? `${recipient.team_name} · ` : ''}{recipient.phone}
-                      </div>
-                      <div style={{
-                        marginTop: 8,
-                        padding: '10px 12px',
-                        borderRadius: 6,
-                        backgroundColor: '#fff',
-                        border: '1px solid #eee',
-                        fontSize: 13,
-                        color: '#222',
-                        whiteSpace: 'pre-wrap',
-                      }}>
-                        {recipient.message}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div style={{
-              padding: '12px 20px',
-              borderTop: '1px solid #e0e0e0',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 10,
-            }}>
-              <div style={{ fontSize: 12, color: '#666' }}>
-                {finalizeSmsPreview.total_messages} text{finalizeSmsPreview.total_messages === 1 ? '' : 's'} ready
-              </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button
-                  onClick={() => {
-                    if (sendingFinalizeSms) return
-                    setFinalizeSmsPreview(null)
-                    setStatusMsg('Match finalized without sending texts.')
-                  }}
-                  style={{
-                    padding: '8px 18px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    backgroundColor: '#f5f5f5',
-                    color: '#555',
-                    border: '1px solid #ddd',
-                    borderRadius: 4,
-                    cursor: sendingFinalizeSms ? 'default' : 'pointer',
-                  }}
-                >
-                  Do Not Send
-                </button>
-                <button
-                  onClick={sendFinalizeTexts}
-                  disabled={sendingFinalizeSms || finalizeSmsPreview.recipients.length === 0}
-                  style={{
-                    padding: '8px 18px',
-                    fontSize: 13,
-                    fontWeight: 700,
-                    backgroundColor: finalizeSmsPreview.recipients.length > 0 ? '#2e7d32' : '#ccc',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 4,
-                    cursor: sendingFinalizeSms || finalizeSmsPreview.recipients.length === 0 ? 'default' : 'pointer',
-                  }}
-                >
-                  {sendingFinalizeSms ? 'Sending...' : finalizeSmsPreview.test_only ? 'Simulate Send' : 'Send'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
+    </>
   )
 }
-
 
 // ── Impact helpers ────────────────────────────────────────────────────
 
@@ -13004,6 +11991,7 @@ export default function TournamentDeskPage() {
             isDraft={isDraft}
             versionId={data.version_id}
             tournamentId={tid!}
+            isCopy={tournamentIsCopy}
             onClose={() => setDrawerMatch(null)}
             onRefreshKeepOpen={() => handleRefresh()}
             onRefreshAndClose={() => {
@@ -13011,6 +11999,29 @@ export default function TournamentDeskPage() {
               setDrawerMatch(null)
             }}
             allMatches={data.matches}
+            onOpenTrophies={() => setTrophyOpen(true)}
+            onSendTexts={async (items) => {
+              if (tournamentIsCopy || tid == null) return 0
+              let failed = 0
+              for (const item of items) {
+                try {
+                  const response = await sendSmsPlayer(tid, item.playerId, { message: item.message })
+                  if (!(response.sent > 0)) failed += 1
+                } catch {
+                  failed += 1
+                }
+              }
+              return failed
+            }}
+            textRoster={[drawerMatch.team1_id, drawerMatch.team2_id].flatMap((teamId, teamIndex) => {
+              const team = deskTeams.find((item) => item.team_id === teamId)
+              if (!team) return []
+              const side = (teamIndex === 0 ? 1 : 2) as 1 | 2
+              return [
+                team.player1_id ? { id: team.player1_id, name: team.player1_name || 'Player 1', phone: team.player1_cellphone, consent: team.player1_sms_consent || null, team: side } : null,
+                team.player2_id ? { id: team.player2_id, name: team.player2_name || 'Player 2', phone: team.player2_cellphone, consent: team.player2_sms_consent || null, team: side } : null,
+              ].filter((player): player is { id: number; name: string; phone: string | null; consent: string | null; team: 1 | 2 } => player != null)
+            })}
             rosterPlayers={[drawerMatch.team1_id, drawerMatch.team2_id].flatMap((teamId) => {
               const team = deskTeams.find((item) => item.team_id === teamId)
               if (!team) return []

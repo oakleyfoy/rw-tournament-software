@@ -3503,6 +3503,48 @@ export async function createWorkingDraft(
   )
 }
 
+export interface NextPreviewPlayer {
+  player_id: number | null
+  name: string
+  phone: string
+  eligible: boolean
+  ineligible_reason?: string | null
+  message: string
+}
+
+export interface NextPreviewCard {
+  team_id: number
+  team_label: string
+  role: string
+  kind: string
+  next_match_id?: number | null
+  date_label?: string | null
+  time_label?: string | null
+  court_label?: string | null
+  opponent_label?: string | null
+  opponent_pending?: boolean
+  schedule_pending?: boolean
+  status_label?: string | null
+  players: NextPreviewPlayer[]
+}
+
+export interface NextPreviewResponse {
+  format_label: string
+  preview_key: string
+  cards: NextPreviewCard[]
+}
+
+export async function deskPreviewNextMatches(
+  tournamentId: number,
+  matchId: number,
+  payload: { version_id: number; winner_team_id: number },
+): Promise<NextPreviewResponse> {
+  return fetchJson<NextPreviewResponse>(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/next-preview`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+}
+
 export async function deskFinalizeMatch(
   tournamentId: number,
   matchId: number,
