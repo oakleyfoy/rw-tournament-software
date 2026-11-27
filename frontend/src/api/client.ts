@@ -3107,6 +3107,15 @@ export function publicTeamPhotoUrl(tournamentId: number, teamId: number, version
 
 // ── Desk Runtime Console ─────────────────────────────────────────────
 
+export interface DeskScoreCorrection {
+  previous_score: string | null
+  corrected_score: string | null
+  previous_winner: string | null
+  corrected_winner: string | null
+  corrected_at: string
+  staff_name: string | null
+}
+
 export interface DeskMatchItem {
   match_id: number
   match_number: number
@@ -3127,6 +3136,7 @@ export interface DeskMatchItem {
   team2_id: number | null
   team2_display: string
   score_display: string | null
+  score_corrections?: DeskScoreCorrection[]
   source_match_a_id: number | null
   source_match_b_id: number | null
   created_at: string | null

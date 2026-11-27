@@ -18,6 +18,7 @@ from app.db_schema_patch import (
     ensure_event_columns,
     ensure_opening_slot_release_table,
     ensure_match_checkin_reset_column,
+    ensure_match_score_correction_table,
     ensure_match_court_queued_column,
     ensure_team_photo_print_tables,
     ensure_tournament_group_photo_tables,
@@ -249,6 +250,7 @@ def on_startup():
     ensure_player_note_columns(engine)
     ensure_start_over_baseline_assignment_table(engine)
     ensure_trophy_distribution_table(engine)
+    ensure_match_score_correction_table(engine)
     import logging as _logging
 
     _startup_log = _logging.getLogger(__name__)

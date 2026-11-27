@@ -7,6 +7,7 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
+from app.models.match_score_correction import MatchScoreCorrection
 from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.opening_slot_release import OpeningSlotRelease
 from app.models.player import Player
@@ -50,6 +51,7 @@ __all__ = [
     "MatchAssignment",
     "MatchCheckIn",
     "MatchLock",
+    "MatchScoreCorrection",
     "MatchPlayerCheckIn",
     "OpeningSlotRelease",
     "CourtDispatchLock",

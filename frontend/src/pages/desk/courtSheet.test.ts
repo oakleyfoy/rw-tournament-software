@@ -246,7 +246,16 @@ describe('court sheet schedule', () => {
   it('reads the draw from the event name and keeps the division separate from the stage', () => {
     expect(drawAbbreviation("Women's B", 'WB_WF_R1')).toBe('WB')
     expect(drawAbbreviation('Mixed A', 'MXA_WF_R1')).toBe('MXA')
+    expect(divisionAbbreviation('Division I')).toBe('DI')
     expect(divisionAbbreviation('Division II')).toBe('DII')
+    expect(divisionAbbreviation('Division III')).toBe('DIII')
+    expect(divisionAbbreviation('Division IV')).toBe('DIV')
+    expect(divisionAbbreviation('Division 4')).toBe('DIV')
+    expect(divisionAbbreviation('Bracket 1')).toBe('DI')
+    expect(divisionAbbreviation('Bracket 3')).toBe('DIII')
+    expect(divisionAbbreviation(null, 'WOM_WOM_E34_B2_M7')).toBe('DII')
+    expect(divisionAbbreviation(null, 'WOM_WOM_E34_DIV4_RR_01')).toBe('DIV')
+    expect(divisionAbbreviation(null, 'WOM_WOM_E33_BWW_M7')).toBe('DI')
     expect(divisionAbbreviation(null)).toBe('')
   })
 

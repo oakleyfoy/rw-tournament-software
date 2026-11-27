@@ -431,11 +431,31 @@ export function drawAbbreviation(eventName: string | null | undefined, matchCode
   return ''
 }
 
-export function divisionAbbreviation(divisionName: string | null | undefined): string {
-  const roman = (divisionName || '').match(/division\s+([ivx]+|\d+)/i)
-  if (!roman) return ''
-  const mapped: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V' }
-  return `D${mapped[roman[1].toUpperCase()] || roman[1].toUpperCase()}`
+export function divisionAbbreviation(divisionName: string | null | undefined, matchCode?: string | null): string {
+  const fromName = abbreviateDivisionName(divisionName)
+  if (fromName) return fromName
+  return divisionFromMatchCode(matchCode)
+}
+
+function abbreviateDivisionName(divisionName: string | null | undefined): string {
+  const text = divisionName || ''
+  const roman = text.match(/division\s+([ivx]+|\d+)/i)
+  if (roman) {
+    const mapped: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V' }
+    return `D${mapped[roman[1].toUpperCase()] || roman[1].toUpperCase()}`
+  }
+  const bracket = text.match(/bracket\s+([123])/i)
+  if (bracket) return ['DI', 'DII', 'DIII'][Number(bracket[1]) - 1]
+  return ''
+}
+
+function divisionFromMatchCode(matchCode: string | null | undefined): string {
+  const tokens = (matchCode || '').toUpperCase().split('_').filter(Boolean)
+  if (tokens.includes('BWW') || tokens.includes('B1')) return 'DI'
+  if (tokens.includes('BWL') || tokens.includes('B2')) return 'DII'
+  if (tokens.includes('BLW') || tokens.includes('B3')) return 'DIII'
+  if (tokens.includes('BLL') || tokens.includes('DIV4')) return 'DIV'
+  return ''
 }
 
 export type SlotCover = { minutes: number; active: boolean }

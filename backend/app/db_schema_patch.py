@@ -663,6 +663,21 @@ def ensure_sms_phone_list_columns(engine: Engine) -> None:
         logger.warning(f"Failed to ensure sms phone list columns (this is OK if table doesn't exist yet): {e}")
 
 
+def ensure_match_score_correction_table(engine: Engine) -> None:
+    """Ensure matchscorecorrection exists. Safe to run at every startup."""
+    try:
+        from app.models.match_score_correction import MatchScoreCorrection
+
+        table = MatchScoreCorrection.__table__
+        with engine.begin() as conn:
+            table.create(conn, checkfirst=True)
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to ensure matchscorecorrection table: {e}")
+
+
 def ensure_trophy_distribution_table(engine: Engine) -> None:
     """Ensure trophydistribution exists. Safe to run at every startup."""
     try:

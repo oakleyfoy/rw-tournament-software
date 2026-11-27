@@ -62,13 +62,13 @@ export default function TrophyDistributionDialog({ tournamentId, versionId, onCl
         )}
         {board?.finals.map((final) => (
           <section key={final.match_id} style={{ borderTop: '1px solid #eceff1', padding: '8px 0' }}>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>{drawAbbreviation(final.event_name, final.match_code)} {divisionAbbreviation(final.division_name)} · Championship final</div>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>{drawAbbreviation(final.event_name, final.match_code)} {divisionAbbreviation(final.division_name, final.match_code)} · Championship final</div>
             {final.awards.map((award) => <AwardRow key={award.award_key} award={award} busy={busyKey === award.award_key} onRun={run} />)}
           </section>
         ))}
         {board?.groups.map((group) => (
           <section key={`${group.event_id}-${group.pool}`} style={{ borderTop: '1px solid #eceff1', padding: '8px 0' }}>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>{drawAbbreviation(group.event_name, group.pool)} {divisionAbbreviation(group.division_name)} · Round robin</div>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>{drawAbbreviation(group.event_name, group.pool)} {divisionAbbreviation(group.division_name, group.pool)} · Round robin</div>
             {!group.official && <div style={{ fontSize: 12, fontWeight: 800, color: '#e65100' }}>{group.unresolved_reason || 'Tiebreak Review Required'}</div>}
             {group.awards.map((award) => <AwardRow key={award.award_key} award={award} busy={busyKey === award.award_key} onRun={run} />)}
           </section>

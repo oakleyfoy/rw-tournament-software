@@ -1112,6 +1112,45 @@ function MiniMatchCard({
   )
 }
 
+function parseScoreSets(score: string): Array<[string, string]> {
+  const cleaned = score.replace(/\(\s*RET\s*\)/gi, '').trim()
+  if (!cleaned) return []
+  const parts = cleaned.split(',').map((part) => part.trim()).filter(Boolean)
+  const sets: Array<[string, string]> = []
+  for (const part of parts) {
+    const match = part.match(/^(\d+)\s*-\s*(\d+)$/)
+    if (!match) return []
+    sets.push([match[1], match[2]])
+  }
+  return sets
+}
+
+function impliedWinnerId(
+  sets: Array<[string, string]>,
+  team1Id: number | null,
+  team2Id: number | null,
+): number | null {
+  let team1Sets = 0
+  let team2Sets = 0
+  for (const [left, right] of sets) {
+    const team1Games = Number(left)
+    const team2Games = Number(right)
+    if (!Number.isFinite(team1Games) || !Number.isFinite(team2Games) || left.trim() === '' || right.trim() === '') continue
+    if (team1Games > team2Games) team1Sets += 1
+    else if (team2Games > team1Games) team2Sets += 1
+  }
+  if (team1Sets > team2Sets) return team1Id
+  if (team2Sets > team1Sets) return team2Id
+  return null
+}
+
+function scoringFormatLabel(minutes: number | null | undefined): string {
+  const duration = minutes || 0
+  if (duration <= 35) return '4-game pro set'
+  if (duration <= 60) return '8-game pro set or regular sets'
+  return 'Regular sets'
+}
+
 // ── Match Drawer (right slideout) ──────────────────────────────────────
 
 function MatchDrawer({
@@ -1149,9 +1188,9 @@ function MatchDrawer({
   const [pendingConflicts, setPendingConflicts] = useState<ConflictItem[] | null>(null)
   const [pendingAction, setPendingAction] = useState<{ label: string; fn: () => void } | null>(null)
 
-  const [correcting, setCorrecting] = useState(false)
-  const [corrScore, setCorrScore] = useState('')
-  const [corrWinnerId, setCorrWinnerId] = useState<number | null>(null)
+  const [corrScore, setCorrScore] = useState(match.score_display || '')
+  const [corrSets, setCorrSets] = useState<Array<[string, string]>>(() => parseScoreSets(match.score_display || ''))
+  const [corrWinnerId, setCorrWinnerId] = useState<number | null>(match.winner_team_id ?? null)
   const [corrSubmitting, setCorrSubmitting] = useState(false)
   const [corrResult, setCorrResult] = useState<FinalizeResponse | null>(null)
   const [corrError, setCorrError] = useState<string | null>(null)
@@ -1270,33 +1309,71 @@ function MatchDrawer({
     runWithConflictCheck('FINALIZE', 'Retired Match', doRetired)
   }, [winnerId, score, runWithConflictCheck, doRetired])
 
-  const openCorrection = useCallback(() => {
-    setCorrScore(result?.match.score_display || match.score_display || '')
-    setCorrWinnerId(result?.match.winner_team_id ?? match.winner_team_id ?? null)
-    setCorrError(null)
-    setCorrResult(null)
-    setCorrecting(true)
-  }, [match, result])
+  const editCorrSet = useCallback((index: number, side: 0 | 1, value: string) => {
+    setCorrSets((prev) => {
+      const next = prev.map((row, rowIndex) => (
+        rowIndex === index ? (side === 0 ? [value, row[1]] : [row[0], value]) as [string, string] : row
+      ))
+      const implied = impliedWinnerId(next, match.team1_id, match.team2_id)
+      if (implied) setCorrWinnerId(implied)
+      return next
+    })
+  }, [match.team1_id, match.team2_id])
 
   const submitCorrection = useCallback(async () => {
-    if (!corrWinnerId || !corrScore.trim()) return
+    const fromSets = corrSets.length > 0 && corrSets.every(([left, right]) => left.trim() && right.trim())
+      ? corrSets.map(([left, right]) => `${left.trim()}-${right.trim()}`).join(', ')
+      : ''
+    const scoreText = fromSets || corrScore.trim()
+    if (!corrWinnerId || !scoreText) return
+    const originalWinner = match.winner_team_id
+    if (originalWinner && corrWinnerId !== originalWinner) {
+      const downstream = allMatches.filter((item) => (
+        item.match_id !== match.match_id
+        && (item.source_match_a_id === match.match_id || item.source_match_b_id === match.match_id)
+      ))
+      const protectedMatches = downstream.filter((item) => (
+        item.status === 'FINAL' || item.status === 'IN_PROGRESS' || item.status === 'PAUSED' || item.status === 'DELAYED'
+      ))
+      const scheduled = downstream.filter((item) => item.status === 'SCHEDULED')
+      const parts = ['This corrected score changes the winner.']
+      if (protectedMatches.length) {
+        parts.push(
+          `Matches already started or completed keep their current players and results: ${protectedMatches.map((item) => `#${item.match_id} ${item.team1_display} vs ${item.team2_display} (${item.status})`).join('; ')}. Review those matches separately.`,
+        )
+      }
+      if (scheduled.length) {
+        parts.push(`Scheduled matches that still use this result will be updated: ${scheduled.map((item) => `#${item.match_id}`).join(', ')}.`)
+      }
+      if (!protectedMatches.length && !scheduled.length) {
+        parts.push('No downstream matches are affected.')
+      }
+      const confirmed = await confirmDialog(parts.join(' '), {
+        title: 'Winner is changing',
+        confirmLabel: 'Save corrected winner',
+      })
+      if (!confirmed) return
+    }
     setCorrSubmitting(true)
     setCorrError(null)
     try {
       const resp = await deskCorrectMatch(tournamentId, match.match_id, {
         version_id: versionId,
-        score: corrScore,
+        score: scoreText,
         winner_team_id: corrWinnerId,
       })
       setCorrResult(resp)
-      setCorrecting(false)
+      setCorrScore(resp.match.score_display || scoreText)
+      const nextSets = parseScoreSets(resp.match.score_display || scoreText)
+      if (nextSets.length) setCorrSets(nextSets)
+      setCorrWinnerId(resp.match.winner_team_id ?? corrWinnerId)
       onRefreshKeepOpen()
     } catch (e) {
       setCorrError(e instanceof Error ? e.message : 'Failed to correct match')
     } finally {
       setCorrSubmitting(false)
     }
-  }, [tournamentId, match.match_id, versionId, corrScore, corrWinnerId, onRefreshKeepOpen])
+  }, [allMatches, corrScore, corrSets, corrWinnerId, match.match_id, match.winner_team_id, onRefreshKeepOpen, tournamentId, versionId])
 
   const doSetStatus = useCallback(async (status: string) => {
     setError(null)
@@ -1382,6 +1459,17 @@ function MatchDrawer({
   const effectiveMatch = corrResult?.match || result?.match || match
   const effectiveStatus = effectiveMatch.status
   const scoreLocked = finalized || match.status === 'FINAL' || effectiveStatus === 'FINAL'
+  const composedCorrScore = corrSets.length > 0 && corrSets.every(([left, right]) => left.trim() && right.trim())
+    ? corrSets.map(([left, right]) => `${left.trim()}-${right.trim()}`).join(', ')
+    : corrScore.trim()
+
+  useEffect(() => {
+    if (!scoreLocked) return
+    const display = effectiveMatch.score_display || ''
+    setCorrScore(display)
+    setCorrSets(parseScoreSets(display))
+    setCorrWinnerId(effectiveMatch.winner_team_id ?? null)
+  }, [match.match_id, scoreLocked])
   const sc = STATUS_COLORS[effectiveStatus] || STATUS_COLORS.SCHEDULED
   const contextLink = effectiveMatch.stage === 'RR'
     ? `/t/${tournamentId}/draws/${effectiveMatch.event_id}/roundrobin?version_id=${versionId}`
@@ -1920,49 +2008,63 @@ function MatchDrawer({
               </div>
             )}
 
-            {isDraft && !correcting && (
-              <button
-                onClick={openCorrection}
-                style={{
-                  marginTop: 10,
-                  padding: '5px 12px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  backgroundColor: '#fff',
-                  color: '#d84315',
-                  border: '1px solid #d84315',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                }}
-              >
-                Correct Score / Winner
-              </button>
-            )}
-
-            {correcting && (
-              <div style={{ marginTop: 12, padding: '10px 12px', backgroundColor: '#fff8e1', borderRadius: 6, border: '1px solid #ffe082' }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: '#e65100', marginBottom: 8 }}>
-                  Correct Match
+            {isDraft && scoreLocked && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 8 }}>
+                  {scoringFormatLabel(match.duration_minutes)}
                 </div>
-                <div style={{ marginBottom: 8 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>Score</label>
-                  <input
-                    type="text"
-                    value={corrScore}
-                    onChange={e => setCorrScore(e.target.value)}
-                    placeholder="e.g. 6-4, 7-5"
-                    style={{ width: '100%', padding: '6px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div style={{ marginBottom: 8 }}>
+                {corrSets.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+                    {corrSets.map((setScore, index) => (
+                      <div key={index} style={{ display: 'grid', gridTemplateColumns: '1fr 72px', gap: 8, alignItems: 'center' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{match.team1_display}</div>
+                        <input
+                          aria-label={`${match.team1_display} set ${index + 1}`}
+                          inputMode="numeric"
+                          value={setScore[0]}
+                          onChange={(e) => editCorrSet(index, 0, e.target.value.replace(/[^\d]/g, ''))}
+                          style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 700, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
+                        />
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{match.team2_display}</div>
+                        <input
+                          aria-label={`${match.team2_display} set ${index + 1}`}
+                          inputMode="numeric"
+                          value={setScore[1]}
+                          onChange={(e) => editCorrSet(index, 1, e.target.value.replace(/[^\d]/g, ''))}
+                          style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 700, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setCorrSets((prev) => [...prev, ['', '']])}
+                      style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 12, background: '#fff', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
+                    >
+                      Add set
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>Score</label>
+                    <input
+                      type="text"
+                      value={corrScore}
+                      onChange={e => setCorrScore(e.target.value)}
+                      placeholder="e.g. 6-4, 7-5"
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 16, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                )}
+                <div style={{ marginBottom: 10 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>Winner</label>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {match.team1_id && (
                       <button
+                        type="button"
                         onClick={() => setCorrWinnerId(match.team1_id!)}
                         style={{
                           flex: 1,
-                          padding: '6px 8px',
+                          padding: '8px 8px',
                           fontSize: 12,
                           fontWeight: 600,
                           backgroundColor: corrWinnerId === match.team1_id ? '#1b5e20' : '#e0e0e0',
@@ -1977,10 +2079,11 @@ function MatchDrawer({
                     )}
                     {match.team2_id && (
                       <button
+                        type="button"
                         onClick={() => setCorrWinnerId(match.team2_id!)}
                         style={{
                           flex: 1,
-                          padding: '6px 8px',
+                          padding: '8px 8px',
                           fontSize: 12,
                           fontWeight: 600,
                           backgroundColor: corrWinnerId === match.team2_id ? '#1b5e20' : '#e0e0e0',
@@ -1998,39 +2101,44 @@ function MatchDrawer({
                 {corrError && (
                   <div style={{ color: '#c62828', fontSize: 12, marginBottom: 6 }}>{corrError}</div>
                 )}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    onClick={submitCorrection}
-                    disabled={!corrWinnerId || !corrScore.trim() || corrSubmitting}
-                    style={{
-                      flex: 1,
-                      padding: '7px 12px',
-                      fontSize: 13,
-                      fontWeight: 700,
-                      backgroundColor: corrWinnerId && corrScore.trim() ? '#d84315' : '#ccc',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 4,
-                      cursor: corrWinnerId && corrScore.trim() ? 'pointer' : 'default',
-                    }}
-                  >
-                    {corrSubmitting ? 'Saving...' : 'Save Correction'}
-                  </button>
-                  <button
-                    onClick={() => setCorrecting(false)}
-                    style={{
-                      padding: '7px 12px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      backgroundColor: '#e0e0e0',
-                      color: '#333',
-                      border: 'none',
-                      borderRadius: 4,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
+                <button
+                  type="button"
+                  onClick={submitCorrection}
+                  disabled={!corrWinnerId || !composedCorrScore || corrSubmitting}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    fontSize: 15,
+                    fontWeight: 700,
+                    backgroundColor: corrWinnerId && composedCorrScore ? '#e65100' : '#ccc',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    cursor: corrWinnerId && composedCorrScore ? 'pointer' : 'default',
+                  }}
+                >
+                  {corrSubmitting ? 'Saving...' : 'Save Corrected Score'}
+                </button>
+                <button
+                  type="button"
+                  onClick={reopenToCurrentlyPlaying}
+                  style={{
+                    width: '100%',
+                    marginTop: 14,
+                    padding: '7px 12px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    backgroundColor: '#fff',
+                    color: '#546e7a',
+                    border: '1px solid #b0bec5',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Reopen Match
+                </button>
+                <div style={{ marginTop: 4, fontSize: 11, color: '#78909c' }}>
+                  Reopen only when this match needs to return to an unfinished state.
                 </div>
               </div>
             )}
@@ -2242,28 +2350,6 @@ function MatchDrawer({
           </div>
         )}
         </div>
-
-        {scoreLocked && isDraft && (
-          <button
-            type="button"
-            onClick={reopenToCurrentlyPlaying}
-            style={{
-              order: 2,
-              width: '100%',
-              marginTop: 12,
-              padding: '8px 16px',
-              fontSize: 13,
-              fontWeight: 700,
-              backgroundColor: '#1565c0',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            Reopen Match
-          </button>
-        )}
 
         <div style={{ order: 4 }}>
           <MatchTimeline match={effectiveMatch} />
@@ -2559,6 +2645,16 @@ function MatchTimeline({ match }: { match: DeskMatchItem }) {
       icon: '★',
       color: '#2e7d32',
       label: `Winner: ${match.winner_display}`,
+    })
+  }
+
+  for (const correction of match.score_corrections || []) {
+    events.push({
+      ts: formatTs(correction.corrected_at) || '',
+      sortKey: `${correction.corrected_at}z2`,
+      icon: '✎',
+      color: '#e65100',
+      label: `Score corrected by ${correction.staff_name || 'staff'}: ${correction.previous_score || '—'} → ${correction.corrected_score || '—'}. Winner: ${correction.previous_winner || '—'} → ${correction.corrected_winner || '—'}.`,
     })
   }
 

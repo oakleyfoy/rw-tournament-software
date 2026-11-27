@@ -12,7 +12,7 @@ import time
 from datetime import date, datetime, timezone
 from datetime import time as dt_time
 from typing import Any, Dict, List, Optional, Tuple
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, or_
@@ -26,6 +26,7 @@ from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
 from app.models.match_checkin import MatchCheckIn
 from app.models.match_lock import MatchLock
+from app.models.match_score_correction import MatchScoreCorrection
 from app.models.match_player_checkin import MatchPlayerCheckIn
 from app.models.player import Player
 from app.models.schedule_slot import ScheduleSlot
@@ -250,6 +251,10 @@ _DIV_LABELS = {
     "BWL": "Division II",
     "BLW": "Division III",
     "BLL": "Division IV",
+    # 24- and 28-team draws use three numbered brackets instead of WW/WL/LW/LL.
+    "B1": "Division I",
+    "B2": "Division II",
+    "B3": "Division III",
 }
 
 _POOL_LABELS = {
@@ -262,6 +267,8 @@ _POOL_LABELS = {
     "POOLG": "Division VII",
     "POOLH": "Division VIII",
     "POOLI": "Division IX",
+    # Women's B seeds 25-28. Six matches, four teams.
+    "DIV4": "Division IV",
 }
 
 MODE_COURT_MANAGEMENT = "court_management"
@@ -746,6 +753,15 @@ def _resolve_lookup_player_ids(
     return resolved
 
 
+class DeskScoreCorrection(BaseModel):
+    previous_score: Optional[str] = None
+    corrected_score: Optional[str] = None
+    previous_winner: Optional[str] = None
+    corrected_winner: Optional[str] = None
+    corrected_at: str
+    staff_name: Optional[str] = None
+
+
 class DeskMatchItem(BaseModel):
     match_id: int
     match_number: int
@@ -766,6 +782,7 @@ class DeskMatchItem(BaseModel):
     team2_id: Optional[int] = None
     team2_display: str
     score_display: Optional[str] = None
+    score_corrections: List[DeskScoreCorrection] = []
     source_match_a_id: Optional[int] = None
     source_match_b_id: Optional[int] = None
     # Timeline fields
@@ -1329,6 +1346,29 @@ def _format_score(score_json: Optional[Dict[str, Any]]) -> Optional[str]:
         if "score" in score_json:
             return str(score_json["score"])
     return str(score_json) if score_json else None
+
+
+def _score_correction_items(session: Session, match_ids: List[int]) -> Dict[int, List[DeskScoreCorrection]]:
+    if not match_ids:
+        return {}
+    rows = session.exec(
+        select(MatchScoreCorrection)
+        .where(MatchScoreCorrection.match_id.in_(match_ids))
+        .order_by(MatchScoreCorrection.created_at.asc())
+    ).all()
+    grouped: Dict[int, List[DeskScoreCorrection]] = {}
+    for row in rows:
+        grouped.setdefault(row.match_id, []).append(
+            DeskScoreCorrection(
+                previous_score=row.previous_score,
+                corrected_score=row.corrected_score,
+                previous_winner=row.previous_winner_name,
+                corrected_winner=row.corrected_winner_name,
+                corrected_at=row.created_at.isoformat() if row.created_at else "",
+                staff_name=row.created_by_name,
+            )
+        )
+    return grouped
 
 
 def _normalize_management_mode(value: Optional[str]) -> str:
@@ -2340,6 +2380,9 @@ def _build_match_items(
         )
 
     items.sort(key=lambda x: (x.day_index, x.sort_time or "", x.court_name or ""))
+    corrections = _score_correction_items(session, [item.match_id for item in items])
+    for item in items:
+        item.score_corrections = corrections.get(item.match_id, [])
     return items, courts_set
 
 
@@ -2469,6 +2512,7 @@ def _match_to_desk_item(
         court_number=slot.court_number if slot else None,
         day_date=slot.day_date.isoformat() if slot else None,
         is_opening=is_opening_waterfall(match),
+        score_corrections=_score_correction_items(session, [match.id]).get(match.id, []),
     )
 
 
@@ -4623,6 +4667,7 @@ def correct_match(
     tournament_id: int,
     match_id: int,
     payload: CorrectMatchRequest,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     """Correct the score and/or winner of a finalized match."""
@@ -4654,6 +4699,34 @@ def correct_match(
 
     winner_changed = match.winner_team_id != payload.winner_team_id
     warnings: List[Dict[str, Any]] = []
+    protected_downstream = {"FINAL", "IN_PROGRESS", "PAUSED", "DELAYED"}
+    preserved_completed_at = match.completed_at
+    preserved_status = match.runtime_status
+
+    def _leave_downstream(down: Match) -> bool:
+        status = (down.runtime_status or "SCHEDULED").upper()
+        if status not in protected_downstream:
+            return False
+        if status == "FINAL":
+            warnings.append(
+                {
+                    "match_id": down.id,
+                    "reason": "DOWNSTREAM_ALREADY_FINAL",
+                    "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
+                }
+            )
+        else:
+            warnings.append(
+                {
+                    "match_id": down.id,
+                    "reason": "DOWNSTREAM_ALREADY_STARTED",
+                    "detail": (
+                        f"Match #{down.id} ({down.match_code}) is {status.replace('_', ' ').lower()} "
+                        "— its players and result were left unchanged."
+                    ),
+                }
+            )
+        return True
 
     if winner_changed:
         downstream_a = session.exec(
@@ -4670,33 +4743,52 @@ def correct_match(
         ).all()
 
         for down in downstream_a:
-            if (down.runtime_status or "SCHEDULED") == "FINAL":
-                warnings.append(
-                    {
-                        "match_id": down.id,
-                        "reason": "DOWNSTREAM_ALREADY_FINAL",
-                        "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
-                    }
-                )
-            else:
-                down.team_a_id = None
-                session.add(down)
+            if _leave_downstream(down):
+                continue
+            down.team_a_id = None
+            session.add(down)
 
         for down in downstream_b:
-            if (down.runtime_status or "SCHEDULED") == "FINAL":
-                warnings.append(
-                    {
-                        "match_id": down.id,
-                        "reason": "DOWNSTREAM_ALREADY_FINAL",
-                        "detail": f"Match #{down.id} ({down.match_code}) is already finalized — correct it manually.",
-                    }
-                )
-            else:
-                down.team_b_id = None
-                session.add(down)
+            if _leave_downstream(down):
+                continue
+            down.team_b_id = None
+            session.add(down)
+
+    def _winner_name(team_id: Optional[int]) -> Optional[str]:
+        if not team_id:
+            return None
+        team = session.get(Team, team_id)
+        if not team:
+            return f"Team {team_id}"
+        return team.display_name or team.name or f"Team {team_id}"
+
+    user = getattr(request.state, "current_user", None)
+    staff_name = None
+    staff_id = None
+    if user is not None:
+        staff_id = getattr(user, "id", None)
+        staff_name = (getattr(user, "display_name", None) or getattr(user, "username", None) or "").strip() or None
+
+    session.add(
+        MatchScoreCorrection(
+            tournament_id=tournament_id,
+            schedule_version_id=payload.version_id,
+            match_id=match.id,
+            previous_score=_format_score(match.score_json),
+            corrected_score=payload.score,
+            previous_winner_team_id=match.winner_team_id,
+            corrected_winner_team_id=payload.winner_team_id,
+            previous_winner_name=_winner_name(match.winner_team_id),
+            corrected_winner_name=_winner_name(payload.winner_team_id),
+            created_by_user_id=staff_id,
+            created_by_name=staff_name,
+        )
+    )
 
     match.winner_team_id = payload.winner_team_id
     match.score_json = {"display": payload.score}
+    match.completed_at = preserved_completed_at
+    match.runtime_status = preserved_status or "FINAL"
     session.add(match)
     session.commit()
     session.refresh(match)
@@ -4787,6 +4879,7 @@ def correct_match(
         for w in adv_result.get("warnings", [])
     ]
 
+    _bump_desk_snapshot()
     return FinalizeResponse(
         match=desk_item,
         downstream_updates=downstream,
