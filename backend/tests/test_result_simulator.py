@@ -17,17 +17,21 @@ from app.models.tournament import Tournament
 from app.services.court_assignment_mode import MODE_PREASSIGNED, replace_court_assignment_modes
 from app.services.dashboard_progression import start_day
 from app.services.result_simulator import advance_to_next_slot, simulation_allowed, simulate_time_slot
-from app.services.score_parser import random_valid_score, validate_score_for_duration
+from app.services.score_parser import random_valid_score_for_match_type, validate_score_for_match_type
 
 
-def test_random_scores_follow_the_match_format_and_the_chosen_winner():
+def test_random_scores_follow_the_match_type_and_the_chosen_winner():
     rng = random.Random(4)
-    for duration in (30, 60, 90):
+    for match_type in ("WF", "MAIN", "RR"):
         for team_a_wins in (True, False):
             for _ in range(12):
-                score = random_valid_score(duration, team_a_wins=team_a_wins, rng=rng)
-                ok, message = validate_score_for_duration(score, duration)
+                score = random_valid_score_for_match_type(match_type, team_a_wins=team_a_wins, rng=rng)
+                ok, message = validate_score_for_match_type(score, match_type)
                 assert ok, message
+                if match_type == "WF":
+                    assert "," not in score
+                else:
+                    assert "," in score
                 first = score.split(",")[0].strip()
                 left, right = [int(part) for part in first.split("-")]
                 if team_a_wins:

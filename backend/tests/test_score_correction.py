@@ -151,7 +151,7 @@ def test_winner_change_keeps_trophy_distribution_under_review(client, session: S
     session.add(feeder)
     session.commit()
 
-    _finalize(client, tournament.id, draft_id, first, "8-4", first["team1_id"])
+    _finalize(client, tournament.id, draft_id, first, "6-4, 6-3", first["team1_id"])
     board = client.get(f"/api/desk/tournaments/{tournament.id}/trophies?version_id={draft_id}").json()
     awards = board["finals"][0]["awards"]
     champion = next(award for award in awards if award["role"] == "champion")
@@ -163,7 +163,7 @@ def test_winner_change_keeps_trophy_distribution_under_review(client, session: S
 
     corrected = client.patch(
         f"/api/desk/tournaments/{tournament.id}/matches/{first['match_id']}/correct",
-        json={"version_id": draft_id, "score": "4-8", "winner_team_id": first["team2_id"]},
+        json={"version_id": draft_id, "score": "3-6, 4-6", "winner_team_id": first["team2_id"]},
     )
     assert corrected.status_code == 200, corrected.text
     reviewed = client.get(f"/api/desk/tournaments/{tournament.id}/trophies?version_id={draft_id}").json()

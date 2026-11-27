@@ -2143,9 +2143,9 @@ def _build_checkin_snapshot(
 
 
 def _validate_score_text_for_match(score_text: str, match: Match) -> None:
-    from app.services.score_parser import validate_score_for_duration
+    from app.services.score_parser import validate_score_for_match_type
 
-    ok, message = validate_score_for_duration(score_text, match.duration_minutes or 0)
+    ok, message = validate_score_for_match_type(score_text, match.match_type)
     if not ok:
         raise HTTPException(status_code=400, detail=message or "Invalid score")
 
@@ -4252,13 +4252,9 @@ def finalize_match(
     match.winner_team_id = payload.winner_team_id
     match.completed_at = datetime.utcnow()
     if payload.is_default:
-        dur = match.duration_minutes
-        if dur <= 35:
-            actual_score = "4-0"
-        elif dur <= 60:
-            actual_score = "8-0"
-        else:
-            actual_score = "6-0, 6-0"
+        from app.services.score_parser import default_score_for_match_type
+
+        actual_score = default_score_for_match_type(match.match_type)
         match.score_json = {"display": "DEFAULT", "actual": actual_score}
     elif payload.is_retired:
         actual_score = payload.score or "0-0"
@@ -6487,13 +6483,9 @@ def default_team_weekend(
         else:
             return False
 
-        dur = m.duration_minutes
-        if dur <= 35:
-            actual_score = "4-0"
-        elif dur <= 60:
-            actual_score = "8-0"
-        else:
-            actual_score = "6-0, 6-0"
+        from app.services.score_parser import default_score_for_match_type
+
+        actual_score = default_score_for_match_type(m.match_type)
 
         m.runtime_status = "FINAL"
         m.winner_team_id = opponent_id

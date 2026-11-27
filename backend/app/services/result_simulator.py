@@ -30,7 +30,7 @@ from app.services.dashboard_progression import (
     set_test_clock,
 )
 from app.services.preassigned_dispatch import _feeders_final
-from app.services.score_parser import random_valid_score, validate_score_for_duration
+from app.services.score_parser import random_valid_score_for_match_type, validate_score_for_match_type
 
 _locks: dict[int, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -245,8 +245,8 @@ def _simulate_locked(session, tournament, version, day, start: time, rng: random
             continue
         team_a_wins = rng.random() < 0.5
         winner_id = match.team_a_id if team_a_wins else match.team_b_id
-        score = random_valid_score(match.duration_minutes or 0, team_a_wins=team_a_wins, rng=rng)
-        ok, message = validate_score_for_duration(score, match.duration_minutes or 0)
+        score = random_valid_score_for_match_type(match.match_type, team_a_wins=team_a_wins, rng=rng)
+        ok, message = validate_score_for_match_type(score, match.match_type)
         if not ok or winner_id is None:
             failed += 1
             results.append({**base, "status": "failed", "reason": message or "Could not build a valid score"})

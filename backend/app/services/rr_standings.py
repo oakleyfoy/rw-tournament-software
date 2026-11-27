@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from app.models.match import Match
-from app.services.score_parser import parse_score, scoring_modes_for_duration
+from app.services.score_parser import parse_score, scoring_mode_for_match_type
 
 
 def _retired(score_json) -> bool:
@@ -139,16 +139,12 @@ class PoolOutlook:
     guaranteed_runner_up: Optional[int] = None
 
 
-def _score_shapes(duration_minutes: int) -> List[Tuple[int, int, int]]:
+def _score_shapes(match_type: str) -> List[Tuple[int, int, int]]:
     """Legal (winner sets lost, loser sets lost, winner game differential)."""
-    modes = scoring_modes_for_duration(duration_minutes or 0)
-    texts: List[str] = []
-    if "PRO_SET_4" in modes:
-        texts.extend(["4-0", "5-4"])
-    if "PRO_SET_8" in modes:
-        texts.extend(["8-0", "9-8"])
-    if "REGULAR" in modes:
-        texts.extend(["6-0, 6-0", "7-6, 7-6", "6-4, 0-6, 6-4", "7-6, 0-6, 6-0"])
+    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+        texts = ["8-0", "9-8"]
+    else:
+        texts = ["6-0, 6-0", "7-6, 7-6", "6-4, 0-6, 1-0", "7-5, 5-7, 1-0"]
     shapes: List[Tuple[int, int, int]] = []
     for text in texts:
         parsed = parse_score({"display": text})
@@ -203,7 +199,7 @@ def project_pool_outlook(matches: List[Match]) -> PoolOutlook:
             base[winner][2] += diff
             base[loser][2] -= diff
             continue
-        shapes = _score_shapes(match.duration_minutes)
+        shapes = _score_shapes(match.match_type or "")
         remaining.append((match.team_a_id, match.team_b_id, shapes))
 
     if len(remaining) > 3:

@@ -1112,43 +1112,197 @@ function MiniMatchCard({
   )
 }
 
-function parseScoreSets(score: string): Array<[string, string]> {
-  const cleaned = score.replace(/\(\s*RET\s*\)/gi, '').trim()
-  if (!cleaned) return []
-  const parts = cleaned.split(',').map((part) => part.trim()).filter(Boolean)
-  const sets: Array<[string, string]> = []
-  for (const part of parts) {
-    const match = part.match(/^(\d+)\s*-\s*(\d+)$/)
-    if (!match) return []
-    sets.push([match[1], match[2]])
-  }
-  return sets
+function editableScore(display: string | null | undefined): string {
+  return (display || '').replace(/\s*\(\s*RET\s*\)/gi, '').trim()
 }
 
-function impliedWinnerId(
-  sets: Array<[string, string]>,
-  team1Id: number | null,
-  team2Id: number | null,
-): number | null {
-  let team1Sets = 0
-  let team2Sets = 0
-  for (const [left, right] of sets) {
-    const team1Games = Number(left)
-    const team2Games = Number(right)
-    if (!Number.isFinite(team1Games) || !Number.isFinite(team2Games) || left.trim() === '' || right.trim() === '') continue
-    if (team1Games > team2Games) team1Sets += 1
-    else if (team2Games > team1Games) team2Sets += 1
-  }
-  if (team1Sets > team2Sets) return team1Id
-  if (team2Sets > team1Sets) return team2Id
-  return null
-}
-
-function scoringFormatLabel(minutes: number | null | undefined): string {
-  const duration = minutes || 0
-  if (duration <= 35) return '4-game pro set'
-  if (duration <= 60) return '8-game pro set or regular sets'
-  return 'Regular sets'
+function ScoreEntryPanel({
+  score,
+  onScore,
+  winnerId,
+  onWinner,
+  team1Id,
+  team1Display,
+  team2Id,
+  team2Display,
+  submitting,
+  stage,
+  primaryLabel,
+  onPrimary,
+  showOutcomeActions,
+  onDefault,
+  onRetired,
+}: {
+  score: string
+  onScore: (value: string) => void
+  winnerId: number | null
+  onWinner: (teamId: number | null) => void
+  team1Id: number | null
+  team1Display: string
+  team2Id: number | null
+  team2Display: string
+  submitting: boolean
+  stage: string
+  primaryLabel: string
+  onPrimary: () => void
+  showOutcomeActions: boolean
+  onDefault?: () => void
+  onRetired?: () => void
+}) {
+  const ready = Boolean(winnerId && score.trim())
+  return (
+    <div style={{
+      border: '1px solid #e0e0e0',
+      borderRadius: 6,
+      padding: 14,
+      backgroundColor: '#fafafa',
+    }}>
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: '#333' }}>
+        Finalize Match
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
+        <input
+          type="text"
+          placeholder="e.g. 8-4"
+          value={score}
+          onChange={e => onScore(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            fontSize: 13,
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            marginTop: 4,
+            boxSizing: 'border-box',
+          }}
+        />
+      </div>
+      <div style={{ marginBottom: 10 }}>
+        <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Winner</label>
+        <div aria-label="Score Entry" data-testid="score-entry-photos" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+          {team1Id && (
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+              cursor: 'pointer',
+              padding: '6px 10px',
+              borderRadius: 4,
+              border: winnerId === team1Id ? '2px solid #1a237e' : '1px solid #ddd',
+              backgroundColor: winnerId === team1Id ? '#e8eaf6' : '#fff',
+            }}>
+              <input
+                type="radio"
+                name="winner"
+                checked={winnerId === team1Id}
+                onChange={() => onWinner(team1Id)}
+              />
+              <TeamPhotoNameRow teamId={team1Id} name={team1Display} size={28} surface="score-entry" />
+            </label>
+          )}
+          {team2Id && (
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+              cursor: 'pointer',
+              padding: '6px 10px',
+              borderRadius: 4,
+              border: winnerId === team2Id ? '2px solid #1a237e' : '1px solid #ddd',
+              backgroundColor: winnerId === team2Id ? '#e8eaf6' : '#fff',
+            }}>
+              <input
+                type="radio"
+                name="winner"
+                checked={winnerId === team2Id}
+                onChange={() => onWinner(team2Id)}
+              />
+              <TeamPhotoNameRow teamId={team2Id} name={team2Display} size={28} surface="score-entry" />
+            </label>
+          )}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={onPrimary}
+          disabled={!ready || submitting}
+          style={{
+            flex: 1,
+            aspectRatio: '1 / 1',
+            minHeight: 56,
+            padding: '6px',
+            fontSize: 12,
+            fontWeight: 600,
+            backgroundColor: ready ? '#2e7d32' : '#ccc',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: ready ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+          }}
+        >
+          {submitting ? 'Submitting...' : primaryLabel}
+        </button>
+        {showOutcomeActions && team1Id && team2Id && (
+          <button
+            onClick={onDefault}
+            disabled={!winnerId || submitting}
+            style={{
+              flex: 1,
+              aspectRatio: '1 / 1',
+              minHeight: 56,
+              padding: '6px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: winnerId ? '#e65100' : '#ccc',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: winnerId ? 'pointer' : 'default',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+            }}
+          >
+            {submitting ? 'Submitting...' : stage === 'WF' ? 'Default (WF)' : 'Default Win'}
+          </button>
+        )}
+        {showOutcomeActions && team1Id && team2Id && (
+          <button
+            onClick={onRetired}
+            disabled={!ready || submitting}
+            title="Enter the score at point of retirement, select the winning team, then click Retired"
+            style={{
+              flex: 1,
+              aspectRatio: '1 / 1',
+              minHeight: 56,
+              padding: '6px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: ready ? '#6a1b9a' : '#ccc',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              cursor: ready ? 'pointer' : 'default',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+            }}
+          >
+            {submitting ? 'Submitting...' : 'Retired'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ── Match Drawer (right slideout) ──────────────────────────────────────
@@ -1176,8 +1330,8 @@ function MatchDrawer({
   rosterPlayers?: { id: number; name: string }[]
   playerNotes?: StaffNote[]
 }) {
-  const [score, setScore] = useState('')
-  const [winnerId, setWinnerId] = useState<number | null>(null)
+  const [score, setScore] = useState(() => match.status === 'FINAL' ? editableScore(match.score_display) : '')
+  const [winnerId, setWinnerId] = useState<number | null>(match.status === 'FINAL' ? (match.winner_team_id ?? null) : null)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<FinalizeResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1188,12 +1342,7 @@ function MatchDrawer({
   const [pendingConflicts, setPendingConflicts] = useState<ConflictItem[] | null>(null)
   const [pendingAction, setPendingAction] = useState<{ label: string; fn: () => void } | null>(null)
 
-  const [corrScore, setCorrScore] = useState(match.score_display || '')
-  const [corrSets, setCorrSets] = useState<Array<[string, string]>>(() => parseScoreSets(match.score_display || ''))
-  const [corrWinnerId, setCorrWinnerId] = useState<number | null>(match.winner_team_id ?? null)
-  const [corrSubmitting, setCorrSubmitting] = useState(false)
   const [corrResult, setCorrResult] = useState<FinalizeResponse | null>(null)
-  const [corrError, setCorrError] = useState<string | null>(null)
 
   const [noteTeamId, setNoteTeamId] = useState<number | null>(null)
   const [noteEventId, setNoteEventId] = useState<number | null>(null)
@@ -1309,25 +1458,11 @@ function MatchDrawer({
     runWithConflictCheck('FINALIZE', 'Retired Match', doRetired)
   }, [winnerId, score, runWithConflictCheck, doRetired])
 
-  const editCorrSet = useCallback((index: number, side: 0 | 1, value: string) => {
-    setCorrSets((prev) => {
-      const next = prev.map((row, rowIndex) => (
-        rowIndex === index ? (side === 0 ? [value, row[1]] : [row[0], value]) as [string, string] : row
-      ))
-      const implied = impliedWinnerId(next, match.team1_id, match.team2_id)
-      if (implied) setCorrWinnerId(implied)
-      return next
-    })
-  }, [match.team1_id, match.team2_id])
-
   const submitCorrection = useCallback(async () => {
-    const fromSets = corrSets.length > 0 && corrSets.every(([left, right]) => left.trim() && right.trim())
-      ? corrSets.map(([left, right]) => `${left.trim()}-${right.trim()}`).join(', ')
-      : ''
-    const scoreText = fromSets || corrScore.trim()
-    if (!corrWinnerId || !scoreText) return
+    const scoreText = score.trim()
+    if (!winnerId || !scoreText) return
     const originalWinner = match.winner_team_id
-    if (originalWinner && corrWinnerId !== originalWinner) {
+    if (originalWinner && winnerId !== originalWinner) {
       const downstream = allMatches.filter((item) => (
         item.match_id !== match.match_id
         && (item.source_match_a_id === match.match_id || item.source_match_b_id === match.match_id)
@@ -1354,26 +1489,24 @@ function MatchDrawer({
       })
       if (!confirmed) return
     }
-    setCorrSubmitting(true)
-    setCorrError(null)
+    setSubmitting(true)
+    setError(null)
     try {
       const resp = await deskCorrectMatch(tournamentId, match.match_id, {
         version_id: versionId,
         score: scoreText,
-        winner_team_id: corrWinnerId,
+        winner_team_id: winnerId,
       })
       setCorrResult(resp)
-      setCorrScore(resp.match.score_display || scoreText)
-      const nextSets = parseScoreSets(resp.match.score_display || scoreText)
-      if (nextSets.length) setCorrSets(nextSets)
-      setCorrWinnerId(resp.match.winner_team_id ?? corrWinnerId)
+      setScore(editableScore(resp.match.score_display) || scoreText)
+      setWinnerId(resp.match.winner_team_id ?? winnerId)
       onRefreshKeepOpen()
     } catch (e) {
-      setCorrError(e instanceof Error ? e.message : 'Failed to correct match')
+      setError(e instanceof Error ? e.message : 'Failed to correct match')
     } finally {
-      setCorrSubmitting(false)
+      setSubmitting(false)
     }
-  }, [allMatches, corrScore, corrSets, corrWinnerId, match.match_id, match.winner_team_id, onRefreshKeepOpen, tournamentId, versionId])
+  }, [allMatches, score, winnerId, match.match_id, match.winner_team_id, onRefreshKeepOpen, tournamentId, versionId])
 
   const doSetStatus = useCallback(async (status: string) => {
     setError(null)
@@ -1459,16 +1592,11 @@ function MatchDrawer({
   const effectiveMatch = corrResult?.match || result?.match || match
   const effectiveStatus = effectiveMatch.status
   const scoreLocked = finalized || match.status === 'FINAL' || effectiveStatus === 'FINAL'
-  const composedCorrScore = corrSets.length > 0 && corrSets.every(([left, right]) => left.trim() && right.trim())
-    ? corrSets.map(([left, right]) => `${left.trim()}-${right.trim()}`).join(', ')
-    : corrScore.trim()
 
   useEffect(() => {
     if (!scoreLocked) return
-    const display = effectiveMatch.score_display || ''
-    setCorrScore(display)
-    setCorrSets(parseScoreSets(display))
-    setCorrWinnerId(effectiveMatch.winner_team_id ?? null)
+    setScore(editableScore(effectiveMatch.score_display))
+    setWinnerId(effectiveMatch.winner_team_id ?? null)
   }, [match.match_id, scoreLocked])
   const sc = STATUS_COLORS[effectiveStatus] || STATUS_COLORS.SCHEDULED
   const contextLink = effectiveMatch.stage === 'RR'
@@ -1694,157 +1822,23 @@ function MatchDrawer({
         </button>
       )}
       {match.status !== 'FINAL' && (
-      <div style={{
-        border: '1px solid #e0e0e0',
-        borderRadius: 6,
-        padding: 14,
-        backgroundColor: '#fafafa',
-      }}>
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: '#333' }}>
-          Finalize Match
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Score</label>
-          <input
-            type="text"
-            placeholder="e.g. 8-4"
-            value={score}
-            onChange={e => setScore(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '6px 10px',
-              fontSize: 13,
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              marginTop: 4,
-              boxSizing: 'border-box',
-            }}
-          />
-        </div>
-        <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 12, fontWeight: 500, color: '#555' }}>Winner</label>
-          <div aria-label="Score Entry" data-testid="score-entry-photos" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-            {match.team1_id && (
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 13,
-                cursor: 'pointer',
-                padding: '6px 10px',
-                borderRadius: 4,
-                border: winnerId === match.team1_id ? '2px solid #1a237e' : '1px solid #ddd',
-                backgroundColor: winnerId === match.team1_id ? '#e8eaf6' : '#fff',
-              }}>
-                <input
-                  type="radio"
-                  name="winner"
-                  checked={winnerId === match.team1_id}
-                  onChange={() => setWinnerId(match.team1_id)}
-                />
-                <TeamPhotoNameRow teamId={match.team1_id} name={match.team1_display} size={28} surface="score-entry" />
-              </label>
-            )}
-            {match.team2_id && (
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 13,
-                cursor: 'pointer',
-                padding: '6px 10px',
-                borderRadius: 4,
-                border: winnerId === match.team2_id ? '2px solid #1a237e' : '1px solid #ddd',
-                backgroundColor: winnerId === match.team2_id ? '#e8eaf6' : '#fff',
-              }}>
-                <input
-                  type="radio"
-                  name="winner"
-                  checked={winnerId === match.team2_id}
-                  onChange={() => setWinnerId(match.team2_id)}
-                />
-                <TeamPhotoNameRow teamId={match.team2_id} name={match.team2_display} size={28} surface="score-entry" />
-              </label>
-            )}
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={handleFinalize}
-            disabled={!winnerId || !score.trim() || submitting}
-            style={{
-              flex: 1,
-              aspectRatio: '1 / 1',
-              minHeight: 56,
-              padding: '6px',
-              fontSize: 12,
-              fontWeight: 600,
-              backgroundColor: winnerId && score.trim() ? '#2e7d32' : '#ccc',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: winnerId && score.trim() ? 'pointer' : 'default',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}
-          >
-            {submitting ? 'Submitting...' : 'Finalize Match'}
-          </button>
-          {match.team1_id && match.team2_id && (
-            <button
-              onClick={handleDefault}
-              disabled={!winnerId || submitting}
-              style={{
-                flex: 1,
-                aspectRatio: '1 / 1',
-                minHeight: 56,
-                padding: '6px',
-                fontSize: 12,
-                fontWeight: 600,
-                backgroundColor: winnerId ? '#e65100' : '#ccc',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                cursor: winnerId ? 'pointer' : 'default',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                textAlign: 'center',
-              }}
-            >
-              {submitting ? 'Submitting...' : match.stage === 'WF' ? 'Default (WF)' : 'Default Win'}
-            </button>
-          )}
-          {match.team1_id && match.team2_id && (
-            <button
-              onClick={handleRetired}
-              disabled={!winnerId || !score.trim() || submitting}
-              title="Enter the score at point of retirement, select the winning team, then click Retired"
-              style={{
-                flex: 1,
-                aspectRatio: '1 / 1',
-                minHeight: 56,
-                padding: '6px',
-                fontSize: 12,
-                fontWeight: 600,
-                backgroundColor: winnerId && score.trim() ? '#6a1b9a' : '#ccc',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                cursor: winnerId && score.trim() ? 'pointer' : 'default',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                textAlign: 'center',
-              }}
-            >
-              {submitting ? 'Submitting...' : 'Retired'}
-            </button>
-          )}
-        </div>
-      </div>
+        <ScoreEntryPanel
+          score={score}
+          onScore={setScore}
+          winnerId={winnerId}
+          onWinner={setWinnerId}
+          team1Id={match.team1_id}
+          team1Display={match.team1_display}
+          team2Id={match.team2_id}
+          team2Display={match.team2_display}
+          submitting={submitting}
+          stage={match.stage}
+          primaryLabel="Finalize Match"
+          onPrimary={handleFinalize}
+          showOutcomeActions
+          onDefault={handleDefault}
+          onRetired={handleRetired}
+        />
       )}
     </div>
   ) : null
@@ -2010,115 +2004,21 @@ function MatchDrawer({
 
             {isDraft && scoreLocked && (
               <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 8 }}>
-                  {scoringFormatLabel(match.duration_minutes)}
-                </div>
-                {corrSets.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
-                    {corrSets.map((setScore, index) => (
-                      <div key={index} style={{ display: 'grid', gridTemplateColumns: '1fr 72px', gap: 8, alignItems: 'center' }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{match.team1_display}</div>
-                        <input
-                          aria-label={`${match.team1_display} set ${index + 1}`}
-                          inputMode="numeric"
-                          value={setScore[0]}
-                          onChange={(e) => editCorrSet(index, 0, e.target.value.replace(/[^\d]/g, ''))}
-                          style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 700, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
-                        />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{match.team2_display}</div>
-                        <input
-                          aria-label={`${match.team2_display} set ${index + 1}`}
-                          inputMode="numeric"
-                          value={setScore[1]}
-                          onChange={(e) => editCorrSet(index, 1, e.target.value.replace(/[^\d]/g, ''))}
-                          style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 700, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
-                        />
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setCorrSets((prev) => [...prev, ['', '']])}
-                      style={{ alignSelf: 'flex-start', padding: '4px 8px', fontSize: 12, background: '#fff', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
-                    >
-                      Add set
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>Score</label>
-                    <input
-                      type="text"
-                      value={corrScore}
-                      onChange={e => setCorrScore(e.target.value)}
-                      placeholder="e.g. 6-4, 7-5"
-                      style={{ width: '100%', padding: '8px 10px', fontSize: 16, border: '1px solid #ccc', borderRadius: 4, boxSizing: 'border-box' }}
-                    />
-                  </div>
-                )}
-                <div style={{ marginBottom: 10 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>Winner</label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {match.team1_id && (
-                      <button
-                        type="button"
-                        onClick={() => setCorrWinnerId(match.team1_id!)}
-                        style={{
-                          flex: 1,
-                          padding: '8px 8px',
-                          fontSize: 12,
-                          fontWeight: 600,
-                          backgroundColor: corrWinnerId === match.team1_id ? '#1b5e20' : '#e0e0e0',
-                          color: corrWinnerId === match.team1_id ? '#fff' : '#333',
-                          border: 'none',
-                          borderRadius: 4,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {match.team1_display}
-                      </button>
-                    )}
-                    {match.team2_id && (
-                      <button
-                        type="button"
-                        onClick={() => setCorrWinnerId(match.team2_id!)}
-                        style={{
-                          flex: 1,
-                          padding: '8px 8px',
-                          fontSize: 12,
-                          fontWeight: 600,
-                          backgroundColor: corrWinnerId === match.team2_id ? '#1b5e20' : '#e0e0e0',
-                          color: corrWinnerId === match.team2_id ? '#fff' : '#333',
-                          border: 'none',
-                          borderRadius: 4,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {match.team2_display}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {corrError && (
-                  <div style={{ color: '#c62828', fontSize: 12, marginBottom: 6 }}>{corrError}</div>
-                )}
-                <button
-                  type="button"
-                  onClick={submitCorrection}
-                  disabled={!corrWinnerId || !composedCorrScore || corrSubmitting}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    fontSize: 15,
-                    fontWeight: 700,
-                    backgroundColor: corrWinnerId && composedCorrScore ? '#e65100' : '#ccc',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 4,
-                    cursor: corrWinnerId && composedCorrScore ? 'pointer' : 'default',
-                  }}
-                >
-                  {corrSubmitting ? 'Saving...' : 'Save Corrected Score'}
-                </button>
+                <ScoreEntryPanel
+                  score={score}
+                  onScore={setScore}
+                  winnerId={winnerId}
+                  onWinner={setWinnerId}
+                  team1Id={match.team1_id}
+                  team1Display={match.team1_display}
+                  team2Id={match.team2_id}
+                  team2Display={match.team2_display}
+                  submitting={submitting}
+                  stage={match.stage}
+                  primaryLabel="Save Corrected Score"
+                  onPrimary={submitCorrection}
+                  showOutcomeActions={false}
+                />
                 <button
                   type="button"
                   onClick={reopenToCurrentlyPlaying}

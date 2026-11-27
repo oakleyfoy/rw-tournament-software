@@ -100,14 +100,60 @@ _PRO_SET_4 = [(4, 0), (4, 1), (4, 2), (5, 3), (5, 4)]
 _REGULAR_SET = [(6, loser) for loser in range(0, 5)] + [(7, 5), (7, 6)]
 
 
+def scoring_mode_for_match_type(match_type: Optional[str]) -> str:
+    """Waterfall is an 8-game pro set. Every other match is best of three sets."""
+    if (match_type or "").upper() == "WF":
+        return "PRO_SET_8"
+    return "REGULAR"
+
+
+def validate_score_for_match_type(score_text: str, match_type: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """Validate a score from the match type, not from the scheduled duration."""
+    sets = _parse_sets_from_raw(score_text)
+    if not sets:
+        return False, "Invalid score format. Use scores like '8-6' or '6-4, 7-5'."
+
+    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+        if not _is_valid_pro_set_8_match(sets):
+            return False, (
+                "Invalid score for 8-game pro set. Allowed set scores: 8-0 through 8-6, plus 9-7 or 9-8."
+            )
+        return True, None
+
+    if not _is_valid_regular_match(sets):
+        return False, (
+            "Invalid score for regular scoring. "
+            "Use two sets with scores 6-0..6-4, 7-5, or 7-6; "
+            "if sets are split, add a third set of 1-0."
+        )
+    return True, None
+
+
+def default_score_for_match_type(match_type: Optional[str]) -> str:
+    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+        return "8-0"
+    return "6-0, 6-0"
+
+
+def random_valid_score_for_match_type(match_type: Optional[str], *, team_a_wins: bool, rng) -> str:
+    """A score the match-type validator accepts, oriented to the chosen winner."""
+    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+        return _oriented_set(rng.choice(_PRO_SET_8), team_a_wins)
+    return _random_regular_score(team_a_wins, rng)
+
+
 def random_valid_score(duration_minutes: int, *, team_a_wins: bool, rng) -> str:
-    """A score the existing validator accepts, oriented to the chosen winner."""
+    """A score the duration validator accepts, oriented to the chosen winner."""
     modes = scoring_modes_for_duration(duration_minutes or 0)
     mode = rng.choice(modes)
     if mode == "PRO_SET_4":
         return _oriented_set(rng.choice(_PRO_SET_4), team_a_wins)
     if mode == "PRO_SET_8":
         return _oriented_set(rng.choice(_PRO_SET_8), team_a_wins)
+    return _random_regular_score(team_a_wins, rng)
+
+
+def _random_regular_score(team_a_wins: bool, rng) -> str:
     first = rng.choice(_REGULAR_SET)
     if rng.random() < 0.75:
         second = rng.choice(_REGULAR_SET)

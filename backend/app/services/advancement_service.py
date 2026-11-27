@@ -430,14 +430,10 @@ def _auto_default_if_needed(session: Session, updates: List[Dict[str, Any]]) -> 
         if a_defaulted and b_defaulted:
             continue
 
+        from app.services.score_parser import default_score_for_match_type
+
         winner_id = down.team_b_id if a_defaulted else down.team_a_id
-        dur = down.duration_minutes
-        if dur <= 35:
-            actual_score = "4-0"
-        elif dur <= 60:
-            actual_score = "8-0"
-        else:
-            actual_score = "6-0, 6-0"
+        actual_score = default_score_for_match_type(down.match_type)
 
         down.runtime_status = "FINAL"
         down.winner_team_id = winner_id

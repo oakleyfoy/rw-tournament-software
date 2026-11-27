@@ -344,7 +344,7 @@ def test_finalize_warns_on_downstream_conflict(client, session):
 
 
 def test_finalize_rejects_invalid_score_for_match_format(client, session):
-    """Desk finalize rejects scores that don't match the match duration format."""
+    """Waterfall matches accept an 8-game pro set and reject other formats."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)
 
     draft_resp = client.post(f"/api/desk/tournaments/{t.id}/working-draft")
@@ -352,7 +352,7 @@ def test_finalize_rejects_invalid_score_for_match_format(client, session):
     snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
     draft_m1 = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]
 
-    # This match is 60-min duration => 8-game pro set scoring.
+    # Waterfall is an 8-game pro set even when the slot is 60 minutes.
     resp = client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/finalize",
         json={"version_id": draft_id, "score": "5-3", "winner_team_id": draft_m1["team1_id"]},
@@ -377,13 +377,58 @@ def test_correct_rejects_invalid_score_for_match_format(client, session):
     )
     assert ok_resp.status_code == 200
 
-    # Invalid correction for 60-min match
+    # Invalid correction for a waterfall match
     bad_resp = client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{draft_m1['match_id']}/correct",
         json={"version_id": draft_id, "score": "5-3", "winner_team_id": draft_m1["team1_id"]},
     )
     assert bad_resp.status_code == 400
     assert "8-game pro set" in bad_resp.json()["detail"]
+
+
+def test_score_format_follows_match_type_not_duration(client, session):
+    """A short regular match stays best-of-three, and a long waterfall stays an 8-game pro set."""
+    t, _v, _ev, _teams, _matches = _setup_tournament_with_matches(session)
+    draft_id = client.post(f"/api/desk/tournaments/{t.id}/working-draft").json()["version_id"]
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    regular = next(match for match in snap["matches"] if match["match_code"] == "WOM_E1_WF_R1_M01")
+    waterfall = next(match for match in snap["matches"] if match["match_code"] == "WOM_E1_WF_R1_M02")
+
+    regular_row = session.get(Match, regular["match_id"])
+    regular_row.match_type = "MAIN"
+    regular_row.duration_minutes = 35
+    waterfall_row = session.get(Match, waterfall["match_id"])
+    waterfall_row.duration_minutes = 105
+    session.add(regular_row)
+    session.add(waterfall_row)
+    session.commit()
+
+    rejected = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{regular['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "4-0", "winner_team_id": regular["team1_id"]},
+    )
+    assert rejected.status_code == 400
+    assert "regular scoring" in rejected.json()["detail"]
+
+    accepted = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{regular['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "6-4, 3-6, 1-0", "winner_team_id": regular["team1_id"]},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["match"]["score_display"] == "6-4, 3-6, 1-0"
+
+    rejected_wf = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{waterfall['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "6-4, 6-3", "winner_team_id": waterfall["team1_id"]},
+    )
+    assert rejected_wf.status_code == 400
+    assert "8-game pro set" in rejected_wf.json()["detail"]
+
+    accepted_wf = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{waterfall['match_id']}/finalize",
+        json={"version_id": draft_id, "score": "9-8", "winner_team_id": waterfall["team1_id"]},
+    )
+    assert accepted_wf.status_code == 200, accepted_wf.text
 
 
 def test_snapshot_returns_court_grouping(client, session):
