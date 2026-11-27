@@ -332,13 +332,13 @@ def advance_to_next_slot(
     if version.id is None:
         raise ValueError("Schedule version is missing")
     selected = _parse_clock(slot_time)
-    from app.services.court_availability import covered_slot_ids
+    from app.services.court_availability import effectively_open_slot_ids
 
-    covered = covered_slot_ids(session, version.id, day)
+    open_slots = effectively_open_slot_ids(session, version.id, day)
     starts = sorted({
         slot.start_time
         for _match, slot in _assignment_rows(session, version.id, day)
-        if slot.start_time is not None and (slot.is_active is not False or slot.id in covered)
+        if slot.start_time is not None and slot.id in open_slots
     })
     later = [start for start in starts if start > selected]
     if not later:

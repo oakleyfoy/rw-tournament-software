@@ -265,7 +265,7 @@ def _court_open_at(
     slots: list[ScheduleSlot],
     court_number: int,
     now_minutes: int,
-    covered: Optional[set[int]] = None,
+    open_slots: Optional[set[int]] = None,
 ) -> bool:
     """A court is open only when the slot covering the operational time is active."""
     court_slots = sorted(
@@ -282,7 +282,9 @@ def _court_open_at(
             break
     if now_minutes < _minutes(cover.start_time):
         return False
-    return cover.is_active is not False or (covered is not None and cover.id in covered)
+    if open_slots is not None:
+        return cover.id in open_slots
+    return cover.is_active is not False
 
 
 def progress_version_day(
@@ -313,10 +315,10 @@ def progress_version_day(
     else:
         now_minutes = _minutes(local_now.time())
 
-    from app.services.court_availability import covered_slot_ids
+    from app.services.court_availability import effectively_open_slot_ids
 
     closed = _closed_labels(session, tournament.id or 0)
-    covered = covered_slot_ids(session, version.id, day)
+    open_slots = effectively_open_slot_ids(session, version.id, day)
     day_slots = list(
         session.exec(
             select(ScheduleSlot).where(
@@ -348,13 +350,13 @@ def progress_version_day(
         if not is_preassigned(event, day):
             continue
         team_ids = {team_id for team_id in (match.team_a_id, match.team_b_id) if team_id}
-        if not _court_open_at(day_slots, court_number, now_minutes, covered):
+        if not _court_open_at(day_slots, court_number, now_minutes, open_slots):
             continue
         allowed, _reason = auto_start_decision(
             day_started=True,
             paused=False,
             court_closed=_court_closed(closed, slot),
-            slot_active=slot.is_active is not False or slot.id in covered,
+            slot_active=slot.id in open_slots,
             status=status,
             teams_known=match.team_a_id is not None and match.team_b_id is not None,
             feeders_final=_feeders_final(session, match),
@@ -575,13 +577,13 @@ def set_test_clock(
 
 
 def _opening_time(session: Session, version_id: int, day: date) -> time:
-    from app.services.court_availability import covered_slot_ids
+    from app.services.court_availability import effectively_open_slot_ids
 
-    covered = covered_slot_ids(session, version_id, day)
+    open_slots = effectively_open_slot_ids(session, version_id, day)
     starts = [
         slot.start_time
         for _match, slot in _assignment_rows(session, version_id, day)
-        if slot.start_time is not None and (slot.is_active is not False or slot.id in covered)
+        if slot.start_time is not None and slot.id in open_slots
     ]
     return min(starts) if starts else time(9, 0)
 

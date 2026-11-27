@@ -24,3 +24,22 @@ class CourtAvailabilityOverride(SQLModel, table=True):
     start_time: time
     end_time: time
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CourtAvailabilityClosure(SQLModel, table=True):
+    """A temporary closure of a court that the schedule says is available.
+
+    Closing does not change ScheduleSlot.is_active. Restore deletes these
+    rows and the court returns to its configured schedule.
+    """
+
+    __tablename__ = "courtavailabilityclosure"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tournament_id: int = Field(foreign_key="tournament.id", index=True)
+    schedule_version_id: int = Field(foreign_key="scheduleversion.id", index=True)
+    day_date: date = Field(index=True)
+    court_number: int
+    start_time: time
+    end_time: time
+    created_at: datetime = Field(default_factory=datetime.utcnow)

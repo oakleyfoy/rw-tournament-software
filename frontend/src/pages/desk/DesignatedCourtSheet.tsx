@@ -51,6 +51,7 @@ type Props = {
     dayDate: string
     courtNumber: number
     scope: 'slot' | 'range' | 'rest'
+    action: 'open' | 'close'
     startTime: string
     endTime?: string
   }) => Promise<void>
@@ -397,14 +398,13 @@ export default function DesignatedCourtSheet(props: Props) {
                     ) : court.closed ? (
                       <span style={{ fontSize: 10, fontWeight: 800, color: '#b71c1c' }}>Closed</span>
                     ) : (
-                      <span style={{ fontSize: 10, fontWeight: 800, color: '#1b5e20' }}>
+                      <button
+                        type="button"
+                        onClick={() => { if (cell) setAvailabilityCourt({ court, slot: cell.slot }) }}
+                        style={{ width: '100%', border: 'none', background: 'transparent', color: '#1b5e20', fontSize: 10, fontWeight: 800, cursor: 'pointer', padding: 4 }}
+                      >
                         Open
-                        {cell?.slot.scheduled_active === false && (
-                          <button type="button" onClick={() => setAvailabilityCourt({ court, slot: cell.slot })} style={{ display: 'block', marginTop: 2, border: 'none', background: 'transparent', color: '#1565c0', fontSize: 9, fontWeight: 800, cursor: 'pointer' }}>
-                            Schedule
-                          </button>
-                        )}
-                      </span>
+                      </button>
                     )}
                   </div>
                 )
@@ -547,13 +547,13 @@ function LiveCell({
   if (!earliest) {
     const cover = coveringCell(cells, nowMinutes)
     return (
-      <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20' }}>
+      <div
+        onClick={() => { if (cover) onUnavailable?.(cover.slot) }}
+        onDragOver={onDragOver}
+        onDrop={onDropEvent}
+        style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20', cursor: 'pointer' }}
+      >
         <b>OPEN</b>
-        {cover?.slot.scheduled_active === false && (
-          <button type="button" onClick={() => onUnavailable?.(cover.slot)} style={{ display: 'block', marginTop: 4, border: 'none', background: 'transparent', color: '#1565c0', fontSize: 10, fontWeight: 800, cursor: 'pointer', padding: 0 }}>
-            Schedule
-          </button>
-        )}
       </div>
     )
   }
@@ -575,7 +575,15 @@ function LiveCell({
   const waiting = inReleaseWindow && (decision.reason === 'Awaiting result' || decision.reason === 'Player is on another court')
   const nextLabel = earliest.scheduled_time || formatSlotTime(earliest.sort_time || '')
   return (
-    <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: waiting ? '#fff59d' : '#e8f5e9', color: waiting ? '#e65100' : '#1b5e20' }}>
+    <div
+      onClick={() => {
+        const cover = coveringCell(cells, nowMinutes)
+        if (cover) onUnavailable?.(cover.slot)
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDropEvent}
+      style={{ ...liveCard, background: waiting ? '#fff59d' : '#e8f5e9', color: waiting ? '#e65100' : '#1b5e20', cursor: 'pointer' }}
+    >
       <b>{waiting ? 'WAITING' : 'OPEN'}</b>
       {!waiting && <div style={liveMeta}>Next: {nextLabel}</div>}
       {waiting && <div style={liveMeta}>{decision.reason === 'Awaiting result' ? 'Awaiting result' : 'Player is on another court'}</div>}
@@ -803,6 +811,7 @@ function CourtAvailabilityDialog({
     dayDate: string
     courtNumber: number
     scope: 'slot' | 'range' | 'rest'
+    action: 'open' | 'close'
     startTime: string
     endTime?: string
   }) => Promise<void>
@@ -812,14 +821,15 @@ function CourtAvailabilityDialog({
   const cells = schedule.rows.map((row) => row.cells[index]).filter((cell): cell is ScheduleCell => cell != null)
   const originallyOpen = cells.filter((cell) => cell.slot.scheduled_active !== false)
   const firstOpen = originallyOpen[0]?.slot.start_time || null
-  const overrideActive = cells.some((cell) => cell.slot.scheduled_active === false && cell.slot.is_active !== false)
+  const overrideActive = cells.some((cell) => (cell.slot.scheduled_active !== false) !== (cell.slot.is_active !== false))
   const [scope, setScope] = useState<'slot' | 'range' | 'rest'>('slot')
   const [rangeEnd, setRangeEnd] = useState(slot.end_time)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const current = slot.is_active === false ? 'Unavailable' : 'Available'
+  const available = slot.is_active !== false
+  const current = available ? 'Available' : 'Unavailable'
 
-  const makeAvailable = async () => {
+  const apply = async (action: 'open' | 'close') => {
     if (!onMake) return
     setBusy(true)
     setError(null)
@@ -828,12 +838,13 @@ function CourtAvailabilityDialog({
         dayDate: day,
         courtNumber: court.courtNumber,
         scope,
+        action,
         startTime: slot.start_time,
         endTime: scope === 'range' ? rangeEnd : undefined,
       })
       onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not make this court available.')
+      setError(cause instanceof Error ? cause.message : action === 'close' ? 'Could not close this court.' : 'Could not make this court available.')
     } finally {
       setBusy(false)
     }
@@ -863,7 +874,7 @@ function CourtAvailabilityDialog({
         <div style={{ marginTop: 10, fontSize: 13 }}><b>Current status:</b> {current}</div>
         <div style={{ marginTop: 4, fontSize: 13 }}><b>Original schedule:</b> {firstOpen ? `Available from ${formatHhmm(firstOpen)}` : 'Not scheduled as available'}</div>
         {firstOpen && <div style={{ marginTop: 4, fontSize: 13 }}><b>Originally available:</b> {formatHhmm(firstOpen)}</div>}
-        <div style={{ marginTop: 12, fontSize: 13, fontWeight: 800 }}>Make available for</div>
+        <div style={{ marginTop: 12, fontSize: 13, fontWeight: 800 }}>Apply to</div>
         <label style={{ display: 'block', marginTop: 6, fontSize: 13 }}>
           <input type="radio" checked={scope === 'slot'} onChange={() => setScope('slot')} /> This time slot ({formatHhmm(slot.start_time)})
         </label>
@@ -875,9 +886,15 @@ function CourtAvailabilityDialog({
           <input type="radio" checked={scope === 'rest'} onChange={() => setScope('rest')} /> The rest of this day
         </label>
         {error && <div style={{ marginTop: 10, color: '#c62828', fontSize: 13 }}>{error}</div>}
-        <button type="button" disabled={busy} onClick={() => { void makeAvailable() }} style={{ width: '100%', marginTop: 14, padding: '10px 12px', border: 'none', borderRadius: 8, background: '#2e7d32', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
-          {busy ? 'Saving...' : 'Make Court Available'}
-        </button>
+        {available ? (
+          <button type="button" disabled={busy} onClick={() => { void apply('close') }} style={{ width: '100%', marginTop: 14, padding: '10px 12px', border: 'none', borderRadius: 8, background: '#37474f', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+            {busy ? 'Saving...' : 'Make Court Unavailable'}
+          </button>
+        ) : (
+          <button type="button" disabled={busy} onClick={() => { void apply('open') }} style={{ width: '100%', marginTop: 14, padding: '10px 12px', border: 'none', borderRadius: 8, background: '#2e7d32', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+            {busy ? 'Saving...' : 'Make Court Available'}
+          </button>
+        )}
         {overrideActive && (
           <button type="button" disabled={busy} onClick={() => { void restore() }} style={{ width: '100%', marginTop: 8, padding: '10px 12px', borderRadius: 8, border: '1px solid #b0bec5', background: '#fff', fontWeight: 700, cursor: 'pointer' }}>
             Restore Original Availability

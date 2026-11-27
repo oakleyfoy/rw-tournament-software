@@ -4,7 +4,7 @@ from datetime import date, time
 
 from sqlmodel import Session, select
 
-from app.models.court_availability_override import CourtAvailabilityOverride
+from app.models.court_availability_override import CourtAvailabilityClosure, CourtAvailabilityOverride
 from app.models.event import Event
 from app.models.match import Match
 from app.models.match_assignment import MatchAssignment
@@ -124,3 +124,128 @@ def test_unavailable_court_override_is_persistent_and_restorable(client, session
     assert session.exec(select(CourtAvailabilityOverride)).all() == []
     stored = session.get(ScheduleSlot, opened.id)
     assert stored.is_active is False
+
+
+def test_playable_court_can_be_closed_and_restored(client, session: Session):
+    tournament = Tournament(
+        name="Closure Copy",
+        location="Test",
+        timezone="America/Chicago",
+        start_date=date(2026, 4, 3),
+        end_date=date(2026, 4, 5),
+    )
+    session.add(tournament)
+    session.flush()
+    version = ScheduleVersion(tournament_id=tournament.id, version_number=1, status="draft")
+    session.add(version)
+    session.flush()
+    day = date(2026, 4, 3)
+    early = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(8, 0),
+        end_time=time(9, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+        is_active=True,
+    )
+    later = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(9, 0),
+        end_time=time(10, 0),
+        court_number=2,
+        court_label="2",
+        block_minutes=60,
+        is_active=True,
+    )
+    neighbor = ScheduleSlot(
+        tournament_id=tournament.id,
+        schedule_version_id=version.id,
+        day_date=day,
+        start_time=time(8, 0),
+        end_time=time(9, 0),
+        court_number=4,
+        court_label="4",
+        block_minutes=60,
+        is_active=True,
+    )
+    session.add(early)
+    session.add(later)
+    session.add(neighbor)
+    session.commit()
+
+    closed = client.post(
+        f"/api/desk/tournaments/{tournament.id}/court-availability",
+        json={
+            "version_id": version.id,
+            "day_date": "2026-04-03",
+            "court_number": 2,
+            "scope": "slot",
+            "action": "close",
+            "start_time": "08:00",
+        },
+    )
+    assert closed.status_code == 200, closed.text
+    snap = client.get(f"/api/desk/tournaments/{tournament.id}/snapshot?version_id={version.id}").json()
+    slots = {(slot["court_number"], slot["start_time"]): slot for slot in snap["slots"]}
+    assert slots[(2, "08:00")]["is_active"] is False
+    assert slots[(2, "08:00")]["scheduled_active"] is True
+    assert slots[(2, "09:00")]["is_active"] is True
+    assert slots[(4, "08:00")]["is_active"] is True
+    session.expire_all()
+    assert session.get(ScheduleSlot, early.id).is_active is True
+
+    event = Event(tournament_id=tournament.id, category="mixed", name="Mixed", team_count=2)
+    session.add(event)
+    session.flush()
+    match = Match(
+        tournament_id=tournament.id,
+        event_id=event.id,
+        schedule_version_id=version.id,
+        match_code="TEST_RR_2",
+        match_type="RR",
+        round_number=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        placeholder_side_a="A",
+        placeholder_side_b="B",
+        runtime_status="SCHEDULED",
+    )
+    session.add(match)
+    session.flush()
+    session.add(MatchAssignment(schedule_version_id=version.id, match_id=match.id, slot_id=later.id))
+    session.commit()
+    blocked = client.post(
+        f"/api/desk/tournaments/{tournament.id}/court-availability",
+        json={
+            "version_id": version.id,
+            "day_date": "2026-04-03",
+            "court_number": 2,
+            "scope": "rest",
+            "action": "close",
+            "start_time": "08:00",
+        },
+    )
+    assert blocked.status_code == 409
+    assert "Move or finish" in blocked.json()["detail"]
+    after_block = client.get(f"/api/desk/tournaments/{tournament.id}/snapshot?version_id={version.id}").json()
+    later_slot = next(slot for slot in after_block["slots"] if slot["court_number"] == 2 and slot["start_time"] == "09:00")
+    assert later_slot["is_active"] is True
+
+    session.delete(session.exec(select(MatchAssignment).where(MatchAssignment.match_id == match.id)).one())
+    session.commit()
+    restored = client.post(
+        f"/api/desk/tournaments/{tournament.id}/court-availability/restore",
+        json={"version_id": version.id, "day_date": "2026-04-03", "court_number": 2},
+    )
+    assert restored.status_code == 200, restored.text
+    session.expire_all()
+    assert session.exec(select(CourtAvailabilityClosure)).all() == []
+    snap = client.get(f"/api/desk/tournaments/{tournament.id}/snapshot?version_id={version.id}").json()
+    reopened = next(slot for slot in snap["slots"] if slot["court_number"] == 2 and slot["start_time"] == "08:00")
+    assert reopened["is_active"] is True
+    assert session.get(ScheduleSlot, early.id).is_active is True

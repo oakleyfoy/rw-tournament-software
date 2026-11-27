@@ -8990,6 +8990,7 @@ export default function TournamentDeskPage() {
     dayDate: string
     courtNumber: number
     scope: 'slot' | 'range' | 'rest'
+    action: 'open' | 'close'
     startTime: string
     endTime?: string
   }) => {
@@ -8999,6 +9000,7 @@ export default function TournamentDeskPage() {
       day_date: input.dayDate,
       court_number: input.courtNumber,
       scope: input.scope,
+      action: input.action,
       start_time: input.startTime,
       end_time: input.endTime,
     })

@@ -3554,6 +3554,7 @@ export async function deskSetCourtAvailability(
     day_date: string
     court_number: number
     scope: 'slot' | 'range' | 'rest'
+    action: 'open' | 'close'
     start_time: string
     end_time?: string
   },

@@ -2575,9 +2575,9 @@ def desk_snapshot(
         ).all()
         slot_assignment_map = {a.slot_id: a.match_id for a in all_assignments}
 
-        from app.services.court_availability import covered_slot_ids
+        from app.services.court_availability import effectively_open_slot_ids
 
-        covered_slots = covered_slot_ids(session, version.id)
+        open_slots = effectively_open_slot_ids(session, version.id)
         snapshot_slots: List[SnapshotSlot] = []
         for s in all_slots:
             court_label = s.court_label or str(s.court_number)
@@ -2594,7 +2594,7 @@ def desk_snapshot(
                     court_number=s.court_number,
                     court_label=court_label,
                     block_minutes=s.block_minutes,
-                    is_active=bool(s.is_active) or s.id in covered_slots,
+                    is_active=s.id in open_slots,
                     scheduled_active=bool(s.is_active),
                     assigned_match_id=slot_assignment_map.get(s.id),
                 )
@@ -7225,6 +7225,7 @@ class CourtAvailabilityRequest(BaseModel):
     day_date: str
     court_number: int
     scope: str = "slot"
+    action: str = "open"
     start_time: str
     end_time: Optional[str] = None
 
@@ -7252,8 +7253,8 @@ def make_court_available(
     payload: CourtAvailabilityRequest,
     session: Session = Depends(get_session),
 ):
-    """Open a configured-unavailable court without changing the original schedule."""
-    from app.services.court_availability import open_court
+    """Open or close one court range without changing the original schedule."""
+    from app.services.court_availability import CourtAvailabilityConflict, close_court, open_court
     from app.services.dashboard_progression import progress_version_day
 
     tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
@@ -7286,25 +7287,41 @@ def make_court_available(
         if selected is None or selected.end_time is None:
             raise HTTPException(status_code=404, detail="That court time is not on the schedule.")
         end = selected.end_time
+    action = (payload.action or "open").strip().lower()
+    if action not in {"open", "close"}:
+        raise HTTPException(status_code=400, detail="Availability action must be open or close.")
     try:
-        open_court(
-            session,
-            tournament_id=tournament.id or tournament_id,
-            version_id=version.id or payload.version_id,
-            day=day,
-            court_number=payload.court_number,
-            start=start,
-            end=end,
-        )
+        if action == "close":
+            close_court(
+                session,
+                tournament_id=tournament.id or tournament_id,
+                version_id=version.id or payload.version_id,
+                day=day,
+                court_number=payload.court_number,
+                start=start,
+                end=end,
+            )
+        else:
+            open_court(
+                session,
+                tournament_id=tournament.id or tournament_id,
+                version_id=version.id or payload.version_id,
+                day=day,
+                court_number=payload.court_number,
+                start=start,
+                end=end,
+            )
+            progress_version_day(session, tournament, version, day)
+    except CourtAvailabilityConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    progress_version_day(session, tournament, version, day)
     session.commit()
     _bump_desk_snapshot()
     return {
         "court_number": payload.court_number,
         "day_date": payload.day_date,
-        "status": "available",
+        "status": "unavailable" if action == "close" else "available",
     }
 
 
@@ -7391,6 +7408,10 @@ def move_match(
     target_slot = session.get(ScheduleSlot, payload.target_slot_id)
     if not target_slot or target_slot.schedule_version_id != payload.version_id:
         raise HTTPException(status_code=404, detail="Target slot not found in version")
+    from app.services.court_availability import slot_effectively_active
+
+    if not slot_effectively_active(session, target_slot):
+        raise HTTPException(status_code=409, detail="That court is not available")
 
     available, reason = validate_slot_available(
         session,
