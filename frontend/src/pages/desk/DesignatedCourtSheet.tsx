@@ -210,8 +210,12 @@ export default function DesignatedCourtSheet(props: Props) {
     if (courtClosed || slot.is_active === false) return
     const match = matchById.get(matchId)
     if (!match || match.slot_id === slot.slot_id) return
-    if (LIVE.has((match.status || '').toUpperCase())) return
     const occupantId = slot.assigned_match_id
+    if (LIVE.has((match.status || '').toUpperCase())) {
+      if (occupantId && occupantId !== match.match_id) return
+      onMove(match.match_id, slot.slot_id)
+      return
+    }
     if (occupantId && occupantId !== match.match_id) {
       const occupant = matchById.get(occupantId)
       if (!window.confirm(`Swap #${match.match_number} with #${occupant?.match_number || occupantId}?`)) return
@@ -224,10 +228,17 @@ export default function DesignatedCourtSheet(props: Props) {
   const dropOnLive = (matchId: number, court: ScheduleCourt) => {
     const match = matchById.get(matchId)
     if (!match || !isDraft || court.closed || court.unavailable) return
-    if (LIVE.has((match.status || '').toUpperCase())) return
     const { cells } = courtMatches(schedule, court.courtNumber)
     const playing = cells.find((cell) => cell.match && LIVE.has((cell.match.status || '').toUpperCase()))
     if (playing) return
+    if (LIVE.has((match.status || '').toUpperCase())) {
+      const cover = coveringCell(cells, liveMinutes)
+      const later = cover ? cells.filter((cell) => cell.slot.start_time > cover.slot.start_time) : []
+      const target = [cover, ...later].find((cell) => cell && cell.slot.is_active !== false && !cell.match)
+      if (!target || target.slot.slot_id === match.slot_id) return
+      onMove(match.match_id, target.slot.slot_id)
+      return
+    }
     const target = cells.find((cell) => cell.slot.start_time.slice(0, 5) === (match.sort_time || '').slice(0, 5))
     if (match.court_number !== court.courtNumber) {
       if (!target) return
@@ -336,6 +347,7 @@ export default function DesignatedCourtSheet(props: Props) {
                 onOpenNotes={onOpenNotes}
                 onDrop={(matchId) => dropOnLive(matchId, court)}
                 onDragState={hold}
+                onDragMatch={(matchId) => { setDragMatchId(matchId); hold(matchId != null) }}
                 onUnavailable={(slot) => setAvailabilityCourt({ court, slot })}
               />
             )
@@ -365,7 +377,19 @@ export default function DesignatedCourtSheet(props: Props) {
                     style={gridCellStyle(cell, court, playing, slotTimes)}
                   >
                     {playing && match ? (
-                      <button type="button" onClick={() => onOpenMatch(match)} style={{ ...placeholderButton, background: activeTimeTint(match.sort_time, slotTimes).bg, color: '#1a1a1a', border: `1px solid ${activeTimeTint(match.sort_time, slotTimes).border}` }}>
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData('text/match-id', String(match.match_id))
+                          event.dataTransfer.effectAllowed = 'move'
+                          setDragMatchId(match.match_id)
+                          hold(true)
+                        }}
+                        onDragEnd={() => { setDragMatchId(null); hold(false) }}
+                        onClick={() => onOpenMatch(match)}
+                        style={{ ...placeholderButton, background: activeTimeTint(match.sort_time, slotTimes).bg, color: '#1a1a1a', border: `1px solid ${activeTimeTint(match.sort_time, slotTimes).border}`, cursor: 'grab' }}
+                      >
                         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
                           <span>↑ Playing {drawAbbreviation(match.event_name, match.match_code)}</span>
                           {match.championship_final && <TrophyIcon gold title="Championship Final — Trophy Match." />}
@@ -464,7 +488,7 @@ function untilLabel(minutes: number | null): string {
 }
 
 function LiveCell({
-  court, cells, covers, compact, photoSize, tick, isCopy, clockMs, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, recipientCount, slotTimes,   onOpen, onText, onOpenNotes, onDrop, onDragState, onUnavailable,
+  court, cells, covers, compact, photoSize, tick, isCopy, clockMs, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, recipientCount, slotTimes, onOpen, onText, onOpenNotes, onDrop, onDragState, onDragMatch, onUnavailable,
 }: {
   court: ScheduleCourt
   cells: ScheduleCell[]
@@ -487,6 +511,7 @@ function LiveCell({
   onOpenNotes?: (players: { id: number; name: string; team?: 1 | 2 }[], teamNotes: { label: string; body: string }[], teamLabels?: { 1: string; 2: string }) => void
   onDrop: (matchId: number) => void
   onDragState: (active: boolean) => void
+  onDragMatch?: (matchId: number | null) => void
   onUnavailable?: (slot: SnapshotSlot) => void
 }) {
   const playing = cells.find((cell) => cell.match && LIVE.has((cell.match.status || '').toUpperCase()))?.match || null
@@ -499,7 +524,22 @@ function LiveCell({
     const tint = activeTimeTint(playing.sort_time, slotTimes)
     const elapsed = elapsedLabel(playing.started_at, isCopy && clockMs != null ? clockMs : tick, isCopy, playing.day_date)
     return (
-      <button type="button" onClick={() => onOpen(playing)} style={{ ...liveCard, background: tint.bg, border: `1px solid ${tint.border}`, color: '#1a1a1a' }}>
+      <button
+        type="button"
+        draggable
+        onDragStart={(event) => {
+          if ((event.target as HTMLElement).closest('[data-card-action]')) {
+            event.preventDefault()
+            return
+          }
+          event.dataTransfer.setData('text/match-id', String(playing.match_id))
+          event.dataTransfer.effectAllowed = 'move'
+          onDragMatch?.(playing.match_id)
+        }}
+        onDragEnd={() => onDragMatch?.(null)}
+        onClick={() => onOpen(playing)}
+        style={{ ...liveCard, background: tint.bg, border: `1px solid ${tint.border}`, color: '#1a1a1a', cursor: 'grab' }}
+      >
         <CardHeading match={playing} compact={compact} trophy={playing.championship_final ? <TrophyIcon gold title="Championship Final — Trophy Match." /> : null} />
         <NameLines a={sideA} b={sideB} teamA={playing.team1_id} teamB={playing.team2_id} compact={compact} photoSize={photoSize} rrFinalTeamIds={playing.rr_final_team_ids} rrChampionTeamIds={playing.rr_champion_team_ids} rrRunnerUpTeamIds={playing.rr_runner_up_team_ids} />
         <div style={liveMeta}>{compactScheduledTime(playing.scheduled_time || playing.sort_time)}</div>

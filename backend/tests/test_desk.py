@@ -11,7 +11,7 @@ Validates:
 - Snapshot returns court grouping
 """
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import List
 
 from sqlmodel import Session, select
@@ -4301,19 +4301,25 @@ def test_move_match_to_occupied_slot_returns_409(client, session):
     assert detail["occupant_match_id"] == matches[1].id
 
 
-def test_move_match_rejects_currently_playing_match(client, session):
+def test_move_currently_playing_match_to_an_empty_court(client, session):
     t, v, _ev, _teams, matches, slots = _setup_draft_for_move(session)
     m1 = matches[0]
+    started = datetime(2026, 7, 1, 14, 5)
     m1.runtime_status = "IN_PROGRESS"
+    m1.started_at = started
     session.add(m1)
     session.commit()
 
     resp = client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{m1.id}/move",
-        json={"version_id": v.id, "target_slot_id": slots[2].id},
+        json={"version_id": v.id, "target_slot_id": slots[3].id},
     )
-    assert resp.status_code == 409
-    assert "cannot be moved" in resp.json()["detail"]
+    assert resp.status_code == 200, resp.text
+    session.refresh(m1)
+    assert m1.runtime_status == "IN_PROGRESS"
+    assert m1.started_at == started
+    assignment = session.exec(select(MatchAssignment).where(MatchAssignment.match_id == m1.id)).one()
+    assert assignment.slot_id == slots[3].id
 
 
 def test_move_rejected_on_final_version(client, session):

@@ -7399,11 +7399,7 @@ def move_match(
     match = session.get(Match, match_id)
     if not match or match.schedule_version_id != payload.version_id:
         raise HTTPException(status_code=404, detail="Match not found in version")
-    if (match.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED"):
-        raise HTTPException(
-            status_code=409,
-            detail="Currently playing matches cannot be moved until score/winner is entered.",
-        )
+    live_move = (match.runtime_status or "SCHEDULED").upper() in ("IN_PROGRESS", "PAUSED")
 
     target_slot = session.get(ScheduleSlot, payload.target_slot_id)
     if not target_slot or target_slot.schedule_version_id != payload.version_id:
@@ -7481,7 +7477,8 @@ def move_match(
     session.commit()
     _bump_desk_snapshot()
     session.refresh(match)
-    _progress_started_days(session, tournament, version)
+    if not live_move:
+        _progress_started_days(session, tournament, version)
 
     try:
         automation = SmsAutomationEngine(session, tournament, payload.version_id)
@@ -7497,17 +7494,18 @@ def move_match(
             match_id,
         )
 
-    # Staff override: reevaluate the moved match on its new court.
-    try:
-        reevaluate_match(session, tournament, match)
-    except Exception:
-        logger.exception(
-            "preassigned reevaluate after move failed tournament=%s match=%s",
-            tournament_id,
-            match_id,
-        )
-    # Also free the previous court for the next eligible reserved match.
-    if previous_slot is not None and (
+    # A live move only changes the court. Leave the match playing and do not
+    # fill the court it left, so staff can close that court afterward.
+    if not live_move:
+        try:
+            reevaluate_match(session, tournament, match)
+        except Exception:
+            logger.exception(
+                "preassigned reevaluate after move failed tournament=%s match=%s",
+                tournament_id,
+                match_id,
+            )
+    if not live_move and previous_slot is not None and (
         previous_slot.court_number != target_slot.court_number or previous_slot.day_date != target_slot.day_date
     ):
         try:
