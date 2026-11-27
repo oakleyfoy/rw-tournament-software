@@ -1,21 +1,22 @@
 """Championship finals and round-robin trophy awards.
 
-A championship final is a MAIN match whose two sides both come from winners
-and from which no later match takes a winner. That is the end of one main-draw
-bracket. Consolation finals are a different match type, or, in the 14-team
-flight, MAIN rows that are not fed by two winner links. Quarterfinals and
-semifinals still have a winner advancing out of them. Placement matches are
-not MAIN.
+A championship final is the last main-draw match of a bracket division.
+Generated brackets code that match `_M7`. The same match is also the main-draw
+match fed by two winners when no later match takes a winner from it. Either
+signal is enough, so a final is designated as soon as the draw exists, before
+finalists, scores, or Start Day. Consolation, placement, and waterfall matches
+are not finals. A blank source role still counts as a winner feed when the
+dashboard already labels that side "Winner of Match".
 
-Round-robin groups have no single final. A team playing its last scheduled
-pool match is only marked as such. Championship and runner-up are taken from
-the existing standings sort after every match in that pool is final and the
-top two places are not tied. The standings engine does not compute a clinch
-before the group is finished, so trophies are not awarded early.
+Round-robin groups have no single final. A silver mark is only for a team on
+its last pool match that can still finish first or second. A green mark is the
+official champion or runner-up on that same match after the pool is complete.
+A clinch before the pool is finished is recorded and is not distributed.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -35,27 +36,54 @@ from app.services.rr_match_codes import (
     is_wf10_sunday_placement_code,
     rr_pool_code_for_match,
 )
-from app.services.rr_standings import build_pool_standings
+from app.services.rr_standings import build_pool_standings, project_pool_outlook
 
 _NON_CHAMPIONSHIP_POOLS = {"FUN", "TOPFUN", "BOTFUN"}
+_BRACKET_FINAL_CODE = re.compile(r"_B[A-Z0-9]+_M7$", re.IGNORECASE)
+
+
+def _winner_feed(match: Match, side: str) -> bool:
+    role = (getattr(match, f"source_{side}_role") or "").strip().upper()
+    source_id = getattr(match, f"source_match_{side}_id")
+    placeholder = (getattr(match, f"placeholder_side_{side}") or "").strip().upper()
+    if role == "LOSER" or placeholder.startswith("LOSER:") or placeholder.startswith("L("):
+        return False
+    if role == "WINNER" and source_id:
+        return True
+    if source_id and role == "":
+        return True
+    return placeholder.startswith("WINNER:") or placeholder.startswith("W(")
+
+
+def _bracket_key(match: Match) -> tuple:
+    found = re.search(r"_B([A-Z0-9]+)_", match.match_code or "", re.IGNORECASE)
+    return (match.event_id, found.group(1).upper() if found else "")
 
 
 def championship_final_ids(matches: List[Match]) -> set[int]:
     consumed_by_winner: set[int] = set()
     for match in matches:
-        if (match.source_a_role or "").upper() == "WINNER" and match.source_match_a_id:
+        if (match.source_a_role or "").strip().upper() == "WINNER" and match.source_match_a_id:
             consumed_by_winner.add(match.source_match_a_id)
-        if (match.source_b_role or "").upper() == "WINNER" and match.source_match_b_id:
+        if (match.source_b_role or "").strip().upper() == "WINNER" and match.source_match_b_id:
             consumed_by_winner.add(match.source_match_b_id)
-    finals: set[int] = set()
+    structural: set[int] = set()
+    structural_brackets: set[tuple] = set()
+    winner_finals: set[int] = set()
     for match in matches:
-        if (match.match_type or "").upper() != "MAIN" or match.id is None:
+        match_type = (match.match_type or "").upper()
+        if match_type not in ("MAIN", "BRACKET") or match.id is None or match.id in consumed_by_winner:
             continue
-        if (match.source_a_role or "").upper() != "WINNER" or (match.source_b_role or "").upper() != "WINNER":
+        if _BRACKET_FINAL_CODE.search(match.match_code or ""):
+            structural.add(match.id)
+            structural_brackets.add(_bracket_key(match))
+        elif _winner_feed(match, "a") and _winner_feed(match, "b"):
+            winner_finals.add(match.id)
+    finals = set(structural)
+    for match in matches:
+        if match.id not in winner_finals:
             continue
-        if not match.source_match_a_id or not match.source_match_b_id:
-            continue
-        if match.id in consumed_by_winner:
+        if _bracket_key(match) in structural_brackets:
             continue
         finals.add(match.id)
     return finals
@@ -78,28 +106,60 @@ def is_championship_rr_match(match: Match) -> bool:
     return bool(pool) and pool not in _NON_CHAMPIONSHIP_POOLS
 
 
-def rr_last_match_teams(matches: List[Match]) -> Dict[int, List[int]]:
-    """Team ids for whom this unfinished match is their last pool match."""
+def _pool_groups(matches: List[Match]) -> Dict[tuple, List[Match]]:
     pools: Dict[tuple, List[Match]] = defaultdict(list)
     for match in matches:
         if not is_championship_rr_match(match):
             continue
         pool = rr_pool_code_for_match(match.match_code)
         pools[(match.event_id, pool)].append(match)
-    marks: Dict[int, List[int]] = {}
-    for group in pools.values():
-        remaining: Dict[int, List[Match]] = defaultdict(list)
-        for match in group:
-            if (match.runtime_status or "").upper() == "FINAL":
+    return pools
+
+
+def _last_pool_match(group: List[Match], team_id: int) -> Optional[Match]:
+    theirs = [match for match in group if team_id in (match.team_a_id, match.team_b_id)]
+    if not theirs:
+        return None
+    return max(theirs, key=lambda match: (match.round_index or 0, match.sequence_in_round or 0, match.id or 0))
+
+
+def rr_match_marks(matches: List[Match]) -> tuple[Dict[int, List[int]], Dict[int, List[int]], Dict[int, List[int]]]:
+    """Contenders, official champions, and official runners by match id.
+
+    Silver contenders are teams on their one remaining match who can still
+    finish first or second. Green marks are official places on that team's
+    final match. A clinched place before the pool is complete is not returned
+    here and is not distributed.
+    """
+    contenders: Dict[int, List[int]] = {}
+    champions: Dict[int, List[int]] = {}
+    runners: Dict[int, List[int]] = {}
+    for group in _pool_groups(matches).values():
+        outlook = project_pool_outlook(group)
+        built = build_pool_standings(group, lambda team_id: str(team_id))
+        official_champion = built.sorted_rows[0][0] if built.official else None
+        official_runner = built.sorted_rows[1][0] if built.official and len(built.sorted_rows) > 1 else None
+        teams = {team_id for match in group for team_id in (match.team_a_id, match.team_b_id) if team_id}
+        for team_id in teams:
+            theirs = [match for match in group if team_id in (match.team_a_id, match.team_b_id)]
+            open_matches = [match for match in theirs if (match.runtime_status or "").upper() != "FINAL"]
+            if len(open_matches) == 1 and team_id in outlook.eligible and open_matches[0].id is not None:
+                contenders.setdefault(open_matches[0].id, []).append(team_id)
+            if open_matches or not built.official:
                 continue
-            for team_id in (match.team_a_id, match.team_b_id):
-                if team_id:
-                    remaining[team_id].append(match)
-        for team_id, open_matches in remaining.items():
-            if len(open_matches) != 1 or open_matches[0].id is None:
+            last = _last_pool_match(group, team_id)
+            if last is None or last.id is None:
                 continue
-            marks.setdefault(open_matches[0].id, []).append(team_id)
-    return marks
+            if team_id == official_champion:
+                champions.setdefault(last.id, []).append(team_id)
+            if team_id == official_runner:
+                runners.setdefault(last.id, []).append(team_id)
+    return contenders, champions, runners
+
+
+def rr_last_match_teams(matches: List[Match]) -> Dict[int, List[int]]:
+    """Teams on their last pool match who can still finish first or second."""
+    return rr_match_marks(matches)[0]
 
 
 def _final_places(match: Match) -> Optional[tuple[int, int]]:

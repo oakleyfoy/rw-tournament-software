@@ -461,9 +461,10 @@ function LiveCell({
     const tint = activeTimeTint(playing.sort_time, slotTimes)
     const elapsed = elapsedLabel(playing.started_at, isCopy && clockMs != null ? clockMs : tick, isCopy, playing.day_date)
     return (
-      <button type="button" onClick={() => onOpen(playing)} style={{ ...liveCard, background: tint.bg, border: `1px solid ${tint.border}`, color: '#1a1a1a' }}>
+      <button type="button" onClick={() => onOpen(playing)} style={{ ...liveCard, position: 'relative', background: tint.bg, border: `1px solid ${tint.border}`, color: '#1a1a1a' }}>
+        {playing.championship_final && <TrophyIcon gold floating title="Championship Final — Trophy Match." />}
         <CardHeading match={playing} compact={compact} />
-        <NameLines a={sideA} b={sideB} teamA={playing.team1_id} teamB={playing.team2_id} compact={compact} photoSize={photoSize} rrFinalTeamIds={playing.rr_final_team_ids} />
+        <NameLines a={sideA} b={sideB} teamA={playing.team1_id} teamB={playing.team2_id} compact={compact} photoSize={photoSize} rrFinalTeamIds={playing.rr_final_team_ids} rrChampionTeamIds={playing.rr_champion_team_ids} rrRunnerUpTeamIds={playing.rr_runner_up_team_ids} />
         <div style={liveMeta}>{compactScheduledTime(playing.scheduled_time || playing.sort_time)}</div>
         <div style={liveMeta} title={elapsed.title}>{elapsed.text}</div>
         <CardActions compact={compact} canText={recipientCount(playing) > 0} showNotes hasNotes={notes.hasNotes} onText={() => onText(playing)} onNotes={() => onOpenNotes?.(notes.players, notes.teamNotes, notes.teamLabels)} />
@@ -526,7 +527,6 @@ function CardHeading({ match, compact }: { match: DeskMatchItem; compact: boolea
       <span>{drawAbbreviation(match.event_name, match.match_code)}</span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
         {division && <span style={{ fontWeight: 700, color: '#37474f' }}>{division}</span>}
-        {match.championship_final && <TrophyIcon gold title="Championship Final — Trophy Match." />}
       </span>
     </div>
   )
@@ -585,17 +585,18 @@ function GridCard({
       }}
       onDragEnd={onDragEnd}
       onClick={onOpen}
-      style={{ ...cardButton, background: tone.bg, border: `1px solid ${tone.border}`, color: '#1a1a1a' }}
+      style={{ ...cardButton, position: 'relative', background: tone.bg, border: `1px solid ${tone.border}`, color: '#1a1a1a' }}
     >
+      {match.championship_final && <TrophyIcon gold floating title="Championship Final — Trophy Match." />}
       <CardHeading match={match} compact={compact} />
-      <NameLines a={sideA.label} b={sideB.label} teamA={match.team1_id} teamB={match.team2_id} compact={compact} photoSize={photoSize} emphasizeA={winnerA} emphasizeB={winnerB} rrFinalTeamIds={match.rr_final_team_ids} />
+      <NameLines a={sideA.label} b={sideB.label} teamA={match.team1_id} teamB={match.team2_id} compact={compact} photoSize={photoSize} emphasizeA={winnerA} emphasizeB={winnerB} rrFinalTeamIds={match.rr_final_team_ids} rrChampionTeamIds={match.rr_champion_team_ids} rrRunnerUpTeamIds={match.rr_runner_up_team_ids} />
       {done && <div style={{ fontSize: compact ? 9 : 11, fontWeight: 800, color: '#1b5e20' }}>✓ {match.score_display || 'Completed'}</div>}
       <CardActions compact={compact} canText={canText} showNotes={showNotes} hasNotes={hasNotes} onText={onText} onNotes={onNotes} />
     </button>
   )
 }
 
-function NameLines({ a, b, teamA, teamB, compact, photoSize, emphasizeA = false, emphasizeB = false, rrFinalTeamIds = [] }: { a: string; b: string; teamA: number | null; teamB: number | null; compact: boolean; photoSize: number; emphasizeA?: boolean; emphasizeB?: boolean; rrFinalTeamIds?: number[] }) {
+function NameLines({ a, b, teamA, teamB, compact, photoSize, emphasizeA = false, emphasizeB = false, rrFinalTeamIds = [], rrChampionTeamIds = [], rrRunnerUpTeamIds = [] }: { a: string; b: string; teamA: number | null; teamB: number | null; compact: boolean; photoSize: number; emphasizeA?: boolean; emphasizeB?: boolean; rrFinalTeamIds?: number[]; rrChampionTeamIds?: number[]; rrRunnerUpTeamIds?: number[] }) {
   const groups = [
     { lines: firstNameLines(a), teamId: teamA, emphasize: emphasizeA },
     { lines: firstNameLines(b), teamId: teamB, emphasize: emphasizeB },
@@ -616,7 +617,9 @@ function NameLines({ a, b, teamA, teamB, compact, photoSize, emphasizeA = false,
                 <div key={`${line}-${index}`} style={{ fontWeight: group.emphasize ? 900 : 700, color: group.emphasize ? '#1b5e20' : '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line}</div>
               ))}
             </div>
-            {group.teamId != null && rrFinalTeamIds.includes(group.teamId) && <TrophyIcon title="This team's final round-robin match. It does not confirm a trophy award." />}
+            {group.teamId != null && rrChampionTeamIds.includes(group.teamId) && <TrophyIcon tone="green" title="Champion — Trophy Awarded by Standings" />}
+            {group.teamId != null && rrRunnerUpTeamIds.includes(group.teamId) && <TrophyIcon tone="green" title="Runner-Up — Trophy Awarded by Standings" />}
+            {group.teamId != null && !rrChampionTeamIds.includes(group.teamId) && !rrRunnerUpTeamIds.includes(group.teamId) && rrFinalTeamIds.includes(group.teamId) && <TrophyIcon title="Final Round-Robin Match — Trophy Contender" />}
           </div>
         </div>
       ))}
@@ -624,11 +627,12 @@ function NameLines({ a, b, teamA, teamB, compact, photoSize, emphasizeA = false,
   )
 }
 
-function TrophyIcon({ gold = false, floating = false, title }: { gold?: boolean; floating?: boolean; title?: string }) {
+function TrophyIcon({ gold = false, floating = false, tone, title }: { gold?: boolean; floating?: boolean; tone?: 'gold' | 'silver' | 'green'; title?: string }) {
+  const color = tone === 'green' ? '#2e7d32' : gold || tone === 'gold' ? '#c9a227' : '#90a4ae'
   return (
-    <span title={title} aria-label={title} style={floating ? { position: 'absolute', top: 2, right: 2, lineHeight: 0 } : { lineHeight: 0, flex: '0 0 auto' }}>
+    <span title={title} aria-label={title} style={floating ? { position: 'absolute', top: 2, right: 2, lineHeight: 0, zIndex: 1 } : { lineHeight: 0, flex: '0 0 auto' }}>
       <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
-        <path fill={gold ? '#c9a227' : '#90a4ae'} d="M7 3h10v2h3v3a5 5 0 01-4 4.9V14h2v2H6v-2h2v-1.1A5 5 0 014 8V5h3V3zm0 4H6v1a3 3 0 003 3V7zm10 0v4a3 3 0 003-3V7h-3zM8 18h8v2H8v-2z" />
+        <path fill={color} d="M7 3h10v2h3v3a5 5 0 01-4 4.9V14h2v2H6v-2h2v-1.1A5 5 0 014 8V5h3V3zm0 4H6v1a3 3 0 003 3V7zm10 0v4a3 3 0 003-3V7h-3zM8 18h8v2H8v-2z" />
       </svg>
     </span>
   )

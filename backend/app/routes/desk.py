@@ -789,6 +789,8 @@ class DeskMatchItem(BaseModel):
     is_opening: bool = False
     championship_final: bool = False
     rr_final_team_ids: List[int] = []
+    rr_champion_team_ids: List[int] = []
+    rr_runner_up_team_ids: List[int] = []
 
 
 class BoardCourtSlot(BaseModel):
@@ -2217,10 +2219,10 @@ def _build_match_items(
 
     items: List[DeskMatchItem] = []
     courts_set: set = set()
-    from app.services.trophy import championship_final_ids, rr_last_match_teams
+    from app.services.trophy import championship_final_ids, rr_match_marks
 
     final_ids = championship_final_ids(all_matches)
-    last_rr = rr_last_match_teams(all_matches)
+    last_rr, rr_champions, rr_runners = rr_match_marks(all_matches)
 
     for m in all_matches:
         ev = event_map.get(m.event_id)
@@ -2332,6 +2334,8 @@ def _build_match_items(
                 is_opening=court_mode == "PREASSIGNED" and is_opening_waterfall(m),
                 championship_final=m.id in final_ids,
                 rr_final_team_ids=last_rr.get(m.id, []),
+                rr_champion_team_ids=rr_champions.get(m.id, []),
+                rr_runner_up_team_ids=rr_runners.get(m.id, []),
             )
         )
 

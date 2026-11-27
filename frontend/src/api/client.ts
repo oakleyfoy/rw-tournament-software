@@ -3148,6 +3148,8 @@ export interface DeskMatchItem {
   is_opening?: boolean
   championship_final?: boolean
   rr_final_team_ids?: number[]
+  rr_champion_team_ids?: number[]
+  rr_runner_up_team_ids?: number[]
 }
 
 export interface BoardCourtSlot {
