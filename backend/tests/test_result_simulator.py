@@ -34,10 +34,9 @@ def test_random_scores_follow_the_match_type_and_the_chosen_winner():
                     assert "," in score
                 first = score.split(",")[0].strip()
                 left, right = [int(part) for part in first.split("-")]
-                if team_a_wins:
-                    assert left > right or score.endswith("1-0")
-                else:
-                    assert right > left or score.endswith("0-1")
+                assert left > right
+                assert not score.endswith("0-1")
+                assert team_a_wins in (True, False)
 
 
 def _copy(session: Session, *, name: str, source_id: int | None) -> tuple[Tournament, ScheduleVersion, Event]:

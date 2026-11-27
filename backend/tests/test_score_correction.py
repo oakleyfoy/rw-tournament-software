@@ -104,7 +104,7 @@ def test_winner_change_does_not_rewrite_started_match(client, session: Session):
 
     corrected = client.patch(
         f"/api/desk/tournaments/{tournament.id}/matches/{first['match_id']}/correct",
-        json={"version_id": draft_id, "score": "4-8", "winner_team_id": first["team2_id"]},
+        json={"version_id": draft_id, "score": "8-4", "winner_team_id": first["team2_id"]},
     )
     assert corrected.status_code == 200, corrected.text
     reasons = {warning["reason"] for warning in corrected.json()["warnings"]}
@@ -128,7 +128,7 @@ def test_winner_change_updates_scheduled_downstream_only(client, session: Sessio
 
     corrected = client.patch(
         f"/api/desk/tournaments/{tournament.id}/matches/{first['match_id']}/correct",
-        json={"version_id": draft_id, "score": "4-8", "winner_team_id": first["team2_id"]},
+        json={"version_id": draft_id, "score": "8-4", "winner_team_id": first["team2_id"]},
     )
     assert corrected.status_code == 200, corrected.text
     session.expire_all()
@@ -163,7 +163,7 @@ def test_winner_change_keeps_trophy_distribution_under_review(client, session: S
 
     corrected = client.patch(
         f"/api/desk/tournaments/{tournament.id}/matches/{first['match_id']}/correct",
-        json={"version_id": draft_id, "score": "3-6, 4-6", "winner_team_id": first["team2_id"]},
+        json={"version_id": draft_id, "score": "6-3, 6-4", "winner_team_id": first["team2_id"]},
     )
     assert corrected.status_code == 200, corrected.text
     reviewed = client.get(f"/api/desk/tournaments/{tournament.id}/trophies?version_id={draft_id}").json()

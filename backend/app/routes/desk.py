@@ -782,6 +782,7 @@ class DeskMatchItem(BaseModel):
     team2_id: Optional[int] = None
     team2_display: str
     score_display: Optional[str] = None
+    score_entry: Optional[str] = None
     score_corrections: List[DeskScoreCorrection] = []
     source_match_a_id: Optional[int] = None
     source_match_b_id: Optional[int] = None
@@ -826,6 +827,7 @@ class SnapshotSlot(BaseModel):
     court_label: str
     block_minutes: int
     is_active: bool = True
+    scheduled_active: bool = True
     assigned_match_id: Optional[int] = None
 
 
@@ -2145,7 +2147,7 @@ def _build_checkin_snapshot(
 def _validate_score_text_for_match(score_text: str, match: Match) -> None:
     from app.services.score_parser import validate_score_for_match_type
 
-    ok, message = validate_score_for_match_type(score_text, match.match_type)
+    ok, message = validate_score_for_match_type(score_text, match.match_type, match.match_code)
     if not ok:
         raise HTTPException(status_code=400, detail=message or "Invalid score")
 
@@ -2322,6 +2324,9 @@ def _build_match_items(
 
         status = (m.runtime_status or "SCHEDULED").upper()
         score = _format_score(m.score_json) if status == "FINAL" else None
+        from app.services.score_parser import winner_perspective_text
+
+        score_entry = winner_perspective_text(m.score_json) if status == "FINAL" else None
 
         winner_disp = None
         if m.winner_team_id and m.winner_team_id in team_map:
@@ -2349,6 +2354,7 @@ def _build_match_items(
                 team2_id=m.team_b_id,
                 team2_display=_team_display(m.team_b_id, m.placeholder_side_b, team_map),
                 score_display=score,
+                score_entry=score_entry,
                 source_match_a_id=m.source_match_a_id,
                 source_match_b_id=m.source_match_b_id,
                 created_at=m.created_at.isoformat() if m.created_at else None,
@@ -2458,6 +2464,9 @@ def _match_to_desk_item(
 
     status = (match.runtime_status or "SCHEDULED").upper()
     score = _format_score(match.score_json) if status == "FINAL" else None
+    from app.services.score_parser import winner_perspective_text
+
+    score_entry = winner_perspective_text(match.score_json) if status == "FINAL" else None
     stage = _STAGE_MAP.get(match.match_type, match.match_type)
     div_name = _derive_division(match.match_code or "", match.match_type or "")
 
@@ -2489,6 +2498,7 @@ def _match_to_desk_item(
         team2_id=match.team_b_id,
         team2_display=_team_display(match.team_b_id, match.placeholder_side_b, team_map),
         score_display=score,
+        score_entry=score_entry,
         source_match_a_id=match.source_match_a_id,
         source_match_b_id=match.source_match_b_id,
         created_at=match.created_at.isoformat() if match.created_at else None,
@@ -2565,6 +2575,9 @@ def desk_snapshot(
         ).all()
         slot_assignment_map = {a.slot_id: a.match_id for a in all_assignments}
 
+        from app.services.court_availability import covered_slot_ids
+
+        covered_slots = covered_slot_ids(session, version.id)
         snapshot_slots: List[SnapshotSlot] = []
         for s in all_slots:
             court_label = s.court_label or str(s.court_number)
@@ -2581,7 +2594,8 @@ def desk_snapshot(
                     court_number=s.court_number,
                     court_label=court_label,
                     block_minutes=s.block_minutes,
-                    is_active=s.is_active,
+                    is_active=bool(s.is_active) or s.id in covered_slots,
+                    scheduled_active=bool(s.is_active),
                     assigned_match_id=slot_assignment_map.get(s.id),
                 )
             )
@@ -4260,13 +4274,13 @@ def finalize_match(
     if payload.is_default:
         from app.services.score_parser import default_score_for_match_type
 
-        actual_score = default_score_for_match_type(match.match_type)
-        match.score_json = {"display": "DEFAULT", "actual": actual_score}
+        actual_score = default_score_for_match_type(match.match_type, match.match_code)
+        match.score_json = {"display": "DEFAULT", "actual": actual_score, "entry": "winner"}
     elif payload.is_retired:
         actual_score = payload.score or "0-0"
-        match.score_json = {"display": f"{actual_score} (RET)", "actual": actual_score}
+        match.score_json = {"display": f"{actual_score} (RET)", "actual": actual_score, "entry": "winner"}
     elif payload.score is not None:
-        match.score_json = {"display": payload.score}
+        match.score_json = {"display": payload.score, "actual": payload.score, "entry": "winner"}
     session.add(match)
     session.commit()
     session.refresh(match)
@@ -4853,7 +4867,7 @@ def correct_match(
     )
 
     match.winner_team_id = payload.winner_team_id
-    match.score_json = {"display": payload.score}
+    match.score_json = {"display": payload.score, "actual": payload.score, "entry": "winner"}
     match.completed_at = preserved_completed_at
     match.runtime_status = preserved_status or "FINAL"
     session.add(match)
@@ -6556,12 +6570,12 @@ def default_team_weekend(
 
         from app.services.score_parser import default_score_for_match_type
 
-        actual_score = default_score_for_match_type(m.match_type)
+        actual_score = default_score_for_match_type(m.match_type, m.match_code)
 
         m.runtime_status = "FINAL"
         m.winner_team_id = opponent_id
         m.completed_at = datetime.utcnow()
-        m.score_json = {"display": "DEFAULT", "actual": actual_score}
+        m.score_json = {"display": "DEFAULT", "actual": actual_score, "entry": "winner"}
         session.add(m)
         return True
 
@@ -7204,6 +7218,126 @@ def activate_dashboard_match(
     session.commit()
     _bump_desk_snapshot()
     return {"match_id": match.id, "status": match.runtime_status}
+
+
+class CourtAvailabilityRequest(BaseModel):
+    version_id: int
+    day_date: str
+    court_number: int
+    scope: str = "slot"
+    start_time: str
+    end_time: Optional[str] = None
+
+
+class CourtAvailabilityRestoreRequest(BaseModel):
+    version_id: int
+    day_date: str
+    court_number: int
+
+
+def _parse_hhmm(value: str) -> dt_time:
+    parts = (value or "").strip().split(":")
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        raise HTTPException(status_code=400, detail="Time must be HH:MM.")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    if hour > 23 or minute > 59:
+        raise HTTPException(status_code=400, detail="Time must be HH:MM.")
+    return dt_time(hour, minute)
+
+
+@router.post("/desk/tournaments/{tournament_id}/court-availability")
+def make_court_available(
+    tournament_id: int,
+    payload: CourtAvailabilityRequest,
+    session: Session = Depends(get_session),
+):
+    """Open a configured-unavailable court without changing the original schedule."""
+    from app.services.court_availability import open_court
+    from app.services.dashboard_progression import progress_version_day
+
+    tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Day must be YYYY-MM-DD.") from exc
+    start = _parse_hhmm(payload.start_time)
+    court_slots = session.exec(
+        select(ScheduleSlot).where(
+            ScheduleSlot.schedule_version_id == version.id,
+            ScheduleSlot.day_date == day,
+            ScheduleSlot.court_number == payload.court_number,
+        )
+    ).all()
+    scope = (payload.scope or "slot").strip().lower()
+    if scope == "range":
+        if not payload.end_time:
+            raise HTTPException(status_code=400, detail="A time range needs an end time.")
+        end = _parse_hhmm(payload.end_time)
+    elif scope == "rest":
+        ends = [
+            slot.end_time
+            for slot in court_slots
+            if slot.end_time is not None and slot.start_time is not None and slot.start_time >= start
+        ]
+        end = max(ends) if ends else dt_time(23, 59)
+    else:
+        selected = next((slot for slot in court_slots if slot.start_time == start), None)
+        if selected is None or selected.end_time is None:
+            raise HTTPException(status_code=404, detail="That court time is not on the schedule.")
+        end = selected.end_time
+    try:
+        open_court(
+            session,
+            tournament_id=tournament.id or tournament_id,
+            version_id=version.id or payload.version_id,
+            day=day,
+            court_number=payload.court_number,
+            start=start,
+            end=end,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    progress_version_day(session, tournament, version, day)
+    session.commit()
+    _bump_desk_snapshot()
+    return {
+        "court_number": payload.court_number,
+        "day_date": payload.day_date,
+        "status": "available",
+    }
+
+
+@router.post("/desk/tournaments/{tournament_id}/court-availability/restore")
+def restore_court_availability(
+    tournament_id: int,
+    payload: CourtAvailabilityRestoreRequest,
+    session: Session = Depends(get_session),
+):
+    """Put one court back on its configured schedule when no live assignment depends on the override."""
+    from app.services.court_availability import CourtAvailabilityConflict, restore_court
+
+    _tournament, version = _draft_version_or_400(session, tournament_id, payload.version_id)
+    try:
+        day = date.fromisoformat(payload.day_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Day must be YYYY-MM-DD.") from exc
+    try:
+        restore_court(
+            session,
+            version_id=version.id or payload.version_id,
+            day=day,
+            court_number=payload.court_number,
+        )
+    except CourtAvailabilityConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    session.commit()
+    _bump_desk_snapshot()
+    return {
+        "court_number": payload.court_number,
+        "day_date": payload.day_date,
+        "status": "restored",
+    }
 
 
 # ── Match Move endpoint ──────────────────────────────────────────────────

@@ -261,7 +261,12 @@ def activation_time(session: Session, tournament: Tournament, match: Match) -> d
     return _activation_stamp(tournament, run)
 
 
-def _court_open_at(slots: list[ScheduleSlot], court_number: int, now_minutes: int) -> bool:
+def _court_open_at(
+    slots: list[ScheduleSlot],
+    court_number: int,
+    now_minutes: int,
+    covered: Optional[set[int]] = None,
+) -> bool:
     """A court is open only when the slot covering the operational time is active."""
     court_slots = sorted(
         (slot for slot in slots if slot.court_number == court_number and slot.start_time is not None),
@@ -277,7 +282,7 @@ def _court_open_at(slots: list[ScheduleSlot], court_number: int, now_minutes: in
             break
     if now_minutes < _minutes(cover.start_time):
         return False
-    return cover.is_active is not False
+    return cover.is_active is not False or (covered is not None and cover.id in covered)
 
 
 def progress_version_day(
@@ -308,7 +313,10 @@ def progress_version_day(
     else:
         now_minutes = _minutes(local_now.time())
 
+    from app.services.court_availability import covered_slot_ids
+
     closed = _closed_labels(session, tournament.id or 0)
+    covered = covered_slot_ids(session, version.id, day)
     day_slots = list(
         session.exec(
             select(ScheduleSlot).where(
@@ -340,13 +348,13 @@ def progress_version_day(
         if not is_preassigned(event, day):
             continue
         team_ids = {team_id for team_id in (match.team_a_id, match.team_b_id) if team_id}
-        if not _court_open_at(day_slots, court_number, now_minutes):
+        if not _court_open_at(day_slots, court_number, now_minutes, covered):
             continue
         allowed, _reason = auto_start_decision(
             day_started=True,
             paused=False,
             court_closed=_court_closed(closed, slot),
-            slot_active=slot.is_active is not False,
+            slot_active=slot.is_active is not False or slot.id in covered,
             status=status,
             teams_known=match.team_a_id is not None and match.team_b_id is not None,
             feeders_final=_feeders_final(session, match),
@@ -479,7 +487,9 @@ def staff_activate(
     if status in LIVE:
         return False, "Match is already playing"
     closed = _closed_labels(session, tournament.id or 0)
-    if _court_closed(closed, slot) or slot.is_active is False:
+    from app.services.court_availability import slot_effectively_active
+
+    if _court_closed(closed, slot) or not slot_effectively_active(session, slot):
         return False, "That court is not available"
     rows = [
         pair for pair in _assignment_rows(session, version.id or 0, slot.day_date) if pair[1].court_number == slot.court_number
@@ -565,10 +575,13 @@ def set_test_clock(
 
 
 def _opening_time(session: Session, version_id: int, day: date) -> time:
+    from app.services.court_availability import covered_slot_ids
+
+    covered = covered_slot_ids(session, version_id, day)
     starts = [
         slot.start_time
         for _match, slot in _assignment_rows(session, version_id, day)
-        if slot.is_active is not False and slot.start_time is not None
+        if slot.start_time is not None and (slot.is_active is not False or slot.id in covered)
     ]
     return min(starts) if starts else time(9, 0)
 

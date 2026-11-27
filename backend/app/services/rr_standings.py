@@ -17,17 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from app.models.match import Match
-from app.services.score_parser import parse_score, scoring_mode_for_match_type
-
-
-def _retired(score_json) -> bool:
-    if not score_json:
-        return False
-    if isinstance(score_json, dict):
-        return "(RET" in str(score_json.get("display") or "").upper()
-    if isinstance(score_json, str):
-        return "(RET" in score_json.upper()
-    return False
+from app.services.score_parser import assign_games_to_teams, parse_score, scoring_mode_for_match_type
 
 
 def _blank() -> dict:
@@ -84,18 +74,14 @@ def build_pool_standings(matches: List[Match], display: Callable[[int], str]) ->
             complete = False
         rows[a_id]["played"] += 1
         rows[b_id]["played"] += 1
-        parsed = parse_score(match.score_json)
-        if parsed:
-            a_sets = parsed.team_a_sets_won
-            b_sets = parsed.team_b_sets_won
-            a_games = parsed.team_a_games
-            b_games = parsed.team_b_games
-            if not _retired(match.score_json) and match.winner_team_id == a_id and b_sets > a_sets:
-                a_sets, b_sets = b_sets, a_sets
-                a_games, b_games = b_games, a_games
-            elif not _retired(match.score_json) and match.winner_team_id == b_id and a_sets > b_sets:
-                a_sets, b_sets = b_sets, a_sets
-                a_games, b_games = b_games, a_games
+        assigned = assign_games_to_teams(
+            match.score_json,
+            winner_team_id=match.winner_team_id,
+            team_a_id=a_id,
+            team_b_id=b_id,
+        )
+        if assigned:
+            a_sets, b_sets, a_games, b_games = assigned
             rows[a_id]["sets_won"] += a_sets
             rows[a_id]["sets_lost"] += b_sets
             rows[b_id]["sets_won"] += b_sets
@@ -139,9 +125,9 @@ class PoolOutlook:
     guaranteed_runner_up: Optional[int] = None
 
 
-def _score_shapes(match_type: str) -> List[Tuple[int, int, int]]:
+def _score_shapes(match_type: str, match_code: Optional[str] = None) -> List[Tuple[int, int, int]]:
     """Legal (winner sets lost, loser sets lost, winner game differential)."""
-    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+    if scoring_mode_for_match_type(match_type, match_code) == "PRO_SET_8":
         texts = ["8-0", "9-8"]
     else:
         texts = ["6-0, 6-0", "7-6, 7-6", "6-4, 0-6, 1-0", "7-5, 5-7, 1-0"]
@@ -181,16 +167,22 @@ def project_pool_outlook(matches: List[Match]) -> PoolOutlook:
         winner = match.winner_team_id
         if status == "FINAL" and winner in (match.team_a_id, match.team_b_id):
             loser = match.team_b_id if winner == match.team_a_id else match.team_a_id
-            parsed = parse_score(match.score_json)
-            if parsed:
+            assigned = assign_games_to_teams(
+                match.score_json,
+                winner_team_id=winner,
+                team_a_id=match.team_a_id,
+                team_b_id=match.team_b_id,
+            )
+            if assigned:
+                a_sets, b_sets, a_games, b_games = assigned
                 if winner == match.team_a_id:
-                    winner_sets_lost = parsed.team_b_sets_won
-                    loser_sets_lost = parsed.team_a_sets_won
-                    diff = parsed.team_a_games - parsed.team_b_games
+                    winner_sets_lost = b_sets
+                    loser_sets_lost = a_sets
+                    diff = a_games - b_games
                 else:
-                    winner_sets_lost = parsed.team_a_sets_won
-                    loser_sets_lost = parsed.team_b_sets_won
-                    diff = parsed.team_b_games - parsed.team_a_games
+                    winner_sets_lost = a_sets
+                    loser_sets_lost = b_sets
+                    diff = b_games - a_games
             else:
                 winner_sets_lost, loser_sets_lost, diff = 0, 1, 1
             base[winner][0] += 1
@@ -199,7 +191,7 @@ def project_pool_outlook(matches: List[Match]) -> PoolOutlook:
             base[winner][2] += diff
             base[loser][2] -= diff
             continue
-        shapes = _score_shapes(match.match_type or "")
+        shapes = _score_shapes(match.match_type or "", getattr(match, "match_code", None))
         remaining.append((match.team_a_id, match.team_b_id, shapes))
 
     if len(remaining) > 3:

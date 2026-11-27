@@ -100,20 +100,36 @@ _PRO_SET_4 = [(4, 0), (4, 1), (4, 2), (5, 3), (5, 4)]
 _REGULAR_SET = [(6, loser) for loser in range(0, 5)] + [(7, 5), (7, 6)]
 
 
-def scoring_mode_for_match_type(match_type: Optional[str]) -> str:
-    """Waterfall is an 8-game pro set. Every other match is best of three sets."""
+def is_waterfall_match(match_type: Optional[str] = None, match_code: Optional[str] = None) -> bool:
+    """Both Waterfall rounds are pro sets. Bracket and round robin are not.
+
+    The draw code is authoritative when a row was stored with the wrong type.
+    Scheduled duration, weekday, and start time do not choose the format.
+    """
     if (match_type or "").upper() == "WF":
+        return True
+    code = (match_code or "").upper()
+    return code.startswith("WF_") or "_WF_" in code
+
+
+def scoring_mode_for_match_type(match_type: Optional[str] = None, match_code: Optional[str] = None) -> str:
+    """Waterfall is an 8-game pro set. Every other match is best of three sets."""
+    if is_waterfall_match(match_type, match_code):
         return "PRO_SET_8"
     return "REGULAR"
 
 
-def validate_score_for_match_type(score_text: str, match_type: Optional[str]) -> Tuple[bool, Optional[str]]:
-    """Validate a score from the match type, not from the scheduled duration."""
+def validate_score_for_match_type(
+    score_text: str,
+    match_type: Optional[str] = None,
+    match_code: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Validate a winning score for the match's stage, not its scheduled duration."""
     sets = _parse_sets_from_raw(score_text)
     if not sets:
         return False, "Invalid score format. Use scores like '8-6' or '6-4, 7-5'."
 
-    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+    if scoring_mode_for_match_type(match_type, match_code) == "PRO_SET_8":
         if not _is_valid_pro_set_8_match(sets):
             return False, (
                 "Invalid score for 8-game pro set. Allowed set scores: 8-0 through 8-6, plus 9-7 or 9-8."
@@ -129,17 +145,29 @@ def validate_score_for_match_type(score_text: str, match_type: Optional[str]) ->
     return True, None
 
 
-def default_score_for_match_type(match_type: Optional[str]) -> str:
-    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
+def default_score_for_match_type(match_type: Optional[str] = None, match_code: Optional[str] = None) -> str:
+    """Winner-perspective default. Waterfall is 8-0. Bracket and round robin are 6-0, 6-0."""
+    if scoring_mode_for_match_type(match_type, match_code) == "PRO_SET_8":
         return "8-0"
     return "6-0, 6-0"
 
 
-def random_valid_score_for_match_type(match_type: Optional[str], *, team_a_wins: bool, rng) -> str:
-    """A score the match-type validator accepts, oriented to the chosen winner."""
-    if scoring_mode_for_match_type(match_type) == "PRO_SET_8":
-        return _oriented_set(rng.choice(_PRO_SET_8), team_a_wins)
-    return _random_regular_score(team_a_wins, rng)
+def random_valid_score_for_match_type(
+    match_type: Optional[str],
+    *,
+    team_a_wins: bool,
+    rng,
+    match_code: Optional[str] = None,
+) -> str:
+    """A legal winning score from the selected winner's perspective.
+
+    The first number is the winner's games. `team_a_wins` chooses who receives
+    the victory; it does not flip the score line.
+    """
+    del team_a_wins
+    if scoring_mode_for_match_type(match_type, match_code) == "PRO_SET_8":
+        return _oriented_set(rng.choice(_PRO_SET_8), True)
+    return _random_regular_score(True, rng)
 
 
 def random_valid_score(duration_minutes: int, *, team_a_wins: bool, rng) -> str:
@@ -329,12 +357,91 @@ def _is_valid_regular_match(sets: List[Tuple[int, int]]) -> bool:
 
 
 def score_supports_winner(score_text: str, *, team_a_wins: bool) -> bool:
-    """True when the entered sets give the selected side more sets than the other."""
+    """True when the entered score is a winning result for the selected winner.
+
+    Staff enter the winner's games first. Court position does not change the
+    line: Team 2 winning 8-3 is entered as 8-3, not 3-8. `team_a_wins` remains
+    for existing callers and is not used to orient the score.
+    """
+    del team_a_wins
     sets = _parse_sets_from_raw(score_text)
     if not sets:
         return False
-    team_a_sets = sum(1 for team_a, team_b in sets if team_a > team_b)
-    team_b_sets = sum(1 for team_a, team_b in sets if team_b > team_a)
-    if team_a_wins:
-        return team_a_sets > team_b_sets
-    return team_b_sets > team_a_sets
+    winner_sets = sum(1 for winner, loser in sets if winner > loser)
+    loser_sets = sum(1 for winner, loser in sets if loser > winner)
+    return winner_sets > loser_sets
+
+
+def _retired_display(score_json: Any) -> bool:
+    if isinstance(score_json, dict):
+        display = str(score_json.get("display") or "")
+    else:
+        display = str(score_json or "")
+    return "(RET" in display.upper()
+
+
+def assign_games_to_teams(
+    score_json: Any,
+    *,
+    winner_team_id: Optional[int],
+    team_a_id: Optional[int],
+    team_b_id: Optional[int],
+) -> Optional[Tuple[int, int, int, int]]:
+    """Return sets and games as (team A sets, team B sets, team A games, team B games).
+
+    New scores are stored from the selected winner's perspective and marked
+    entry=winner, so the left side belongs to the winner even in a retirement.
+    Older non-retired scores still flip only when the set winner disagrees
+    with the selected team. Older retired scores stay in their stored order.
+    """
+    parsed = parse_score(score_json)
+    if not parsed:
+        return None
+    a_sets = parsed.team_a_sets_won
+    b_sets = parsed.team_b_sets_won
+    a_games = parsed.team_a_games
+    b_games = parsed.team_b_games
+    winner_entry = isinstance(score_json, dict) and score_json.get("entry") == "winner"
+    swap = False
+    if winner_entry:
+        swap = winner_team_id is not None and winner_team_id == team_b_id
+    elif not _retired_display(score_json):
+        if winner_team_id == team_a_id and b_sets > a_sets:
+            swap = True
+        elif winner_team_id == team_b_id and a_sets > b_sets:
+            swap = True
+    if swap:
+        return b_sets, a_sets, b_games, a_games
+    return a_sets, b_sets, a_games, b_games
+
+
+def winner_perspective_text(score_json: Any) -> Optional[str]:
+    """Numeric score for the editor, with the winner's games on the left.
+
+    Does not rewrite stored history. DEFAULT becomes its numeric actual score.
+    A stored team-position line whose right side won is flipped for display.
+    """
+    if not score_json:
+        return None
+    if isinstance(score_json, dict):
+        display = str(score_json.get("display") or "")
+        actual = str(score_json.get("actual") or "")
+        winner_entry = score_json.get("entry") == "winner"
+        raw = actual if display.strip().upper() == "DEFAULT" and actual else (actual or display)
+    else:
+        display = str(score_json)
+        winner_entry = False
+        raw = display
+    cleaned = re.sub(r"\s*\(\s*RET\s*\)", "", raw, flags=re.IGNORECASE).strip()
+    if not cleaned or cleaned.upper() == "DEFAULT":
+        return None
+    if winner_entry or _retired_display(score_json):
+        return cleaned
+    sets = _parse_sets_from_raw(cleaned)
+    if not sets:
+        return cleaned
+    left = sum(1 for winner, loser in sets if winner > loser)
+    right = sum(1 for winner, loser in sets if loser > winner)
+    if right <= left:
+        return cleaned
+    return ", ".join(f"{right_games}-{left_games}" for left_games, right_games in sets)

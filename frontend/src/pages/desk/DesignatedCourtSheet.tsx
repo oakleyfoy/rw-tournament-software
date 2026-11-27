@@ -47,6 +47,14 @@ type Props = {
   onSwap: (matchId: number, occupantId: number) => void
   onUndo: () => void
   onCourtState: (courtLabel: string, closed: boolean, note: string) => void
+  onMakeCourtAvailable?: (input: {
+    dayDate: string
+    courtNumber: number
+    scope: 'slot' | 'range' | 'rest'
+    startTime: string
+    endTime?: string
+  }) => Promise<void>
+  onRestoreCourtAvailability?: (input: { dayDate: string; courtNumber: number }) => Promise<string | null>
   onInteractionChange?: (active: boolean) => void
   rosterByTeam?: Record<number, { id: number; name: string; phone?: string | null; consent?: string | null; slot?: 1 | 2 }[]>
   onSendMatchText?: (players: MatchTextPlayer[], message: string) => Promise<MatchTextResult[]>
@@ -131,8 +139,9 @@ export default function DesignatedCourtSheet(props: Props) {
     dayStarted = false, dayPaused = false, onStartDay, onSetPaused, courtNotes = {},
     isCopy = false, testClock = null, simulatedAt = null, serverNow = null, clockFrozen = false,
     onSetTestClock, onAdvanceClock, onFreezeClock, canSimulate = false, onOpenSimulation,
-    trophyPending = 0, onOpenTrophies,
+    trophyPending = 0, onOpenTrophies, onMakeCourtAvailable, onRestoreCourtAvailability,
   } = props
+  const [availabilityCourt, setAvailabilityCourt] = useState<{ court: ScheduleCourt; slot: SnapshotSlot } | null>(null)
   const [dragMatchId, setDragMatchId] = useState<number | null>(null)
   const [courtPanel, setCourtPanel] = useState<number | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
@@ -324,6 +333,7 @@ export default function DesignatedCourtSheet(props: Props) {
                 onOpenNotes={onOpenNotes}
                 onDrop={(matchId) => dropOnLive(matchId, court)}
                 onDragState={hold}
+                onUnavailable={(slot) => setAvailabilityCourt({ court, slot })}
               />
             )
           })}
@@ -377,11 +387,24 @@ export default function DesignatedCourtSheet(props: Props) {
                         onDragEnd={() => { setDragMatchId(null); hold(false) }}
                       />
                     ) : !cell || cell.slot.is_active === false ? (
-                      <span style={{ fontSize: 10, fontWeight: 800, color: '#eceff1' }}>Unavailable</span>
+                      <button
+                        type="button"
+                        onClick={() => { if (cell) setAvailabilityCourt({ court, slot: cell.slot }) }}
+                        style={{ width: '100%', border: 'none', background: 'transparent', color: '#eceff1', fontSize: 10, fontWeight: 800, cursor: cell ? 'pointer' : 'default', padding: 4 }}
+                      >
+                        Unavailable
+                      </button>
                     ) : court.closed ? (
                       <span style={{ fontSize: 10, fontWeight: 800, color: '#b71c1c' }}>Closed</span>
                     ) : (
-                      <span style={{ fontSize: 10, fontWeight: 800, color: '#1b5e20' }}>Open</span>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#1b5e20' }}>
+                        Open
+                        {cell?.slot.scheduled_active === false && (
+                          <button type="button" onClick={() => setAvailabilityCourt({ court, slot: cell.slot })} style={{ display: 'block', marginTop: 2, border: 'none', background: 'transparent', color: '#1565c0', fontSize: 9, fontWeight: 800, cursor: 'pointer' }}>
+                            Schedule
+                          </button>
+                        )}
+                      </span>
                     )}
                   </div>
                 )
@@ -405,6 +428,17 @@ export default function DesignatedCourtSheet(props: Props) {
           }}
         />
       )}
+      {availabilityCourt && (
+        <CourtAvailabilityDialog
+          schedule={schedule}
+          court={availabilityCourt.court}
+          slot={availabilityCourt.slot}
+          day={selectedDay}
+          onClose={() => setAvailabilityCourt(null)}
+          onMake={onMakeCourtAvailable}
+          onRestore={onRestoreCourtAvailability}
+        />
+      )}
       {textMatch && (
         <MatchTextDialog
           drawLabel={drawAbbreviation(textMatch.event_name, textMatch.match_code)}
@@ -420,6 +454,18 @@ export default function DesignatedCourtSheet(props: Props) {
   )
 }
 
+function coveringCell(cells: ScheduleCell[], nowMinutes: number | null): ScheduleCell | null {
+  const ordered = [...cells].sort((a, b) => a.slot.start_time.localeCompare(b.slot.start_time))
+  if (!ordered.length) return null
+  if (nowMinutes == null) return ordered[0]
+  let cover = ordered[0]
+  for (const cell of ordered) {
+    const minutes = minutesFromSort(cell.slot.start_time)
+    if (minutes != null && minutes <= nowMinutes) cover = cell
+  }
+  return cover
+}
+
 function untilLabel(minutes: number | null): string {
   if (minutes == null) return ''
   const hour = Math.floor(minutes / 60)
@@ -429,7 +475,7 @@ function untilLabel(minutes: number | null): string {
 }
 
 function LiveCell({
-  court, cells, covers, compact, photoSize, tick, isCopy, clockMs, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, recipientCount, slotTimes, onOpen, onText, onOpenNotes, onDrop, onDragState,
+  court, cells, covers, compact, photoSize, tick, isCopy, clockMs, dayStarted, dayPaused, nowMinutes, liveTeamIds, matches, noteFor, recipientCount, slotTimes,   onOpen, onText, onOpenNotes, onDrop, onDragState, onUnavailable,
 }: {
   court: ScheduleCourt
   cells: ScheduleCell[]
@@ -452,6 +498,7 @@ function LiveCell({
   onOpenNotes?: (players: { id: number; name: string; team?: 1 | 2 }[], teamNotes: { label: string; body: string }[], teamLabels?: { 1: string; 2: string }) => void
   onDrop: (matchId: number) => void
   onDragState: (active: boolean) => void
+  onUnavailable?: (slot: SnapshotSlot) => void
 }) {
   const playing = cells.find((cell) => cell.match && LIVE.has((cell.match.status || '').toUpperCase()))?.match || null
   const upcoming = cells.flatMap((cell) => (cell.match ? [cell.match] : []))
@@ -478,11 +525,16 @@ function LiveCell({
   const availability = courtOpenAt(covers, nowMinutes)
   if (!availability.open) {
     const until = untilLabel(availability.untilMinutes)
+    const cover = coveringCell(cells, nowMinutes)
     return (
-      <div style={{ ...liveCard, background: '#37474f', color: '#eceff1' }}>
+      <button
+        type="button"
+        onClick={() => { if (cover) onUnavailable?.(cover.slot) }}
+        style={{ ...liveCard, background: '#37474f', color: '#eceff1', cursor: 'pointer', width: '100%' }}
+      >
         <b style={unavailableLabel}>UNAVAILABLE</b>
         {until && <div style={liveMeta}>Until {until}</div>}
-      </div>
+      </button>
     )
   }
   const onDragOver = (event: DragEvent) => event.preventDefault()
@@ -493,7 +545,17 @@ function LiveCell({
     onDragState(false)
   }
   if (!earliest) {
-    return <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20' }}><b>OPEN</b></div>
+    const cover = coveringCell(cells, nowMinutes)
+    return (
+      <div onDragOver={onDragOver} onDrop={onDropEvent} style={{ ...liveCard, background: '#e8f5e9', color: '#1b5e20' }}>
+        <b>OPEN</b>
+        {cover?.slot.scheduled_active === false && (
+          <button type="button" onClick={() => onUnavailable?.(cover.slot)} style={{ display: 'block', marginTop: 4, border: 'none', background: 'transparent', color: '#1565c0', fontSize: 10, fontWeight: 800, cursor: 'pointer', padding: 0 }}>
+            Schedule
+          </button>
+        )}
+      </div>
+    )
   }
   const earliestCell = cells.find((cell) => cell.match?.match_id === earliest.match_id)
   const decision = autoStartDecision({
@@ -712,4 +774,116 @@ function gridCellStyle(cell: ScheduleCell | null, court: ScheduleCourt, playing:
   else if (cell.match) background = SCHEDULED_CARD.bg
   else if (court.closed) background = '#ffcdd2'
   return { minHeight: 58, borderRadius: 6, padding: 2, minWidth: 0, background }
+}
+
+function formatDay(day: string): string {
+  const parsed = new Date(`${day}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) return day
+  return parsed.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
+function formatHhmm(value: string): string {
+  const [hourText, minuteText] = value.split(':')
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return value
+  const suffix = hour < 12 ? 'AM' : 'PM'
+  return `${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
+function CourtAvailabilityDialog({
+  schedule, court, slot, day, onClose, onMake, onRestore,
+}: {
+  schedule: DaySchedule
+  court: ScheduleCourt
+  slot: SnapshotSlot
+  day: string
+  onClose: () => void
+  onMake?: (input: {
+    dayDate: string
+    courtNumber: number
+    scope: 'slot' | 'range' | 'rest'
+    startTime: string
+    endTime?: string
+  }) => Promise<void>
+  onRestore?: (input: { dayDate: string; courtNumber: number }) => Promise<string | null>
+}) {
+  const index = schedule.courts.findIndex((row) => row.courtNumber === court.courtNumber)
+  const cells = schedule.rows.map((row) => row.cells[index]).filter((cell): cell is ScheduleCell => cell != null)
+  const originallyOpen = cells.filter((cell) => cell.slot.scheduled_active !== false)
+  const firstOpen = originallyOpen[0]?.slot.start_time || null
+  const overrideActive = cells.some((cell) => cell.slot.scheduled_active === false && cell.slot.is_active !== false)
+  const [scope, setScope] = useState<'slot' | 'range' | 'rest'>('slot')
+  const [rangeEnd, setRangeEnd] = useState(slot.end_time)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const current = slot.is_active === false ? 'Unavailable' : 'Available'
+
+  const makeAvailable = async () => {
+    if (!onMake) return
+    setBusy(true)
+    setError(null)
+    try {
+      await onMake({
+        dayDate: day,
+        courtNumber: court.courtNumber,
+        scope,
+        startTime: slot.start_time,
+        endTime: scope === 'range' ? rangeEnd : undefined,
+      })
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not make this court available.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const restore = async () => {
+    if (!onRestore) return
+    setBusy(true)
+    setError(null)
+    const message = await onRestore({ dayDate: day, courtNumber: court.courtNumber })
+    setBusy(false)
+    if (message) {
+      setError(message)
+      return
+    }
+    onClose()
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ width: 'min(420px, 100%)', background: '#fff', borderRadius: 12, padding: 16, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#1a237e' }}>{court.courtName}</div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer' }}>×</button>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 13, color: '#455a64' }}>{formatDay(day)}</div>
+        <div style={{ marginTop: 10, fontSize: 13 }}><b>Current status:</b> {current}</div>
+        <div style={{ marginTop: 4, fontSize: 13 }}><b>Original schedule:</b> {firstOpen ? `Available from ${formatHhmm(firstOpen)}` : 'Not scheduled as available'}</div>
+        {firstOpen && <div style={{ marginTop: 4, fontSize: 13 }}><b>Originally available:</b> {formatHhmm(firstOpen)}</div>}
+        <div style={{ marginTop: 12, fontSize: 13, fontWeight: 800 }}>Make available for</div>
+        <label style={{ display: 'block', marginTop: 6, fontSize: 13 }}>
+          <input type="radio" checked={scope === 'slot'} onChange={() => setScope('slot')} /> This time slot ({formatHhmm(slot.start_time)})
+        </label>
+        <label style={{ display: 'block', marginTop: 6, fontSize: 13 }}>
+          <input type="radio" checked={scope === 'range'} onChange={() => setScope('range')} /> A time range through
+          <input type="time" value={rangeEnd.slice(0, 5)} onChange={(event) => { setRangeEnd(event.target.value); setScope('range') }} style={{ marginLeft: 8 }} />
+        </label>
+        <label style={{ display: 'block', marginTop: 6, fontSize: 13 }}>
+          <input type="radio" checked={scope === 'rest'} onChange={() => setScope('rest')} /> The rest of this day
+        </label>
+        {error && <div style={{ marginTop: 10, color: '#c62828', fontSize: 13 }}>{error}</div>}
+        <button type="button" disabled={busy} onClick={() => { void makeAvailable() }} style={{ width: '100%', marginTop: 14, padding: '10px 12px', border: 'none', borderRadius: 8, background: '#2e7d32', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+          {busy ? 'Saving...' : 'Make Court Available'}
+        </button>
+        {overrideActive && (
+          <button type="button" disabled={busy} onClick={() => { void restore() }} style={{ width: '100%', marginTop: 8, padding: '10px 12px', borderRadius: 8, border: '1px solid #b0bec5', background: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+            Restore Original Availability
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }

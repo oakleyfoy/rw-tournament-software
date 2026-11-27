@@ -77,7 +77,7 @@ def project_next_matches(session: Session, match: Match, winner_team_id: int) ->
 
 
 def _format_label(match: Match) -> str:
-    if scoring_mode_for_match_type(match.match_type) == "PRO_SET_8":
+    if scoring_mode_for_match_type(match.match_type, match.match_code) == "PRO_SET_8":
         return "8-game pro set · Tiebreak at 8–8"
     return "Best of three sets · Match tiebreak for third set"
 

@@ -1322,6 +1322,11 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
             "DELETE FROM matchscorecorrection WHERE tournament_id = :tournament_id",
             {"tournament_id": new_tournament.id},
         )
+        _delete_if_present(
+            session,
+            "DELETE FROM courtavailabilityoverride WHERE tournament_id = :tournament_id",
+            {"tournament_id": new_tournament.id},
+        )
 
         source_days = session.exec(select(TournamentDay).where(TournamentDay.tournament_id == tournament_id)).all()
         source_windows = session.exec(
@@ -2091,6 +2096,7 @@ def _delete_orphaned_tournament_rows(session: Session) -> None:
         "DELETE FROM player_note WHERE tournament_id NOT IN (SELECT id FROM tournament)",
         "DELETE FROM trophydistribution WHERE tournament_id NOT IN (SELECT id FROM tournament)",
         "DELETE FROM matchscorecorrection WHERE tournament_id NOT IN (SELECT id FROM tournament)",
+        "DELETE FROM courtavailabilityoverride WHERE tournament_id NOT IN (SELECT id FROM tournament)",
         "DELETE FROM deskdayrun WHERE tournament_id NOT IN (SELECT id FROM tournament) OR schedule_version_id NOT IN (SELECT id FROM scheduleversion)",
         "DELETE FROM openingslotrelease WHERE tournament_id NOT IN (SELECT id FROM tournament)",
         "DELETE FROM matchplayercheckin WHERE tournament_id NOT IN (SELECT id FROM tournament)",
@@ -2111,6 +2117,7 @@ def _purge_tournament_owned_rows(session: Session, tournament_id: int) -> None:
     for statement in (
         "DELETE FROM trophydistribution WHERE tournament_id = :tournament_id",
         "DELETE FROM matchscorecorrection WHERE tournament_id = :tournament_id",
+        "DELETE FROM courtavailabilityoverride WHERE tournament_id = :tournament_id",
         "DELETE FROM deskdayrun WHERE tournament_id = :tournament_id OR schedule_version_id IN (SELECT id FROM scheduleversion WHERE tournament_id = :tournament_id)",
         "DELETE FROM courtdispatchlock WHERE schedule_version_id IN (SELECT id FROM scheduleversion WHERE tournament_id = :tournament_id)",
         "DELETE FROM openingslotrelease WHERE tournament_id = :tournament_id",

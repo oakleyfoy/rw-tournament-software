@@ -1,4 +1,5 @@
 from app.models.auth_session import AuthSession
+from app.models.court_availability_override import CourtAvailabilityOverride
 from app.models.court_dispatch_lock import CourtDispatchLock
 from app.models.court_state import TournamentCourtState
 from app.models.desk_day_run import DeskDayRun
@@ -54,6 +55,7 @@ __all__ = [
     "MatchScoreCorrection",
     "MatchPlayerCheckIn",
     "OpeningSlotRelease",
+    "CourtAvailabilityOverride",
     "CourtDispatchLock",
     "SlotLock",
     "StartOverBaselineAssignment",

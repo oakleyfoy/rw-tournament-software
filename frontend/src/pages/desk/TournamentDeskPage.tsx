@@ -35,6 +35,8 @@ import {
   deskSetMatchStatus,
   deskReturnMatchToWaitingCheckIn,
   deskMoveMatch,
+  deskSetCourtAvailability,
+  deskRestoreCourtAvailability,
   deskSwapMatches,
   setDashboardTestClock,
   type SimulationSlot,
@@ -1111,8 +1113,15 @@ function MiniMatchCard({
   )
 }
 
-function editableScore(display: string | null | undefined): string {
-  return (display || '').replace(/\s*\(\s*RET\s*\)/gi, '').trim()
+function editableScore(match: { score_entry?: string | null; score_display: string | null; stage?: string; match_code?: string }): string {
+  const entered = (match.score_entry || '').replace(/\s*\(\s*RET\s*\)/gi, '').trim()
+  if (entered && !/^DEFAULT$/i.test(entered)) return entered
+  const display = (match.score_display || '').replace(/\s*\(\s*RET\s*\)/gi, '').trim()
+  if (/^DEFAULT$/i.test(display)) {
+    const waterfall = match.stage === 'WF' || (match.match_code || '').includes('_WF_')
+    return waterfall ? '8-0' : '6-0, 6-0'
+  }
+  return display
 }
 
 function MatchDrawer({
@@ -1146,7 +1155,7 @@ function MatchDrawer({
   onSendTexts?: (items: Array<{ playerId: number; message: string }>) => Promise<number>
   onOpenTrophies?: () => void
 }) {
-  const [score, setScore] = useState(() => match.status === 'FINAL' ? editableScore(match.score_display) : '')
+  const [score, setScore] = useState(() => match.status === 'FINAL' ? editableScore(match) : '')
   const [winnerId, setWinnerId] = useState<number | null>(match.status === 'FINAL' ? (match.winner_team_id ?? null) : null)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<FinalizeResponse | null>(null)
@@ -1264,7 +1273,7 @@ function MatchDrawer({
         winner_team_id: winnerId,
       })
       setCorrResult(resp)
-      setScore(editableScore(resp.match.score_display) || scoreText)
+      setScore(editableScore(resp.match) || scoreText)
       setWinnerId(resp.match.winner_team_id ?? winnerId)
       onRefreshKeepOpen()
       return true
@@ -1345,7 +1354,7 @@ function MatchDrawer({
 
   useEffect(() => {
     if (!scoreLocked) return
-    setScore(editableScore(effectiveMatch.score_display))
+    setScore(editableScore(effectiveMatch))
     setWinnerId(effectiveMatch.winner_team_id ?? null)
   }, [match.match_id, scoreLocked])
 
@@ -8977,6 +8986,40 @@ export default function TournamentDeskPage() {
     } catch { /* ignore */ }
   }, [tid])
 
+  const handleMakeCourtAvailable = useCallback(async (input: {
+    dayDate: string
+    courtNumber: number
+    scope: 'slot' | 'range' | 'rest'
+    startTime: string
+    endTime?: string
+  }) => {
+    if (!tid || !data) return
+    await deskSetCourtAvailability(tid, {
+      version_id: data.version_id,
+      day_date: input.dayDate,
+      court_number: input.courtNumber,
+      scope: input.scope,
+      start_time: input.startTime,
+      end_time: input.endTime,
+    })
+    await refreshSnapshotAndLookups()
+  }, [tid, data, refreshSnapshotAndLookups])
+
+  const handleRestoreCourtAvailability = useCallback(async (input: { dayDate: string; courtNumber: number }) => {
+    if (!tid || !data) return 'Tournament is still loading.'
+    try {
+      await deskRestoreCourtAvailability(tid, {
+        version_id: data.version_id,
+        day_date: input.dayDate,
+        court_number: input.courtNumber,
+      })
+      await refreshSnapshotAndLookups()
+      return null
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : 'Could not restore the original schedule.'
+    }
+  }, [tid, data, refreshSnapshotAndLookups])
+
   const handleQuickSmsTeam = useCallback((teamId: number) => {
     setSmsQuickTarget({
       scope: 'team',
@@ -11297,6 +11340,8 @@ export default function TournamentDeskPage() {
               onSwap={(matchId, occupantId) => { void handleCourtSheetSwap(matchId, occupantId) }}
               onUndo={() => { void handleCourtSheetUndo() }}
               onCourtState={(courtLabel, closed, note) => { void handleCourtStateChange(courtLabel, { is_closed: closed, note }) }}
+              onMakeCourtAvailable={handleMakeCourtAvailable}
+              onRestoreCourtAvailability={handleRestoreCourtAvailability}
               onInteractionChange={(active) => { courtSheetHold.current = active }}
               rosterByTeam={Object.fromEntries(deskTeams.map((team) => [team.team_id, [
                 team.player1_id ? { id: team.player1_id, name: team.player1_name || 'Player 1', phone: team.player1_cellphone, consent: team.player1_sms_consent, slot: 1 as const } : null,

@@ -11,21 +11,20 @@ export type ScoreRosterPlayer = {
   team: 1 | 2
 }
 
-function scoreAgrees(score: string, teamAWins: boolean): boolean {
+function winningScore(score: string): boolean {
   const parts = score.replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean)
-  let a = 0
-  let b = 0
+  let winner = 0
+  let loser = 0
   for (const part of parts) {
     const pair = part.split('-')
     if (pair.length !== 2) return false
     const left = Number(pair[0])
     const right = Number(pair[1])
     if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return false
-    if (left > right) a += 1
-    else b += 1
+    if (left > right) winner += 1
+    else loser += 1
   }
-  if (!parts.length) return false
-  return teamAWins ? a > b : b > a
+  return parts.length > 0 && winner > loser
 }
 
 function shortTeam(label: string): string {
@@ -112,12 +111,13 @@ export default function MatchScoreDrawer({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [holdForTexts, setHoldForTexts] = useState(false)
   const [localNotice, setLocalNotice] = useState<string | null>(null)
+  const [resultKind, setResultKind] = useState<'normal' | 'default' | 'retired'>('normal')
   const approvedKey = useRef<string>('')
 
-  const waterfall = match.stage === 'WF'
+  const waterfall = match.stage === 'WF' || (match.match_code || '').includes('_WF_')
+  const defaultScore = waterfall ? '8-0' : '6-0, 6-0'
   const formatLabel = waterfall ? '8-game pro set · Tiebreak at 8–8' : 'Best of three sets · Match tiebreak for third set'
-  const teamAWins = winnerId != null && winnerId === match.team1_id
-  const scoreOk = score.trim().length > 0 && winnerId != null && scoreAgrees(score, teamAWins)
+  const scoreOk = score.trim().length > 0 && winnerId != null && (resultKind === 'retired' || winningScore(score))
   const eligibleIds = useMemo(
     () => (preview?.cards || []).flatMap((card) => card.players.filter((player) => player.eligible && player.player_id).map((player) => player.player_id as number)),
     [preview],
@@ -125,8 +125,21 @@ export default function MatchScoreDrawer({
   const selectedCount = selected.filter((id) => eligibleIds.includes(id)).length
 
   useEffect(() => {
+    setResultKind('normal')
     if (!completed) scoreRef.current?.focus()
   }, [match.match_id, completed])
+
+  const chooseResult = (kind: 'normal' | 'default' | 'retired') => {
+    setResultKind(kind)
+    if (kind === 'default') onScore(defaultScore)
+  }
+
+  const saveForKind = () => {
+    if (completed && !holdForTexts) return onSave()
+    if (resultKind === 'default') return onDefault()
+    if (resultKind === 'retired') return onRetired()
+    return onSave()
+  }
 
   useEffect(() => {
     if (!winnerId || !isDraft) {
@@ -249,12 +262,13 @@ export default function MatchScoreDrawer({
           ref={scoreRef}
           value={score}
           onChange={(event) => onScore(event.target.value)}
+          readOnly={resultKind === 'default'}
           placeholder={waterfall ? '8-4' : '6-4, 6-3'}
           aria-label="Final score"
-          style={{ width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 18, border: '1px solid #90caf9', borderRadius: 8, boxSizing: 'border-box' }}
+          style={{ width: '100%', marginTop: 6, padding: '10px 12px', fontSize: 18, border: '1px solid #90caf9', borderRadius: 8, boxSizing: 'border-box', background: resultKind === 'default' ? '#f7f9fb' : '#fff' }}
         />
-        <div style={{ marginTop: 4, fontSize: 12, color: '#78909c' }}>{preview?.format_label || formatLabel}</div>
-        {winnerId && score.trim() && !scoreOk && <div style={{ marginTop: 6, color: '#c62828', fontSize: 12 }}>The selected winner does not match this score.</div>}
+        <div style={{ marginTop: 4, fontSize: 12, color: '#78909c' }}>{preview?.format_label || formatLabel}. Enter the winner's games first.</div>
+        {winnerId && score.trim() && resultKind !== 'retired' && !winningScore(score) && <div style={{ marginTop: 6, color: '#c62828', fontSize: 12 }}>The selected winner does not match this score.</div>}
 
         {(!completed || holdForTexts) && (
           <>
@@ -305,7 +319,7 @@ export default function MatchScoreDrawer({
             onClick={() => {
               void (completed && !holdForTexts
                 ? onSave().then((saved) => { if (saved) onComplete?.() })
-                : finalize(onSave, !completed || holdForTexts))
+                : finalize(saveForKind, !completed || holdForTexts))
             }}
             style={{ width: '100%', marginTop: 14, padding: '12px 14px', border: 'none', borderRadius: 8, background: scoreOk || holdForTexts ? '#2e7d32' : '#cfd8dc', color: '#fff', fontWeight: 800, fontSize: 16, cursor: 'pointer' }}
           >
@@ -313,14 +327,18 @@ export default function MatchScoreDrawer({
           </button>
         )}
         {isDraft && !completed && (
-          <button type="button" disabled={submitting || !scoreOk} onClick={() => { void finalize(onSave, false) }} style={{ width: '100%', marginTop: 8, padding: '10px 14px', borderRadius: 8, border: '1px solid #b0bec5', background: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+          <button type="button" disabled={submitting || !scoreOk} onClick={() => { void finalize(saveForKind, false) }} style={{ width: '100%', marginTop: 8, padding: '10px 14px', borderRadius: 8, border: '1px solid #b0bec5', background: '#fff', fontWeight: 700, cursor: 'pointer' }}>
             Finalize Match Without Texting
           </button>
         )}
         {isDraft && !completed && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button type="button" disabled={submitting || !winnerId} onClick={() => { void finalize(onDefault, true) }} style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid #ffcc80', background: '#fff', color: '#e65100', fontWeight: 700, cursor: 'pointer' }}>{waterfall ? 'Default (WF)' : 'Default Win'}</button>
-            <button type="button" disabled={submitting || !winnerId || !score.trim()} onClick={() => { void finalize(onRetired, true) }} style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid #ce93d8', background: '#fff', color: '#6a1b9a', fontWeight: 700, cursor: 'pointer' }}>Retired</button>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#263238', marginBottom: 6 }}>Result</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" aria-pressed={resultKind === 'normal'} onClick={() => chooseResult('normal')} style={resultButton(resultKind === 'normal', '#1565c0', '#e3f2fd')}>Normal</button>
+              <button type="button" aria-pressed={resultKind === 'default'} onClick={() => chooseResult('default')} style={resultButton(resultKind === 'default', '#e65100', '#fff3e0')}>Default Win</button>
+              <button type="button" aria-pressed={resultKind === 'retired'} onClick={() => chooseResult('retired')} style={resultButton(resultKind === 'retired', '#6a1b9a', '#f3e5f5')}>Retired</button>
+            </div>
           </div>
         )}
 
@@ -354,6 +372,19 @@ export default function MatchScoreDrawer({
       )}
     </div>
   )
+}
+
+function resultButton(selected: boolean, color: string, fill: string): CSSProperties {
+  return {
+    flex: 1,
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: `2px solid ${selected ? color : '#cfd8dc'}`,
+    background: selected ? fill : '#fff',
+    color,
+    fontWeight: 800,
+    cursor: 'pointer',
+  }
 }
 
 const adminButton: CSSProperties = { padding: '8px 10px', borderRadius: 8, border: '1px solid #cfd8dc', background: '#fff', textAlign: 'left', cursor: 'pointer' }

@@ -396,6 +396,7 @@ def test_score_format_follows_match_type_not_duration(client, session):
 
     regular_row = session.get(Match, regular["match_id"])
     regular_row.match_type = "MAIN"
+    regular_row.match_code = "WOM_E1_BWW_M1"
     regular_row.duration_minutes = 35
     waterfall_row = session.get(Match, waterfall["match_id"])
     waterfall_row.duration_minutes = 105
@@ -2041,11 +2042,11 @@ def test_standings_with_finalized_rr(client, session):
     rr_matches = [m for m in snap["matches"] if m["stage"] == "RR"]
     assert len(rr_matches) == 3
 
-    # Finalize M1: Alpha beats Bravo 8-4
+    # Finalize M1: Alpha beats Bravo 6-4, 6-3. Round robin is best of three sets.
     m1 = rr_matches[0]
     client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{m1['match_id']}/finalize",
-        json={"version_id": draft_id, "score": "8-4", "winner_team_id": m1["team1_id"]},
+        json={"version_id": draft_id, "score": "6-4, 6-3", "winner_team_id": m1["team1_id"]},
     )
 
     # Finalize M2: Alpha beats Charlie 6-3 6-2
@@ -2100,10 +2101,10 @@ def test_standings_sorting_by_game_diff(client, session):
         json={"version_id": draft_id, "score": "6-1 6-1", "winner_team_id": rr_matches[0]["team1_id"]},
     )
 
-    # M2: Charlie beats Alpha 4-6 4-6 (team_a=Alpha loses, team_b=Charlie wins)
+    # M2: Charlie beats Alpha. Staff enter 6-4 6-4 from Charlie's perspective.
     client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{rr_matches[1]['match_id']}/finalize",
-        json={"version_id": draft_id, "score": "4-6 4-6", "winner_team_id": rr_matches[1]["team2_id"]},
+        json={"version_id": draft_id, "score": "6-4 6-4", "winner_team_id": rr_matches[1]["team2_id"]},
     )
 
     # M3: Bravo beats Charlie 7-5 7-5
@@ -2148,7 +2149,7 @@ def test_standings_sorting_by_sets_lost_before_game_diff(client, session):
     )
     client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{rr_matches[1]['match_id']}/finalize",
-        json={"version_id": draft_id, "score": "4-6 4-6", "winner_team_id": rr_matches[1]["team2_id"]},
+        json={"version_id": draft_id, "score": "6-4 6-4", "winner_team_id": rr_matches[1]["team2_id"]},
     )
     client.patch(
         f"/api/desk/tournaments/{t.id}/matches/{rr_matches[2]['match_id']}/finalize",

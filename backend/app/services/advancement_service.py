@@ -433,12 +433,12 @@ def _auto_default_if_needed(session: Session, updates: List[Dict[str, Any]]) -> 
         from app.services.score_parser import default_score_for_match_type
 
         winner_id = down.team_b_id if a_defaulted else down.team_a_id
-        actual_score = default_score_for_match_type(down.match_type)
+        actual_score = default_score_for_match_type(down.match_type, down.match_code)
 
         down.runtime_status = "FINAL"
         down.winner_team_id = winner_id
         down.completed_at = datetime.utcnow()
-        down.score_json = {"display": "DEFAULT", "actual": actual_score}
+        down.score_json = {"display": "DEFAULT", "actual": actual_score, "entry": "winner"}
         session.add(down)
         session.commit()
 

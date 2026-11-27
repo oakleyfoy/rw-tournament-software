@@ -156,7 +156,9 @@ def _block_reason(
     if earlier:
         return "Earlier match still unfinished"
     playing = status in {"IN_PROGRESS", "PAUSED"}
-    if not playing and (_court_closed(closed, slot) or slot.is_active is False):
+    from app.services.court_availability import slot_effectively_active
+
+    if not playing and (_court_closed(closed, slot) or not slot_effectively_active(session, slot)):
         return "Assigned court unavailable"
     team_ids = {team_id for team_id in (match.team_a_id, match.team_b_id) if team_id}
     if _team_busy(session, version_id, team_ids, match.id or 0):
@@ -245,8 +247,13 @@ def _simulate_locked(session, tournament, version, day, start: time, rng: random
             continue
         team_a_wins = rng.random() < 0.5
         winner_id = match.team_a_id if team_a_wins else match.team_b_id
-        score = random_valid_score_for_match_type(match.match_type, team_a_wins=team_a_wins, rng=rng)
-        ok, message = validate_score_for_match_type(score, match.match_type)
+        score = random_valid_score_for_match_type(
+            match.match_type,
+            team_a_wins=True,
+            rng=rng,
+            match_code=match.match_code,
+        )
+        ok, message = validate_score_for_match_type(score, match.match_type, match.match_code)
         if not ok or winner_id is None:
             failed += 1
             results.append({**base, "status": "failed", "reason": message or "Could not build a valid score"})
@@ -325,10 +332,13 @@ def advance_to_next_slot(
     if version.id is None:
         raise ValueError("Schedule version is missing")
     selected = _parse_clock(slot_time)
+    from app.services.court_availability import covered_slot_ids
+
+    covered = covered_slot_ids(session, version.id, day)
     starts = sorted({
         slot.start_time
         for _match, slot in _assignment_rows(session, version.id, day)
-        if slot.start_time is not None and slot.is_active is not False
+        if slot.start_time is not None and (slot.is_active is not False or slot.id in covered)
     })
     later = [start for start in starts if start > selected]
     if not later:

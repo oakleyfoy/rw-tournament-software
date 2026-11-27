@@ -3136,6 +3136,7 @@ export interface DeskMatchItem {
   team2_id: number | null
   team2_display: string
   score_display: string | null
+  score_entry?: string | null
   score_corrections?: DeskScoreCorrection[]
   source_match_a_id: number | null
   source_match_b_id: number | null
@@ -3178,6 +3179,7 @@ export interface SnapshotSlot {
   court_label: string
   block_minutes: number
   is_active: boolean
+  scheduled_active?: boolean
   assigned_match_id: number | null
 }
 
@@ -3541,6 +3543,33 @@ export async function deskPreviewNextMatches(
 ): Promise<NextPreviewResponse> {
   return fetchJson<NextPreviewResponse>(
     `${API_BASE_URL}/desk/tournaments/${tournamentId}/matches/${matchId}/next-preview`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+}
+
+export async function deskSetCourtAvailability(
+  tournamentId: number,
+  payload: {
+    version_id: number
+    day_date: string
+    court_number: number
+    scope: 'slot' | 'range' | 'rest'
+    start_time: string
+    end_time?: string
+  },
+): Promise<{ status: string }> {
+  return fetchJson(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/court-availability`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+}
+
+export async function deskRestoreCourtAvailability(
+  tournamentId: number,
+  payload: { version_id: number; day_date: string; court_number: number },
+): Promise<{ status: string }> {
+  return fetchJson(
+    `${API_BASE_URL}/desk/tournaments/${tournamentId}/court-availability/restore`,
     { method: 'POST', body: JSON.stringify(payload) },
   )
 }
