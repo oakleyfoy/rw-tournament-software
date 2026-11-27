@@ -1256,6 +1256,7 @@ def _reset_duplicated_desk_play_state(session: Session, tournament_id: int) -> N
         match.completed_at = None
         match.checkin_reset_pending = False
         match.court_queued = False
+        match.start_held = False
         session.add(match)
 
     for row in session.exec(select(MatchCheckIn).where(MatchCheckIn.tournament_id == tournament_id)).all():
@@ -1772,6 +1773,7 @@ def duplicate_tournament(tournament_id: int, session: Session = Depends(get_sess
                 completed_at=None,
                 checkin_reset_pending=False,
                 court_queued=False,
+                start_held=False,
             )
             session.add(cloned)
             session.flush()

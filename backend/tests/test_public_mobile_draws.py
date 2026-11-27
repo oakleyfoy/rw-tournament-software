@@ -227,6 +227,105 @@ def test_public_photo_stays_hidden_until_the_draw_is_published(client, session: 
     assert hidden.status_code == 404
 
 
+def test_draw_matches_carry_the_saved_team_photo_including_first_round_waterfall(client, session: Session, monkeypatch):
+    monkeypatch.setenv("TEAM_PHOTO_OBJECT_STORE", "memory")
+    reset_memory_store()
+    tournament, photographed = _published(session)
+    first_round = session.exec(
+        select(Match).where(Match.tournament_id == tournament.id, Match.match_type == "WF")
+    ).one()
+    key = official_object_key(tournament.id, photographed.id, "draw-photo")
+    get_object_store().put_jpeg(key, _jpeg())
+    session.add(TeamOfficialPhoto(
+        tournament_id=tournament.id,
+        team_id=photographed.id,
+        storage_key=key,
+        byte_size=10,
+    ))
+    session.add(Match(
+        tournament_id=tournament.id,
+        event_id=first_round.event_id,
+        schedule_version_id=first_round.schedule_version_id,
+        match_code="MIX_E1_WF_R2_W01",
+        match_type="WF",
+        round_number=2,
+        round_index=2,
+        sequence_in_round=1,
+        duration_minutes=60,
+        source_match_a_id=first_round.id,
+        source_a_role="WINNER",
+        team_a_id=photographed.id,
+        team_b_id=first_round.team_b_id,
+        placeholder_side_a="Winner of Match",
+        placeholder_side_b="Winner of Match",
+    ))
+    session.add(Match(
+        tournament_id=tournament.id,
+        event_id=first_round.event_id,
+        schedule_version_id=first_round.schedule_version_id,
+        match_code="MIX_E1_BWW_R1_01",
+        match_type="MAIN",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=photographed.id,
+        team_b_id=first_round.team_b_id,
+        placeholder_side_a="Ada Smith / Bea Jones",
+        placeholder_side_b="Cara Lee / Dee Chen",
+    ))
+    session.add(Match(
+        tournament_id=tournament.id,
+        event_id=first_round.event_id,
+        schedule_version_id=first_round.schedule_version_id,
+        match_code="MIX_E1_RR_POOLA_M01",
+        match_type="RR",
+        round_number=1,
+        round_index=1,
+        sequence_in_round=1,
+        duration_minutes=60,
+        team_a_id=photographed.id,
+        team_b_id=first_round.team_b_id,
+        placeholder_side_a="Ada Smith / Bea Jones",
+        placeholder_side_b="Cara Lee / Dee Chen",
+    ))
+    session.commit()
+
+    waterfall = client.get(
+        f"/api/public/tournaments/{tournament.id}/events/{first_round.event_id}/waterfall"
+    )
+    assert waterfall.status_code == 200
+    row = next(item for item in waterfall.json()["rows"] if item["center_box"]["match_id"] == first_round.id)
+    center = row["center_box"]
+    assert center["team_a_id"] == photographed.id
+    assert center["team_a_photo_version"]
+    assert center["team_b_id"] == first_round.team_b_id
+    assert center["team_b_photo_version"] is None
+    assert row["winner_box"]["team_a_photo_version"] == center["team_a_photo_version"]
+    assert row["winner_box"]["team_b_photo_version"] is None
+
+    bracket = client.get(
+        f"/api/public/tournaments/{tournament.id}/events/{first_round.event_id}/bracket/BWW"
+    )
+    assert bracket.status_code == 200
+    bracket_match = bracket.json()["main_matches"][0]
+    assert bracket_match["team_a_photo_version"] == center["team_a_photo_version"]
+    assert bracket_match["team_b_photo_version"] is None
+
+    robin = client.get(
+        f"/api/public/tournaments/{tournament.id}/events/{first_round.event_id}/roundrobin"
+    )
+    assert robin.status_code == 200
+    robin_match = next(
+        match
+        for pool in robin.json()["pools"]
+        for match in pool["matches"]
+        if match["team_a_id"] == photographed.id
+    )
+    assert robin_match["team_a_photo_version"] == center["team_a_photo_version"]
+    assert robin_match["team_b_photo_version"] is None
+
+
 def test_public_draws_hide_seeds_outside_round_robin_pools():
     from app.routes.public import (
         _bracket_team_line,

@@ -346,6 +346,8 @@ def progress_version_day(
         status = (match.runtime_status or "SCHEDULED").upper()
         if status in LIVE:
             continue
+        if bool(getattr(match, "start_held", False)):
+            continue
         event = session.get(Event, match.event_id) if match.event_id else None
         if not is_preassigned(event, day):
             continue
@@ -530,6 +532,9 @@ def staff_activate(
     )
     if occupant is not None:
         return False, "That court already has a match playing"
+    match.start_held = False
+    session.add(match)
+    session.flush()
     if not _activate(session, match, slot, _activation_stamp(tournament, run)):
         return False, "Could not start the match"
     return True, "started"

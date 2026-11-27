@@ -5186,6 +5186,13 @@ def set_match_status(
         # Back To Ready leaves the court. Leaving this flag set hides the match
         # from Ready To Go once the court card stops showing it.
         match.court_queued = False
+    if payload.status == "SCHEDULED" and previous_status in {"IN_PROGRESS", "PAUSED"}:
+        # Keep the assignment. The grid shows the match as not started, and
+        # automatic progression does not start it again.
+        match.start_held = True
+        match.started_at = None
+    if payload.status == "IN_PROGRESS":
+        match.start_held = False
     if payload.reset_started_at:
         match.started_at = None
     if payload.status == "IN_PROGRESS" and (match.started_at is None or payload.reset_started_at):

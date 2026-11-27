@@ -61,6 +61,9 @@ class Match(SQLModel, table=True):
     # Staff sent this match to a court queue with Put courts on or a drag.
     # Check-in alone does not set it, and a start will not happen until it is set.
     court_queued: bool = Field(default=False)
+    # Staff returned a playing match to Not Started. Automatic progression
+    # leaves it on its grid slot until staff set it in progress again.
+    start_held: bool = Field(default=False)
 
     # Relationships
     tournament: "Tournament" = Relationship(back_populates="matches")

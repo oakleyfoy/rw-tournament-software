@@ -131,6 +131,29 @@ def test_start_day_is_idempotent_and_does_not_text(session: Session):
     assert session.exec(select(SmsLog).where(SmsLog.tournament_id == tournament.id)).all() == []
 
 
+def test_not_started_stays_on_the_grid_until_staff_start_it_again(session: Session):
+    tournament, version, event = _build(session)
+    nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "HOLD9")
+    noon = _place(session, tournament, version, event, 2, time(12, 0), _pair(session, event, ("Amy", "Holly")), "HOLD12")
+    session.commit()
+    start_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 15, 5, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, nine.id) == "IN_PROGRESS"
+
+    nine = session.get(Match, nine.id)
+    nine.runtime_status = "SCHEDULED"
+    nine.started_at = None
+    nine.start_held = True
+    session.add(nine)
+    session.commit()
+
+    progress_version_day(session, tournament, version, date(2026, 12, 4), now=datetime(2026, 12, 4, 16, 0, tzinfo=timezone.utc))
+    session.commit()
+    assert _status(session, nine.id) == "SCHEDULED"
+    assert _status(session, noon.id) == "SCHEDULED"
+    assert session.get(Match, nine.id).start_held is True
+
+
 def test_open_court_holds_the_noon_match_until_its_release_window(session: Session):
     tournament, version, event = _build(session)
     nine = _place(session, tournament, version, event, 2, time(9, 0), _pair(session, event, ("Carol", "Olivia")), "M9")

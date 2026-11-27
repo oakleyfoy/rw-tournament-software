@@ -65,6 +65,7 @@ export default function MatchScoreDrawer({
   onRetired,
   onReopen,
   onSetInProgress,
+  onSetNotStarted,
   onBackToWaiting,
   onOpenNotes,
   onOpenTrophies,
@@ -95,6 +96,7 @@ export default function MatchScoreDrawer({
   onRetired: () => Promise<boolean>
   onReopen: () => void
   onSetInProgress: () => void
+  onSetNotStarted: () => void
   onBackToWaiting: () => void
   onOpenNotes: () => void
   onOpenTrophies: () => void
@@ -346,6 +348,9 @@ export default function MatchScoreDrawer({
           <summary style={{ cursor: 'pointer', fontWeight: 800, color: '#455a64' }}>Administrative Actions</summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             {!completed && <button type="button" onClick={onSetInProgress} style={adminButton}>Set In Progress</button>}
+            {!completed && (match.status === 'IN_PROGRESS' || match.status === 'PAUSED') && (
+              <button type="button" onClick={onSetNotStarted} style={adminButton}>Set Not Started</button>
+            )}
             {showBackToWaiting && !completed && <button type="button" onClick={onBackToWaiting} style={adminButton}>Back To Waiting for Check-In</button>}
             {completed && <button type="button" onClick={onReopen} style={adminButton}>Reopen Match</button>}
           </div>

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback } 
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicBracket, BracketResponse, BracketMatchBox } from '../../api/client'
 import PublicMobileDraw from './PublicMobileDraw'
+import { DrawPhotoTournamentContext, DrawTeamPhoto } from './DrawTeamPhoto'
 import './publicMobileDraw.css'
 
 const HubHighlightTeamContext = createContext<number | null>(null)
@@ -71,7 +72,7 @@ function injectBracketPrintStyles() {
 // ── Layout constants ────────────────────────────────────────────────────
 
 const MATCH_W = 280
-const MATCH_H = 82
+const MATCH_H = 100
 const GAP_V = 8
 const CONNECTOR_W = 28
 const PHONE_BRACKET_MAX_WIDTH = 768
@@ -216,26 +217,44 @@ function MatchCard({ match, variant, showCourtInfo, phoneMode = false }: {
         color: '#222',
         fontSize: phoneMode ? 15 : 11,
         fontWeight: phoneMode ? 600 : undefined,
-        whiteSpace: phoneMode ? 'normal' : 'nowrap',
-        overflow: phoneMode ? undefined : 'hidden',
-        textOverflow: phoneMode ? undefined : 'ellipsis',
-        overflowWrap: phoneMode ? 'anywhere' : undefined,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
         borderBottom: '1px solid rgba(0,0,0,0.08)',
         paddingBottom: 1,
         marginBottom: 1,
       }}>
-        {match.line1}
+        <DrawTeamPhoto teamId={match.team_a_id} version={match.team_a_photo_version} size={phoneMode ? 32 : 22} />
+        <span style={{
+          minWidth: 0,
+          whiteSpace: phoneMode ? 'normal' : 'nowrap',
+          overflow: phoneMode ? undefined : 'hidden',
+          textOverflow: phoneMode ? undefined : 'ellipsis',
+          overflowWrap: phoneMode ? 'anywhere' : undefined,
+        }}>
+          {match.line1}
+        </span>
       </div>
       <div style={{
         color: '#222',
         fontSize: phoneMode ? 15 : 11,
         fontWeight: phoneMode ? 600 : undefined,
-        whiteSpace: phoneMode ? 'normal' : 'nowrap',
-        overflow: phoneMode ? undefined : 'hidden',
-        textOverflow: phoneMode ? undefined : 'ellipsis',
-        overflowWrap: phoneMode ? 'anywhere' : undefined,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {match.line2}
+        <DrawTeamPhoto teamId={match.team_b_id} version={match.team_b_photo_version} size={phoneMode ? 32 : 22} />
+        <span style={{
+          minWidth: 0,
+          whiteSpace: phoneMode ? 'normal' : 'nowrap',
+          overflow: phoneMode ? undefined : 'hidden',
+          textOverflow: phoneMode ? undefined : 'ellipsis',
+          overflowWrap: phoneMode ? 'anywhere' : undefined,
+        }}>
+          {match.line2}
+        </span>
       </div>
     </div>
   )
@@ -268,11 +287,13 @@ function MatchCardTv({ match, variant, showCourtInfo }: {
           <span style={{ fontSize: 10, fontWeight: 800, color: '#1a237e' }}>{match.score_display}</span>
         )}
       </div>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {match.line1}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 12, fontWeight: 800, color: '#1f2937' }}>
+        <DrawTeamPhoto teamId={match.team_a_id} version={match.team_a_photo_version} size={22} />
+        <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{match.line1}</span>
       </div>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {match.line2}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 12, fontWeight: 800, color: '#1f2937' }}>
+        <DrawTeamPhoto teamId={match.team_b_id} version={match.team_b_photo_version} size={22} />
+        <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{match.line2}</span>
       </div>
       <div style={{ fontSize: 10, color: '#667085' }}>
         {metaParts.join(' • ') || (match.status === 'UNSCHEDULED' ? 'Pending' : 'Completed')}
@@ -679,6 +700,7 @@ export default function PublicBracketPage() {
   const headerText = `${data.event_name} — ${data.division_label}`.toUpperCase()
 
   return (
+    <DrawPhotoTournamentContext.Provider value={tid}>
     <HubHighlightTeamContext.Provider value={highlightTeamId}>
     <div className={`bracket-print-root${phoneMode && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
@@ -872,5 +894,6 @@ export default function PublicBracketPage() {
       </div>
     </div>
     </HubHighlightTeamContext.Provider>
+    </DrawPhotoTournamentContext.Provider>
   )
 }

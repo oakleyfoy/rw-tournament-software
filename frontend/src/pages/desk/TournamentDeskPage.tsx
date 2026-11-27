@@ -1401,6 +1401,7 @@ function MatchDrawer({
         onRetired={async () => Boolean(await doRetired())}
         onReopen={reopenToCurrentlyPlaying}
         onSetInProgress={() => handleSetStatus('IN_PROGRESS')}
+        onSetNotStarted={() => handleSetStatus('SCHEDULED')}
         onBackToWaiting={() => { void returnToWaitingCheckIn() }}
         onOpenNotes={() => setPlayerNotesOpen(true)}
         onOpenTrophies={() => onOpenTrophies?.()}

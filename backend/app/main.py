@@ -20,6 +20,7 @@ from app.db_schema_patch import (
     ensure_match_checkin_reset_column,
     ensure_match_score_correction_table,
     ensure_match_court_queued_column,
+    ensure_match_start_held_column,
     ensure_team_photo_print_tables,
     ensure_tournament_group_photo_tables,
     ensure_schedule_slot_columns,
@@ -276,6 +277,7 @@ def on_startup():
     ensure_schedule_slot_columns(engine)
     ensure_match_checkin_reset_column(engine)
     ensure_match_court_queued_column(engine)
+    ensure_match_start_held_column(engine)
     ensure_team_photo_print_tables(engine)
     ensure_tournament_group_photo_tables(engine)
     start_first_match_runner_if_enabled()

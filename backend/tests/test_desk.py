@@ -1742,6 +1742,44 @@ def test_bulk_delay_respects_day_index(client, session):
     assert resp.json()["updated_count"] == 0
 
 
+def test_playing_match_can_return_to_not_started_and_start_again(client, session):
+    t, v, ev, teams, matches = _setup_tournament_with_matches(session)
+    draft_id = client.post(f"/api/desk/tournaments/{t.id}/working-draft").json()["version_id"]
+    snap = client.get(f"/api/desk/tournaments/{t.id}/snapshot?version_id={draft_id}").json()
+    match_id = [m for m in snap["matches"] if m["match_code"] == "WOM_E1_WF_R1_M01"][0]["match_id"]
+
+    started = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{match_id}/status",
+        json={"version_id": draft_id, "status": "IN_PROGRESS"},
+    )
+    assert started.status_code == 200
+    playing = session.get(Match, match_id)
+    session.refresh(playing)
+    assert playing.runtime_status == "IN_PROGRESS"
+    assert playing.started_at is not None
+    assert playing.start_held is False
+
+    stopped = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{match_id}/status",
+        json={"version_id": draft_id, "status": "SCHEDULED"},
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "SCHEDULED"
+    session.refresh(playing)
+    assert playing.started_at is None
+    assert playing.start_held is True
+
+    again = client.patch(
+        f"/api/desk/tournaments/{t.id}/matches/{match_id}/status",
+        json={"version_id": draft_id, "status": "IN_PROGRESS"},
+    )
+    assert again.status_code == 200
+    session.refresh(playing)
+    assert playing.runtime_status == "IN_PROGRESS"
+    assert playing.started_at is not None
+    assert playing.start_held is False
+
+
 def test_paused_delayed_status_via_status_endpoint(client, session):
     """The status endpoint accepts PAUSED and DELAYED as valid statuses."""
     t, v, ev, teams, matches = _setup_tournament_with_matches(session)

@@ -50,6 +50,8 @@ class MatchBox(BaseModel):
     winner_team_id: Optional[int] = None
     team_a_id: Optional[int] = None
     team_b_id: Optional[int] = None
+    team_a_photo_version: Optional[str] = None
+    team_b_photo_version: Optional[str] = None
 
 
 class WaterfallRow(BaseModel):
@@ -96,6 +98,8 @@ class BracketMatchBox(BaseModel):
     team_a_id: Optional[int] = None
     team_b_id: Optional[int] = None
     winner_team_id: Optional[int] = None
+    team_a_photo_version: Optional[str] = None
+    team_b_photo_version: Optional[str] = None
 
 
 class BracketResponse(BaseModel):
@@ -253,6 +257,34 @@ def _match_show_scheduled_court(
     return is_preassigned(event, getattr(slot, "day_date", None))
 
 
+def _official_photo_versions(session: Session, tournament_id: int) -> Dict[int, str]:
+    """Version string for each team that already has an official photo.
+
+    The same stamp the teams page publishes, so a new or replaced photo
+    shows up on the next draw refresh.
+    """
+    photos = session.exec(
+        select(TeamOfficialPhoto).where(TeamOfficialPhoto.tournament_id == tournament_id)
+    ).all()
+    versions: Dict[int, str] = {}
+    for photo in photos:
+        if photo.team_id is None or not photo.storage_key:
+            continue
+        versions[photo.team_id] = (
+            photo.updated_at.isoformat() if photo.updated_at else photo.storage_key
+        )
+    return versions
+
+
+def _side_photo_version(
+    team_id: Optional[int],
+    photo_versions: Optional[Dict[int, str]],
+) -> Optional[str]:
+    if team_id is None or not photo_versions:
+        return None
+    return photo_versions.get(team_id)
+
+
 def _build_match_box(
     match: Match,
     team_map: Dict[int, Team],
@@ -261,6 +293,7 @@ def _build_match_box(
     all_matches_by_id: Dict[int, Match],
     is_center: bool,
     show_court_info: bool,
+    photo_versions: Optional[Dict[int, str]] = None,
 ) -> MatchBox:
     """Build a MatchBox for a single match."""
 
@@ -346,6 +379,8 @@ def _build_match_box(
         winner_team_id=match.winner_team_id,
         team_a_id=match.team_a_id,
         team_b_id=match.team_b_id,
+        team_a_photo_version=_side_photo_version(match.team_a_id, photo_versions),
+        team_b_photo_version=_side_photo_version(match.team_b_id, photo_versions),
     )
 
 
@@ -776,6 +811,7 @@ def public_waterfall(
 
     # Build rows
     r2_winner_count = sum(1 for r2 in r2_matches if r2.source_a_role == "WINNER")
+    photo_versions = _official_photo_versions(session, tournament_id)
     rows: List[WaterfallRow] = []
     for r1 in ordered_r1:
         center = _build_match_box(
@@ -786,6 +822,7 @@ def public_waterfall(
             all_matches_by_id,
             is_center=True,
             show_court_info=_match_show_scheduled_court(tournament, event, r1, assignment_map, slot_map),
+            photo_versions=photo_versions,
         )
 
         winner_match = r1_to_winner.get(r1.id)
@@ -798,6 +835,7 @@ def public_waterfall(
                 all_matches_by_id,
                 is_center=False,
                 show_court_info=_match_show_scheduled_court(tournament, event, winner_match, assignment_map, slot_map),
+                photo_versions=photo_versions,
             )
             if winner_match
             else None
@@ -813,6 +851,7 @@ def public_waterfall(
                 all_matches_by_id,
                 is_center=False,
                 show_court_info=_match_show_scheduled_court(tournament, event, loser_match, assignment_map, slot_map),
+                photo_versions=photo_versions,
             )
             if loser_match
             else None
@@ -919,6 +958,7 @@ def _build_bracket_box(
     slot_map: Dict[int, Any],
     match_map: Dict[int, Match],
     show_court_info: bool,
+    photo_versions: Optional[Dict[int, str]] = None,
 ) -> BracketMatchBox:
     status = (match.status or "unscheduled").upper()
     asgn = assignment_map.get(match.id)
@@ -981,6 +1021,8 @@ def _build_bracket_box(
         team_a_id=match.team_a_id,
         team_b_id=match.team_b_id,
         winner_team_id=match.winner_team_id,
+        team_a_photo_version=_side_photo_version(match.team_a_id, photo_versions),
+        team_b_photo_version=_side_photo_version(match.team_b_id, photo_versions),
     )
 
 
@@ -1074,6 +1116,7 @@ def public_bracket(
     main_matches = []
     consolation_matches = []
 
+    photo_versions = _official_photo_versions(session, tournament_id)
     for m in sorted(bracket_matches, key=lambda m: (m.round_index or 0, m.sequence_in_round or 0)):
         box = _build_bracket_box(
             m,
@@ -1082,6 +1125,7 @@ def public_bracket(
             slot_map,
             match_map,
             show_court_info=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+            photo_versions=photo_versions,
         )
         if (m.match_type or "").upper() == "CONSOLATION":
             consolation_matches.append(box)
@@ -1172,6 +1216,8 @@ class RRMatchBox(BaseModel):
     team_a_id: Optional[int] = None
     team_b_id: Optional[int] = None
     winner_team_id: Optional[int] = None
+    team_a_photo_version: Optional[str] = None
+    team_b_photo_version: Optional[str] = None
 
 
 class RRPool(BaseModel):
@@ -1243,6 +1289,7 @@ def _build_rr_match_box(
     slot_map: Dict[int, Any],
     display_round_index: int,
     include_court: bool = True,
+    photo_versions: Optional[Dict[int, str]] = None,
 ) -> RRMatchBox:
     import json
 
@@ -1311,6 +1358,8 @@ def _build_rr_match_box(
         team_a_id=m.team_a_id,
         team_b_id=m.team_b_id,
         winner_team_id=m.winner_team_id,
+        team_a_photo_version=_side_photo_version(m.team_a_id, photo_versions),
+        team_b_photo_version=_side_photo_version(m.team_b_id, photo_versions),
     )
 
 
@@ -1500,6 +1549,7 @@ def _public_round_robin_impl(
             continue
         pool_matches.setdefault(pool_key, []).append(m)
 
+    photo_versions = _official_photo_versions(session, tournament_id)
     pools: List[RRPool] = []
     for pool_code in sorted(pool_matches.keys(), key=_pool_display_sort_key):
         matches = sorted(
@@ -1526,6 +1576,7 @@ def _public_round_robin_impl(
                         slot_map,
                         display_round_index,
                         include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+                        photo_versions=photo_versions,
                     )
                 )
             except Exception:
@@ -1670,6 +1721,7 @@ def _public_round_robin_impl(
                         slot_map,
                         _safe_int_field(m.round_index, 1) or 1,
                         include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+                        photo_versions=photo_versions,
                     )
                 )
             except Exception:
@@ -1702,6 +1754,7 @@ def _public_round_robin_impl(
                         slot_map,
                         _safe_int_field(m.round_index, 1) or 1,
                         include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+                        photo_versions=photo_versions,
                     )
                 )
             except Exception:
@@ -1737,6 +1790,7 @@ def _public_round_robin_impl(
                             slot_map,
                             _safe_int_field(m.round_index, 1) or 1,
                             include_court=_match_show_scheduled_court(tournament, event, m, assignment_map, slot_map),
+                            photo_versions=photo_versions,
                         )
                     )
                 except Exception:

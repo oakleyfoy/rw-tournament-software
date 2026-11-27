@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useMemo, useCallback, u
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getPublicWaterfall, PublicWaterfallResponse, PublicMatchBox } from '../../api/client'
 import PublicMobileDraw from './PublicMobileDraw'
+import { DrawPhotoTournamentContext, DrawTeamPhoto } from './DrawTeamPhoto'
 import './publicMobileDraw.css'
 
 const HubHighlightTeamContext = createContext<number | null>(null)
@@ -249,6 +250,11 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
   const line1 = tvMode ? shortenTvTeamLine(box.line1) : box.line1
   const line2 = tvMode ? shortenTvTeamLine(box.line2) : box.line2
   const notes = tvMode ? stripTvLocationSuffix(box.notes) : box.notes
+  const photoSize = phoneMode
+    ? 36
+    : tvMode
+      ? Math.max(22, Math.round(teamFontSize))
+      : Math.max(22, Math.round(32 * layout.scale))
 
   return (
     <div
@@ -306,13 +312,23 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         color: line1IsWinner ? '#1b5e20' : '#222',
         fontSize: teamFontSize,
         fontWeight: line1IsWinner ? 800 : 600,
-        whiteSpace: tvMode ? 'nowrap' : 'normal',
-        overflow: tvMode ? 'hidden' : undefined,
-        textOverflow: tvMode ? 'ellipsis' : undefined,
-        overflowWrap: phoneMode ? 'anywhere' : undefined,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {line1IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
-        {line1}
+        <DrawTeamPhoto teamId={box.team_a_id} version={box.team_a_photo_version} size={photoSize} />
+        <span style={{
+          minWidth: 0,
+          whiteSpace: tvMode ? 'nowrap' : 'normal',
+          overflow: tvMode ? 'hidden' : undefined,
+          textOverflow: tvMode ? 'ellipsis' : undefined,
+          overflowWrap: phoneMode ? 'anywhere' : undefined,
+        }}>
+          {line1IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
+          {line1}
+        </span>
       </div>
       <div data-vs style={{ fontSize: vsFontSize, color: '#999', fontWeight: 600, fontStyle: 'italic', margin: tvMode ? '3px 0' : phoneMode ? '4px 0' : '1px 0' }}>
         vs
@@ -321,13 +337,23 @@ function MatchBoxCard({ box, variant, layout, widthOverride, heightOverride, tvM
         color: line2IsWinner ? '#1b5e20' : '#222',
         fontSize: teamFontSize,
         fontWeight: line2IsWinner ? 800 : 600,
-        whiteSpace: tvMode ? 'nowrap' : 'normal',
-        overflow: tvMode ? 'hidden' : undefined,
-        textOverflow: tvMode ? 'ellipsis' : undefined,
-        overflowWrap: phoneMode ? 'anywhere' : undefined,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {line2IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
-        {line2}
+        <DrawTeamPhoto teamId={box.team_b_id} version={box.team_b_photo_version} size={photoSize} />
+        <span style={{
+          minWidth: 0,
+          whiteSpace: tvMode ? 'nowrap' : 'normal',
+          overflow: tvMode ? 'hidden' : undefined,
+          textOverflow: tvMode ? 'ellipsis' : undefined,
+          overflowWrap: phoneMode ? 'anywhere' : undefined,
+        }}>
+          {line2IsWinner && <span style={{ fontSize: badgeFontSize, marginRight: 4 }}>&#9654;</span>}
+          {line2}
+        </span>
       </div>
 
       {/* Notes */}
@@ -1160,6 +1186,7 @@ export default function PublicWaterfallPage() {
   const headerText = `${data.event_name} Waterfall Bracket`.toUpperCase()
 
   return (
+    <DrawPhotoTournamentContext.Provider value={tid}>
     <HubHighlightTeamContext.Provider value={highlightTeamId}>
     <div className={`print-root${viewportWidth <= PHONE_WATERFALL_MAX_WIDTH && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || displayFitMode || tvMode ? '#fff' : '#f8f9fa',
@@ -1452,5 +1479,6 @@ export default function PublicWaterfallPage() {
       </div>
     </div>
     </HubHighlightTeamContext.Provider>
+    </DrawPhotoTournamentContext.Provider>
   )
 }

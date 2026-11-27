@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { getPublicRoundRobin, RoundRobinResponse, RRMatchBox, RRPool, RRPoolStandings } from '../../api/client'
 import PublicMobileDraw from './PublicMobileDraw'
+import { DrawPhotoTournamentContext, DrawTeamPhoto } from './DrawTeamPhoto'
 import './publicMobileDraw.css'
 
 const REFRESH_MS = 15000
@@ -98,8 +99,13 @@ function RRMatchCard({
         borderBottom: '1px solid #eee',
         paddingBottom: 3,
         marginBottom: 3,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {match.line1}
+        <DrawTeamPhoto teamId={match.team_a_id} version={match.team_a_photo_version} size={28} />
+        <span style={{ minWidth: 0 }}>{match.line1}</span>
       </div>
 
       {/* Match info line */}
@@ -145,8 +151,13 @@ function RRMatchCard({
         borderTop: '1px solid #eee',
         paddingTop: 3,
         marginTop: 3,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {match.line2}
+        <DrawTeamPhoto teamId={match.team_b_id} version={match.team_b_photo_version} size={28} />
+        <span style={{ minWidth: 0 }}>{match.line2}</span>
       </div>
     </div>
   )
@@ -306,11 +317,13 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
         fontWeight: line1IsWinner ? 900 : 800,
         fontSize: 11.5,
         color: line1IsWinner ? '#2e7d32' : '#1f2937',
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {line1}
+        <DrawTeamPhoto teamId={match.team_a_id} version={match.team_a_photo_version} size={20} />
+        <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line1}</span>
       </div>
       <div style={{ fontSize: 9, color: '#6b7280', textAlign: 'center', padding: '1px 0', textTransform: 'uppercase', letterSpacing: 0.5 }}>
         vs
@@ -319,11 +332,13 @@ function RRMatchCardTv({ match, showCourtInfo }: { match: RRMatchBox; showCourtI
         fontWeight: line2IsWinner ? 900 : 800,
         fontSize: 11.5,
         color: line2IsWinner ? '#2e7d32' : '#1f2937',
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
       }}>
-        {line2}
+        <DrawTeamPhoto teamId={match.team_b_id} version={match.team_b_photo_version} size={20} />
+        <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line2}</span>
       </div>
       <div style={{
         marginTop: 3,
@@ -854,6 +869,7 @@ export default function PublicRoundRobinPage() {
   const headerText = `${data.event_name} Round Robin${tvSinglePool ? ` ${tvSinglePool.pool_label}` : ''}`.toUpperCase()
 
   return (
+    <DrawPhotoTournamentContext.Provider value={tid}>
     <div className={`rr-print-root${viewportWidth <= 768 && showFullDraw ? ' public-full-draw-scroll' : ''}`} style={{
       backgroundColor: captureMode || tvMode ? '#fff' : '#f8f9fa',
       minHeight: captureMode ? 'auto' : '100vh',
@@ -1137,5 +1153,6 @@ export default function PublicRoundRobinPage() {
         </div>
       </div>
     </div>
+    </DrawPhotoTournamentContext.Provider>
   )
 }

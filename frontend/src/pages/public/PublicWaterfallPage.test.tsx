@@ -40,6 +40,8 @@ const sample: PublicWaterfallResponse = {
         winner_team_id: null,
         team_a_id: 1,
         team_b_id: 2,
+        team_a_photo_version: '2026-11-27T12:00:00',
+        team_b_photo_version: null,
       },
       loser_box: {
         match_id: 3,
@@ -167,5 +169,9 @@ describe('waterfall phone layout', () => {
     expect(await screen.findByText('Heather Herman / Barry Herman')).toBeTruthy()
     expect(screen.getByText('WF Round 1')).toBeTruthy()
     expect(screen.queryByLabelText('Find your team')).toBeNull()
+    const photos = document.querySelectorAll('img')
+    expect(photos).toHaveLength(1)
+    expect(photos[0].getAttribute('src')).toContain('/teams/1/photo')
+    expect(photos[0].getAttribute('src')).toContain('2026-11-27T12')
   })
 })

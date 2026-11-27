@@ -2834,6 +2834,8 @@ export interface PublicMatchBox {
   winner_team_id: number | null
   team_a_id: number | null
   team_b_id: number | null
+  team_a_photo_version?: string | null
+  team_b_photo_version?: string | null
 }
 
 export interface PublicWaterfallRow {
@@ -2921,6 +2923,8 @@ export interface BracketMatchBox {
   team_a_id?: number | null
   team_b_id?: number | null
   winner_team_id?: number | null
+  team_a_photo_version?: string | null
+  team_b_photo_version?: string | null
 }
 
 export interface BracketResponse {
@@ -2962,6 +2966,8 @@ export interface RRMatchBox {
   team_a_id?: number | null
   team_b_id?: number | null
   winner_team_id?: number | null
+  team_a_photo_version?: string | null
+  team_b_photo_version?: string | null
 }
 
 export interface RRPool {
